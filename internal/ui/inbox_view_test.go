@@ -34,7 +34,8 @@ func TestInboxRendersAllKinds(t *testing.T) {
 
 	for _, size := range [][2]int{{140, 40}, {90, 30}} {
 		for _, tb := range []tab{tabFleet, tabInbox} {
-			m := Model{st: newStyles(theme.Deepharness), agents: agents, store: store, tab: tb, focus: paneInbox, width: size[0], height: size[1]}
+			m := Model{st: newStyles(theme.Deepharness), agents: agents, store: store, tab: tb, width: size[0], height: size[1]}
+			m.input = newInput(m.st)
 			out := m.View().Content
 			for i, l := range strings.Split(out, "\n") {
 				if w := ansi.StringWidth(l); w > size[0] {
@@ -42,8 +43,8 @@ func TestInboxRendersAllKinds(t *testing.T) {
 				}
 			}
 			plain := ansi.Strip(out)
-			if tb == tabFleet && size[0] < 110 {
-				continue // two-pane layout hides the inbox; the Inbox tab still shows it
+			if tb == tabFleet {
+				continue // the Fleet view no longer shows the inbox
 			}
 			for _, want := range []string{"PERMISSION", "QUESTION", "DONE", "IDLE", "Super+M"} {
 				if !strings.Contains(plain, want) {

@@ -37,6 +37,7 @@ func sample() []fleet.Agent {
 func TestViewFitsWidthAtSeveralSizes(t *testing.T) {
 	for _, size := range [][2]int{{160, 45}, {120, 40}, {100, 30}, {80, 24}, {60, 20}} {
 		m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New(), cursor: 1, width: size[0], height: size[1]}
+		m.input = newInput(m.st)
 		out := m.View().Content
 		lines := strings.Split(out, "\n")
 		if len(lines) != size[1] {
@@ -47,7 +48,7 @@ func TestViewFitsWidthAtSeveralSizes(t *testing.T) {
 				t.Errorf("%dx%d: line %d is %d wide: %q", size[0], size[1], i, w, ansi.Strip(l))
 			}
 		}
-		if size[0] >= 110 && !strings.Contains(ansi.Strip(out), "37%") {
+		if size[0] >= 72 && !strings.Contains(ansi.Strip(out), "37%") {
 			t.Errorf("%dx%d: context gauge missing", size[0], size[1])
 		}
 		if os.Getenv("DEN_SHOW") != "" && size[0] == 120 {

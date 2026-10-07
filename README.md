@@ -37,10 +37,14 @@ Hooks apply to Claude Code sessions started after installing. Den holds a
 permission request only while you are not at that terminal; if the agent's
 window is focused, or you switch to it, the normal dialog appears instead.
 
-Keys: `j k` move · `Enter` focus terminal · `y n a` allow, deny, allow again
-this session · `x` dismiss · `@` message the selected agent, `m` ask the orchestrator (Tab
-completes a name, Enter sends, Esc cancels) · `1 2 3` Fleet, Inbox and
-Orchestrator tabs · `Tab` next pane · `r` rescan · `?` help · `q` quit.
+The command line at the bottom is always open: type to ask the orchestrator,
+`@Name …` to message one agent (Tab completes the name), `/help` for commands.
+Keys: `Tab` switches between Fleet, Inbox and Orchestrator · `← →` move
+between the panes of a view · `↑ ↓` select or scroll in the focused pane ·
+`Enter` sends, or with an empty line focuses the selected agent's terminal ·
+`Ctrl+Y` allow and `Ctrl+N` deny the waiting prompt (`/always` allows it again
+this session) · `/open`, `/dismiss`, `/rescan`, `/quit` · `Esc` clears the
+line · `Ctrl+C` quits.
 
 Messages arrive in the agent's session the way messages from other Claude
 Code sessions do, with a first line saying they come from you via Den. While

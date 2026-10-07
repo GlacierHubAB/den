@@ -35,7 +35,7 @@ const guardMax = 10 * time.Minute
 func newInput(st styles) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = "› "
-	ti.Placeholder = "@Name to message one agent · plain text to ask the orchestrator"
+	ti.Placeholder = "Ask the orchestrator, or @Name to message one agent · /help for commands"
 	ti.CharLimit = 4000
 	ti.SetVirtualCursor(true)
 	applyInputStyles(&ti, st)
@@ -54,66 +54,21 @@ func applyInputStyles(ti *textinput.Model, st styles) {
 	ti.SetStyles(s)
 }
 
-// startCompose focuses the command line with an optional prefill.
-func (m *Model) startCompose(prefill string) tea.Cmd {
-	m.input.SetValue(prefill)
-	m.input.CursorEnd()
-	m.complIdx = 0
-	return m.input.Focus()
-}
-
-func (m *Model) stopCompose() {
-	m.input.Blur()
+// clear empties the command line after a send.
+func (m *Model) clear() {
 	m.input.SetValue("")
 	m.complIdx = 0
-}
-
-// handleComposeKey routes keys while the command line is focused.
-func (m Model) handleComposeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	compl := completions(m.input.Value(), m.agents)
-	switch msg.String() {
-	case "esc":
-		m.stopCompose()
-		return m, nil
-	case "ctrl+c":
-		return m, tea.Quit
-	case "tab":
-		if len(compl) > 0 {
-			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
-			m.input.CursorEnd()
-			m.complIdx = 0
-		}
-		return m, nil
-	case "down", "ctrl+n":
-		if len(compl) > 0 {
-			m.complIdx = (m.complIdx + 1) % len(compl)
-		}
-		return m, nil
-	case "up", "ctrl+p":
-		if len(compl) > 0 {
-			m.complIdx = (m.complIdx + len(compl) - 1) % len(compl)
-		}
-		return m, nil
-	case "enter":
-		if len(compl) > 0 && resolveMention(m.input.Value(), m.agents).target == nil {
-			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
-			m.input.CursorEnd()
-			return m, nil
-		}
-		return m.submit()
-	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	m.complIdx = 0
-	return m, cmd
 }
 
 // submit sends the command line's text.
 func (m Model) submit() (tea.Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
-		m.stopCompose()
 		return m, nil
+	}
+	if strings.HasPrefix(text, "/") {
+		m.clear()
+		return m.command(text)
 	}
 	mt := resolveMention(text, m.agents)
 	switch {
@@ -122,7 +77,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	case mt.target == nil && (mt.missing != "" || strings.HasPrefix(text, "@")):
 		return m.say(fmt.Sprintf("No agent called %q", mt.missing), true)
 	case mt.target == nil:
-		m.stopCompose()
+		m.clear()
 		return m, m.askOrchestrator(mt.body)
 	case mt.body == "":
 		return m.say("Add the message after the name.", true)
@@ -131,7 +86,7 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if target.Status == fleet.Gone {
 		return m.say(target.Name+" is gone.", true)
 	}
-	m.stopCompose()
+	m.clear()
 	if m.atTerminal(target.Session.SessionID) {
 		it := m.store.Sent(target.Session.SessionID, mt.body, "waiting: you are at that terminal")
 		m.queue = append(m.queue, outgoing{agent: target, text: mt.body, item: it, since: time.Now()})

@@ -4,6 +4,7 @@ package ui
 import (
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textinput"
@@ -20,11 +21,11 @@ import (
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
+// pane is which half of the Fleet view has the arrow keys.
 type pane int
 
 const (
 	paneAgents pane = iota
-	paneInbox
 	paneDetail
 )
 
@@ -57,7 +58,6 @@ type Model struct {
 	base     []fleet.Agent // as discovered, before inbox state is applied
 	agents   []fleet.Agent // base with "needs you" applied and re-sorted
 	cursor   int
-	focus    pane
 	tab      tab
 	width    int
 	height   int
@@ -79,6 +79,9 @@ type Model struct {
 	queue    []outgoing
 	orch     orchState
 	anim     int
+
+	focus        pane // Fleet view: agents or detail
+	detailScroll int  // lines scrolled in the detail pane
 }
 
 // New returns the root model and starts listening for hook events.
@@ -91,6 +94,7 @@ func New() Model {
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
 	m.input = newInput(m.st)
+	m.input.Focus()
 	return m
 }
 
@@ -298,17 +302,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flashClearMsg:
 		m.flash = ""
 	case tea.KeyPressMsg:
-		if m.input.Focused() {
-			return m.handleComposeKey(msg)
-		}
 		return m.handleKey(msg)
 	}
-	if m.input.Focused() {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
-	}
-	return m, nil
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
 }
 
 // handleRequest folds a hook event into the inbox and decides whether a
@@ -389,106 +387,173 @@ func (m Model) inboxSelected() *inbox.Item {
 	return items[m.inboxCur]
 }
 
-func (m Model) inboxActive() bool {
-	return m.tab == tabInbox || m.focus == paneInbox
+func (m Model) inboxActive() bool { return m.tab == tabInbox }
+
+// handleKey routes every key. The command line is always open, so letters
+// and most punctuation go to it; navigation uses arrows and Tab, answers use
+// Ctrl keys or slash commands, and Enter sends or, when the line is empty,
+// focuses the selected agent's terminal.
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	m.help = false
+	compl := completions(m.input.Value(), m.agents)
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.input.SetValue("")
+		m.complIdx = 0
+		return m, nil
+	case "tab":
+		if len(compl) > 0 {
+			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
+			m.input.CursorEnd()
+			m.complIdx = 0
+			return m, nil
+		}
+		m.tab = (m.tab + 1) % 3
+		return m, nil
+	case "shift+tab":
+		m.tab = (m.tab + 2) % 3
+		return m, nil
+	case "left":
+		if m.tab == tabFleet {
+			m.focus = paneAgents
+		}
+		return m, nil
+	case "right":
+		if m.tab == tabFleet {
+			m.focus = paneDetail
+		}
+		return m, nil
+	case "down":
+		if len(compl) > 0 {
+			m.complIdx = (m.complIdx + 1) % len(compl)
+			return m, nil
+		}
+		m.move(1)
+		return m, nil
+	case "up":
+		if len(compl) > 0 {
+			m.complIdx = (m.complIdx + len(compl) - 1) % len(compl)
+			return m, nil
+		}
+		m.move(-1)
+		return m, nil
+	case "pgdown":
+		m.move(5)
+		return m, nil
+	case "pgup":
+		m.move(-5)
+		return m, nil
+	case "ctrl+y":
+		return m.answer("allow")
+	case "ctrl+n":
+		return m.answer("deny")
+	case "enter":
+		if strings.TrimSpace(m.input.Value()) == "" {
+			return m.openSelected()
+		}
+		if len(compl) > 0 && resolveMention(m.input.Value(), m.agents).target == nil {
+			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
+			m.input.CursorEnd()
+			return m, nil
+		}
+		return m.submit()
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	m.complIdx = 0
+	return m, cmd
 }
 
-func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.help {
-		m.help = false
+// move shifts the selection of whatever the active view lists.
+func (m *Model) move(delta int) {
+	switch m.tab {
+	case tabFleet:
+		if m.focus == paneDetail {
+			m.detailScroll = max(0, m.detailScroll+delta)
+			return
+		}
+		if next := clamp(m.cursor+delta, 0, max(0, len(m.agents)-1)); next != m.cursor {
+			m.cursor = next
+			m.detailScroll = 0
+		}
+	case tabInbox:
+		m.inboxCur = clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1))
+	case tabOrch:
+		m.orch.scroll = max(0, m.orch.scroll-delta)
+	}
+}
+
+// openSelected focuses the terminal of the selected agent or inbox item.
+func (m Model) openSelected() (tea.Model, tea.Cmd) {
+	var target fleet.Agent
+	var ok bool
+	switch m.tab {
+	case tabInbox:
+		if it := m.inboxSelected(); it != nil {
+			target, ok = m.agentFor(it.SessionID)
+		}
+	case tabFleet:
+		target, ok = m.selected()
+	}
+	if !ok {
 		return m, nil
 	}
-	switch msg.String() {
-	case "q", "ctrl+c":
-		return m, tea.Quit
-	case "?":
-		m.help = true
-	case "1":
-		m.tab = tabFleet
-	case "2":
-		m.tab = tabInbox
-	case "3":
-		m.tab = tabOrch
-	case "j", "down":
-		if m.tab == tabOrch {
-			if m.orch.scroll > 0 {
-				m.orch.scroll--
-			}
-		} else if m.inboxActive() {
-			if m.inboxCur < len(m.store.Items())-1 {
-				m.inboxCur++
-			}
-		} else if m.cursor < len(m.agents)-1 {
-			m.cursor++
-		}
-	case "k", "up":
-		if m.tab == tabOrch {
-			m.orch.scroll++
-		} else if m.inboxActive() {
-			if m.inboxCur > 0 {
-				m.inboxCur--
-			}
-		} else if m.cursor > 0 {
-			m.cursor--
-		}
-	case "g", "home":
-		if m.inboxActive() {
-			m.inboxCur = 0
-		} else {
-			m.cursor = 0
-		}
-	case "G", "end":
-		if m.inboxActive() {
-			m.inboxCur = max(0, len(m.store.Items())-1)
-		} else {
-			m.cursor = max(0, len(m.agents)-1)
-		}
-	case "tab":
-		m.focus = (m.focus + 1) % 3
-	case "shift+tab":
-		m.focus = (m.focus + 2) % 3
-	case "r":
-		return m, snapshot
-	case "@", "i", ":":
-		return m, m.startCompose("@")
-	case "m":
-		if a, ok := m.selected(); ok && m.tab != tabOrch {
-			return m, m.startCompose("@" + a.Name + " ")
-		}
-		return m, m.startCompose("")
-	case "y", "n", "a":
-		it := m.topAnswerable()
-		if m.inboxActive() {
-			it = m.inboxSelected()
-		}
-		if it != nil && it.Answerable() {
-			verb := map[string]string{"y": "allow", "n": "deny", "a": "always"}[msg.String()]
-			m.store.Answer(it, verb)
-			m.flash, m.flashErr = verbPast(verb)+" for "+m.nameFor(it.SessionID), false
-			m.refresh()
-			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
-		}
-	case "x":
-		if it := m.inboxSelected(); it != nil && m.inboxActive() {
+	return m, func() tea.Msg {
+		note, err := fleet.Focus(target)
+		return focusedMsg{note: note, err: err}
+	}
+}
+
+// answer applies allow, deny or always to the selected inbox item, or to the
+// top waiting one from any other view.
+func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
+	it := m.topAnswerable()
+	if m.tab == tabInbox {
+		it = m.inboxSelected()
+	}
+	if it == nil || !it.Answerable() {
+		return m.say("Nothing is waiting for an answer.", true)
+	}
+	m.store.Answer(it, verb)
+	m.refresh()
+	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
+}
+
+// command runs a slash command typed on the command line.
+func (m Model) command(text string) (tea.Model, tea.Cmd) {
+	fields := strings.Fields(text)
+	switch strings.ToLower(fields[0]) {
+	case "/allow", "/y", "/yes":
+		return m.answer("allow")
+	case "/deny", "/n", "/no":
+		return m.answer("deny")
+	case "/always", "/a":
+		return m.answer("always")
+	case "/open", "/o", "/focus":
+		return m.openSelected()
+	case "/dismiss", "/x":
+		if it := m.inboxSelected(); it != nil && m.tab == tabInbox {
 			m.store.Dismiss(it)
 			m.refresh()
+			return m, nil
 		}
-	case "enter", "o":
-		var target fleet.Agent
-		var ok bool
-		if m.inboxActive() {
-			if it := m.inboxSelected(); it != nil {
-				target, ok = m.agentFor(it.SessionID)
-			}
-		} else {
-			target, ok = m.selected()
-		}
-		if ok {
-			return m, func() tea.Msg {
-				note, err := fleet.Focus(target)
-				return focusedMsg{note: note, err: err}
-			}
-		}
+		return m.say("Select an inbox item first.", true)
+	case "/rescan", "/r":
+		return m, snapshot
+	case "/fleet":
+		m.tab = tabFleet
+	case "/inbox":
+		m.tab = tabInbox
+	case "/orchestrator", "/orch":
+		m.tab = tabOrch
+	case "/help", "/?":
+		m.help = true
+	case "/quit", "/q", "/exit":
+		return m, tea.Quit
+	default:
+		return m.say("Unknown command "+fields[0]+". Try /help.", true)
 	}
 	return m, nil
 }

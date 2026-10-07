@@ -104,7 +104,7 @@ func (m Model) tabs(w int) string {
 	if n := m.store.Waiting(); n > 0 {
 		inboxCount = " " + s.badgeN.Render(fmt.Sprint(n))
 	}
-	return "  " + style(tabFleet).Render("1 Fleet") + "   " + style(tabInbox).Render("2 Inbox") + inboxCount + "   " + style(tabOrch).Render("3 Orchestrator") + orchStatus + "   " + s.tabOff.Render("? help")
+	return "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus + "   " + s.muted.Render("Tab switches")
 }
 
 func (m Model) panes(w, h int) string {
@@ -114,25 +114,15 @@ func (m Model) panes(w, h int) string {
 	if m.tab == tabOrch {
 		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
 	}
-	// Column plan: agents | inbox | detail, collapsing on narrow terminals.
-	switch {
-	case w < 70:
-		return m.box("Agents", m.agentsPane(w-2, h-2), w, h, m.focus == paneAgents)
-	case w < 110:
-		lw := clamp(w*40/100, 34, 60)
-		rw := w - lw
-		a := m.box("Agents", m.agentsPane(lw-2, h-2), lw, h, m.focus == paneAgents)
-		d := m.box(m.detailTitle(), m.detailPane(rw-2, h-2), rw, h, m.focus != paneAgents)
-		return lipgloss.JoinHorizontal(lipgloss.Top, a, d)
-	default:
-		lw := clamp(w*28/100, 36, 52)
-		rw := clamp(w*32/100, 42, 64)
-		cw := w - lw - rw
-		a := m.box("Agents", m.agentsPane(lw-2, h-2), lw, h, m.focus == paneAgents)
-		i := m.box("Inbox", m.inboxPane(cw-2, h-2), cw, h, m.focus == paneInbox)
-		d := m.box(m.detailTitle(), m.detailPane(rw-2, h-2), rw, h, m.focus == paneDetail)
-		return lipgloss.JoinHorizontal(lipgloss.Top, a, i, d)
+	// Fleet: agents on the left, the selected agent on the right.
+	if w < 72 {
+		return m.box("Agents", m.agentsPane(w-2, h-2), w, h, true)
 	}
+	lw := clamp(w*42/100, 36, 64)
+	rw := w - lw
+	a := m.box("Agents", m.agentsPane(lw-2, h-2), lw, h, m.focus == paneAgents)
+	d := m.box(m.detailTitle(), m.detailPane(rw-2, h-2), rw, h, m.focus == paneDetail)
+	return lipgloss.JoinHorizontal(lipgloss.Top, a, d)
 }
 
 func (m Model) detailTitle() string {
@@ -539,15 +529,17 @@ func (m Model) detailPane(w, h int) string {
 		}
 	}
 	b.WriteString("\n")
-	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render("@") + s.keyLabel.Render(" message  ") + s.key.Render("r") + s.keyLabel.Render(" rescan"))
-	return strings.TrimRight(b.String(), "\n")
+	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render("@"+a.Name) + s.keyLabel.Render(" to message"))
+	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	if m.detailScroll > 0 && len(lines) > h {
+		off := min(m.detailScroll, len(lines)-h)
+		lines = lines[off:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // completionRows lists matching agents while an @mention is being typed.
 func (m Model) completionRows(w int) []string {
-	if !m.input.Focused() {
-		return nil
-	}
 	compl := completions(m.input.Value(), m.agents)
 	if len(compl) == 0 {
 		return nil
@@ -570,33 +562,33 @@ func (m Model) completionRows(w int) []string {
 }
 
 func (m Model) prompt(w int) string {
-	s := m.st
-	if m.input.Focused() {
-		m.input.SetWidth(max(10, w-4))
-		return " " + m.input.View()
-	}
-	if m.help {
-		return " " + s.fg.Render("j k") + s.dim.Render(" move  ") + s.fg.Render("g G") + s.dim.Render(" first/last  ") +
-			s.fg.Render("Enter") + s.dim.Render(" focus terminal  ") + s.fg.Render("Tab") + s.dim.Render(" next pane  ") +
-			s.fg.Render("r") + s.dim.Render(" rescan  ") + s.fg.Render("q") + s.dim.Render(" quit")
-	}
-	if it := m.topAnswerable(); it != nil && !m.inboxActive() {
-		return " " + s.attn.Render("›") + " " + s.fg.Render(m.nameFor(it.SessionID)+": "+it.Title) + "  " + s.key.Render("y") + s.keyLabel.Render(" allow ") + s.key.Render("n") + s.keyLabel.Render(" deny ") + s.key.Render("a") + s.keyLabel.Render(" always")
-	}
-	return " " + s.muted.Render("›") + " " + s.muted.Render("@ to message an agent · m to ask the orchestrator · plain text goes to the orchestrator")
+	m.input.SetWidth(max(10, w-4))
+	return " " + m.input.View()
 }
 
 func (m Model) hints(w int) string {
 	s := m.st
-	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"y n a", "answer"}, {"@ m", "message"}, {"1 2 3", "tabs"}, {"Tab", "pane"}, {"?", "help"}, {"q", "quit"}}
-	if m.tab == tabOrch {
-		items = [][2]string{{"m", "ask"}, {"@", "message one agent"}, {"j k", "scroll"}, {"1", "fleet"}, {"?", "help"}, {"q", "quit"}}
-	}
-	if m.input.Focused() {
-		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "cancel"}}
+	var items [][2]string
+	switch {
+	case m.help:
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch", "switch view"}, {"/quit", ""}, {"Esc", "clear line"}}
+	case len(completions(m.input.Value(), m.agents)) > 0:
+		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
+	case m.tab == tabInbox:
+		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+	case m.tab == tabOrch:
+		items = [][2]string{{"Enter", "send"}, {"@Name", "one agent"}, {"↑ ↓", "scroll"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+	case m.focus == paneDetail:
+		items = [][2]string{{"↑ ↓", "scroll"}, {"←", "agents"}, {"Enter", "send · empty: focus terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+	default:
+		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	}
 	var parts []string
 	for _, it := range items {
+		if it[1] == "" {
+			parts = append(parts, s.key.Render(it[0]))
+			continue
+		}
 		parts = append(parts, s.key.Render(it[0])+" "+s.keyLabel.Render(it[1]))
 	}
 	return " " + strings.Join(parts, "   ")

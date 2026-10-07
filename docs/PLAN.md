@@ -143,7 +143,7 @@ filtering; relay loop guards (depth cap plus visited set).
 - Module: `github.com/GlacierHubAB/den`. Private repository to start.
 - Single binary with subcommands: `den` (TUI), `den hook <event>`, `den install-hooks`, `den explain`.
 - No daemon. Den's socket lives only while the TUI runs; hooks fail open.
-- Keys follow the mockup: `j k` move, `Enter` focus, `y n a` answer the top inbox item, `1-3` tabs, `Tab` next pane, `@` mention, `m` message, `?` help.
+- Keys: the command line is always open, so letters are text. `Tab` switches views, `← →` panes, `↑ ↓` select or scroll, `Enter` sends (empty line: focus terminal), `Ctrl+Y`/`Ctrl+N` answer, slash commands for the rest. The Fleet view shows agents and the selected agent only; the inbox has its own view with a count on its tab.
 
 ## Open questions
 
