@@ -198,6 +198,32 @@ func (m Model) glyph(st fleet.Status) string {
 	return s.muted.Render("?")
 }
 
+// rowStyles returns the text styles for a list row. A selected row carries
+// the selection background in every style, so nested colour resets never
+// break the highlight, and gets a bright left marker.
+func (m Model) rowStyles(selected bool) (fg, dim, muted, bright, ok, attn, err lipgloss.Style, marker string) {
+	s := m.st
+	fg, dim, muted, bright, ok, attn, err = s.fg, s.dim, s.muted, s.bright, s.ok, s.attn, s.err
+	marker = " "
+	if !selected {
+		return
+	}
+	bg := lipgloss.Color(s.pal.Sel)
+	fg, dim, muted, bright = fg.Background(bg), dim.Background(bg), muted.Background(bg), bright.Background(bg)
+	ok, attn, err = ok.Background(bg), attn.Background(bg), err.Background(bg)
+	marker = s.bright.Background(bg).Render("▎")
+	return
+}
+
+// fill pads a styled line to width w with the given style's background.
+func fill(line string, w int, pad lipgloss.Style) string {
+	n := w - ansi.StringWidth(line)
+	if n <= 0 {
+		return line
+	}
+	return line + pad.Render(strings.Repeat(" ", n))
+}
+
 func (m Model) agentsPane(w, h int) string {
 	s := m.st
 	if m.err != nil {
@@ -221,53 +247,61 @@ func (m Model) agentsPane(w, h int) string {
 			b.WriteString(" " + s.section.Render(fmt.Sprintf("%s · %d", title, counts[a.Status])) + "\n")
 			last = a.Status
 		}
+		selected := i == m.cursor
+		fg, dim, muted, bright, _, attn, err, marker := m.rowStyles(selected)
+		var glyph string
+		switch a.Status {
+		case fleet.Working:
+			glyph = bright.Render("●")
+		case fleet.NeedsYou:
+			glyph = attn.Render("◐")
+		case fleet.Idle:
+			glyph = dim.Render("○")
+		case fleet.Gone:
+			glyph = err.Render("✕")
+		default:
+			glyph = muted.Render("?")
+		}
+		name := fg.Render(a.Name)
+		if selected {
+			name = bright.Render(a.Name)
+		}
 		role := ""
 		if a.Labels.Role != "" {
-			role = "  " + s.muted.Render(strings.ToUpper(a.Labels.Role))
+			role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
 		}
-		name := s.fg.Render(a.Name)
-		if i == m.cursor {
-			name = s.bright.Render(a.Name)
-		}
-		l1 := fmt.Sprintf(" %s %s%s", m.glyph(a.Status), name, role)
-		marker := "▸ "
+		l1 := marker + glyph + fg.Render(" ") + name + role
+
+		taskMark := "▸ "
 		if a.Status == fleet.Idle || a.Status == fleet.Gone {
-			marker = "↳ "
+			taskMark = "↳ "
 		}
-		l2 := "   " + s.fg.Render(ansi.Truncate(marker+a.Task(), w-4, "…"))
-		if i != m.cursor {
-			l2 = "   " + s.dim.Render(ansi.Truncate(marker+a.Task(), w-4, "…"))
+		taskStyle := dim
+		if selected {
+			taskStyle = fg
 		}
+		l2 := marker + fg.Render("  ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-4, "…"))
+
 		meta := a.Where()
-		age := humanAge(a.Since())
 		if a.Status != fleet.Gone {
-			meta += "  " + age
+			meta += "  " + humanAge(a.Since())
 		}
-		l3 := "   " + s.dim.Render(ansi.Truncate(meta, w-4, "…"))
+		l3 := marker + fg.Render("  ") + dim.Render(ansi.Truncate(meta, w-4, "…"))
 		if a.HasUsage {
 			ctx := fmt.Sprintf("ctx %d%%", a.Usage.Percent())
-			cs := s.dim
+			cs := dim
 			if a.Usage.Percent() >= 90 {
-				cs = s.err
+				cs = err
 			} else if a.Usage.Percent() >= 75 {
-				cs = s.attn
+				cs = attn
 			}
-			if room := w - 4 - ansi.StringWidth(meta) - len(ctx) - 2; room >= 0 {
-				l3 = "   " + s.dim.Render(meta) + strings.Repeat(" ", room+2) + cs.Render(ctx)
+			if room := w - 3 - ansi.StringWidth(meta) - len(ctx) - 2; room >= 0 {
+				l3 = marker + fg.Render("  ") + dim.Render(meta) + fg.Render(strings.Repeat(" ", room+2)) + cs.Render(ctx)
 			}
 		}
-		rows := []string{l1, l2, l3}
-		for j, r := range rows {
-			if i == m.cursor {
-				pad := w - ansi.StringWidth(r)
-				if pad < 0 {
-					pad = 0
-				}
-				r = s.sel.Render(r + strings.Repeat(" ", pad))
-			}
-			rows[j] = r
+		for _, r := range []string{l1, l2, l3} {
+			b.WriteString(fill(r, w, fg) + "\n")
 		}
-		b.WriteString(strings.Join(rows, "\n") + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -291,88 +325,84 @@ func (m Model) inboxPane(w, h int) string {
 	var b strings.Builder
 	active := m.inboxActive()
 	for i, it := range items {
-		stripe := s.muted.Render("▏")
-		kindStyle := s.muted
+		selected := active && i == m.inboxCur
+		fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
+		stripe := muted.Render("▏")
+		kindStyle := muted
 		switch {
 		case it.Answerable():
-			stripe, kindStyle = s.attn.Render("▌"), s.attn
+			stripe, kindStyle = attn.Render("▌"), attn
 		case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
-			stripe, kindStyle = s.attn.Render("▏"), s.attn
+			stripe, kindStyle = attn.Render("▏"), attn
 		case it.Kind == inbox.Done && it.State != inbox.Resolved:
-			stripe, kindStyle = s.ok.Render("▌"), s.ok
+			stripe, kindStyle = ok.Render("▌"), ok
 		case it.Kind == inbox.Sent:
 			switch {
 			case strings.HasPrefix(it.Resolved, "failed"):
-				stripe, kindStyle = s.err.Render("▏"), s.err
+				stripe, kindStyle = err.Render("▏"), err
 			case it.State == inbox.Resolved:
-				stripe, kindStyle = s.ok.Render("▏"), s.dim
+				stripe, kindStyle = ok.Render("▏"), dim
 			default:
-				stripe, kindStyle = s.attn.Render("▏"), s.attn
+				stripe, kindStyle = attn.Render("▏"), attn
 			}
 		}
-		name := s.fg.Render(m.nameFor(it.SessionID))
-		if active && i == m.inboxCur {
-			name = s.bright.Render(m.nameFor(it.SessionID))
+		name := fg.Render(m.nameFor(it.SessionID))
+		if selected {
+			name = bright.Render(m.nameFor(it.SessionID))
 		}
-		head := fmt.Sprintf("%s %s  %s  %s", stripe, name, kindStyle.Render(strings.ToUpper(it.Kind.String())), s.muted.Render(humanAge(time.Since(it.At))))
+		sp := fg.Render(" ")
+		head := stripe + sp + name + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
 		rows := []string{head}
-		body := s.fg
+		body := fg
 		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
-			body = s.dim
+			body = dim
 		}
 		titleLines := strings.Split(ansi.Wrap(it.Title, w-4, ""), "\n")
 		bodyLines := it.Body
 		if it.Kind >= inbox.Done || it.State == inbox.Resolved {
 			// Notices are a glance, not a transcript: two lines of title, one of body.
 			if len(titleLines) > 2 {
-				titleLines = append(titleLines[:2], "")
-				titleLines[1] = ansi.Truncate(titleLines[1], w-6, "…")
 				titleLines = titleLines[:2]
+				titleLines[1] = ansi.Truncate(titleLines[1], w-6, "…")
 			}
 			if len(bodyLines) > 1 {
 				bodyLines = bodyLines[:1]
 			}
 		}
 		for _, l := range titleLines {
-			rows = append(rows, stripe+" "+body.Render(l))
+			rows = append(rows, stripe+sp+body.Render(l))
 		}
 		for _, l := range bodyLines {
-			rows = append(rows, stripe+" "+s.dim.Render(ansi.Truncate(l, w-4, "…")))
+			rows = append(rows, stripe+sp+dim.Render(ansi.Truncate(l, w-4, "…")))
 		}
 		for j, o := range it.Options {
-			rows = append(rows, stripe+" "+s.bright.Render(fmt.Sprint(j+1))+" "+s.fg.Render(ansi.Truncate(o, w-6, "…")))
+			rows = append(rows, stripe+sp+bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, w-6, "…")))
 		}
+		key := func(k, label string) string { return bright.Render(k) + dim.Render(" "+label) }
 		switch {
 		case it.Kind == inbox.Sent:
-			rows = append(rows, stripe+" "+s.dim.Render(it.Resolved)+"  "+s.key.Render("x")+s.keyLabel.Render(" dismiss"))
+			rows = append(rows, stripe+sp+dim.Render(it.Resolved)+sp+sp+key("x", "dismiss"))
 		case it.Answerable():
-			acts := s.key.Render("y") + s.keyLabel.Render(" allow  ") + s.key.Render("a") + s.keyLabel.Render(" always this session  ") + s.key.Render("n") + s.keyLabel.Render(" deny  ") + s.key.Render("o") + s.keyLabel.Render(" open terminal")
+			acts := key("y", "allow") + sp + sp + key("a", "always this session") + sp + sp + key("n", "deny") + sp + sp + key("o", "open terminal")
 			if it.Kind == inbox.Plan {
-				acts = s.key.Render("y") + s.keyLabel.Render(" approve  ") + s.key.Render("n") + s.keyLabel.Render(" ask for changes  ") + s.key.Render("o") + s.keyLabel.Render(" read it in the terminal")
+				acts = key("y", "approve") + sp + sp + key("n", "ask for changes") + sp + sp + key("o", "read it in the terminal")
 			}
-			rows = append(rows, stripe+" "+acts)
+			rows = append(rows, stripe+sp+acts)
 		case it.State == inbox.InTerminal:
 			why := "answer in the terminal"
 			if it.Resolved != "" {
 				why = it.Resolved + " · answer in the terminal"
 			}
-			rows = append(rows, stripe+" "+s.dim.Render(why)+"  "+s.key.Render("o")+s.keyLabel.Render(" open"))
+			rows = append(rows, stripe+sp+dim.Render(why)+sp+sp+key("o", "open"))
 		case it.State == inbox.Resolved:
-			rows = append(rows, stripe+" "+s.muted.Render(it.Resolved))
+			rows = append(rows, stripe+sp+muted.Render(it.Resolved))
 		default:
-			rows = append(rows, stripe+" "+s.key.Render("o")+s.keyLabel.Render(" open  ")+s.key.Render("x")+s.keyLabel.Render(" dismiss"))
+			rows = append(rows, stripe+sp+key("o", "open")+sp+sp+key("x", "dismiss"))
 		}
-		for j, r := range rows {
-			if active && i == m.inboxCur {
-				pad := w - ansi.StringWidth(r)
-				if pad < 0 {
-					pad = 0
-				}
-				r = s.sel.Render(r + strings.Repeat(" ", pad))
-			}
-			rows[j] = r
+		for _, r := range rows {
+			b.WriteString(fill(r, w, fg) + "\n")
 		}
-		b.WriteString(strings.Join(rows, "\n") + "\n\n")
+		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -484,14 +514,14 @@ func (m Model) completionRows(w int) []string {
 	s := m.st
 	rows := make([]string, 0, len(compl))
 	for i, a := range compl {
-		line := fmt.Sprintf("   %s  %s", a.Name, strings.ToLower(a.Labels.Role))
-		meta := a.Status.String()
+		fg, dim, muted, bright, _, _, _, marker := m.rowStyles(i == m.complIdx%len(compl))
+		line := marker + fg.Render("  ") + bright.Render(a.Name) + fg.Render("  ") + muted.Render(strings.ToLower(a.Labels.Role)) + fg.Render("  ") + dim.Render(a.Status.String())
 		if i == m.complIdx%len(compl) {
-			rows = append(rows, s.sel.Render(s.bright.Render(line)+"  "+s.dim.Render(meta)+" "))
-		} else {
-			rows = append(rows, s.fg.Render(line)+"  "+s.muted.Render(meta))
+			line = fill(line, min(w, 60), fg)
 		}
+		rows = append(rows, line)
 	}
+	_ = s
 	return rows
 }
 
