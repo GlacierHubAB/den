@@ -424,7 +424,7 @@ func (m Model) detailPane(w, h int) string {
 	}
 	if a.HasUsage {
 		pct := a.Usage.Percent()
-		barW := clamp(w-24, 6, 20)
+		barW := clamp(w-30, 6, 16)
 		full := pct * barW / 100
 		fill := s.bright
 		if pct >= 90 {

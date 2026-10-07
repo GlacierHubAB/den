@@ -21,8 +21,8 @@ func sample() []fleet.Agent {
 		return fleet.Agent{
 			Session: discover.Session{PID: 4242, SessionID: "0123456789abcdef", CWD: cwd, Version: "2.1.289", Name: "grvlle-aa", Alive: st != fleet.Gone},
 			Name:    name, Labels: badge.Labels{Role: role, Task: task, History: hist}, Status: st, Model: "claude-fable-5-1",
-			Usage:   transcript.Usage{Tokens: 373961, Window: 1_000_000}, HasUsage: true,
-			Tail:    []transcript.Entry{{Kind: "you", Text: "create a mockup"}, {Kind: "tool", Text: "Bash go test ./..."}, {Kind: "text", Text: "Done, all tests pass."}},
+			Usage: transcript.Usage{Tokens: 373961, Window: 1_000_000}, HasUsage: true,
+			Tail: []transcript.Entry{{Kind: "you", Text: "create a mockup"}, {Kind: "tool", Text: "Bash go test ./..."}, {Kind: "text", Text: "Done, all tests pass."}},
 		}
 	}
 	return []fleet.Agent{
