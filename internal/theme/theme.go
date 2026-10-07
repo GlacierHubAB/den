@@ -20,6 +20,11 @@ type Palette struct {
 	Fg, FgDim, Muted string
 	Bright           string
 	Ok, Attn, Err    string
+
+	// Bodies are the critter body colours, in agent-badge's order; Blush
+	// is the cheek colour. Both mirror the badge so the faces match.
+	Bodies []string
+	Blush  string
 }
 
 // Deepharness is the fallback palette.
@@ -28,6 +33,7 @@ var Deepharness = Palette{
 	Fg: "#dfdfdf", FgDim: "#7c7c7c", Muted: "#575757",
 	Bright: "#f8f8f8",
 	Ok:     "#66cb8e", Attn: "#e8b84a", Err: "#ea9e9e",
+	Bodies: []string{"#66cb8e", "#e8b84a", "#ea9e9e"}, Blush: "#f4c4c4",
 }
 
 // Surface2 is the raised surface used for inactive borders and tracks.
@@ -62,6 +68,21 @@ func parseHex(h string) ([3]int, bool) {
 		out[i] = int(v)
 	}
 	return out, true
+}
+
+// paletteKeys is the order agent-badge picks body colours from.
+var paletteKeys = []string{
+	"red", "yellow", "orange", "green", "cyan", "blue", "magenta",
+	"bright_red", "bright_yellow", "bright_green", "bright_cyan", "bright_blue", "bright_magenta",
+	"accent",
+}
+
+func luminance(hex string) float64 {
+	c, ok := parseHex(hex)
+	if !ok {
+		return 0
+	}
+	return 0.2126*float64(c[0]) + 0.7152*float64(c[1]) + 0.0722*float64(c[2])
 }
 
 // ColorsFile is the Omarchy theme file Den reads.
@@ -112,5 +133,22 @@ func Load() Palette {
 	set(&p.Ok, "green")
 	set(&p.Attn, "yellow", "orange")
 	set(&p.Err, "red")
+	// Body colours: every palette hue that stands out against the background.
+	var bodies []string
+	seen := map[string]bool{}
+	for _, k := range paletteKeys {
+		v, ok := kv[k]
+		if !ok || seen[v] {
+			continue
+		}
+		seen[v] = true
+		if d := luminance(v) - luminance(p.Bg); d > 60 || d < -60 {
+			bodies = append(bodies, v)
+		}
+	}
+	if len(bodies) > 0 {
+		p.Bodies = bodies
+	}
+	set(&p.Blush, "bright_red", "red")
 	return p
 }

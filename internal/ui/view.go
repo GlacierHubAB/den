@@ -126,7 +126,7 @@ func (m Model) panes(w, h int) string {
 		return lipgloss.JoinHorizontal(lipgloss.Top, a, d)
 	default:
 		lw := clamp(w*28/100, 36, 52)
-		rw := clamp(w*30/100, 38, 60)
+		rw := clamp(w*32/100, 42, 64)
 		cw := w - lw - rw
 		a := m.box("Agents", m.agentsPane(lw-2, h-2), lw, h, m.focus == paneAgents)
 		i := m.box("Inbox", m.inboxPane(cw-2, h-2), cw, h, m.focus == paneInbox)
@@ -415,22 +415,28 @@ func (m Model) detailPane(w, h int) string {
 	}
 	var b strings.Builder
 	line := func(str string) { b.WriteString(" " + ansi.Truncate(str, w-2, "…") + "\n") }
-	wrap := func(prefix, text string, style lipgloss.Style) {
-		for i, l := range strings.Split(ansi.Wrap(text, w-2-ansi.StringWidth(prefix), ""), "\n") {
-			p := prefix
-			if i > 0 {
-				p = strings.Repeat(" ", ansi.StringWidth(prefix))
-			}
-			b.WriteString(" " + style.Render(p+l) + "\n")
-		}
-	}
 	role := ""
 	if a.Labels.Role != "" {
 		role = "  " + s.roleChip.Render(strings.ToUpper(a.Labels.Role))
 	}
-	line(s.bright.Bold(true).Render(a.Name) + role)
-	b.WriteString("\n")
-	wrap("▸ ", a.Task(), s.fg)
+	// Header: the critter on the left, identity on the right.
+	const spriteW = 16
+	var head []string
+	textW := w - 2 - spriteW - 2
+	if textW < 16 {
+		textW = w - 2
+	}
+	wrapTo := func(prefix, text string, style lipgloss.Style, dst *[]string) {
+		for i, l := range strings.Split(ansi.Wrap(text, max(8, textW-ansi.StringWidth(prefix)), ""), "\n") {
+			p := prefix
+			if i > 0 {
+				p = strings.Repeat(" ", ansi.StringWidth(prefix))
+			}
+			*dst = append(*dst, style.Render(p+l))
+		}
+	}
+	head = append(head, ansi.Truncate(s.bright.Bold(true).Render(a.Name)+role, textW, "…"))
+	wrapTo("▸ ", a.Task(), s.fg, &head)
 	for i, h := range a.Labels.History {
 		if i >= 3 {
 			break
@@ -439,7 +445,32 @@ func (m Model) detailPane(w, h int) string {
 		if i > 0 {
 			prefix = "           "
 		}
-		wrap(prefix, h, s.dim)
+		wrapTo(prefix, h, s.dim, &head)
+	}
+	sub := prettyModel(a.Model)
+	if sub != "" {
+		sub += " · "
+	}
+	sub += a.Session.ShortCWD()
+	head = append(head, s.dim.Render(ansi.Truncate(sub, textW, "…")))
+	if textW == w-2 {
+		for _, l := range head {
+			line(l)
+		}
+	} else {
+		sprite := m.critterRows(a)
+		n := max(len(sprite), len(head))
+		for i := 0; i < n; i++ {
+			left := strings.Repeat(" ", spriteW)
+			if i < len(sprite) {
+				left = sprite[i]
+			}
+			right := ""
+			if i < len(head) {
+				right = head[i]
+			}
+			b.WriteString(" " + left + "  " + right + "\n")
+		}
 	}
 	b.WriteString("\n")
 	kv := func(k, v string) {
@@ -449,25 +480,38 @@ func (m Model) detailPane(w, h int) string {
 		line(s.dim.Render(fmt.Sprintf("%-9s", k)) + s.fg.Render(v))
 	}
 	kv("status", a.Status.String()+" · "+humanAge(a.Since()))
-	if a.Model != "" {
-		kv("model", prettyModel(a.Model))
-	}
+	var gauges [][]string
 	if a.HasUsage {
-		pct := a.Usage.Percent()
-		barW := clamp(w-30, 6, 16)
-		full := pct * barW / 100
-		fill := s.bright
-		if pct >= 90 {
-			fill = s.err
-		} else if pct >= 75 {
-			fill = s.attn
-		}
-		bar := fill.Render(strings.Repeat("█", full)) + s.muted.Render(strings.Repeat("░", barW-full))
 		left := (a.Usage.Window - a.Usage.Tokens) / 1000
 		if left < 0 {
 			left = 0
 		}
-		kv("context", fmt.Sprintf("%s %d%% · %dk left", bar, pct, left))
+		gauges = append(gauges, m.gauge("Context", a.Usage.Percent(), fmt.Sprintf("%dk left", left), 18))
+	}
+	if a.HasLimit {
+		gauges = append(gauges, m.limitGauges(a.Limits, 18)...)
+		if a.Limits.USD != nil {
+			gauges = append(gauges, []string{s.dim.Render("Spent"), s.fg.Render(fmt.Sprintf("$%.2f", *a.Limits.USD)), s.dim.Render("this session")})
+		}
+	}
+	if len(gauges) > 0 {
+		cols := max(1, min(len(gauges), (w-2)/20))
+		for i := 0; i < len(gauges); i += cols {
+			group := gauges[i:min(i+cols, len(gauges))]
+			for r := 0; r < 3; r++ {
+				var row []string
+				for _, g := range group {
+					cell := g[r]
+					pad := 20 - ansi.StringWidth(cell)
+					if pad < 0 {
+						pad = 0
+					}
+					row = append(row, cell+strings.Repeat(" ", pad))
+				}
+				line(strings.TrimRight(strings.Join(row, ""), " "))
+			}
+			b.WriteString("\n")
+		}
 	}
 	kv("where", a.Where())
 	if a.HasGit {

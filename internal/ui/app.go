@@ -78,6 +78,7 @@ type Model struct {
 	complIdx int
 	queue    []outgoing
 	orch     orchState
+	anim     int
 }
 
 // New returns the root model and starts listening for hook events.
@@ -103,7 +104,7 @@ func (m Model) Close() {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch)}
+	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick()}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
 	}
@@ -247,6 +248,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+	case animTickMsg:
+		m.anim++
+		return m, animTick()
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()

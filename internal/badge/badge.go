@@ -100,3 +100,44 @@ func Load() (map[string]Labels, error) {
 	}
 	return out, nil
 }
+
+// Usage is what agent-badge records about a session's context window, rate
+// limits and spend (stored under "usage:<sessionId>" by agent-badge 1.1+).
+type Usage struct {
+	Context        *float64 `json:"context"`
+	Filled         *float64 `json:"filled"`
+	Window         *float64 `json:"window"`
+	FiveHour       *float64 `json:"fiveHour"`
+	FiveHourResets string   `json:"fiveHourResets"`
+	SevenDay       *float64 `json:"sevenDay"`
+	SevenDayResets string   `json:"sevenDayResets"`
+	USD            *float64 `json:"usd"`
+	Now            int64    `json:"now"`
+}
+
+// LoadUsage reads every agent-badge store file and returns usage by session id.
+func LoadUsage() map[string]Usage {
+	matches, _ := filepath.Glob(filepath.Join(StoreDir(), "agent-badge_*.json"))
+	out := map[string]Usage{}
+	for _, m := range matches {
+		raw, err := os.ReadFile(m)
+		if err != nil {
+			continue
+		}
+		var store map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &store); err != nil {
+			continue
+		}
+		for key, v := range store {
+			id, ok := strings.CutPrefix(key, "usage:")
+			if !ok {
+				continue
+			}
+			var u Usage
+			if err := json.Unmarshal(v, &u); err == nil {
+				out[id] = u
+			}
+		}
+	}
+	return out
+}

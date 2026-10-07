@@ -63,6 +63,8 @@ type Agent struct {
 
 	Usage    transcript.Usage // context consumed by the last turn
 	HasUsage bool
+	Limits   badge.Usage // rate limits and spend as agent-badge recorded them
+	HasLimit bool
 	Tail     []transcript.Entry // recent prompts, replies and tool calls
 	Path     string             // transcript path, "" when none
 }
@@ -122,6 +124,7 @@ func Snapshot() ([]Agent, error) {
 		return nil, err
 	}
 	labels, _ := badge.Load()
+	limits := badge.LoadUsage()
 	var clients []hypr.Client
 	if hypr.Available() {
 		clients, _ = hypr.Clients()
@@ -131,6 +134,9 @@ func Snapshot() ([]Agent, error) {
 	agents := make([]Agent, 0, len(sessions))
 	for _, s := range sessions {
 		a := Agent{Session: s, Name: badge.Name(s.SessionID), Labels: labels[s.SessionID]}
+		if u, ok := limits[s.SessionID]; ok {
+			a.Limits, a.HasLimit = u, true
+		}
 		if s.CWD != "" {
 			a.Git, a.HasGit = gitinfo.Lookup(s.CWD)
 		}

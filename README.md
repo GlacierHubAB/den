@@ -9,7 +9,8 @@ agent with an `@mention` or to an orchestrator that speaks to all of them.
 
 Status: milestone 5 in progress. The Fleet view is live: agents grouped by
 state with their critter, role, task, repo, branch and context usage, a detail
-pane with a context gauge and recent activity, and Enter brings the
+pane with the agent's animated critter, context and usage gauges and recent
+activity, and Enter brings the
 agent's terminal to the front through Hyprland (herdr panes included). With the
 hooks installed, every permission prompt, plan review, question and finished
 turn from every session lands in the inbox, and permissions can be answered
@@ -54,5 +55,7 @@ hunting around. It cannot approve anything. Its turns are billed like any
 other session; it uses `sonnet` unless `DEN_ORCHESTRATOR_MODEL` says otherwise.
 
 Requirements: Claude Code 2.1.289+, Hyprland (for focusing), and optionally
-the [agent-badge](https://github.com/GlacierHubAB/agent-badge) mod for names,
-roles and tasks. Colours follow the current Omarchy theme.
+the [agent-badge](https://github.com/GlacierHubAB/agent-badge) mod for roles,
+tasks and the 5-hour and weekly gauges (agent-badge 1.1.0+). Critter names
+and faces are generated the same way the badge does, so they match with or
+without it. Colours follow the current Omarchy theme.
