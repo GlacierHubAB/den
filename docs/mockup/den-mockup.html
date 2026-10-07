@@ -1,0 +1,409 @@
+<title>Den</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one terminal frame per screen; three TUI panes over a command line.
+   Palette: Deepharness. Near-black surfaces, white opacity ladder for text,
+   hue reserved for status (green ok / yellow needs you / red error). */
+:root{
+  color-scheme:dark;
+  --bg:#000000; --surface:#0d0d0d; --surface-2:#141414; --sel:#2e2e2e;
+  --fg:#dfdfdf; --fg-2:#adadad; --fg-3:#7c7c7c; --muted:#575757; --bright:#f8f8f8;
+  --ok:#66cb8e; --attn:#e8b84a; --err:#ea9e9e;
+  --border:rgba(248,248,248,.10); --border-dim:rgba(248,248,248,.05);
+  --mono:"Geist Mono","GeistMono Nerd Font",ui-monospace,"JetBrains Mono",monospace;
+  --fs:13px;
+}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs)/1.5 var(--mono);
+  padding-block:28px;padding-inline:16px;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+.wrap{max-width:1360px;margin:0 auto;display:grid;gap:36px}
+h1,h2,h3,p{margin:0}
+.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-3)}
+.intro{display:grid;gap:10px;max-width:72ch}
+.intro h1{font-size:22px;font-weight:600;color:var(--bright);text-wrap:balance}
+.intro p{color:var(--fg-2)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--fg-2);font-size:12px}
+.legend span b{font-weight:500;color:var(--fg)}
+.frame-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;margin-bottom:10px}
+.frame-head h2{font-size:14px;font-weight:600;color:var(--bright)}
+.frame-head span{color:var(--fg-3);font-size:12px}
+
+/* terminal frame */
+.term{background:var(--bg);border:1px solid var(--border);padding:14px;display:grid;gap:8px;min-width:0}
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;min-height:22px}
+.bar .right{margin-left:auto;color:var(--fg-3)}
+.brand{background:var(--bright);color:var(--bg);padding:0 8px;font-weight:600}
+.tabs{display:flex;gap:2px;flex-wrap:wrap}
+.tab{padding:0 10px;color:var(--fg-3);border-bottom:1px solid transparent}
+.tab b{font-weight:500;color:var(--fg-3);margin-right:6px}
+.tab.on{color:var(--bright);border-bottom-color:var(--bright)}
+.tab.on b{color:var(--bright)}
+.tab .n{display:inline-block;min-width:16px;text-align:center;background:var(--attn);color:var(--bg);margin-left:6px;padding:0 4px;font-weight:600}
+
+.panes{display:grid;grid-template-columns:minmax(280px,340px) minmax(0,1fr) minmax(300px,380px);gap:8px;min-width:0}
+.pane{position:relative;border:1px solid var(--border-dim);padding:14px 12px 10px;min-width:0;display:grid;align-content:start;gap:2px}
+.pane.focus{border-color:var(--border)}
+.pane>.title{position:absolute;top:-9px;left:10px;background:var(--bg);padding:0 6px;color:var(--fg-3);font-size:12px}
+.pane.focus>.title{color:var(--fg)}
+.pane>.title em{font-style:normal;color:var(--attn)}
+.half{display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px solid var(--attn);background:linear-gradient(90deg,var(--attn) 50%,transparent 50%);vertical-align:-1px;margin-right:1px}
+.dim{color:var(--fg-3)} .faint{color:var(--muted)} .hi{color:var(--bright)}
+.ok{color:var(--ok)} .attn{color:var(--attn)} .err{color:var(--err)}
+.kbd{color:var(--fg-2)} .kbd b{font-weight:500;color:var(--bright)}
+.sect{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:10px 0 4px}
+.sect:first-child{margin-top:0}
+
+/* agent rows */
+.agent{display:grid;grid-template-columns:14px minmax(0,1fr);gap:0 6px;padding:4px 6px 5px;margin:0 -6px;border-left:2px solid transparent}
+.agent.sel{background:var(--sel)}
+.agent .dot{line-height:1.5}
+.agent .name{font-weight:500;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent .name .role{font-weight:500;font-size:10px;letter-spacing:.06em;color:var(--fg-3);margin-left:8px}
+.agent .task{grid-column:2;color:var(--fg-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agent .meta{grid-column:2;color:var(--fg-3);display:flex;gap:10px;white-space:nowrap;overflow:hidden;font-size:12px}
+.agent .meta .ctx{font-variant-numeric:tabular-nums}
+.agent.sel .task{color:var(--fg)} .agent.sel .meta{color:var(--fg-2)}
+.agent.other .name{color:var(--fg-3)} .agent.other .task{color:var(--muted)}
+.gauge{letter-spacing:-.5px}
+
+/* inbox items */
+.item{border-left:2px solid var(--border);padding:6px 10px 8px;margin:0 0 8px;display:grid;gap:2px;min-width:0}
+.item.wait{border-left-color:var(--attn);background:var(--surface)}
+.item.done{border-left-color:var(--ok)}
+.item .who{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.item .who .name{font-weight:500}
+.item .who .kind{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--fg-3)}
+.item.wait .who .kind{color:var(--attn)}
+.item .who .ago{margin-left:auto;color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.item .body{color:var(--fg)}
+.item.done .body,.item.idle .body{color:var(--fg-2)}
+.item pre{margin:4px 0;padding:4px 8px;background:var(--surface-2);color:var(--fg);overflow-x:auto;white-space:pre}
+.item .opts{display:grid;gap:1px;margin:4px 0}
+.item .opts div{color:var(--fg-2)} .item .opts div b{font-weight:500;color:var(--bright);margin-right:8px}
+.item .opts .rec{color:var(--fg)}
+.item .acts{display:flex;gap:16px;flex-wrap:wrap;color:var(--fg-3);font-size:12px;margin-top:2px}
+.item .acts b{font-weight:500;color:var(--fg)}
+.item.wait .acts b{color:var(--bright)}
+.diff{margin:4px 0;padding:4px 8px;background:var(--surface-2);overflow-x:auto;white-space:pre}
+.diff .a{background:#0f1e15;color:var(--fg)} .diff .r{background:#231818;color:var(--fg-2)}
+
+/* detail pane */
+.badge{display:grid;grid-template-columns:40px minmax(0,1fr);gap:0 10px;align-items:start}
+.sprite{display:grid;grid-template-columns:repeat(8,5px);grid-auto-rows:5px;margin-top:3px}
+.sprite i{display:block;background:var(--bright)} .sprite i.e{background:var(--bg)} .sprite i.k{background:var(--sel)}
+.badge .name{font-weight:600;color:var(--bright)}
+.badge .role{display:inline-block;background:var(--bright);color:var(--bg);font-size:10px;letter-spacing:.06em;padding:0 5px;margin-left:8px;font-weight:600;vertical-align:1px}
+.badge .line{color:var(--fg-2)} .badge .line.now{color:var(--fg)}
+.badge .sub{color:var(--fg-3);font-size:12px}
+.gauges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;margin:10px 0 6px}
+.g{display:grid;gap:0;font-size:12px;min-width:0}
+.g .l{color:var(--fg-3)} .g .v{color:var(--fg);font-variant-numeric:tabular-nums}
+.g .b{white-space:nowrap;overflow:hidden;letter-spacing:-.5px}
+.g .b .f{color:var(--bright)} .g .b .t{color:var(--sel)}
+.g .b.warn .f{color:var(--attn)}
+.tail{margin-top:6px;border-top:1px solid var(--border-dim);padding-top:6px;display:grid;gap:1px;color:var(--fg-3);min-width:0}
+.tail .you{color:var(--fg-2)} .tail .you::before{content:"you › ";color:var(--muted)}
+.tail .cl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tail .tool::before{content:"● ";color:var(--ok)}
+.tail .live::before{content:"● ";color:var(--bright)}
+.tail .cur{color:var(--fg)}
+.pane .foot{margin-top:8px;color:var(--fg-3);font-size:12px;display:flex;gap:16px;flex-wrap:wrap}
+.pane .foot b{font-weight:500;color:var(--fg)}
+
+/* command line */
+.cmd.has-pop{margin-top:52px}
+.cmd{position:relative;border:1px solid var(--bright);padding:6px 10px;display:flex;gap:8px;align-items:baseline;min-width:0;flex-wrap:wrap}
+.cmd .p{color:var(--bright)}
+.cmd .mention{background:var(--sel);color:var(--bright);padding:0 6px}
+.cmd .text{color:var(--fg)}
+.cmd .caret{display:inline-block;width:.6em;height:1.1em;background:var(--bright);vertical-align:-3px}
+.cmd .hint{margin-left:auto;color:var(--muted);font-size:12px}
+.pop{position:absolute;left:20px;bottom:calc(100% + 6px);background:var(--surface);border:1px solid var(--border);padding:4px 0;min-width:300px;max-width:calc(100% - 40px)}
+.pop div{padding:0 10px;display:flex;gap:12px;color:var(--fg-2)}
+.pop div.on{background:var(--sel);color:var(--bright)}
+.pop div span:last-child{margin-left:auto;color:var(--fg-3);font-size:12px}
+.hints{display:flex;gap:4px 18px;flex-wrap:wrap;color:var(--fg-3);font-size:12px}
+.hints b{font-weight:500;color:var(--fg-2)}
+
+/* orchestrator frame */
+.chat{display:grid;gap:10px;border:1px solid var(--border-dim);padding:14px 12px;position:relative;min-width:0}
+.msg{display:grid;grid-template-columns:14ch minmax(0,1fr);gap:0 12px;max-width:100ch}
+.msg .from{color:var(--muted);text-align:right}
+.msg.you .from{color:var(--fg-3)} .msg.you .body{color:var(--fg)}
+.msg.orc .from{color:var(--bright)} .msg.orc .body{color:var(--fg-2)}
+.msg .body{display:grid;gap:4px;min-width:0}
+.msg .body b{font-weight:500;color:var(--fg)}
+.fan{display:grid;gap:2px;margin:2px 0 0 0;padding:4px 10px;border-left:2px solid var(--border);color:var(--fg-3);font-size:12px}
+.fan .to{color:var(--fg-2)} .fan .st{color:var(--ok)} .fan .st.p{color:var(--attn)}
+
+/* notes */
+.notes{display:grid;gap:14px;max-width:80ch}
+.notes h2{font-size:14px;font-weight:600;color:var(--bright)}
+.notes ol{margin:0;padding-left:3ch;display:grid;gap:10px;color:var(--fg-2)}
+.notes li b{font-weight:500;color:var(--fg)}
+.notes li span{color:var(--fg-3)}
+.src{color:var(--fg-3);font-size:12px}
+
+@media (max-width:1000px){.panes{grid-template-columns:1fr 1fr}.pane.detail{grid-column:1/-1}}
+@media (max-width:700px){.panes{grid-template-columns:1fr}.msg{grid-template-columns:1fr}.msg .from{text-align:left}.gauges{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:no-preference){.caret{animation:blink 1.1s steps(1) infinite}@keyframes blink{50%{opacity:0}}}
+</style>
+
+<div class="wrap">
+
+  <section class="intro">
+    <div class="eyebrow">Mockup · working title, 2026-10-07</div>
+    <h1>Den: one screen for every coding agent on this machine</h1>
+    <p>A small TUI that finds the Claude Code sessions already running in your terminals, shows who they are (the agent-badge critter, role and task), streams everything that needs your answer into one inbox, and lets you talk to one agent with an @mention or to an orchestrator that speaks to all of them.</p>
+    <div class="legend">
+      <span><i class="half"></i> needs you</span>
+      <span><b class="hi">●</b> working</span>
+      <span><b class="dim">○</b> idle</span>
+      <span><b class="err">✕</b> error / gone</span>
+      <span><b class="faint">?</b> unknown, never guessed as idle</span>
+      <span><b class="dim">π</b> other harness, read-only</span>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Screen 1: Fleet ───────────────────────── -->
+  <section>
+    <div class="frame-head"><h2>Screen 1 · Fleet</h2><span>default view · 3 panes · command line always at the bottom · data is from the sessions running right now</span></div>
+    <div class="term" aria-label="Den TUI, Fleet view">
+
+      <div class="bar">
+        <span class="brand">den</span>
+        <span class="dim">6 agents · <span class="attn">3 need you</span> · 2 working · 1 idle</span>
+        <span class="right">grvlle@omarchy · 23:52</span>
+      </div>
+      <div class="tabs">
+        <span class="tab on"><b>1</b>Fleet</span>
+        <span class="tab"><b>2</b>Inbox<span class="n">3</span></span>
+        <span class="tab"><b>3</b>Orchestrator</span>
+        <span class="tab"><b>?</b>help</span>
+      </div>
+
+      <div class="panes">
+
+        <!-- agents -->
+        <div class="pane focus">
+          <div class="title">Agents</div>
+
+          <div class="sect">Needs you · 3</div>
+          <div class="agent">
+            <span class="dot"><i class="half"></i></span>
+            <span class="name">Mossy Lemur<span class="role">CODING AGENT</span></span>
+            <span class="task">▸ implement --pending flag for list command</span>
+            <span class="meta"><span>tasklog · feat-pending-filter</span><span class="ctx">ctx 38%</span></span>
+          </div>
+          <div class="agent">
+            <span class="dot"><i class="half"></i></span>
+            <span class="name">Plucky Capybara<span class="role">UI DESIGNER</span></span>
+            <span class="task">▸ implement hotkey to trigger omarchy menu</span>
+            <span class="meta"><span>~/.config/hypr</span><span class="ctx">ctx 61%</span></span>
+          </div>
+          <div class="agent">
+            <span class="dot"><i class="half"></i></span>
+            <span class="name">Maple Owl<span class="role">CODING AGENT</span></span>
+            <span class="task">▸ match theme borders, gaps, fix progress bars</span>
+            <span class="meta"><span>agent-badge</span><span class="ctx">ctx 54%</span></span>
+          </div>
+
+          <div class="sect">Working · 2</div>
+          <div class="agent sel">
+            <span class="dot hi">●</span>
+            <span class="name">Snug Capybara<span class="role">DESIGNER</span></span>
+            <span class="task">▸ design TUI mockup for multi-agent orchestrator</span>
+            <span class="meta"><span>~</span><span class="ctx">ctx 22%</span><span>4m</span></span>
+          </div>
+          <div class="agent">
+            <span class="dot hi">●</span>
+            <span class="name">Sunny Puffin<span class="role">DESIGNER</span></span>
+            <span class="task">▸ push project to public repo and plugin page</span>
+            <span class="meta"><span>omarchy-keyhint</span><span class="ctx attn">ctx 81%</span><span>12m</span></span>
+          </div>
+
+          <div class="sect">Idle · 1</div>
+          <div class="agent">
+            <span class="dot dim">○</span>
+            <span class="name">Fuzzy Sprite<span class="role">CODING ASSISTANT</span></span>
+            <span class="task">↳ review Python code for optimization</span>
+            <span class="meta"><span>herdr-nvim-test</span><span>idle 2h</span></span>
+          </div>
+
+          <div class="sect">Other harnesses</div>
+          <div class="agent other">
+            <span class="dot dim">π</span>
+            <span class="name">pi · feat-pending-filter</span>
+            <span class="task">read-only until an adapter exists</span>
+          </div>
+
+          <div class="foot"><b>j k</b> move <b>Enter</b> focus terminal <b>m</b> message</div>
+        </div>
+
+        <!-- inbox -->
+        <div class="pane">
+          <div class="title">Inbox · <em>3 waiting</em></div>
+
+          <div class="item wait">
+            <div class="who"><span class="name">Mossy Lemur</span><span class="kind">permission · bash</span><span class="ago">12s</span></div>
+            <div class="body">Wants to run:</div>
+            <pre>$ gh pr create --fill --base main</pre>
+            <div class="acts"><span><b>y</b> allow once</span><span><b>a</b> always allow gh pr</span><span><b>n</b> deny</span><span><b>o</b> open terminal</span></div>
+          </div>
+
+          <div class="item wait">
+            <div class="who"><span class="name">Plucky Capybara</span><span class="kind">question</span><span class="ago">1m</span></div>
+            <div class="body">Which key should trigger the Omarchy menu?</div>
+            <div class="opts">
+              <div><b>1</b>Super+Space</div>
+              <div class="rec"><b>2</b>Super+M <span class="dim">(recommended)</span></div>
+              <div><b>3</b>Alt+Space</div>
+            </div>
+            <div class="acts"><span><b>1-3</b> pick</span><span><b>e</b> type another answer</span></div>
+          </div>
+
+          <div class="item wait">
+            <div class="who"><span class="name">Maple Owl</span><span class="kind">plan ready</span><span class="ago">3m</span></div>
+            <div class="body">4 steps · 6 files · touches hooks/register.tsx and the gauge renderer</div>
+            <div class="acts"><span><b>v</b> read plan</span><span><b>y</b> approve</span><span><b>n</b> ask for changes</span></div>
+          </div>
+
+          <div class="item done">
+            <div class="who"><span class="name">Sunny Puffin</span><span class="kind">done</span><span class="ago">6m</span></div>
+            <div class="body">Pushed GlacierHubAB/omarchy-super-hints and opened marketplace issue #10463. Validation passed, waiting on manual review.</div>
+            <div class="acts"><span><b>r</b> reply</span><span><b>o</b> open terminal</span><span><b>x</b> dismiss</span></div>
+          </div>
+
+          <div class="item idle">
+            <div class="who"><span class="name">Fuzzy Sprite</span><span class="kind">idle</span><span class="ago">2h</span></div>
+            <div class="body">Review finished. Nothing queued.</div>
+            <div class="acts"><span><b>r</b> reply</span><span><b>x</b> dismiss</span></div>
+          </div>
+        </div>
+
+        <!-- detail -->
+        <div class="pane detail">
+          <div class="title">Snug Capybara</div>
+          <div class="badge">
+            <div class="sprite" aria-hidden="true">
+              <i class="e"></i><i class="e"></i><i></i><i class="e"></i><i class="e"></i><i></i><i class="e"></i><i class="e"></i>
+              <i class="e"></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="e"></i>
+              <i></i><i></i><i class="k"></i><i></i><i></i><i class="k"></i><i></i><i></i>
+              <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              <i class="e"></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="e"></i>
+              <i class="e"></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="e"></i>
+              <i class="e"></i><i class="e"></i><i></i><i class="e"></i><i class="e"></i><i></i><i class="e"></i><i class="e"></i>
+              <i class="e"></i><i class="e"></i><i></i><i class="e"></i><i class="e"></i><i></i><i class="e"></i><i class="e"></i>
+            </div>
+            <div>
+              <div class="name">Snug Capybara<span class="role">DESIGNER</span></div>
+              <div class="line now">▸ design TUI mockup for multi-agent orchestrator</div>
+              <div class="line">↳ earlier: —</div>
+              <div class="sub">Fable 5.1 · ~ · pid 2829558 · ghostty on workspace 3</div>
+            </div>
+          </div>
+
+          <div class="gauges">
+            <div class="g"><span class="l">Context</span><span class="b"><span class="f">████</span><span class="t">████████████████</span></span><span class="v">22% · 156k left</span></div>
+            <div class="g"><span class="l">5-hour limit</span><span class="b"><span class="f">████████</span><span class="t">████████████</span></span><span class="v">41% · resets in 2h 10m</span></div>
+            <div class="g"><span class="l">Weekly limit</span><span class="b warn"><span class="f">█████████████</span><span class="t">███████</span></span><span class="v">67% · resets in 3d 4h</span></div>
+            <div class="g"><span class="l">Spent</span><span class="v">$1.86 this session</span></div>
+          </div>
+
+          <div class="tail">
+            <div class="you cl">create a HTML + CSS UI mockup using my theme</div>
+            <div class="tool cl">Read ~/.local/state/omarchy/current/theme/colors.toml</div>
+            <div class="tool cl">Agent research herdr orchestration tool</div>
+            <div class="tool cl">Agent research OpenRig orchestration tool</div>
+            <div class="tool cl">Bash derive critter names for running sessions</div>
+            <div class="live cl cur">Writing den-mockup.html…</div>
+          </div>
+
+          <div class="foot"><b>Enter</b> focus terminal <b>t</b> full tail <b>m</b> message <b>Esc</b> back</div>
+        </div>
+      </div>
+
+      <!-- command line -->
+      <div class="cmd has-pop">
+        <div class="pop" aria-label="mention completion">
+          <div class="on"><span>Snug Capybara</span><span>designer · working</span></div>
+          <div><span>Sunny Puffin</span><span>designer · working · ctx 81%</span></div>
+        </div>
+        <span class="p">›</span>
+        <span class="mention">@Sn</span>
+        <span class="text">merge main into your worktree before you continue</span><span class="caret"></span>
+        <span class="hint">Enter send · no @ = orchestrator</span>
+      </div>
+      <div class="hints">
+        <span><b>@</b> mention an agent</span>
+        <span><b>y n a</b> answer the top inbox item</span>
+        <span><b>1-3</b> tabs</span>
+        <span><b>Tab</b> next pane</span>
+        <span><b>Enter</b> focus that agent's terminal</span>
+        <span><b>?</b> all keys</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Screen 2: Orchestrator ───────────────────────── -->
+  <section>
+    <div class="frame-head"><h2>Screen 2 · Orchestrator</h2><span>plain text with no @ goes here · the orchestrator reads every agent's state and relays messages for you</span></div>
+    <div class="term" aria-label="Den TUI, Orchestrator view">
+      <div class="bar">
+        <span class="brand">den</span>
+        <span class="dim">6 agents · <span class="attn">2 need you</span> · 3 working · 1 idle</span>
+        <span class="right">grvlle@omarchy · 23:58</span>
+      </div>
+      <div class="tabs">
+        <span class="tab"><b>1</b>Fleet</span>
+        <span class="tab"><b>2</b>Inbox<span class="n">2</span></span>
+        <span class="tab on"><b>3</b>Orchestrator</span>
+        <span class="tab"><b>?</b>help</span>
+      </div>
+
+      <div class="chat">
+        <div class="msg you"><span class="from">you ›</span><div class="body">what is everyone blocked on?</div></div>
+        <div class="msg orc"><span class="from">orchestrator ›</span><div class="body">
+          <div>Three agents are waiting on you. <b>Mossy Lemur</b> wants to open a PR with <b>gh pr create</b> on tasklog. <b>Plucky Capybara</b> needs a key for the Omarchy menu and recommends Super+M. <b>Maple Owl</b> has a 4-step plan ready for the gauge renderer.</div>
+          <div><b>Sunny Puffin</b> finished the marketplace submission. <b>Fuzzy Sprite</b> has been idle for two hours.</div>
+        </div></div>
+        <div class="msg you"><span class="from">you ›</span><div class="body">tell Mossy Lemur to rebase on main first, then it can open the PR. go with Super+M. I'll read the plan myself.</div></div>
+        <div class="msg orc"><span class="from">orchestrator ›</span><div class="body">
+          <div>Done. Two messages sent, one permission granted, the plan is still in your inbox.</div>
+          <div class="fan">
+            <div><span class="to">→ Mossy Lemur</span> · rebase on main before opening the PR, then run gh pr create · <span class="st">delivered</span></div>
+            <div><span class="to">→ Plucky Capybara</span> · answered question: 2 Super+M · <span class="st">delivered</span></div>
+            <div><span class="to">→ Mossy Lemur</span> · allow gh pr create once the rebase is clean · <span class="st p">pending agent report</span></div>
+          </div>
+        </div></div>
+      </div>
+
+      <div class="cmd">
+        <span class="p">›</span>
+        <span class="text"></span><span class="caret"></span>
+        <span class="hint">Enter send · @ to address one agent</span>
+      </div>
+      <div class="hints">
+        <span><b>Ctrl+L</b> clear</span>
+        <span><b>↑</b> previous message</span>
+        <span><b>1</b> back to Fleet</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Notes ───────────────────────── -->
+  <section class="notes">
+    <h2>Decisions to react to</h2>
+    <ol>
+      <li><b>One inbox, not one tab per agent.</b> <span>Everything that needs a human answer lands in one stream, newest at the bottom, with single-key answers. Per-agent history stays in the agent's own terminal.</span></li>
+      <li><b>Den never embeds terminals.</b> <span>Enter on an agent focuses its real Ghostty window through Hyprland. The detail pane only shows a tail. This keeps Den small and avoids rebuilding what herdr already does.</span></li>
+      <li><b>Identity comes from agent-badge.</b> <span>Critter, role, task and the earlier trail are read from the badge's plugin store, so both tools agree on who an agent is.</span></li>
+      <li><b>No @ means the orchestrator.</b> <span>@Name addresses one agent directly. Anything else goes to an orchestrator that can see all agents and relay on your behalf. It never acts on permissions without you saying so in the message.</span></li>
+      <li><b>Hue only for status.</b> <span>Following Deepharness: white opacity ladder for everything, yellow for "needs you", green for finished, red for an agent that crashed or vanished.</span></li>
+      <li><b>Other harnesses appear read-only.</b> <span>pi, Codex and friends show up as dim rows when detected, until an adapter exists. Claude Code is the only first-class harness in v1.</span></li>
+    </ol>
+    <p class="src">Names, tasks and limits shown are the real agent-badge records for the six Claude Code sessions running on this machine when the mockup was made.</p>
+  </section>
+
+</div>
