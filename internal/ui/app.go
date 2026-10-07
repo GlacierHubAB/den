@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
 
@@ -71,6 +72,10 @@ type Model struct {
 	store      *inbox.Store
 	inboxCur   int
 	hooksReady bool
+
+	input    textinput.Model
+	complIdx int
+	queue    []outgoing
 }
 
 // New returns the root model and starts listening for hook events.
@@ -82,6 +87,7 @@ func New() Model {
 	}
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
+	m.input = newInput(m.st)
 	return m
 }
 
@@ -237,6 +243,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(snapshot, tick())
 	case changedMsg:
 		m.st = newStyles(theme.Load())
+		applyInputStyles(&m.input, m.st)
 		return m, tea.Batch(snapshot, waitChange(m.watch))
 	case snapshotMsg:
 		m.err = msg.err
@@ -249,9 +256,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.handleRequest(msg.req)
 		return m, tea.Batch(cmd, waitRequest(m.srv))
 	case holdTickMsg:
-		if m.releaseIfAtTerminal() {
-			return m, holdTick()
+		held := m.releaseIfAtTerminal()
+		cmds, queued := m.flushQueue()
+		if held || queued {
+			cmds = append(cmds, holdTick())
 		}
+		return m, tea.Batch(cmds...)
+	case sentMsg:
+		m.applySent(msg)
+		m.refresh()
+		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 	case serverClosedMsg:
 		m.srv = nil
 	case focusedMsg:
@@ -264,7 +278,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flashClearMsg:
 		m.flash = ""
 	case tea.KeyPressMsg:
+		if m.input.Focused() {
+			return m.handleComposeKey(msg)
+		}
 		return m.handleKey(msg)
+	}
+	if m.input.Focused() {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -392,6 +414,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.focus = (m.focus + 2) % 3
 	case "r":
 		return m, snapshot
+	case "@", "i", ":":
+		return m, m.startCompose("@")
+	case "m":
+		if a, ok := m.selected(); ok {
+			return m, m.startCompose("@" + a.Name + " ")
+		}
+		return m, m.startCompose("@")
 	case "y", "n", "a":
 		it := m.topAnswerable()
 		if m.inboxActive() {

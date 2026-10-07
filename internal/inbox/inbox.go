@@ -21,6 +21,7 @@ const (
 	Question               // AskUserQuestion: answer in the terminal
 	Done                   // a turn finished while you were elsewhere
 	Idle                   // Claude Code's idle notice
+	Sent                   // a message you sent, with its delivery status
 )
 
 func (k Kind) String() string {
@@ -35,6 +36,8 @@ func (k Kind) String() string {
 		return "done"
 	case Idle:
 		return "idle"
+	case Sent:
+		return "sent"
 	}
 	return "?"
 }
@@ -182,6 +185,21 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		s.resolveSession(in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
+}
+
+// Sent records an outgoing message. status is shown as the trailer and can
+// be updated through SetStatus.
+func (s *Store) Sent(sessionID, text, status string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Sent, State: InTerminal, Title: "→ " + firstLine(text), Resolved: status})
+}
+
+// SetStatus updates a notice's trailer, marking it resolved when final.
+func (s *Store) SetStatus(it *Item, status string, final bool) {
+	it.Resolved = status
+	if final {
+		it.State = Resolved
+		it.At = time.Now()
+	}
 }
 
 // Answer resolves an answerable item. verb is "allow", "deny" or "always".

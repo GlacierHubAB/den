@@ -34,7 +34,7 @@ Verified against Claude Code 2.1.289 and its docs on 2026-10-07/08.
 | Discover sessions | `~/.claude/sessions/<pid>.json` | sessionId, cwd, `status` busy/idle, name, `messagingSocketPath`. File semantics are not documented; verify pid is alive. |
 | Identity | agent-badge plugin store `~/.claude/plugins/store/agent-badge_*.json` | `badge:<sessionId>` → role, task, history. Critter name = same generator (`internal/badge`). |
 | Needs-you signals | Hooks: `Notification` (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_*`), `PermissionRequest` (may return allow/deny), `Stop` (`last_assistant_message`), `SessionStart`/`SessionEnd`, `UserPromptSubmit` | Hooks receive `session_id`, `cwd`, `transcript_path`, `tool_name`, `tool_input`. Default timeout 600 s. All matching hooks run in parallel. |
-| Send a message to an agent | Per-session inbox socket, documented for scripts: one JSON line `{"type":"user","message":{"role":"user","content":"…"}}`; optional first line `{"type":"auth","token":"…"}` | Arrives as "message from another session": cannot approve anything, commands are plain text. Delivered between tool calls or starts a turn when idle. |
+| Send a message to an agent | Per-session inbox socket, documented for scripts: one JSON line `{"type":"user","message":{"role":"user","content":"…"}}`; optional first line `{"type":"auth","token":"…"}` | Arrives as "message from another session": cannot approve anything, commands are plain text. Delivered between tool calls or starts a turn when idle. Verified 2026-10-08: the socket sends no acknowledgement, and extra fields such as `from`/`name` are ignored, so Den names the real author in the text (`peer.Header`). |
 | Idle notice | `SendMessage` `notify_when_idle` (peer feature `notify_idle`) | Only from a Claude session, which the orchestrator is. |
 | Orchestrator | A Claude Code session Den spawns with `claude -p --input-format stream-json --output-format stream-json`, allowed tools `ListAgents`, `SendMessage` | It already knows how to list and message peers. Den only renders its stream. |
 | Transcript tail | `~/.claude/projects/<slug>/<sessionId>.jsonl` | Internal format, changes between releases. Best effort only, behind an interface. |
@@ -55,8 +55,10 @@ Hard parts, to prototype first:
   confirm by hand: that an interactive session shows nothing while held and
   shows its dialog promptly on release.
 - **Typing guard.** Never post into a session whose terminal window is
-  focused and whose prompt has text. First cut: skip delivery while the
-  session's Ghostty window is Hyprland's active window; queue and retry.
+  focused and whose prompt has text. Shipped as: while the agent's window is
+  Hyprland's active window, the message waits in the inbox as "waiting: you
+  are at that terminal" and is delivered within a second of you leaving, or
+  after 10 minutes regardless.
 
 ## Architecture
 
@@ -131,7 +133,7 @@ filtering; relay loop guards (depth cap plus visited set).
 | M0 | Scaffold: discovery, badge identity, theme, live list | `go run ./cmd/den` lists the sessions on this machine with names and status. **Shipped in this commit.** |
 | M1 | Fleet pane for real: grouping by state, `?` unknown, repo · branch, model, Enter focuses the Hyprland window (herdr panes too), fsnotify refresh, `den list` and `den focus` | Matches screen 1's left pane. **Shipped.** Context % moved to M5: the badge store does not record it yet. |
 | M2 | Hook bridge + inbox: `den install-hooks`, socket server, `Notification`/`Stop`/`SessionStart`/`SessionEnd`/`UserPromptSubmit`/`PostToolUse` → inbox and status; `PermissionRequest` round trip with `y`/`a`/`n`; `den events` | Permission prompts from any terminal can be answered in Den; the terminal fallback works. **Shipped.** Verified headless: a `claude -p` session's `PermissionRequest` reached Den, was allowed there, the tool ran and `PostToolUse`/`Stop` followed. Interactive dialog behaviour while the hook is held still needs a human check. |
-| M3 | Messaging: `@` completion, post to the inbox socket, delivery receipts, typing guard, `m` on an agent | Screen 1's command line. |
+| M3 | Messaging: `@` completion, post to the inbox socket, delivery receipts, typing guard, `m` on an agent, `den send` | Screen 1's command line. **Shipped.** Verified: `den send` delivered into this very session and into a herdr-hosted session; the message arrived framed as a peer message with Den's header. |
 | M4 | Orchestrator tab: spawn `claude -p` with stream-json, render its text and fan-out, `notify_when_idle` reports | Screen 2. |
 | M5 | Polish: detail pane with gauges and transcript tail (best effort), `den explain <agent>`, config file (`~/.config/den/config.toml`, keys only), README, release build | Daily-driver quality. |
 

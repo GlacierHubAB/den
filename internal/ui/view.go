@@ -25,12 +25,16 @@ func (m Model) View() tea.View {
 	out.WriteString(ansi.Truncate(m.topBar(w), w, "…") + "\n")
 	out.WriteString(ansi.Truncate(m.tabs(w), w, "…") + "\n")
 
-	// Rows: top bar, tabs, panes, prompt, hints.
-	paneH := h - 4
+	// Rows: top bar, tabs, panes, [completions], prompt, hints.
+	popup := m.completionRows(w)
+	paneH := h - 4 - len(popup)
 	if paneH < 6 {
 		paneH = 6
 	}
 	out.WriteString(m.panes(w, paneH) + "\n")
+	for _, r := range popup {
+		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+	}
 	out.WriteString(ansi.Truncate(m.prompt(w), w, "…") + "\n")
 	out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 
@@ -277,6 +281,15 @@ func (m Model) inboxPane(w, h int) string {
 			stripe, kindStyle = s.attn.Render("▏"), s.attn
 		case it.Kind == inbox.Done && it.State != inbox.Resolved:
 			stripe, kindStyle = s.ok.Render("▌"), s.ok
+		case it.Kind == inbox.Sent:
+			switch {
+			case strings.HasPrefix(it.Resolved, "failed"):
+				stripe, kindStyle = s.err.Render("▏"), s.err
+			case it.State == inbox.Resolved:
+				stripe, kindStyle = s.ok.Render("▏"), s.dim
+			default:
+				stripe, kindStyle = s.attn.Render("▏"), s.attn
+			}
 		}
 		name := s.fg.Render(m.nameFor(it.SessionID))
 		if active && i == m.inboxCur {
@@ -311,6 +324,8 @@ func (m Model) inboxPane(w, h int) string {
 			rows = append(rows, stripe+" "+s.bright.Render(fmt.Sprint(j+1))+" "+s.fg.Render(ansi.Truncate(o, w-6, "…")))
 		}
 		switch {
+		case it.Kind == inbox.Sent:
+			rows = append(rows, stripe+" "+s.dim.Render(it.Resolved)+"  "+s.key.Render("x")+s.keyLabel.Render(" dismiss"))
 		case it.Answerable():
 			acts := s.key.Render("y") + s.keyLabel.Render(" allow  ") + s.key.Render("a") + s.keyLabel.Render(" always this session  ") + s.key.Render("n") + s.keyLabel.Render(" deny  ") + s.key.Render("o") + s.keyLabel.Render(" open terminal")
 			if it.Kind == inbox.Plan {
@@ -404,8 +419,38 @@ func (m Model) detailPane(w, h int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// completionRows lists matching agents while an @mention is being typed.
+func (m Model) completionRows(w int) []string {
+	if !m.input.Focused() {
+		return nil
+	}
+	compl := completions(m.input.Value(), m.agents)
+	if len(compl) == 0 {
+		return nil
+	}
+	if len(compl) > 5 {
+		compl = compl[:5]
+	}
+	s := m.st
+	rows := make([]string, 0, len(compl))
+	for i, a := range compl {
+		line := fmt.Sprintf("   %s  %s", a.Name, strings.ToLower(a.Labels.Role))
+		meta := a.Status.String()
+		if i == m.complIdx%len(compl) {
+			rows = append(rows, s.sel.Render(s.bright.Render(line)+"  "+s.dim.Render(meta)+" "))
+		} else {
+			rows = append(rows, s.fg.Render(line)+"  "+s.muted.Render(meta))
+		}
+	}
+	return rows
+}
+
 func (m Model) prompt(w int) string {
 	s := m.st
+	if m.input.Focused() {
+		m.input.SetWidth(max(10, w-4))
+		return " " + m.input.View()
+	}
 	if m.help {
 		return " " + s.fg.Render("j k") + s.dim.Render(" move  ") + s.fg.Render("g G") + s.dim.Render(" first/last  ") +
 			s.fg.Render("Enter") + s.dim.Render(" focus terminal  ") + s.fg.Render("Tab") + s.dim.Render(" next pane  ") +
@@ -414,12 +459,15 @@ func (m Model) prompt(w int) string {
 	if it := m.topAnswerable(); it != nil && !m.inboxActive() {
 		return " " + s.attn.Render("›") + " " + s.fg.Render(m.nameFor(it.SessionID)+": "+it.Title) + "  " + s.key.Render("y") + s.keyLabel.Render(" allow ") + s.key.Render("n") + s.keyLabel.Render(" deny ") + s.key.Render("a") + s.keyLabel.Render(" always")
 	}
-	return " " + s.muted.Render("›") + " " + s.muted.Render("Messaging arrives in milestone 3. @Name will address one agent, plain text the orchestrator.")
+	return " " + s.muted.Render("›") + " " + s.muted.Render("@ or m to message an agent · plain text for the orchestrator (M4)")
 }
 
 func (m Model) hints(w int) string {
 	s := m.st
-	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"y n a", "answer"}, {"1 2", "tabs"}, {"Tab", "pane"}, {"?", "help"}, {"q", "quit"}}
+	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"y n a", "answer"}, {"@ m", "message"}, {"1 2", "tabs"}, {"Tab", "pane"}, {"?", "help"}, {"q", "quit"}}
+	if m.input.Focused() {
+		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "cancel"}}
+	}
 	var parts []string
 	for _, it := range items {
 		parts = append(parts, s.key.Render(it[0])+" "+s.keyLabel.Render(it[1]))
