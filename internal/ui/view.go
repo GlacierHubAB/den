@@ -288,10 +288,23 @@ func (m Model) inboxPane(w, h int) string {
 		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
 			body = s.dim
 		}
-		for _, l := range strings.Split(ansi.Wrap(it.Title, w-4, ""), "\n") {
+		titleLines := strings.Split(ansi.Wrap(it.Title, w-4, ""), "\n")
+		bodyLines := it.Body
+		if it.Kind >= inbox.Done || it.State == inbox.Resolved {
+			// Notices are a glance, not a transcript: two lines of title, one of body.
+			if len(titleLines) > 2 {
+				titleLines = append(titleLines[:2], "")
+				titleLines[1] = ansi.Truncate(titleLines[1], w-6, "…")
+				titleLines = titleLines[:2]
+			}
+			if len(bodyLines) > 1 {
+				bodyLines = bodyLines[:1]
+			}
+		}
+		for _, l := range titleLines {
 			rows = append(rows, stripe+" "+body.Render(l))
 		}
-		for _, l := range it.Body {
+		for _, l := range bodyLines {
 			rows = append(rows, stripe+" "+s.dim.Render(ansi.Truncate(l, w-4, "…")))
 		}
 		for j, o := range it.Options {
