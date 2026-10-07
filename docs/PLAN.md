@@ -46,10 +46,14 @@ Hard parts, to prototype first:
   (`PreToolUse`, `Notification agent_needs_input`) but not answer it. v1 shows
   the question in the inbox and Enter jumps to the terminal. Later options: a
   channel with permission relay, or a mod using `ui.*` events.
-- **PermissionRequest hook vs. the terminal dialog.** Unknown whether the
-  dialog shows while a hook is pending. Plan: the hook waits up to ~25 s for a
-  Den decision, then exits with no output so the normal dialog appears and the
-  inbox item flips to "answer in terminal". Measure in M2.
+- **PermissionRequest hook vs. the terminal dialog.** Den assumes the dialog
+  waits for the hook. So Den holds a request only while you are *not* at that
+  terminal: if the agent's window is Hyprland's active window when the
+  request arrives, or becomes active while it is held, Den releases it with no
+  decision and the normal dialog appears. Otherwise it is held for up to
+  580 s (`DEN_PERMISSION_WAIT`), and `y`/`n`/`a` in Den answer it. Still to
+  confirm by hand: that an interactive session shows nothing while held and
+  shows its dialog promptly on release.
 - **Typing guard.** Never post into a session whose terminal window is
   focused and whose prompt has text. First cut: skip delivery while the
   session's Ghostty window is Hyprland's active window; queue and retry.
@@ -81,8 +85,15 @@ Hard parts, to prototype first:
   `den install-hooks` (adds entries to `~/.claude/settings.json`, backs the
   file up, removable with `den uninstall-hooks`). It reads hook JSON on stdin,
   drops subagent events (`agent_id` present), posts one JSON line with a
-  monotonic `seq` to Den's socket, and fails open with a 0.5 s timeout when
-  Den is not running. `PermissionRequest` is the only blocking hook.
+  monotonic `seq` to `$XDG_RUNTIME_DIR/den.sock`, and fails open with a 0.5 s
+  timeout when Den is not running. `PermissionRequest` is the only blocking
+  hook: the connection stays open until Den replies `{"behavior":"allow|deny"}`
+  or `{}` for "show the dialog". `a` ("always") is Den-side and in-memory: the
+  same tool, and for Bash the same first two words, is allowed again for that
+  session while Den runs. Claude Code's own permission rules are never edited.
+  `AskUserQuestion` is shown from `PreToolUse` and resolved by `PostToolUse`;
+  only the terminal can answer it. `ExitPlanMode` arrives as a
+  `PermissionRequest`, so plans are approved with `y` like any permission.
 - **Focus terminal.** Match the window by title (see the table above), then
   dispatch `hl.dsp.focus({ window = "address:<addr>" })`; Hyprland 0.56+
   takes dispatchers as Lua, and Den falls back to the classic `focuswindow`
@@ -119,7 +130,7 @@ filtering; relay loop guards (depth cap plus visited set).
 | --- | --- | --- |
 | M0 | Scaffold: discovery, badge identity, theme, live list | `go run ./cmd/den` lists the sessions on this machine with names and status. **Shipped in this commit.** |
 | M1 | Fleet pane for real: grouping by state, `?` unknown, repo · branch, model, Enter focuses the Hyprland window (herdr panes too), fsnotify refresh, `den list` and `den focus` | Matches screen 1's left pane. **Shipped.** Context % moved to M5: the badge store does not record it yet. |
-| M2 | Hook bridge + inbox: `den install-hooks`, socket server, `Notification`/`Stop`/`SessionStart`/`SessionEnd` → inbox and status; `PermissionRequest` round trip with `y`/`a`/`n` | Permission prompts from any terminal can be answered in Den; the terminal fallback works. |
+| M2 | Hook bridge + inbox: `den install-hooks`, socket server, `Notification`/`Stop`/`SessionStart`/`SessionEnd`/`UserPromptSubmit`/`PostToolUse` → inbox and status; `PermissionRequest` round trip with `y`/`a`/`n`; `den events` | Permission prompts from any terminal can be answered in Den; the terminal fallback works. **Shipped.** Verified headless: a `claude -p` session's `PermissionRequest` reached Den, was allowed there, the tool ran and `PostToolUse`/`Stop` followed. Interactive dialog behaviour while the hook is held still needs a human check. |
 | M3 | Messaging: `@` completion, post to the inbox socket, delivery receipts, typing guard, `m` on an agent | Screen 1's command line. |
 | M4 | Orchestrator tab: spawn `claude -p` with stream-json, render its text and fan-out, `notify_when_idle` reports | Screen 2. |
 | M5 | Polish: detail pane with gauges and transcript tail (best effort), `den explain <agent>`, config file (`~/.config/den/config.toml`, keys only), README, release build | Daily-driver quality. |

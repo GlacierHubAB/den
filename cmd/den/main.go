@@ -1,9 +1,12 @@
 // Command den is a TUI that tracks and manages the coding agents running in
 // your terminals. See docs/PLAN.md.
 //
-//	den              open the TUI
-//	den list [-json] print the agents Den sees
-//	den focus <who>  bring an agent's terminal to the front
+//	den                  open the TUI
+//	den list [-json]     print the agents Den sees
+//	den focus <who>      bring an agent's terminal to the front
+//	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
+//	den events           headless: print hook events as they arrive
+//	den hook             used by Claude Code's hooks; not for humans
 package main
 
 import (
@@ -36,15 +39,25 @@ func main() {
 			fail("usage: den focus <name|session-id|pid>")
 		}
 		focus(os.Args[2])
+	case "hook":
+		runHook()
+	case "install-hooks":
+		installHooks()
+	case "uninstall-hooks":
+		uninstallHooks()
+	case "events":
+		runEvents()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who>")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den install-hooks | den uninstall-hooks | den events")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
 }
 
 func runTUI() {
-	if _, err := tea.NewProgram(ui.New()).Run(); err != nil {
+	m := ui.New()
+	defer m.Close()
+	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fail("den: %v", err)
 	}
 }

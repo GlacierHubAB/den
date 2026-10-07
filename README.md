@@ -7,21 +7,32 @@ terminals, shows who they are (the agent-badge critter, role and task), streams
 everything that needs your answer into one inbox, and lets you talk to one
 agent with an `@mention` or to an orchestrator that speaks to all of them.
 
-Status: milestone 1. The Fleet view is live: agents grouped by state with
+Status: milestone 2. The Fleet view is live: agents grouped by state with
 their critter, role, task, repo and branch, a detail pane, and Enter brings the
-agent's terminal to the front through Hyprland (herdr panes included). See
+agent's terminal to the front through Hyprland (herdr panes included). With the
+hooks installed, every permission prompt, plan review, question and finished
+turn from every session lands in the inbox, and permissions can be answered
+with one key. See
 [docs/PLAN.md](docs/PLAN.md) for scope and milestones and
 [docs/mockup/den-mockup.html](docs/mockup/den-mockup.html) for the target UI.
 
 ```
-go build -o den ./cmd/den
-./den                 # the TUI
-./den list [-json]    # what Den sees, for scripts and debugging
-./den focus mossy     # focus an agent's terminal by name, session id or pid
+go build -o ~/.local/bin/den ./cmd/den
+den install-hooks     # once; wires den into ~/.claude/settings.json (backed up)
+den                   # the TUI
+den list [-json]      # what Den sees, for scripts and debugging
+den focus mossy       # focus an agent's terminal by name, session id or pid
+den events            # headless: print hook events as they arrive
+den uninstall-hooks   # undo
 ```
 
-Keys: `j k` move · `Enter` focus terminal · `Tab` next pane · `r` rescan ·
-`?` help · `q` quit.
+Hooks apply to Claude Code sessions started after installing. Den holds a
+permission request only while you are not at that terminal; if the agent's
+window is focused, or you switch to it, the normal dialog appears instead.
+
+Keys: `j k` move · `Enter` focus terminal · `y n a` allow, deny, allow again
+this session · `x` dismiss · `1 2` Fleet and Inbox tabs · `Tab` next pane ·
+`r` rescan · `?` help · `q` quit.
 
 Requirements: Claude Code 2.1.289+, Hyprland (for focusing), and optionally
 the [agent-badge](https://github.com/GlacierHubAB/agent-badge) mod for names,

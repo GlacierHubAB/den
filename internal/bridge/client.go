@@ -1,0 +1,50 @@
+package bridge
+
+import (
+	"bufio"
+	"encoding/json"
+	"net"
+	"time"
+)
+
+// Send posts an envelope and does not wait beyond the acknowledgement.
+// It returns false when Den is not running.
+func Send(path string, env Envelope) bool {
+	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	b, _ := json.Marshal(env)
+	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Write(append(b, '\n')); err != nil {
+		return false
+	}
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	bufio.NewReader(conn).ReadBytes('\n')
+	return true
+}
+
+// Ask posts a PermissionRequest and waits up to wait for Den's decision.
+// ok is false when Den is not running or did not answer in time.
+func Ask(path string, env Envelope, wait time.Duration) (d Decision, ok bool) {
+	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	if err != nil {
+		return Decision{}, false
+	}
+	defer conn.Close()
+	b, _ := json.Marshal(env)
+	conn.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := conn.Write(append(b, '\n')); err != nil {
+		return Decision{}, false
+	}
+	conn.SetReadDeadline(time.Now().Add(wait))
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		return Decision{}, false
+	}
+	if json.Unmarshal(line, &d) != nil {
+		return Decision{}, false
+	}
+	return d, true
+}

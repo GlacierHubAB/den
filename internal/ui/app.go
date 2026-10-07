@@ -3,14 +3,19 @@ package ui
 
 import (
 	"path/filepath"
+	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/GlacierHubAB/den/internal/badge"
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/hooks"
+	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
@@ -22,8 +27,18 @@ const (
 	paneDetail
 )
 
+type tab int
+
+const (
+	tabFleet tab = iota
+	tabInbox
+)
+
 type tickMsg time.Time
+type holdTickMsg time.Time
 type changedMsg struct{}
+type requestMsg struct{ req *bridge.Request }
+type serverClosedMsg struct{}
 type snapshotMsg struct {
 	agents []fleet.Agent
 	err    error
@@ -37,9 +52,11 @@ type flashClearMsg struct{}
 // Model is the root bubbletea model.
 type Model struct {
 	st       styles
-	agents   []fleet.Agent
+	base     []fleet.Agent // as discovered, before inbox state is applied
+	agents   []fleet.Agent // base with "needs you" applied and re-sorted
 	cursor   int
 	focus    pane
+	tab      tab
 	width    int
 	height   int
 	err      error
@@ -48,24 +65,62 @@ type Model struct {
 	help     bool
 	watch    <-chan struct{}
 	lastScan time.Time
+
+	srv        *bridge.Server
+	srvErr     error
+	store      *inbox.Store
+	inboxCur   int
+	hooksReady bool
 }
 
-// New returns the root model.
+// New returns the root model and starts listening for hook events.
 func New() Model {
-	return Model{st: newStyles(theme.Load()), watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile())}
+	m := Model{
+		st:    newStyles(theme.Load()),
+		watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile()),
+		store: inbox.New(),
+	}
+	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
+	m.hooksReady = hooks.Installed("")
+	return m
+}
+
+// Close releases the socket. Call it after the program exits.
+func (m Model) Close() {
+	if m.srv != nil {
+		m.srv.Close()
+	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(snapshot, tick(), waitChange(m.watch))
+	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch)}
+	if m.srv != nil {
+		cmds = append(cmds, waitRequest(m.srv))
+	}
+	return tea.Batch(cmds...)
 }
 
 func tick() tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
+func holdTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return holdTickMsg(t) })
+}
+
 func snapshot() tea.Msg {
 	agents, err := fleet.Snapshot()
 	return snapshotMsg{agents: agents, err: err}
+}
+
+func waitRequest(srv *bridge.Server) tea.Cmd {
+	return func() tea.Msg {
+		r, ok := <-srv.Requests()
+		if !ok {
+			return serverClosedMsg{}
+		}
+		return requestMsg{req: r}
+	}
 }
 
 func waitChange(ch <-chan struct{}) tea.Cmd {
@@ -132,33 +187,73 @@ func (m Model) selected() (fleet.Agent, bool) {
 	return m.agents[m.cursor], true
 }
 
+func (m Model) agentFor(sessionID string) (fleet.Agent, bool) {
+	for _, a := range m.agents {
+		if a.Session.SessionID == sessionID {
+			return a, true
+		}
+	}
+	return fleet.Agent{}, false
+}
+
+// refresh recomputes the displayed agents from base plus inbox state, and
+// keeps the cursor on the same agent.
+func (m *Model) refresh() {
+	var keep string
+	if a, ok := m.selected(); ok {
+		keep = a.Session.SessionID
+	}
+	m.agents = append([]fleet.Agent(nil), m.base...)
+	for i := range m.agents {
+		a := &m.agents[i]
+		if a.Status != fleet.Gone && m.store.SessionNeedsYou(a.Session.SessionID) {
+			a.Status = fleet.NeedsYou
+		}
+	}
+	sort.SliceStable(m.agents, func(i, j int) bool {
+		if m.agents[i].Status != m.agents[j].Status {
+			return m.agents[i].Status < m.agents[j].Status
+		}
+		return m.agents[i].Session.StartedAt < m.agents[j].Session.StartedAt
+	})
+	m.cursor = 0
+	for i, a := range m.agents {
+		if a.Session.SessionID == keep {
+			m.cursor = i
+		}
+	}
+	if n := len(m.store.Items()); m.inboxCur >= n {
+		m.inboxCur = max(0, n-1)
+	}
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tickMsg:
+		m.store.Prune(2*time.Minute, 30)
+		m.refresh()
 		return m, tea.Batch(snapshot, tick())
 	case changedMsg:
-		// Theme may have changed too; reload tokens with the data.
 		m.st = newStyles(theme.Load())
 		return m, tea.Batch(snapshot, waitChange(m.watch))
 	case snapshotMsg:
 		m.err = msg.err
 		if msg.err == nil {
-			// Keep the cursor on the same agent across re-sorts.
-			var keep string
-			if a, ok := m.selected(); ok {
-				keep = a.Session.SessionID
-			}
-			m.agents = msg.agents
+			m.base = msg.agents
 			m.lastScan = time.Now()
-			m.cursor = 0
-			for i, a := range m.agents {
-				if a.Session.SessionID == keep {
-					m.cursor = i
-				}
-			}
+			m.refresh()
 		}
+	case requestMsg:
+		cmd := m.handleRequest(msg.req)
+		return m, tea.Batch(cmd, waitRequest(m.srv))
+	case holdTickMsg:
+		if m.releaseIfAtTerminal() {
+			return m, holdTick()
+		}
+	case serverClosedMsg:
+		m.srv = nil
 	case focusedMsg:
 		if msg.err != nil {
 			m.flash, m.flashErr = msg.err.Error(), true
@@ -174,6 +269,81 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleRequest folds a hook event into the inbox and decides whether a
+// permission request is held for Den or released to the terminal.
+func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
+	it := m.store.Apply(r)
+	var cmds []tea.Cmd
+	switch r.Event {
+	case "SessionStart", "SessionEnd":
+		cmds = append(cmds, snapshot)
+	}
+	if it != nil && it.Answerable() {
+		if m.atTerminal(it.SessionID) {
+			m.store.Release(it, "you were at that terminal")
+		} else {
+			cmds = append(cmds, holdTick())
+		}
+	}
+	if r.WantsReply() && it == nil {
+		// Nothing holds it (auto-allowed or rejected above); make sure the
+		// hook is never left hanging.
+		r.Reply(bridge.Decision{})
+	}
+	m.refresh()
+	return tea.Batch(cmds...)
+}
+
+// atTerminal reports whether the session's terminal window is the focused
+// window right now, in which case the terminal dialog is the better UI.
+func (m Model) atTerminal(sessionID string) bool {
+	a, ok := m.agentFor(sessionID)
+	if !ok || a.Window == nil || !hypr.Available() {
+		return false
+	}
+	return hypr.ActiveAddress() == a.Window.Client.Address
+}
+
+// releaseIfAtTerminal releases held permissions whose terminal became the
+// active window. It returns true while anything is still held.
+func (m *Model) releaseIfAtTerminal() bool {
+	held := false
+	for _, it := range m.store.Items() {
+		if !it.Answerable() {
+			continue
+		}
+		if m.atTerminal(it.SessionID) {
+			m.store.Release(it, "you went to that terminal")
+			continue
+		}
+		held = true
+	}
+	m.refresh()
+	return held
+}
+
+// topAnswerable is the item y/n/a act on from the agents pane.
+func (m Model) topAnswerable() *inbox.Item {
+	for _, it := range m.store.Items() {
+		if it.Answerable() {
+			return it
+		}
+	}
+	return nil
+}
+
+func (m Model) inboxSelected() *inbox.Item {
+	items := m.store.Items()
+	if m.inboxCur < 0 || m.inboxCur >= len(items) {
+		return nil
+	}
+	return items[m.inboxCur]
+}
+
+func (m Model) inboxActive() bool {
+	return m.tab == tabInbox || m.focus == paneInbox
+}
+
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.help {
 		m.help = false
@@ -184,31 +354,99 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "?":
 		m.help = true
+	case "1":
+		m.tab = tabFleet
+	case "2":
+		m.tab = tabInbox
 	case "j", "down":
-		if m.cursor < len(m.agents)-1 {
+		if m.inboxActive() {
+			if m.inboxCur < len(m.store.Items())-1 {
+				m.inboxCur++
+			}
+		} else if m.cursor < len(m.agents)-1 {
 			m.cursor++
 		}
 	case "k", "up":
-		if m.cursor > 0 {
+		if m.inboxActive() {
+			if m.inboxCur > 0 {
+				m.inboxCur--
+			}
+		} else if m.cursor > 0 {
 			m.cursor--
 		}
 	case "g", "home":
-		m.cursor = 0
+		if m.inboxActive() {
+			m.inboxCur = 0
+		} else {
+			m.cursor = 0
+		}
 	case "G", "end":
-		m.cursor = max(0, len(m.agents)-1)
+		if m.inboxActive() {
+			m.inboxCur = max(0, len(m.store.Items())-1)
+		} else {
+			m.cursor = max(0, len(m.agents)-1)
+		}
 	case "tab":
 		m.focus = (m.focus + 1) % 3
 	case "shift+tab":
 		m.focus = (m.focus + 2) % 3
 	case "r":
 		return m, snapshot
-	case "enter":
-		if a, ok := m.selected(); ok {
+	case "y", "n", "a":
+		it := m.topAnswerable()
+		if m.inboxActive() {
+			it = m.inboxSelected()
+		}
+		if it != nil && it.Answerable() {
+			verb := map[string]string{"y": "allow", "n": "deny", "a": "always"}[msg.String()]
+			m.store.Answer(it, verb)
+			m.flash, m.flashErr = verbPast(verb)+" for "+m.nameFor(it.SessionID), false
+			m.refresh()
+			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		}
+	case "x":
+		if it := m.inboxSelected(); it != nil && m.inboxActive() {
+			m.store.Dismiss(it)
+			m.refresh()
+		}
+	case "enter", "o":
+		var target fleet.Agent
+		var ok bool
+		if m.inboxActive() {
+			if it := m.inboxSelected(); it != nil {
+				target, ok = m.agentFor(it.SessionID)
+			}
+		} else {
+			target, ok = m.selected()
+		}
+		if ok {
 			return m, func() tea.Msg {
-				note, err := fleet.Focus(a)
+				note, err := fleet.Focus(target)
 				return focusedMsg{note: note, err: err}
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m Model) nameFor(sessionID string) string {
+	if a, ok := m.agentFor(sessionID); ok {
+		return a.Name
+	}
+	if len(sessionID) > 8 {
+		return sessionID[:8]
+	}
+	return sessionID
+}
+
+func verbPast(v string) string {
+	switch v {
+	case "allow":
+		return "Allowed"
+	case "deny":
+		return "Denied"
+	case "always":
+		return "Allowed, and again this session,"
+	}
+	return v
 }

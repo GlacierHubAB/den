@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
 func (m Model) View() tea.View {
@@ -85,15 +86,23 @@ func (m Model) topBar(w int) string {
 
 func (m Model) tabs(w int) string {
 	s := m.st
-	needs, _, _, _, _ := m.counts()
-	inbox := "2 Inbox"
-	if needs > 0 {
-		inbox += " " + s.badgeN.Render(fmt.Sprint(needs))
+	inboxLabel := "2 Inbox"
+	if n := m.store.Waiting(); n > 0 {
+		inboxLabel += " " + s.badgeN.Render(fmt.Sprint(n))
 	}
-	return "  " + s.tabOn.Render("1 Fleet") + "   " + s.tabOff.Render(inbox) + "   " + s.tabOff.Render("3 Orchestrator") + "   " + s.tabOff.Render("? help")
+	style := func(t tab) lipgloss.Style {
+		if m.tab == t {
+			return s.tabOn
+		}
+		return s.tabOff
+	}
+	return "  " + style(tabFleet).Render("1 Fleet") + "   " + style(tabInbox).Render(inboxLabel) + "   " + s.tabOff.Render("3 Orchestrator") + "   " + s.tabOff.Render("? help")
 }
 
 func (m Model) panes(w, h int) string {
+	if m.tab == tabInbox {
+		return m.box("Inbox", m.inboxPane(w-2, h-2), w, h, true)
+	}
 	// Column plan: agents | inbox | detail, collapsing on narrow terminals.
 	switch {
 	case w < 70:
@@ -242,11 +251,83 @@ func (m Model) agentsPane(w, h int) string {
 
 func (m Model) inboxPane(w, h int) string {
 	s := m.st
-	lines := []string{"", " " + s.dim.Render("Nothing is waiting on you."), ""}
-	for _, l := range strings.Split(ansi.Wrap("Permission prompts, questions and plan reviews from every agent will land here once the hook bridge is installed (milestone 2).", w-2, ""), "\n") {
-		lines = append(lines, " "+s.muted.Render(l))
+	items := m.store.Items()
+	if m.srvErr != nil {
+		return "\n " + s.err.Render(ansi.Wrap("Hook bridge unavailable: "+m.srvErr.Error(), w-2, ""))
 	}
-	return strings.Join(lines, "\n")
+	if len(items) == 0 {
+		lines := []string{"", " " + s.dim.Render("Nothing is waiting on you.")}
+		if !m.hooksReady {
+			lines = append(lines, "")
+			for _, l := range strings.Split(ansi.Wrap("Run `den install-hooks` once so permission prompts, questions and finished turns from every agent land here. Sessions started afterwards report in.", w-2, ""), "\n") {
+				lines = append(lines, " "+s.muted.Render(l))
+			}
+		}
+		return strings.Join(lines, "\n")
+	}
+	var b strings.Builder
+	active := m.inboxActive()
+	for i, it := range items {
+		stripe := s.muted.Render("▏")
+		kindStyle := s.muted
+		switch {
+		case it.Answerable():
+			stripe, kindStyle = s.attn.Render("▌"), s.attn
+		case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
+			stripe, kindStyle = s.attn.Render("▏"), s.attn
+		case it.Kind == inbox.Done && it.State != inbox.Resolved:
+			stripe, kindStyle = s.ok.Render("▌"), s.ok
+		}
+		name := s.fg.Render(m.nameFor(it.SessionID))
+		if active && i == m.inboxCur {
+			name = s.bright.Render(m.nameFor(it.SessionID))
+		}
+		head := fmt.Sprintf("%s %s  %s  %s", stripe, name, kindStyle.Render(strings.ToUpper(it.Kind.String())), s.muted.Render(humanAge(time.Since(it.At))))
+		rows := []string{head}
+		body := s.fg
+		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
+			body = s.dim
+		}
+		for _, l := range strings.Split(ansi.Wrap(it.Title, w-4, ""), "\n") {
+			rows = append(rows, stripe+" "+body.Render(l))
+		}
+		for _, l := range it.Body {
+			rows = append(rows, stripe+" "+s.dim.Render(ansi.Truncate(l, w-4, "…")))
+		}
+		for j, o := range it.Options {
+			rows = append(rows, stripe+" "+s.bright.Render(fmt.Sprint(j+1))+" "+s.fg.Render(ansi.Truncate(o, w-6, "…")))
+		}
+		switch {
+		case it.Answerable():
+			acts := s.key.Render("y") + s.keyLabel.Render(" allow  ") + s.key.Render("a") + s.keyLabel.Render(" always this session  ") + s.key.Render("n") + s.keyLabel.Render(" deny  ") + s.key.Render("o") + s.keyLabel.Render(" open terminal")
+			if it.Kind == inbox.Plan {
+				acts = s.key.Render("y") + s.keyLabel.Render(" approve  ") + s.key.Render("n") + s.keyLabel.Render(" ask for changes  ") + s.key.Render("o") + s.keyLabel.Render(" read it in the terminal")
+			}
+			rows = append(rows, stripe+" "+acts)
+		case it.State == inbox.InTerminal:
+			why := "answer in the terminal"
+			if it.Resolved != "" {
+				why = it.Resolved + " · answer in the terminal"
+			}
+			rows = append(rows, stripe+" "+s.dim.Render(why)+"  "+s.key.Render("o")+s.keyLabel.Render(" open"))
+		case it.State == inbox.Resolved:
+			rows = append(rows, stripe+" "+s.muted.Render(it.Resolved))
+		default:
+			rows = append(rows, stripe+" "+s.key.Render("o")+s.keyLabel.Render(" open  ")+s.key.Render("x")+s.keyLabel.Render(" dismiss"))
+		}
+		for j, r := range rows {
+			if active && i == m.inboxCur {
+				pad := w - ansi.StringWidth(r)
+				if pad < 0 {
+					pad = 0
+				}
+				r = s.sel.Render(r + strings.Repeat(" ", pad))
+			}
+			rows[j] = r
+		}
+		b.WriteString(strings.Join(rows, "\n") + "\n\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m Model) detailPane(w, h int) string {
@@ -317,12 +398,15 @@ func (m Model) prompt(w int) string {
 			s.fg.Render("Enter") + s.dim.Render(" focus terminal  ") + s.fg.Render("Tab") + s.dim.Render(" next pane  ") +
 			s.fg.Render("r") + s.dim.Render(" rescan  ") + s.fg.Render("q") + s.dim.Render(" quit")
 	}
+	if it := m.topAnswerable(); it != nil && !m.inboxActive() {
+		return " " + s.attn.Render("›") + " " + s.fg.Render(m.nameFor(it.SessionID)+": "+it.Title) + "  " + s.key.Render("y") + s.keyLabel.Render(" allow ") + s.key.Render("n") + s.keyLabel.Render(" deny ") + s.key.Render("a") + s.keyLabel.Render(" always")
+	}
 	return " " + s.muted.Render("›") + " " + s.muted.Render("Messaging arrives in milestone 3. @Name will address one agent, plain text the orchestrator.")
 }
 
 func (m Model) hints(w int) string {
 	s := m.st
-	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"Tab", "pane"}, {"r", "rescan"}, {"?", "help"}, {"q", "quit"}}
+	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"y n a", "answer"}, {"1 2", "tabs"}, {"Tab", "pane"}, {"?", "help"}, {"q", "quit"}}
 	var parts []string
 	for _, it := range items {
 		parts = append(parts, s.key.Render(it[0])+" "+s.keyLabel.Render(it[1]))
