@@ -7,17 +7,19 @@ package theme
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // Palette is the small token set the UI is built from.
 type Palette struct {
-	Bg, Surface, Sel      string
-	Fg, FgDim, Muted      string
-	Bright                string
-	Ok, Attn, Err         string
+	Bg, Surface, Sel string
+	Fg, FgDim, Muted string
+	Bright           string
+	Ok, Attn, Err    string
 }
 
 // Deepharness is the fallback palette.
@@ -25,7 +27,41 @@ var Deepharness = Palette{
 	Bg: "#000000", Surface: "#0d0d0d", Sel: "#2e2e2e",
 	Fg: "#dfdfdf", FgDim: "#7c7c7c", Muted: "#575757",
 	Bright: "#f8f8f8",
-	Ok: "#66cb8e", Attn: "#e8b84a", Err: "#ea9e9e",
+	Ok:     "#66cb8e", Attn: "#e8b84a", Err: "#ea9e9e",
+}
+
+// Surface2 is the raised surface used for inactive borders and tracks.
+func (p Palette) Surface2() string {
+	if p.Sel != "" {
+		return blend(p.Bg, p.Sel)
+	}
+	return p.Surface
+}
+
+// blend returns the midpoint of two hex colours (#rrggbb).
+func blend(a, b string) string {
+	pa, okA := parseHex(a)
+	pb, okB := parseHex(b)
+	if !okA || !okB {
+		return a
+	}
+	return fmt.Sprintf("#%02x%02x%02x", (pa[0]+pb[0])/2, (pa[1]+pb[1])/2, (pa[2]+pb[2])/2)
+}
+
+func parseHex(h string) ([3]int, bool) {
+	var out [3]int
+	h = strings.TrimPrefix(h, "#")
+	if len(h) != 6 {
+		return out, false
+	}
+	for i := 0; i < 3; i++ {
+		v, err := strconv.ParseInt(h[i*2:i*2+2], 16, 32)
+		if err != nil {
+			return out, false
+		}
+		out[i] = int(v)
+	}
+	return out, true
 }
 
 // ColorsFile is the Omarchy theme file Den reads.

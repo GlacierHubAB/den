@@ -1,88 +1,135 @@
-// Package ui is Den's bubbletea application. Milestone 0: a live list of the
-// Claude Code sessions on this machine with badge identity and status.
+// Package ui is Den's bubbletea application.
 package ui
 
 import (
-	"fmt"
-	"strings"
+	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/discover"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
-// Status is Den's own state vocabulary. "needs you" only ever comes from an
-// explicit signal (hook bridge, milestone 2); nothing is guessed as idle.
-type Status int
+type pane int
 
 const (
-	Unknown Status = iota
-	Working
-	NeedsYou
-	Idle
-	Gone
+	paneAgents pane = iota
+	paneInbox
+	paneDetail
 )
 
-// Agent is a session joined with its badge identity.
-type Agent struct {
-	Session discover.Session
-	Name    string
-	Labels  badge.Labels
-	Status  Status
-}
-
 type tickMsg time.Time
-type scanMsg struct {
-	agents []Agent
+type changedMsg struct{}
+type snapshotMsg struct {
+	agents []fleet.Agent
 	err    error
 }
+type focusedMsg struct {
+	note string
+	err  error
+}
+type flashClearMsg struct{}
 
 // Model is the root bubbletea model.
 type Model struct {
-	pal     theme.Palette
-	agents  []Agent
-	cursor  int
-	width   int
-	height  int
-	err     error
-	lastRun time.Time
+	st       styles
+	agents   []fleet.Agent
+	cursor   int
+	focus    pane
+	width    int
+	height   int
+	err      error
+	flash    string
+	flashErr bool
+	help     bool
+	watch    <-chan struct{}
+	lastScan time.Time
 }
 
 // New returns the root model.
-func New() Model { return Model{pal: theme.Load()} }
-
-func (m Model) Init() tea.Cmd { return tea.Batch(scan, tick()) }
-
-func tick() tea.Cmd {
-	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+func New() Model {
+	return Model{st: newStyles(theme.Load()), watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile())}
 }
 
-func scan() tea.Msg {
-	sessions, err := discover.Scan()
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(snapshot, tick(), waitChange(m.watch))
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+func snapshot() tea.Msg {
+	agents, err := fleet.Snapshot()
+	return snapshotMsg{agents: agents, err: err}
+}
+
+func waitChange(ch <-chan struct{}) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		<-ch
+		return changedMsg{}
+	}
+}
+
+// watchDirs emits one signal per burst of filesystem changes in the given
+// paths (directories are watched as a whole). Returns nil when watching is
+// unavailable; the periodic tick still refreshes then.
+func watchDirs(paths ...string) <-chan struct{} {
+	w, err := fsnotify.NewWatcher()
 	if err != nil {
-		return scanMsg{err: err}
+		return nil
 	}
-	labels, _ := badge.Load()
-	agents := make([]Agent, 0, len(sessions))
-	for _, s := range sessions {
-		a := Agent{Session: s, Name: badge.Name(s.SessionID), Labels: labels[s.SessionID]}
-		switch {
-		case !s.Alive:
-			a.Status = Gone
-		case s.Status == "busy":
-			a.Status = Working
-		case s.Status == "idle":
-			a.Status = Idle
-		default:
-			a.Status = Unknown
+	added := 0
+	for _, p := range paths {
+		dir := p
+		if filepath.Ext(p) != "" {
+			dir = filepath.Dir(p)
 		}
-		agents = append(agents, a)
+		if w.Add(dir) == nil {
+			added++
+		}
 	}
-	return scanMsg{agents: agents}
+	if added == 0 {
+		w.Close()
+		return nil
+	}
+	out := make(chan struct{}, 1)
+	go func() {
+		var timer *time.Timer
+		for {
+			select {
+			case _, ok := <-w.Events:
+				if !ok {
+					return
+				}
+				if timer != nil {
+					timer.Stop()
+				}
+				timer = time.AfterFunc(250*time.Millisecond, func() {
+					select {
+					case out <- struct{}{}:
+					default:
+					}
+				})
+			case <-w.Errors:
+			}
+		}
+	}()
+	return out
+}
+
+func (m Model) selected() (fleet.Agent, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.agents) {
+		return fleet.Agent{}, false
+	}
+	return m.agents[m.cursor], true
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -90,138 +137,78 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tickMsg:
-		return m, tea.Batch(scan, tick())
-	case scanMsg:
+		return m, tea.Batch(snapshot, tick())
+	case changedMsg:
+		// Theme may have changed too; reload tokens with the data.
+		m.st = newStyles(theme.Load())
+		return m, tea.Batch(snapshot, waitChange(m.watch))
+	case snapshotMsg:
 		m.err = msg.err
 		if msg.err == nil {
+			// Keep the cursor on the same agent across re-sorts.
+			var keep string
+			if a, ok := m.selected(); ok {
+				keep = a.Session.SessionID
+			}
 			m.agents = msg.agents
-			m.lastRun = time.Now()
-			if m.cursor >= len(m.agents) {
-				m.cursor = max(0, len(m.agents)-1)
+			m.lastScan = time.Now()
+			m.cursor = 0
+			for i, a := range m.agents {
+				if a.Session.SessionID == keep {
+					m.cursor = i
+				}
 			}
 		}
+	case focusedMsg:
+		if msg.err != nil {
+			m.flash, m.flashErr = msg.err.Error(), true
+		} else {
+			m.flash, m.flashErr = "Focused "+msg.note, false
+		}
+		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+	case flashClearMsg:
+		m.flash = ""
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "j", "down":
-			if m.cursor < len(m.agents)-1 {
-				m.cursor++
-			}
-		case "k", "up":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "r":
-			return m, scan
-		}
+		return m.handleKey(msg)
 	}
 	return m, nil
 }
 
-func (m Model) View() tea.View {
-	p := m.pal
-	dim := lipgloss.NewStyle().Foreground(lipgloss.Color(p.FgDim))
-	muted := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Muted))
-	fg := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Fg))
-	bright := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Bright))
-	brand := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Bg)).Background(lipgloss.Color(p.Bright)).Bold(true).Padding(0, 1)
-	sel := lipgloss.NewStyle().Background(lipgloss.Color(p.Sel))
-
-	var b strings.Builder
-	counts := map[Status]int{}
-	for _, a := range m.agents {
-		counts[a.Status]++
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.help {
+		m.help = false
+		return m, nil
 	}
-	summary := fmt.Sprintf("%d agents · %d working · %d idle", len(m.agents), counts[Working], counts[Idle])
-	if counts[NeedsYou] > 0 {
-		summary = fmt.Sprintf("%d agents · %s · %d working · %d idle", len(m.agents),
-			lipgloss.NewStyle().Foreground(lipgloss.Color(p.Attn)).Render(fmt.Sprintf("%d need you", counts[NeedsYou])), counts[Working], counts[Idle])
-	}
-	b.WriteString(brand.Render("den") + "  " + dim.Render(summary) + "\n\n")
-
-	if m.err != nil {
-		b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(p.Err)).Render("scan failed: "+m.err.Error()) + "\n")
-	}
-	if len(m.agents) == 0 && m.err == nil {
-		b.WriteString(dim.Render("No Claude Code sessions found in "+discover.Dir()) + "\n")
-	}
-
-	width := m.width
-	if width <= 0 {
-		width = 100
-	}
-	for i, a := range m.agents {
-		glyph, gstyle := m.glyph(a.Status)
-		role := ""
-		if a.Labels.Role != "" {
-			role = "  " + muted.Render(strings.ToUpper(a.Labels.Role))
+	switch msg.String() {
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	case "?":
+		m.help = true
+	case "j", "down":
+		if m.cursor < len(m.agents)-1 {
+			m.cursor++
 		}
-		task := a.Labels.Task
-		if task == "" {
-			task = a.Session.Name
+	case "k", "up":
+		if m.cursor > 0 {
+			m.cursor--
 		}
-		age := humanAge(time.Since(a.Session.StatusChanged()))
-		line1 := fmt.Sprintf(" %s %s%s", gstyle.Render(glyph), bright.Render(a.Name), role)
-		line2 := "   " + fg.Render("▸ "+task)
-		line3 := "   " + dim.Render(a.Session.ShortCWD()+"  "+statusWord(a.Status)+" "+age)
-		rows := []string{line1, line2, line3}
-		for j, r := range rows {
-			if i == m.cursor {
-				r = sel.Width(width).Render(r)
+	case "g", "home":
+		m.cursor = 0
+	case "G", "end":
+		m.cursor = max(0, len(m.agents)-1)
+	case "tab":
+		m.focus = (m.focus + 1) % 3
+	case "shift+tab":
+		m.focus = (m.focus + 2) % 3
+	case "r":
+		return m, snapshot
+	case "enter":
+		if a, ok := m.selected(); ok {
+			return m, func() tea.Msg {
+				note, err := fleet.Focus(a)
+				return focusedMsg{note: note, err: err}
 			}
-			rows[j] = r
-		}
-		b.WriteString(strings.Join(rows, "\n") + "\n")
-		if i < len(m.agents)-1 {
-			b.WriteString("\n")
 		}
 	}
-
-	b.WriteString("\n" + dim.Render("j k move · r rescan · q quit"))
-	v := tea.NewView(b.String())
-	v.AltScreen = true
-	return v
-}
-
-func (m Model) glyph(s Status) (string, lipgloss.Style) {
-	p := m.pal
-	switch s {
-	case Working:
-		return "●", lipgloss.NewStyle().Foreground(lipgloss.Color(p.Bright))
-	case NeedsYou:
-		return "◐", lipgloss.NewStyle().Foreground(lipgloss.Color(p.Attn))
-	case Idle:
-		return "○", lipgloss.NewStyle().Foreground(lipgloss.Color(p.FgDim))
-	case Gone:
-		return "✕", lipgloss.NewStyle().Foreground(lipgloss.Color(p.Err))
-	default:
-		return "?", lipgloss.NewStyle().Foreground(lipgloss.Color(p.Muted))
-	}
-}
-
-func statusWord(s Status) string {
-	switch s {
-	case Working:
-		return "working"
-	case NeedsYou:
-		return "needs you"
-	case Idle:
-		return "idle"
-	case Gone:
-		return "gone"
-	}
-	return "unknown"
-}
-
-func humanAge(d time.Duration) string {
-	switch {
-	case d < time.Minute:
-		return fmt.Sprintf("%ds", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	}
-	return fmt.Sprintf("%dd", int(d.Hours()/24))
+	return m, nil
 }

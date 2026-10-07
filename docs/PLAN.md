@@ -38,6 +38,7 @@ Verified against Claude Code 2.1.289 and its docs on 2026-10-07/08.
 | Idle notice | `SendMessage` `notify_when_idle` (peer feature `notify_idle`) | Only from a Claude session, which the orchestrator is. |
 | Orchestrator | A Claude Code session Den spawns with `claude -p --input-format stream-json --output-format stream-json`, allowed tools `ListAgents`, `SendMessage` | It already knows how to list and message peers. Den only renders its stream. |
 | Transcript tail | `~/.claude/projects/<slug>/<sessionId>.jsonl` | Internal format, changes between releases. Best effort only, behind an interface. |
+| Terminal window | `{"type":"ai-title","aiTitle":…}` records in the transcript | Claude Code sets the terminal title to this text behind a status glyph (`✳`, `◑`). Ghostty is one process for all windows, so pid ancestry cannot tell windows apart; Den matches `hyprctl clients -j` on the stripped title, then on the shell's cwd title. Sessions whose ancestry includes `herdr` are focused through `herdr agent focus` plus the herdr client window. |
 
 Hard parts, to prototype first:
 
@@ -82,9 +83,10 @@ Hard parts, to prototype first:
   drops subagent events (`agent_id` present), posts one JSON line with a
   monotonic `seq` to Den's socket, and fails open with a 0.5 s timeout when
   Den is not running. `PermissionRequest` is the only blocking hook.
-- **Focus terminal.** Walk `/proc/<pid>/status` parents to the terminal pid,
-  match `hyprctl clients -j` by pid, then `hyprctl dispatch focuswindow
-  address:<addr>`. Falls back to showing the cwd.
+- **Focus terminal.** Match the window by title (see the table above), then
+  dispatch `hl.dsp.focus({ window = "address:<addr>" })`; Hyprland 0.56+
+  takes dispatchers as Lua, and Den falls back to the classic `focuswindow`
+  form on older releases.
 - **Theme.** Read `~/.local/state/omarchy/current/theme/colors.toml` at start
   and on change; fall back to Deepharness. Hue only for status.
 
@@ -116,7 +118,7 @@ filtering; relay loop guards (depth cap plus visited set).
 | | Deliverable | Done when |
 | --- | --- | --- |
 | M0 | Scaffold: discovery, badge identity, theme, live list | `go run ./cmd/den` lists the sessions on this machine with names and status. **Shipped in this commit.** |
-| M1 | Fleet pane for real: grouping by state, `?` unknown, cwd/branch, context % from badge store, Enter focuses the Hyprland window, `r`/fsnotify refresh | Matches screen 1's left pane. |
+| M1 | Fleet pane for real: grouping by state, `?` unknown, repo · branch, model, Enter focuses the Hyprland window (herdr panes too), fsnotify refresh, `den list` and `den focus` | Matches screen 1's left pane. **Shipped.** Context % moved to M5: the badge store does not record it yet. |
 | M2 | Hook bridge + inbox: `den install-hooks`, socket server, `Notification`/`Stop`/`SessionStart`/`SessionEnd` → inbox and status; `PermissionRequest` round trip with `y`/`a`/`n` | Permission prompts from any terminal can be answered in Den; the terminal fallback works. |
 | M3 | Messaging: `@` completion, post to the inbox socket, delivery receipts, typing guard, `m` on an agent | Screen 1's command line. |
 | M4 | Orchestrator tab: spawn `claude -p` with stream-json, render its text and fan-out, `notify_when_idle` reports | Screen 2. |

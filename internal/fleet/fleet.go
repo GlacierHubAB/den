@@ -1,0 +1,239 @@
+// Package fleet joins everything Den knows about one agent: the Claude Code
+// session, its agent-badge identity, the git checkout it works in, the
+// transcript title and model, and the terminal window it lives in.
+package fleet
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/GlacierHubAB/den/internal/badge"
+	"github.com/GlacierHubAB/den/internal/discover"
+	"github.com/GlacierHubAB/den/internal/gitinfo"
+	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/procs"
+	"github.com/GlacierHubAB/den/internal/transcript"
+)
+
+// Status is Den's state vocabulary. NeedsYou only ever comes from an explicit
+// signal (the hook bridge, milestone 2); nothing is guessed. Unknown is shown
+// as "?" and never as idle.
+type Status int
+
+const (
+	Unknown Status = iota
+	NeedsYou
+	Working
+	Idle
+	Gone
+)
+
+func (s Status) String() string {
+	switch s {
+	case NeedsYou:
+		return "needs you"
+	case Working:
+		return "working"
+	case Idle:
+		return "idle"
+	case Gone:
+		return "gone"
+	}
+	return "unknown"
+}
+
+// Agent is one coding agent as Den sees it.
+type Agent struct {
+	Session discover.Session
+	Name    string
+	Labels  badge.Labels
+	Git     gitinfo.Info
+	HasGit  bool
+	Title   string
+	Model   string
+	Status  Status
+	InHerdr bool
+	Window  *hypr.Match
+}
+
+// Task is the current task label, falling back to the transcript title and
+// then Claude Code's own session name.
+func (a Agent) Task() string {
+	switch {
+	case a.Labels.Task != "":
+		return a.Labels.Task
+	case a.Title != "":
+		return a.Title
+	}
+	return a.Session.Name
+}
+
+// Where renders "repo · branch" or the short cwd.
+func (a Agent) Where() string {
+	if a.HasGit && a.Git.Branch != "" {
+		return a.Git.Repo + " · " + a.Git.Branch
+	}
+	if a.HasGit {
+		return a.Git.Repo
+	}
+	return a.Session.ShortCWD()
+}
+
+// Since is how long the agent has been in its current status.
+func (a Agent) Since() time.Duration {
+	return time.Since(a.Session.StatusChanged())
+}
+
+// Place says which terminal window the agent is in, if known.
+func (a Agent) Place() string {
+	if a.Window == nil {
+		if a.InHerdr {
+			return "herdr"
+		}
+		return ""
+	}
+	class := a.Window.Client.Class
+	if i := strings.LastIndex(class, "."); i >= 0 {
+		class = class[i+1:]
+	}
+	s := fmt.Sprintf("%s · ws %s", class, a.Window.Client.Workspace.Name)
+	if a.InHerdr {
+		s = "herdr in " + s
+	}
+	return s
+}
+
+// Snapshot gathers every agent. Window lookup is skipped when Hyprland is not
+// available, and a failing lookup never fails the snapshot.
+func Snapshot() ([]Agent, error) {
+	sessions, err := discover.Scan()
+	if err != nil {
+		return nil, err
+	}
+	labels, _ := badge.Load()
+	var clients []hypr.Client
+	if hypr.Available() {
+		clients, _ = hypr.Clients()
+	}
+	host, _ := os.Hostname()
+
+	agents := make([]Agent, 0, len(sessions))
+	for _, s := range sessions {
+		a := Agent{Session: s, Name: badge.Name(s.SessionID), Labels: labels[s.SessionID]}
+		if s.CWD != "" {
+			a.Git, a.HasGit = gitinfo.Lookup(s.CWD)
+		}
+		facts := transcript.Read(transcript.Path(s.SessionID))
+		a.Title, a.Model = facts.Title, facts.Model
+		switch {
+		case !s.Alive:
+			a.Status = Gone
+		case s.Status == "busy":
+			a.Status = Working
+		case s.Status == "idle":
+			a.Status = Idle
+		default:
+			a.Status = Unknown
+		}
+		if s.Alive {
+			a.InHerdr = procs.HasAncestor(s.PID, "herdr")
+		}
+		if len(clients) > 0 {
+			prefix := ""
+			if a.InHerdr {
+				prefix = host + ": "
+			}
+			if m, ok := hypr.Find(clients, a.Title, s.ShortCWD(), prefix); ok {
+				a.Window = &m
+			}
+		}
+		agents = append(agents, a)
+	}
+	sort.SliceStable(agents, func(i, j int) bool {
+		if agents[i].Status != agents[j].Status {
+			return agents[i].Status < agents[j].Status
+		}
+		return agents[i].Session.StartedAt < agents[j].Session.StartedAt
+	})
+	return agents, nil
+}
+
+// Focus brings the agent's terminal to the front. Inside herdr it also asks
+// herdr to focus the pane. It returns a short description of what it did.
+func Focus(a Agent) (string, error) {
+	if a.Status == Gone {
+		return "", errors.New("that agent is gone")
+	}
+	var notes []string
+	if a.InHerdr {
+		if pane, err := herdrPane(a.Session.SessionID); err == nil && pane != "" {
+			if err := exec.Command("herdr", "agent", "focus", pane).Run(); err == nil {
+				notes = append(notes, "herdr pane "+pane)
+			}
+		}
+	}
+	if a.Window == nil {
+		if len(notes) > 0 {
+			return strings.Join(notes, ", "), nil
+		}
+		return "", fmt.Errorf("no terminal window found for %s", a.Name)
+	}
+	if err := hypr.Focus(a.Window.Client.Address); err != nil {
+		return "", err
+	}
+	notes = append(notes, fmt.Sprintf("window on workspace %s (matched by %s)", a.Window.Client.Workspace.Name, a.Window.How))
+	return strings.Join(notes, ", "), nil
+}
+
+// herdrPane maps a Claude session id to the herdr pane hosting it.
+func herdrPane(sessionID string) (string, error) {
+	out, err := exec.Command("herdr", "agent", "list").Output()
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		Result struct {
+			Agents []struct {
+				PaneID  string `json:"pane_id"`
+				Session struct {
+					Value string `json:"value"`
+				} `json:"agent_session"`
+			} `json:"agents"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return "", err
+	}
+	for _, ag := range resp.Result.Agents {
+		if ag.Session.Value == sessionID {
+			return ag.PaneID, nil
+		}
+	}
+	return "", nil
+}
+
+// Find returns the agent whose name, session id or pid matches query. Names
+// match case-insensitively on a prefix ("mossy", "Mossy Lemur").
+func Find(agents []Agent, query string) (Agent, bool) {
+	q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(query, "@")))
+	if q == "" {
+		return Agent{}, false
+	}
+	for _, a := range agents {
+		if strings.HasPrefix(a.Session.SessionID, q) || fmt.Sprint(a.Session.PID) == q {
+			return a, true
+		}
+	}
+	for _, a := range agents {
+		if strings.HasPrefix(strings.ToLower(a.Name), q) {
+			return a, true
+		}
+	}
+	return Agent{}, false
+}

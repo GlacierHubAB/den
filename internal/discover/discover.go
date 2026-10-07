@@ -20,19 +20,19 @@ import (
 
 // Session is one running Claude Code process as its sessions file reports it.
 type Session struct {
-	PID         int    `json:"pid"`
-	SessionID   string `json:"sessionId"`
-	CWD         string `json:"cwd"`
-	StartedAt   int64  `json:"startedAt"`
-	Version     string `json:"version"`
-	Kind        string `json:"kind"`
-	Entrypoint  string `json:"entrypoint"`
-	Name        string `json:"name"`
-	NameSource  string `json:"nameSource"`
-	Status      string `json:"status"` // "busy" | "idle" as Claude Code reports it
-	UpdatedAt   int64  `json:"updatedAt"`
-	StatusAt    int64  `json:"statusUpdatedAt"`
-	Socket      string `json:"messagingSocketPath"`
+	PID         int      `json:"pid"`
+	SessionID   string   `json:"sessionId"`
+	CWD         string   `json:"cwd"`
+	StartedAt   int64    `json:"startedAt"`
+	Version     string   `json:"version"`
+	Kind        string   `json:"kind"`
+	Entrypoint  string   `json:"entrypoint"`
+	Name        string   `json:"name"`
+	NameSource  string   `json:"nameSource"`
+	Status      string   `json:"status"` // "busy" | "idle" as Claude Code reports it
+	UpdatedAt   int64    `json:"updatedAt"`
+	StatusAt    int64    `json:"statusUpdatedAt"`
+	Socket      string   `json:"messagingSocketPath"`
 	PeerFeature []string `json:"peerFeatures"`
 
 	// Alive is false when the pid in the file no longer exists; the file is

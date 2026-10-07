@@ -1,0 +1,38 @@
+package hypr
+
+import "testing"
+
+func TestStripStatusGlyph(t *testing.T) {
+	for in, want := range map[string]string{
+		"✳ Install herdr":         "Install herdr",
+		"◑ TUI agent platform":    "TUI agent platform",
+		"~/projects/x":            "~/projects/x",
+		"  ✳  Fix login  ":        "Fix login",
+		"mainframe: Main Session": "mainframe: Main Session",
+	} {
+		if got := StripStatusGlyph(in); got != want {
+			t.Errorf("%q -> %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestFindPrefersHerdrThenTitleThenCwd(t *testing.T) {
+	cs := []Client{
+		{Address: "a", Class: "com.mitchellh.ghostty", Title: "✳ Fix login", FocusHist: 3},
+		{Address: "b", Class: "com.mitchellh.ghostty", Title: "~/code/den", FocusHist: 1},
+		{Address: "c", Class: "com.mitchellh.ghostty", Title: "mainframe: Main Session", FocusHist: 2},
+		{Address: "d", Class: "zen", Title: "Fix login", FocusHist: 0},
+	}
+	if m, ok := Find(cs, "Fix login", "~/code/den", ""); !ok || m.Client.Address != "a" || m.How != "title" {
+		t.Errorf("title match = %+v %v", m, ok)
+	}
+	if m, ok := Find(cs, "", "~/code/den", ""); !ok || m.Client.Address != "b" {
+		t.Errorf("cwd match = %+v %v", m, ok)
+	}
+	if m, ok := Find(cs, "Fix login", "", "mainframe: "); !ok || m.Client.Address != "c" || m.How != "herdr" {
+		t.Errorf("herdr match = %+v %v", m, ok)
+	}
+	if _, ok := Find(cs, "Nope", "", ""); ok {
+		t.Error("unexpected match")
+	}
+}
