@@ -33,6 +33,7 @@ type tab int
 const (
 	tabFleet tab = iota
 	tabInbox
+	tabOrch
 )
 
 type tickMsg time.Time
@@ -76,6 +77,7 @@ type Model struct {
 	input    textinput.Model
 	complIdx int
 	queue    []outgoing
+	orch     orchState
 }
 
 // New returns the root model and starts listening for hook events.
@@ -91,11 +93,13 @@ func New() Model {
 	return m
 }
 
-// Close releases the socket. Call it after the program exits.
+// Close releases the socket and stops the orchestrator. Call it after the
+// program exits.
 func (m Model) Close() {
 	if m.srv != nil {
 		m.srv.Close()
 	}
+	m.closeOrchestrator()
 }
 
 func (m Model) Init() tea.Cmd {
@@ -209,7 +213,13 @@ func (m *Model) refresh() {
 	if a, ok := m.selected(); ok {
 		keep = a.Session.SessionID
 	}
-	m.agents = append([]fleet.Agent(nil), m.base...)
+	m.agents = m.agents[:0]
+	for _, a := range m.base {
+		if m.isOrchestrator(a) {
+			continue
+		}
+		m.agents = append(m.agents, a)
+	}
 	for i := range m.agents {
 		a := &m.agents[i]
 		if a.Status != fleet.Gone && m.store.SessionNeedsYou(a.Session.SessionID) {
@@ -262,6 +272,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, holdTick())
 		}
 		return m, tea.Batch(cmds...)
+	case orchStartedMsg:
+		return m, m.handleOrchStarted(msg)
+	case orchEventMsg:
+		cmd := m.handleOrchEvent(msg.ev)
+		m.refresh()
+		return m, cmd
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
@@ -294,6 +310,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleRequest folds a hook event into the inbox and decides whether a
 // permission request is held for Den or released to the terminal.
 func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
+	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
+		// The orchestrator's turns show on their own tab, not in the inbox.
+		if r.WantsReply() {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: the orchestrator may only list and message sessions"})
+		}
+		return nil
+	}
 	it := m.store.Apply(r)
 	var cmds []tea.Cmd
 	switch r.Event {
@@ -380,8 +403,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.tab = tabFleet
 	case "2":
 		m.tab = tabInbox
+	case "3":
+		m.tab = tabOrch
 	case "j", "down":
-		if m.inboxActive() {
+		if m.tab == tabOrch {
+			if m.orch.scroll > 0 {
+				m.orch.scroll--
+			}
+		} else if m.inboxActive() {
 			if m.inboxCur < len(m.store.Items())-1 {
 				m.inboxCur++
 			}
@@ -389,7 +418,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.cursor++
 		}
 	case "k", "up":
-		if m.inboxActive() {
+		if m.tab == tabOrch {
+			m.orch.scroll++
+		} else if m.inboxActive() {
 			if m.inboxCur > 0 {
 				m.inboxCur--
 			}
@@ -417,10 +448,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "@", "i", ":":
 		return m, m.startCompose("@")
 	case "m":
-		if a, ok := m.selected(); ok {
+		if a, ok := m.selected(); ok && m.tab != tabOrch {
 			return m, m.startCompose("@" + a.Name + " ")
 		}
-		return m, m.startCompose("@")
+		return m, m.startCompose("")
 	case "y", "n", "a":
 		it := m.topAnswerable()
 		if m.inboxActive() {

@@ -100,12 +100,19 @@ func (m Model) tabs(w int) string {
 		}
 		return s.tabOff
 	}
-	return "  " + style(tabFleet).Render("1 Fleet") + "   " + style(tabInbox).Render(inboxLabel) + "   " + s.tabOff.Render("3 Orchestrator") + "   " + s.tabOff.Render("? help")
+	orchLabel := "3 Orchestrator"
+	if m.orch.status != "" {
+		orchLabel += " " + s.muted.Render(m.orch.status)
+	}
+	return "  " + style(tabFleet).Render("1 Fleet") + "   " + style(tabInbox).Render(inboxLabel) + "   " + style(tabOrch).Render(orchLabel) + "   " + s.tabOff.Render("? help")
 }
 
 func (m Model) panes(w, h int) string {
 	if m.tab == tabInbox {
 		return m.box("Inbox", m.inboxPane(w-2, h-2), w, h, true)
+	}
+	if m.tab == tabOrch {
+		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
 	}
 	// Column plan: agents | inbox | detail, collapsing on narrow terminals.
 	switch {
@@ -459,12 +466,15 @@ func (m Model) prompt(w int) string {
 	if it := m.topAnswerable(); it != nil && !m.inboxActive() {
 		return " " + s.attn.Render("›") + " " + s.fg.Render(m.nameFor(it.SessionID)+": "+it.Title) + "  " + s.key.Render("y") + s.keyLabel.Render(" allow ") + s.key.Render("n") + s.keyLabel.Render(" deny ") + s.key.Render("a") + s.keyLabel.Render(" always")
 	}
-	return " " + s.muted.Render("›") + " " + s.muted.Render("@ or m to message an agent · plain text for the orchestrator (M4)")
+	return " " + s.muted.Render("›") + " " + s.muted.Render("@ to message an agent · m to ask the orchestrator · plain text goes to the orchestrator")
 }
 
 func (m Model) hints(w int) string {
 	s := m.st
-	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"y n a", "answer"}, {"@ m", "message"}, {"1 2", "tabs"}, {"Tab", "pane"}, {"?", "help"}, {"q", "quit"}}
+	items := [][2]string{{"j k", "move"}, {"Enter", "focus terminal"}, {"y n a", "answer"}, {"@ m", "message"}, {"1 2 3", "tabs"}, {"Tab", "pane"}, {"?", "help"}, {"q", "quit"}}
+	if m.tab == tabOrch {
+		items = [][2]string{{"m", "ask"}, {"@", "message one agent"}, {"j k", "scroll"}, {"1", "fleet"}, {"?", "help"}, {"q", "quit"}}
+	}
 	if m.input.Focused() {
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "cancel"}}
 	}

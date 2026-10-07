@@ -35,7 +35,7 @@ const guardMax = 10 * time.Minute
 func newInput(st styles) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = "› "
-	ti.Placeholder = "@Name to message one agent · plain text for the orchestrator (M4)"
+	ti.Placeholder = "@Name to message one agent · plain text to ask the orchestrator"
 	ti.CharLimit = 4000
 	ti.SetVirtualCursor(true)
 	applyInputStyles(&ti, st)
@@ -122,7 +122,8 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	case mt.target == nil && (mt.missing != "" || strings.HasPrefix(text, "@")):
 		return m.say(fmt.Sprintf("No agent called %q", mt.missing), true)
 	case mt.target == nil:
-		return m.say("The orchestrator arrives in milestone 4. Address one agent with @Name for now.", true)
+		m.stopCompose()
+		return m, m.askOrchestrator(mt.body)
 	case mt.body == "":
 		return m.say("Add the message after the name.", true)
 	}

@@ -5,6 +5,7 @@
 //	den list [-json]     print the agents Den sees
 //	den focus <who>      bring an agent's terminal to the front
 //	den send <who> <msg> deliver a message to one agent's session
+//	den ask <text>       one orchestrator turn: ask about the fleet or have it relay
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
 //	den events           headless: print hook events as they arrive
 //	den hook             used by Claude Code's hooks; not for humans
@@ -42,6 +43,8 @@ func main() {
 		focus(os.Args[2])
 	case "send":
 		send(os.Args[2:])
+	case "ask":
+		ask(os.Args[2:])
 	case "hook":
 		runHook()
 	case "install-hooks":
@@ -51,7 +54,7 @@ func main() {
 	case "events":
 		runEvents()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den send <who> <msg> | den install-hooks | den uninstall-hooks | den events")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den send <who> <msg> | den ask <text> | den install-hooks | den uninstall-hooks | den events")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
