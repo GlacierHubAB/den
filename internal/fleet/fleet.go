@@ -60,6 +60,11 @@ type Agent struct {
 	Status  Status
 	InHerdr bool
 	Window  *hypr.Match
+
+	Usage    transcript.Usage // context consumed by the last turn
+	HasUsage bool
+	Tail     []transcript.Entry // recent prompts, replies and tool calls
+	Path     string             // transcript path, "" when none
 }
 
 // Task is the current task label, falling back to the transcript title and
@@ -129,8 +134,13 @@ func Snapshot() ([]Agent, error) {
 		if s.CWD != "" {
 			a.Git, a.HasGit = gitinfo.Lookup(s.CWD)
 		}
-		facts := transcript.Read(transcript.Path(s.SessionID))
+		a.Path = transcript.Path(s.SessionID)
+		facts := transcript.Read(a.Path)
 		a.Title, a.Model = facts.Title, facts.Model
+		if a.Path != "" {
+			a.Usage, a.HasUsage = transcript.ReadUsage(a.Path)
+			a.Tail = transcript.Tail(a.Path, 8)
+		}
 		switch {
 		case !s.Alive:
 			a.Status = Gone
@@ -216,6 +226,71 @@ func herdrPane(sessionID string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// Explain says how Den arrived at what it shows for an agent.
+func Explain(a Agent) []string {
+	var out []string
+	add := func(f string, args ...any) { out = append(out, fmt.Sprintf(f, args...)) }
+	add("name      %s, generated from the session id %s the way agent-badge does", a.Name, a.Session.SessionID)
+	if a.Labels.Role != "" || a.Labels.Task != "" {
+		add("labels    role %q and task %q from the agent-badge plugin store", a.Labels.Role, a.Labels.Task)
+	} else {
+		add("labels    none: agent-badge has not labelled this session (task falls back to the transcript title, then the session name)")
+	}
+	switch a.Status {
+	case Gone:
+		add("status    gone: pid %d is not running, the sessions file is stale", a.Session.PID)
+	case NeedsYou:
+		add("status    needs you: the hook bridge reported something waiting on the human")
+	case Working, Idle:
+		add("status    %s: %s/%d.json says %q, updated %s ago", a.Status, discover.Dir(), a.Session.PID, a.Session.Status, humanAge(a.Since()))
+	default:
+		add("status    unknown: the sessions file has no busy/idle status")
+	}
+	if a.HasGit {
+		add("where     repo %q on branch %q from .git under %s", a.Git.Repo, a.Git.Branch, a.Session.CWD)
+	} else {
+		add("where     %s (no git checkout found above it)", a.Session.CWD)
+	}
+	if a.Path != "" {
+		add("transcript %s", a.Path)
+		if a.Title != "" {
+			add("title     %q from the last ai-title record; Claude Code shows it as the terminal title", a.Title)
+		}
+		if a.HasUsage {
+			add("context   %d of %d tokens (%d%%) from the last assistant message's usage", a.Usage.Tokens, a.Usage.Window, a.Usage.Percent())
+		}
+	} else {
+		add("transcript none found under %s", transcript.ProjectsDir())
+	}
+	if a.InHerdr {
+		add("herdr     a herdr process is among pid %d's ancestors, so Enter also asks herdr to focus the pane", a.Session.PID)
+	}
+	switch {
+	case a.Window != nil:
+		add("window    %s on workspace %s, matched by %s", a.Window.Client.Class, a.Window.Client.Workspace.Name, a.Window.How)
+	case !hypr.Available():
+		add("window    not looked up: Hyprland is not available here")
+	default:
+		add("window    no terminal window matched the title or the cwd")
+	}
+	if a.Session.Socket != "" {
+		add("messages  delivered to %s", a.Session.Socket)
+	} else {
+		add("messages  no inbox socket; this session cannot receive messages")
+	}
+	return out
+}
+
+func humanAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	return fmt.Sprintf("%dh", int(d.Hours()))
 }
 
 // Find returns the agent whose name, session id or pid matches query. Names

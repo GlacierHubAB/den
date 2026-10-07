@@ -81,7 +81,8 @@ func (m Model) roster() []orch.RosterAgent {
 		r := orch.RosterAgent{
 			Critter: a.Name, Peer: a.Session.Name, Role: a.Labels.Role,
 			Status: a.Status.String(), Task: a.Task(), Where: a.Where(),
-			IsSelf: m.isOrchestrator(a), Terminal: a.Window != nil,
+			Earlier: a.Labels.History,
+			IsSelf:  m.isOrchestrator(a), Terminal: a.Window != nil,
 		}
 		for _, it := range m.store.Items() {
 			if it.SessionID == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {

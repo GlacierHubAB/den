@@ -13,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 func sample() []fleet.Agent {
@@ -20,6 +21,8 @@ func sample() []fleet.Agent {
 		return fleet.Agent{
 			Session: discover.Session{PID: 4242, SessionID: "0123456789abcdef", CWD: cwd, Version: "2.1.289", Name: "grvlle-aa", Alive: st != fleet.Gone},
 			Name:    name, Labels: badge.Labels{Role: role, Task: task, History: hist}, Status: st, Model: "claude-fable-5-1",
+			Usage:   transcript.Usage{Tokens: 373961, Window: 1_000_000}, HasUsage: true,
+			Tail:    []transcript.Entry{{Kind: "you", Text: "create a mockup"}, {Kind: "tool", Text: "Bash go test ./..."}, {Kind: "text", Text: "Done, all tests pass."}},
 		}
 	}
 	return []fleet.Agent{
@@ -43,6 +46,9 @@ func TestViewFitsWidthAtSeveralSizes(t *testing.T) {
 			if w := ansi.StringWidth(l); w > size[0] {
 				t.Errorf("%dx%d: line %d is %d wide: %q", size[0], size[1], i, w, ansi.Strip(l))
 			}
+		}
+		if size[0] >= 110 && !strings.Contains(ansi.Strip(out), "37%") {
+			t.Errorf("%dx%d: context gauge missing", size[0], size[1])
 		}
 		if os.Getenv("DEN_SHOW") != "" && size[0] == 120 {
 			fmt.Println(ansi.Strip(out))

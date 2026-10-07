@@ -135,7 +135,7 @@ filtering; relay loop guards (depth cap plus visited set).
 | M2 | Hook bridge + inbox: `den install-hooks`, socket server, `Notification`/`Stop`/`SessionStart`/`SessionEnd`/`UserPromptSubmit`/`PostToolUse` → inbox and status; `PermissionRequest` round trip with `y`/`a`/`n`; `den events` | Permission prompts from any terminal can be answered in Den; the terminal fallback works. **Shipped.** Verified headless: a `claude -p` session's `PermissionRequest` reached Den, was allowed there, the tool ran and `PostToolUse`/`Stop` followed. Interactive dialog behaviour while the hook is held still needs a human check. |
 | M3 | Messaging: `@` completion, post to the inbox socket, delivery receipts, typing guard, `m` on an agent, `den send` | Screen 1's command line. **Shipped.** Verified: `den send` delivered into this very session and into a herdr-hosted session; the message arrived framed as a peer message with Den's header. |
 | M4 | Orchestrator tab: spawn `claude -p` with stream-json, render its text and fan-out, `den ask` | Screen 2. **Shipped.** Verified live: a fleet question answered from the roster, and a relay delivered to a peer session with proper sender identity. `notify_when_idle` reports moved to M5. |
-| M5 | Polish: detail pane with gauges and transcript tail (best effort), `den explain <agent>`, config file (`~/.config/den/config.toml`, keys only), README, release build | Daily-driver quality. |
+| M5 | Polish: detail pane with gauges and transcript tail (best effort), `den explain <agent>`, config file (`~/.config/den/config.toml`, keys only), README, release build | Daily-driver quality. **In progress.** Shipped: context gauge from the last assistant message's `usage` in the transcript (no agent-badge change needed after all), recent-activity tail, `ctx %` on agent rows, `den explain`. Left: 5-hour and weekly limits (account-wide; only agent-badge has them), config file, release build. `notify_when_idle` dropped: the Stop hook already reports every finished turn. |
 
 ## Decisions
 
@@ -149,4 +149,4 @@ filtering; relay loop guards (depth cap plus visited set).
 
 1. Name. "Den" is the placeholder.
 2. Should the orchestrator be allowed to answer a permission on your explicit instruction ("allow the PR once it rebases"), or only relay text? Default: relay only; Den itself answers permissions.
-3. Context % and usage limits: read from the agent-badge store (needs a small addition to the mod) or from the transcript? Prefer the store.
+3. Usage limits (5-hour, weekly): account-wide figures only agent-badge sees via `session.measure`. Either the mod writes them to its store for Den to read, or Den leaves them to the badge. Context % turned out to be readable from the transcript.

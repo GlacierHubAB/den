@@ -4,6 +4,7 @@
 //	den                  open the TUI
 //	den list [-json]     print the agents Den sees
 //	den focus <who>      bring an agent's terminal to the front
+//	den explain <who>    say how Den arrived at what it shows for an agent
 //	den send <who> <msg> deliver a message to one agent's session
 //	den ask <text>       one orchestrator turn: ask about the fleet or have it relay
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
@@ -41,6 +42,11 @@ func main() {
 			fail("usage: den focus <name|session-id|pid>")
 		}
 		focus(os.Args[2])
+	case "explain":
+		if len(os.Args) < 3 {
+			fail("usage: den explain <name|session-id|pid>")
+		}
+		explain(os.Args[2])
 	case "send":
 		send(os.Args[2:])
 	case "ask":
@@ -54,7 +60,7 @@ func main() {
 	case "events":
 		runEvents()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den send <who> <msg> | den ask <text> | den install-hooks | den uninstall-hooks | den events")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text> | den install-hooks | den uninstall-hooks | den events")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
@@ -86,6 +92,20 @@ func list(asJSON bool) {
 			a.Status, since(a.Since()), a.Name, a.Labels.Role, trunc(a.Task(), 48), a.Where(), a.Place(), a.Session.PID, a.Session.SessionID[:8])
 	}
 	tw.Flush()
+}
+
+func explain(who string) {
+	agents, err := fleet.Snapshot()
+	if err != nil {
+		fail("den: %v", err)
+	}
+	a, ok := fleet.Find(agents, who)
+	if !ok {
+		fail("den: no agent matches %q", who)
+	}
+	for _, l := range fleet.Explain(a) {
+		fmt.Println(l)
+	}
 }
 
 func focus(who string) {

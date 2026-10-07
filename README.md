@@ -7,8 +7,9 @@ terminals, shows who they are (the agent-badge critter, role and task), streams
 everything that needs your answer into one inbox, and lets you talk to one
 agent with an `@mention` or to an orchestrator that speaks to all of them.
 
-Status: milestone 4. The Fleet view is live: agents grouped by state with
-their critter, role, task, repo and branch, a detail pane, and Enter brings the
+Status: milestone 5 in progress. The Fleet view is live: agents grouped by
+state with their critter, role, task, repo, branch and context usage, a detail
+pane with a context gauge and recent activity, and Enter brings the
 agent's terminal to the front through Hyprland (herdr panes included). With the
 hooks installed, every permission prompt, plan review, question and finished
 turn from every session lands in the inbox, and permissions can be answered
@@ -24,6 +25,7 @@ den install-hooks     # once; wires den into ~/.claude/settings.json (backed up)
 den                   # the TUI
 den list [-json]      # what Den sees, for scripts and debugging
 den focus mossy       # focus an agent's terminal by name, session id or pid
+den explain mossy     # how Den arrived at that agent's name, status, window…
 den send mossy "rebase on main first"   # message an agent from a script
 den ask "who is blocked on what?"       # one orchestrator turn from a script
 den events            # headless: print hook events as they arrive

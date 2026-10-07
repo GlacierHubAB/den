@@ -12,6 +12,7 @@ type RosterAgent struct {
 	Role     string
 	Status   string
 	Task     string
+	Earlier  []string // earlier tasks this session worked on, newest first
 	Where    string
 	Waiting  []string // inbox items waiting on the human, one line each
 	IsSelf   bool     // the orchestrator itself
@@ -40,6 +41,9 @@ func Compose(agents []RosterAgent, text string) string {
 			b.WriteString(" · in " + a.Where)
 		}
 		b.WriteString("\n")
+		if len(a.Earlier) > 0 {
+			b.WriteString("    earlier: " + strings.Join(a.Earlier, "; ") + "\n")
+		}
 		for _, w := range a.Waiting {
 			b.WriteString("    waiting on the human: " + w + "\n")
 		}

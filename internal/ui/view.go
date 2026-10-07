@@ -90,21 +90,21 @@ func (m Model) topBar(w int) string {
 
 func (m Model) tabs(w int) string {
 	s := m.st
-	inboxLabel := "2 Inbox"
-	if n := m.store.Waiting(); n > 0 {
-		inboxLabel += " " + s.badgeN.Render(fmt.Sprint(n))
-	}
 	style := func(t tab) lipgloss.Style {
 		if m.tab == t {
 			return s.tabOn
 		}
 		return s.tabOff
 	}
-	orchLabel := "3 Orchestrator"
+	orchStatus := ""
 	if m.orch.status != "" {
-		orchLabel += " " + s.muted.Render(m.orch.status)
+		orchStatus = " " + s.muted.Render(m.orch.status)
 	}
-	return "  " + style(tabFleet).Render("1 Fleet") + "   " + style(tabInbox).Render(inboxLabel) + "   " + style(tabOrch).Render(orchLabel) + "   " + s.tabOff.Render("? help")
+	inboxCount := ""
+	if n := m.store.Waiting(); n > 0 {
+		inboxCount = " " + s.badgeN.Render(fmt.Sprint(n))
+	}
+	return "  " + style(tabFleet).Render("1 Fleet") + "   " + style(tabInbox).Render("2 Inbox") + inboxCount + "   " + style(tabOrch).Render("3 Orchestrator") + orchStatus + "   " + s.tabOff.Render("? help")
 }
 
 func (m Model) panes(w, h int) string {
@@ -244,6 +244,18 @@ func (m Model) agentsPane(w, h int) string {
 			meta += "  " + age
 		}
 		l3 := "   " + s.dim.Render(ansi.Truncate(meta, w-4, "…"))
+		if a.HasUsage {
+			ctx := fmt.Sprintf("ctx %d%%", a.Usage.Percent())
+			cs := s.dim
+			if a.Usage.Percent() >= 90 {
+				cs = s.err
+			} else if a.Usage.Percent() >= 75 {
+				cs = s.attn
+			}
+			if room := w - 4 - ansi.StringWidth(meta) - len(ctx) - 2; room >= 0 {
+				l3 = "   " + s.dim.Render(meta) + strings.Repeat(" ", room+2) + cs.Render(ctx)
+			}
+		}
 		rows := []string{l1, l2, l3}
 		for j, r := range rows {
 			if i == m.cursor {
@@ -410,6 +422,23 @@ func (m Model) detailPane(w, h int) string {
 	if a.Model != "" {
 		kv("model", prettyModel(a.Model))
 	}
+	if a.HasUsage {
+		pct := a.Usage.Percent()
+		barW := clamp(w-24, 6, 20)
+		full := pct * barW / 100
+		fill := s.bright
+		if pct >= 90 {
+			fill = s.err
+		} else if pct >= 75 {
+			fill = s.attn
+		}
+		bar := fill.Render(strings.Repeat("█", full)) + s.muted.Render(strings.Repeat("░", barW-full))
+		left := (a.Usage.Window - a.Usage.Tokens) / 1000
+		if left < 0 {
+			left = 0
+		}
+		kv("context", fmt.Sprintf("%s %d%% · %dk left", bar, pct, left))
+	}
 	kv("where", a.Where())
 	if a.HasGit {
 		kv("cwd", a.Session.ShortCWD())
@@ -421,8 +450,22 @@ func (m Model) detailPane(w, h int) string {
 	kv("started", humanAge(time.Since(a.Session.Started()))+" ago")
 	kv("pid", fmt.Sprintf("%d · claude %s", a.Session.PID, a.Session.Version))
 	kv("session", a.Session.SessionID[:8]+" · "+a.Session.Name)
+	if len(a.Tail) > 0 {
+		b.WriteString("\n")
+		line(s.muted.Render("recent"))
+		for _, e := range a.Tail {
+			switch e.Kind {
+			case "you":
+				line(s.muted.Render("you › ") + s.dim.Render(e.Text))
+			case "tool":
+				line(s.ok.Render("● ") + s.dim.Render(e.Text))
+			default:
+				line(s.fg.Render(e.Text))
+			}
+		}
+	}
 	b.WriteString("\n")
-	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render("r") + s.keyLabel.Render(" rescan"))
+	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render("@") + s.keyLabel.Render(" message  ") + s.key.Render("r") + s.keyLabel.Render(" rescan"))
 	return strings.TrimRight(b.String(), "\n")
 }
 
