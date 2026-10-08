@@ -61,12 +61,13 @@ type Agent struct {
 	InHerdr bool
 	Window  *hypr.Match
 
-	Usage    transcript.Usage // context consumed by the last turn
-	HasUsage bool
-	Limits   badge.Usage // rate limits and spend as agent-badge recorded them
-	HasLimit bool
-	Tail     []transcript.Entry // recent prompts, replies and tool calls
-	Path     string             // transcript path, "" when none
+	Usage          transcript.Usage // context consumed by the last turn
+	HasUsage       bool
+	UsageFromBadge bool        // the figures came from agent-badge, which gets them from Claude Code itself
+	Limits         badge.Usage // rate limits and spend as agent-badge recorded them
+	HasLimit       bool
+	Tail           []transcript.Entry // recent prompts, replies and tool calls
+	Path           string             // transcript path, "" when none
 }
 
 // Task is the current task label, falling back to the transcript title and
@@ -116,6 +117,25 @@ func (a Agent) Place() string {
 	return s
 }
 
+// mergeUsage prefers the context figures agent-badge recorded, which Claude
+// Code reports to it directly, over the transcript estimate, whose window is
+// a guess (a 1M-window model that is still under 200k reads as nearly full).
+func mergeUsage(u transcript.Usage, has bool, l badge.Usage, hasL bool) (transcript.Usage, bool, bool) {
+	if !hasL || l.Window == nil || *l.Window <= 0 {
+		return u, has, false
+	}
+	u.Window = int(*l.Window)
+	switch {
+	case l.Filled != nil:
+		u.Tokens = int(*l.Filled)
+	case l.Context != nil:
+		u.Tokens = int(*l.Context * *l.Window / 100)
+	default:
+		return u, has, false
+	}
+	return u, true, true
+}
+
 // Snapshot gathers every agent. Window lookup is skipped when Hyprland is not
 // available, and a failing lookup never fails the snapshot.
 func Snapshot() ([]Agent, error) {
@@ -147,6 +167,7 @@ func Snapshot() ([]Agent, error) {
 			a.Usage, a.HasUsage = transcript.ReadUsage(a.Path)
 			a.Tail = transcript.Tail(a.Path, 8)
 		}
+		a.Usage, a.HasUsage, a.UsageFromBadge = mergeUsage(a.Usage, a.HasUsage, a.Limits, a.HasLimit)
 		switch {
 		case !s.Alive:
 			a.Status = Gone
@@ -265,7 +286,11 @@ func Explain(a Agent) []string {
 			add("title     %q from the last ai-title record; Claude Code shows it as the terminal title", a.Title)
 		}
 		if a.HasUsage {
-			add("context   %d of %d tokens (%d%%) from the last assistant message's usage", a.Usage.Tokens, a.Usage.Window, a.Usage.Percent())
+			src := "from the last assistant message's usage (window guessed)"
+			if a.UsageFromBadge {
+				src = "as agent-badge recorded them from Claude Code"
+			}
+			add("context   %d of %d tokens (%d%%) %s", a.Usage.Tokens, a.Usage.Window, a.Usage.Percent(), src)
 		}
 	} else {
 		add("transcript none found under %s", transcript.ProjectsDir())
