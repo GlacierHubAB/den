@@ -670,31 +670,50 @@ func (m Model) detailPane(w, h int) string {
 	if len(a.Tail) > 0 {
 		b.WriteString("\n")
 		line(s.muted.Render("recent"))
-		// Each entry wraps in full under a hanging indent; the pane scrolls.
-		entry := func(prefix string, pstyle, tstyle lipgloss.Style, text string) {
+		// Newest first. Each entry wraps in full under a hanging indent, with
+		// light markdown for replies and code styling for commands.
+		entry := func(prefix string, pstyle lipgloss.Style, text string, render func(string, bool) (string, bool)) {
 			indent := strings.Repeat(" ", ansi.StringWidth(prefix))
 			width := max(12, w-4-ansi.StringWidth(prefix))
 			first := true
+			inFence := false
 			for _, raw := range strings.Split(text, "\n") {
-				for _, l := range strings.Split(ansi.Wrap(raw, width, ""), "\n") {
+				var out string
+				out, inFence = render(raw, inFence)
+				if out == "" && strings.TrimSpace(raw) != "" {
+					continue // a fence marker
+				}
+				for _, l := range strings.Split(ansi.Wrap(out, width, ""), "\n") {
 					if first {
-						line(pstyle.Render(prefix) + tstyle.Render(l))
+						line(pstyle.Render(prefix) + l)
 						first = false
 						continue
 					}
-					line(indent + tstyle.Render(l))
+					line(indent + l)
 				}
 			}
 		}
-		for _, e := range a.Tail {
+		md := func(l string, f bool) (string, bool) { return m.mdLine(l, f, w-6) }
+		for i := len(a.Tail) - 1; i >= 0; i-- {
+			e := a.Tail[i]
 			switch e.Kind {
 			case "you":
-				entry("you › ", s.muted, s.dim, e.Text)
+				entry("you › ", s.muted, e.Text, func(l string, f bool) (string, bool) { return s.dim.Render(l), f })
 			case "tool":
 				name, rest, _ := strings.Cut(e.Text, " ")
-				entry("● "+name+" ", s.ok, s.dim, rest)
+				n := 0
+				entry("● "+name+" ", s.ok, rest, func(l string, f bool) (string, bool) {
+					n++
+					if n == 1 {
+						return s.fg.Render(l), f // the description
+					}
+					return s.code.Render(l), f // the command or path
+				})
 			default:
-				entry("", s.fg, s.fg, e.Text)
+				entry("", s.fg, e.Text, md)
+			}
+			if i > 0 {
+				b.WriteString("\n")
 			}
 		}
 	}

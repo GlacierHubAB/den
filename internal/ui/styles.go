@@ -14,7 +14,7 @@ type styles struct {
 	brand, sel, section                            lipgloss.Style
 	border, borderFocus, paneTitle, paneTitleFocus lipgloss.Style
 	tabOn, tabOff, badgeN, badgeNew                lipgloss.Style
-	key, keyLabel, keycap                          lipgloss.Style
+	key, keyLabel, keycap, code                    lipgloss.Style
 }
 
 // chip is the role badge in the agent's own colour.
@@ -45,6 +45,7 @@ func newStyles(p theme.Palette) styles {
 	s.badgeNew = lipgloss.NewStyle().Foreground(c(p.Bg)).Background(c(p.Fg)).Bold(true).Padding(0, 1)
 	s.key = lipgloss.NewStyle().Foreground(c(p.Fg))
 	s.keyLabel = lipgloss.NewStyle().Foreground(c(p.FgDim))
+	s.code = lipgloss.NewStyle().Foreground(c(p.Fg)).Background(c(p.Surface2()))
 	s.keycap = lipgloss.NewStyle().Foreground(c(p.Fg)).Background(c(p.Sel)).Padding(0, 1)
 	return s
 }
