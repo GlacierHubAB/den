@@ -25,6 +25,9 @@ type Palette struct {
 	// is the cheek colour. Both mirror the badge so the faces match.
 	Bodies []string
 	Blush  string
+	// Code is the colour for inline code and commands, the way Claude Code
+	// sets code apart by colour rather than background.
+	Code string
 }
 
 // Deepharness is the fallback palette.
@@ -34,6 +37,7 @@ var Deepharness = Palette{
 	Bright: "#f8f8f8",
 	Ok:     "#66cb8e", Attn: "#e8b84a", Err: "#ea9e9e",
 	Bodies: fillHues(nil, "#000000"), Blush: "#f4c4c4",
+	Code:   "#cccccc",
 }
 
 // Surface2 is the raised surface used for inactive borders and tracks.
@@ -207,5 +211,6 @@ func Load() Palette {
 	}
 	p.Bodies = fillHues(bodies, p.Bg)
 	set(&p.Blush, "bright_red", "red")
+	set(&p.Code, "cyan", "blue", "bright_cyan", "bright_blue", "accent")
 	return p
 }

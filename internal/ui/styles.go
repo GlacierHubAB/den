@@ -45,7 +45,7 @@ func newStyles(p theme.Palette) styles {
 	s.badgeNew = lipgloss.NewStyle().Foreground(c(p.Bg)).Background(c(p.Fg)).Bold(true).Padding(0, 1)
 	s.key = lipgloss.NewStyle().Foreground(c(p.Fg))
 	s.keyLabel = lipgloss.NewStyle().Foreground(c(p.FgDim))
-	s.code = lipgloss.NewStyle().Foreground(c(p.Fg)).Background(c(p.Surface2()))
+	s.code = lipgloss.NewStyle().Foreground(c(p.Code))
 	s.keycap = lipgloss.NewStyle().Foreground(c(p.Fg)).Background(c(p.Sel)).Padding(0, 1)
 	return s
 }

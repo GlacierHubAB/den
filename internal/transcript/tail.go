@@ -146,8 +146,9 @@ func Tail(path string, n int) []Entry {
 	return out
 }
 
-// excerptLines is how much of a prompt or reply the tail keeps.
-const excerptLines = 8
+// excerptLines is how much of a prompt or reply the tail keeps. The pane
+// scrolls, so this is generous; it only guards against pathological turns.
+const excerptLines = 40
 
 func cleanPrompt(s string) string {
 	s = strings.TrimSpace(s)
@@ -157,21 +158,26 @@ func cleanPrompt(s string) string {
 	return excerpt(s, excerptLines)
 }
 
-// excerpt keeps the first n non-empty lines of s, marking a cut with an
-// ellipsis, so the detail pane can show the gist of a turn rather than
-// only its opening line.
+// excerpt keeps the first n non-empty lines of s and the paragraph breaks
+// between them (runs of blank lines collapse to one), marking a cut with an
+// ellipsis.
 func excerpt(s string, n int) string {
 	var out []string
+	kept := 0
 	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
 		l = strings.TrimRight(l, " \t")
 		if strings.TrimSpace(l) == "" {
+			if len(out) > 0 && out[len(out)-1] != "" {
+				out = append(out, "")
+			}
 			continue
 		}
-		if len(out) == n {
+		if kept == n {
 			out = append(out, "…")
 			break
 		}
 		out = append(out, l)
+		kept++
 	}
 	return strings.Join(out, "\n")
 }

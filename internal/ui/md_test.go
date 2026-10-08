@@ -36,7 +36,7 @@ func TestMarkdownLines(t *testing.T) {
 		t.Errorf("codeBlock = %q", block)
 	}
 	for _, l := range block {
-		if w := ansi.StringWidth(l); w != 30 {
+		if w := ansi.StringWidth(l); w > 30 {
 			t.Errorf("block line width %d: %q", w, ansi.Strip(l))
 		}
 	}

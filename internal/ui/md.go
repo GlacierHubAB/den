@@ -36,19 +36,15 @@ func (m Model) mdLine(line string, inFence bool, width int) (out string, code, f
 	return m.inline(line, s.fg), false, false
 }
 
-// codeBlock draws lines as a block the way Claude Code shows a call: a bar
-// down the left and the code on the raised surface, filled to width.
+// codeBlock draws lines as a block: a bar down the left and the code in the
+// code colour, wrapped to width.
 func (m Model) codeBlock(text string, width int) []string {
 	s := m.st
 	inner := max(8, width-2)
 	var out []string
 	for _, raw := range strings.Split(text, "\n") {
 		for _, l := range strings.Split(ansi.Wrap(raw, inner, ""), "\n") {
-			pad := inner - ansi.StringWidth(l)
-			if pad < 0 {
-				pad = 0
-			}
-			out = append(out, s.muted.Render("┃ ")+s.code.Render(l+strings.Repeat(" ", pad)))
+			out = append(out, s.muted.Render("┃ ")+s.code.Render(l))
 		}
 	}
 	return out

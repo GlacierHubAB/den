@@ -42,8 +42,8 @@ func TestUsageAndTail(t *testing.T) {
 }
 
 func TestExcerptKeepsLinesAndMarksCut(t *testing.T) {
-	in := "one\n\n  two  \nthree\nfour"
-	if got := excerpt(in, 3); got != "one\n  two\nthree\n…" {
+	in := "one\n\n\n  two  \nthree\nfour"
+	if got := excerpt(in, 3); got != "one\n\n  two\nthree\n…" {
 		t.Errorf("excerpt = %q", got)
 	}
 	if got := excerpt("   ", 3); got != "" {
