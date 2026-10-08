@@ -44,3 +44,30 @@ func TestOrchestratorTabRendersConversation(t *testing.T) {
 		t.Errorf("roster = %+v", r)
 	}
 }
+
+func TestOrchestratorStreamsAndFormats(t *testing.T) {
+	st := newStyles(theme.Deepharness)
+	m := Model{st: st, agents: sample(), store: inbox.New(), tab: tabOrch, width: 120, height: 30}
+	m.input = newInput(st)
+	m.orch.thinking = true
+	m.handleOrchEvent(orch.Event{Kind: orch.Delta, Text: "## Plan\n\nRun `go te"})
+	if m.orch.thinking {
+		t.Error("first delta should end the thinking indicator")
+	}
+	m.handleOrchEvent(orch.Event{Kind: orch.Delta, Text: "st` now."})
+	out := ansi.Strip(m.View().Content)
+	if !strings.Contains(out, "Run go test now.▍") {
+		t.Errorf("streamed text with cursor missing:\n%s", out)
+	}
+	if strings.Contains(out, "## Plan") || !strings.Contains(out, "Plan") {
+		t.Errorf("heading should render without hashes:\n%s", out)
+	}
+	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "## Plan\n\nRun `go test` now.\n\n```sh\ngo test ./...\n```"})
+	if n := len(m.orch.chat); n != 1 || m.orch.chat[0].streaming {
+		t.Errorf("final text should replace the streamed entry: %+v", m.orch.chat)
+	}
+	out = ansi.Strip(m.View().Content)
+	if strings.Contains(out, "▍") || !strings.Contains(out, "┃ go test ./...") {
+		t.Errorf("final render wrong:\n%s", out)
+	}
+}

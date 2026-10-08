@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/config"
@@ -20,10 +21,12 @@ const OrchestratorName = "den-orchestrator"
 
 // chatEntry is one row of the Orchestrator tab.
 type chatEntry struct {
-	role string // "you", "orchestrator", "fan", "note"
-	text string
+	role      string // "you", "orchestrator", "fan", "note"
+	text      string
+	streaming bool // text is still arriving
 	// fan-out fields
-	to        string
+	to        string // the agent's critter name
+	sid       string // the agent's session id, for its colour
 	status    string
 	toolUseID string
 	at        time.Time
@@ -156,13 +159,27 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	switch ev.Kind {
 	case orch.Started:
 		m.orch.status = "ready · " + prettyModel(ev.Model)
+	case orch.Delta:
+		// Streamed text grows the entry in place; the full block replaces it.
+		m.orch.thinking = false
+		if n := len(m.orch.chat); n > 0 && m.orch.chat[n-1].streaming {
+			m.orch.chat[n-1].text += ev.Text
+		} else {
+			m.orch.chat = append(m.orch.chat, chatEntry{role: "orchestrator", text: ev.Text, streaming: true, at: now})
+		}
 	case orch.Text:
-		m.orch.chat = append(m.orch.chat, chatEntry{role: "orchestrator", text: strings.TrimSpace(ev.Text), at: now})
+		if n := len(m.orch.chat); n > 0 && m.orch.chat[n-1].streaming {
+			m.orch.chat[n-1].text = strings.TrimSpace(ev.Text)
+			m.orch.chat[n-1].streaming = false
+		} else {
+			m.orch.chat = append(m.orch.chat, chatEntry{role: "orchestrator", text: strings.TrimSpace(ev.Text), at: now})
+		}
 	case orch.ToolUse:
 		if ev.Tool == "SendMessage" {
 			in, ok := orch.ParseSendMessage(ev.Input)
 			if ok {
-				m.orch.chat = append(m.orch.chat, chatEntry{role: "fan", to: m.critterForPeer(in.To), text: firstLineOf(in.Message), status: "sending", toolUseID: ev.ToolUseID, at: now})
+				name, sid := m.agentForPeer(in.To)
+				m.orch.chat = append(m.orch.chat, chatEntry{role: "fan", to: name, sid: sid, text: firstLineOf(in.Message), status: "sending", toolUseID: ev.ToolUseID, at: now})
 			}
 		} else {
 			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "· " + ev.Tool, toolUseID: ev.ToolUseID, at: now})
@@ -207,16 +224,23 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 }
 
 func (m Model) critterForPeer(peer string) string {
+	name, _ := m.agentForPeer(peer)
+	return name
+}
+
+// agentForPeer resolves a peer name to the agent's critter name and session
+// id; an unknown peer keeps its name and has no id.
+func (m Model) agentForPeer(peer string) (name, sid string) {
 	p := strings.TrimPrefix(peer, "@")
 	if i := strings.Index(p, " ["); i > 0 {
 		p = p[:i]
 	}
 	for _, a := range m.agents {
 		if a.Session.Name == p {
-			return a.Name
+			return a.Name, a.Session.SessionID
 		}
 	}
-	return peer
+	return peer, ""
 }
 
 func firstLineOf(s string) string {
@@ -243,32 +267,44 @@ func (m Model) orchPane(w, h int) string {
 	if bodyW < 20 {
 		label, bodyW = 0, w-2
 	}
+	// The orchestrator's code highlights carry its own colour, the way an
+	// agent's do in the detail pane.
+	orchColor := s.pal.Bright
+	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
+		orchColor = m.colorFor(m.orch.proc.SessionID)
+	}
+	mo := m
+	mo.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor))
 	for _, e := range m.orch.chat {
 		var from string
 		var body []string
-		var style = s.fg
 		switch e.role {
 		case "you":
 			from = s.dim.Render("you ›")
-			style = s.fg
-			body = strings.Split(ansi.Wrap(e.text, bodyW, ""), "\n")
+			body = m.plainLines(e.text, bodyW, s.fg)
 		case "orchestrator":
-			from = s.bright.Render("orchestrator ›")
-			style = s.fg
-			body = strings.Split(ansi.Wrap(e.text, bodyW, ""), "\n")
+			from = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor)).Render("orchestrator ›")
+			body = mo.markdownLines(e.text, bodyW)
+			if e.streaming {
+				if len(body) == 0 {
+					body = []string{""}
+				}
+				body[len(body)-1] += s.bright.Render("▍")
+			}
 		case "fan":
-			from = ""
 			st := s.ok
 			if strings.HasPrefix(e.status, "failed") {
 				st = s.err
 			} else if e.status == "sending" {
 				st = s.attn
 			}
-			body = []string{s.dim.Render("→ ") + s.fg.Render(e.to) + s.dim.Render(" · "+ansi.Truncate(e.text, max(10, bodyW-len(e.to)-len(e.status)-8), "…")+" · ") + st.Render(e.status)}
+			name := s.fg.Render(e.to)
+			if e.sid != "" {
+				name = lipgloss.NewStyle().Foreground(lipgloss.Color(m.colorFor(e.sid))).Bold(true).Render(e.to)
+			}
+			body = []string{s.dim.Render("→ ") + name + s.dim.Render(" · "+ansi.Truncate(e.text, max(10, bodyW-ansi.StringWidth(e.to)-len(e.status)-8), "…")+" · ") + st.Render(e.status)}
 		default:
-			from = ""
-			style = s.muted
-			body = strings.Split(ansi.Wrap(e.text, bodyW, ""), "\n")
+			body = m.plainLines(e.text, bodyW, s.muted)
 		}
 		for i, l := range body {
 			prefix := strings.Repeat(" ", label+1)
@@ -279,7 +315,7 @@ func (m Model) orchPane(w, h int) string {
 				}
 				prefix = strings.Repeat(" ", pad) + from + " "
 			}
-			lines = append(lines, prefix+style.Render(l))
+			lines = append(lines, prefix+l)
 		}
 		lines = append(lines, "")
 	}

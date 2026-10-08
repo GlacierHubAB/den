@@ -717,48 +717,18 @@ func (m Model) detailPane(w, h int) string {
 		prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
 			indent := strings.Repeat(" ", ansi.StringWidth(prefix))
 			width := max(12, textW-ansi.StringWidth(prefix))
-			first := true
-			inFence := false
-			var fenced []string
-			flush := func() {
-				for _, l := range m.codeBlock(strings.Join(fenced, "\n"), width) {
-					line(indent + l)
-				}
-				fenced = nil
+			var body []string
+			if plain {
+				body = m.plainLines(text, width, s.dim)
+			} else {
+				body = m.markdownLines(text, width)
 			}
-			put := func(l string) {
-				if first {
+			for i, l := range body {
+				if i == 0 {
 					line(pstyle.Render(prefix) + l)
-					first = false
-					return
-				}
-				line(indent + l)
-			}
-			for _, raw := range strings.Split(text, "\n") {
-				if plain {
-					for _, l := range strings.Split(ansi.Wrap(raw, width, ""), "\n") {
-						put(s.dim.Render(l))
-					}
 					continue
 				}
-				out, code, fence := m.mdLine(raw, inFence, width)
-				if fence != inFence && len(fenced) > 0 {
-					flush()
-				}
-				inFence = fence
-				switch {
-				case code:
-					fenced = append(fenced, out)
-				case out == "" && strings.TrimSpace(raw) != "":
-					// a fence marker: nothing to draw
-				default:
-					for _, l := range strings.Split(ansi.Wrap(out, width, ""), "\n") {
-						put(l)
-					}
-				}
-			}
-			if len(fenced) > 0 {
-				flush()
+				line(indent + l)
 			}
 		}
 		for i := len(a.Tail) - 1; i >= 0; i-- {

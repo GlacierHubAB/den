@@ -43,6 +43,7 @@ const (
 	Result                 // the turn finished
 	Error                  // something went wrong
 	Exited                 // the process ended
+	Delta                  // a piece of assistant text, streamed as it is generated
 )
 
 // SystemPrompt is appended to Claude Code's default prompt.
@@ -97,6 +98,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"-p",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
+		"--include-partial-messages",
 		"--verbose",
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
@@ -222,6 +224,14 @@ type line struct {
 	IsError   bool    `json:"is_error"`
 	CostUSD   float64 `json:"total_cost_usd"`
 	ErrorText string  `json:"error"`
+	// Event is the raw API stream event when Type is "stream_event".
+	Event struct {
+		Type  string `json:"type"`
+		Delta struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"delta"`
+	} `json:"event"`
 }
 
 type block struct {
@@ -252,6 +262,11 @@ func (o *Orchestrator) readStdout(r io.Reader) {
 			if l.Subtype == "init" {
 				o.SessionID, o.Model = l.SessionID, l.Model
 				o.emit(Event{Kind: Started, SessionID: l.SessionID, Model: l.Model})
+			}
+		case "stream_event":
+			// Text arrives in pieces before the whole assistant message does.
+			if l.Event.Type == "content_block_delta" && l.Event.Delta.Type == "text_delta" && l.Event.Delta.Text != "" {
+				o.emit(Event{Kind: Delta, Text: l.Event.Delta.Text})
 			}
 		case "assistant":
 			for _, b := range blocks(l.Message.Content) {

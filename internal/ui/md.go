@@ -153,3 +153,46 @@ func (m Model) diffLines(hunks []transcript.Hunk, width int) []string {
 
 // maxDiffLines caps one file's diff in the pane; the terminal has the rest.
 const maxDiffLines = 30
+
+// plainLines wraps text to width in one style, keeping its line breaks.
+func (m Model) plainLines(text string, width int, style lipgloss.Style) []string {
+	var out []string
+	for _, raw := range strings.Split(text, "\n") {
+		for _, l := range strings.Split(ansi.Wrap(raw, width, ""), "\n") {
+			out = append(out, style.Render(l))
+		}
+	}
+	return out
+}
+
+// markdownLines renders a reply with the light markdown treatment: styled
+// headings, quotes, bullets, inline code and bold, and fenced code as a
+// block, wrapped to width.
+func (m Model) markdownLines(text string, width int) []string {
+	var out []string
+	inFence := false
+	var fenced []string
+	flush := func() {
+		out = append(out, m.codeBlock(strings.Join(fenced, "\n"), width)...)
+		fenced = nil
+	}
+	for _, raw := range strings.Split(text, "\n") {
+		o, code, fence := m.mdLine(raw, inFence, width)
+		if fence != inFence && len(fenced) > 0 {
+			flush()
+		}
+		inFence = fence
+		switch {
+		case code:
+			fenced = append(fenced, o)
+		case o == "" && strings.TrimSpace(raw) != "":
+			// a fence marker: nothing to draw
+		default:
+			out = append(out, strings.Split(ansi.Wrap(o, width, ""), "\n")...)
+		}
+	}
+	if len(fenced) > 0 {
+		flush()
+	}
+	return out
+}
