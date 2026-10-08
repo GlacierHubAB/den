@@ -344,23 +344,27 @@ func (m Model) agentsPane(w, h int) string {
 		}
 		l2 := marker + fg.Render("   ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-5, "…"))
 
-		meta := a.Where()
+		// Third line: age · harness · model · ctx, all inline. Where it runs
+		// lives in the details pane.
+		var meta []string
 		if a.Status != fleet.Gone {
-			meta += "  " + humanAge(a.Since())
+			meta = append(meta, humanAge(a.Since()))
 		}
-		l3 := marker + fg.Render("   ") + dim.Render(ansi.Truncate(meta, w-5, "…"))
+		meta = append(meta, "Claude Code")
+		if pm := prettyModel(a.Model); pm != "" {
+			meta = append(meta, pm)
+		}
+		l3 := marker + fg.Render("   ") + dim.Render(strings.Join(meta, " · "))
 		if a.HasUsage {
-			ctx := fmt.Sprintf("ctx %d%%", a.Usage.Percent())
 			cs := dim
 			if a.Usage.Percent() >= 90 {
 				cs = err
 			} else if a.Usage.Percent() >= 75 {
 				cs = attn
 			}
-			if room := w - 4 - ansi.StringWidth(meta) - len(ctx) - 2; room >= 0 {
-				l3 = marker + fg.Render("   ") + dim.Render(meta) + fg.Render(strings.Repeat(" ", room+2)) + cs.Render(ctx)
-			}
+			l3 += dim.Render(" · ") + cs.Render(fmt.Sprintf("ctx %d%%", a.Usage.Percent()))
 		}
+		l3 = ansi.Truncate(l3, w, "…")
 		for _, r := range []string{l1, l2, l3} {
 			b.WriteString(fill(r, w, fg) + "\n")
 		}
