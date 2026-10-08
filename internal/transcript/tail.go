@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // Usage is the context the last assistant turn consumed.
@@ -66,6 +67,7 @@ func windowFor(model string, tokens int) int {
 
 // Entry is one line of recent activity.
 type Entry struct {
+	At      time.Time    // when it happened
 	Kind    string       // "you", "text", "tool"
 	Text    string       // the prompt, the reply, or a tool call's description
 	Tool    string       // tool name, for Kind "tool"
@@ -172,15 +174,22 @@ func (r toolResult) changes(tool string) []FileChange {
 }
 
 func Tail(path string, n int) []Entry {
+	return Turn(path, time.Time{}, time.Time{}, n)
+}
+
+// Turn returns the newest n entries whose timestamps fall between from and
+// to; a zero bound is open. It is how a dispatch card shows one agent turn.
+func Turn(path string, from, to time.Time, n int) []Entry {
 	var rev []Entry
 	// Results follow their calls in the file, so scanning backwards we meet
 	// each result first and attach it when its call turns up.
 	results := map[string]toolResult{}
-	scanBackwards(path, 4<<20, func(line []byte) bool {
+	scanBackwards(path, 8<<20, func(line []byte) bool {
 		var rec struct {
-			Type    string `json:"type"`
-			IsMeta  bool   `json:"isMeta"`
-			Message struct {
+			Type      string `json:"type"`
+			IsMeta    bool   `json:"isMeta"`
+			Timestamp string `json:"timestamp"`
+			Message   struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
 			ToolUseResult json.RawMessage `json:"toolUseResult"`
@@ -188,12 +197,20 @@ func Tail(path string, n int) []Entry {
 		if json.Unmarshal(line, &rec) != nil || rec.IsMeta {
 			return false
 		}
+		at, _ := time.Parse(time.RFC3339Nano, rec.Timestamp)
+		if !to.IsZero() && !at.IsZero() && at.After(to) {
+			return false // newer than the window: keep scanning back
+		}
+		if !from.IsZero() && !at.IsZero() && at.Before(from) {
+			return true // older than the window: done
+		}
+		stamp := func(e Entry) Entry { e.At = at; return e }
 		switch rec.Type {
 		case "user":
 			var s string
 			if json.Unmarshal(rec.Message.Content, &s) == nil {
 				if t := cleanPrompt(s); t != "" {
-					rev = append(rev, Entry{Kind: "you", Text: t})
+					rev = append(rev, stamp(Entry{Kind: "you", Text: t}))
 				}
 				break
 			}
@@ -207,7 +224,7 @@ func Tail(path string, n int) []Entry {
 					switch b.Type {
 					case "text":
 						if t := cleanPrompt(b.Text); t != "" {
-							rev = append(rev, Entry{Kind: "you", Text: t})
+							rev = append(rev, stamp(Entry{Kind: "you", Text: t}))
 						}
 					case "tool_result":
 						var r toolResult
@@ -234,11 +251,11 @@ func Tail(path string, n int) []Entry {
 				switch b.Type {
 				case "text":
 					if t := excerpt(b.Text, excerptLines); t != "" {
-						rev = append(rev, Entry{Kind: "text", Text: t})
+						rev = append(rev, stamp(Entry{Kind: "text", Text: t}))
 					}
 				case "tool_use":
-					desc, code := toolBrief(b.Input)
-					e := Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code}
+					desc, code := ToolBrief(b.Input)
+					e := stamp(Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code})
 					if r, ok := results[b.ID]; ok {
 						e.Changes = r.changes(b.Name)
 						if out := strings.TrimSpace(r.Stdout); out != "" {
@@ -307,10 +324,10 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// toolBrief returns what a tool call was for (its description, when the
+// ToolBrief returns what a tool call was for (its description, when the
 // model gave one) and the call itself: the command, path or other main
-// argument, up to six lines.
-func toolBrief(raw json.RawMessage) (desc, code string) {
+// argument, up to six lines. Hook payloads carry the same input shape.
+func ToolBrief(raw json.RawMessage) (desc, code string) {
 	var in map[string]any
 	if json.Unmarshal(raw, &in) != nil {
 		return "", ""

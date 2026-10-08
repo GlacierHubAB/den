@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 func (m Model) View() tea.View {
@@ -35,10 +36,7 @@ func (m Model) View() tea.View {
 	// left, so a growing command line pushes them up rather than over them.
 	popup := m.completionRows(w)
 	prompt := m.prompt(w)
-	paneH := h - len(header) - len(prompt) - 1 - len(popup)
-	if paneH < 6 {
-		paneH = 6
-	}
+	_, paneH := m.paneArea()
 	out.WriteString(m.panes(w, paneH) + "\n")
 	for _, r := range popup {
 		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
@@ -50,6 +48,11 @@ func (m Model) View() tea.View {
 
 	v := tea.NewView(out.String())
 	v.AltScreen = true
+	if m.tab == tabReview {
+		// Clicks and drags pick lines in the diff. Only here, so the other
+		// views keep the terminal's own text selection.
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	// Ask for disambiguated keys so Shift+Enter is not plain Enter.
 	v.KeyboardEnhancements = tea.KeyboardEnhancements{ReportAlternateKeys: true}
 	return v
@@ -214,7 +217,7 @@ func (m Model) tabs(w int) string {
 		}
 		inboxCount = " " + badge.Render(fmt.Sprint(n))
 	}
-	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus
+	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus + "   " + style(tabReview).Render("Review")
 	return justify(left, s.keycap.Render("Tab ⇥")+"  ", w)
 }
 
@@ -224,6 +227,9 @@ func (m Model) panes(w, h int) string {
 	}
 	if m.tab == tabOrch {
 		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
+	}
+	if m.tab == tabReview {
+		return m.reviewPanes(w, h)
 	}
 	// Fleet: agents on the left, the selected agent on the right.
 	if w < 72 {
@@ -707,84 +713,8 @@ func (m Model) detailPane(w, h int) string {
 	if len(a.Tail) > 0 {
 		b.WriteString("\n")
 		line(s.muted.Render("recent"))
-		// Newest first. Prompts and replies wrap under a hanging indent with
-		// light markdown; tool calls read like Claude Code's own log: the
-		// tool and what it was for, then the call itself as a code block.
-		// Code and commands take the agent's own colour, so the pane reads
-		// as that agent's.
-		m := m.inAgentColor(a)
-		textW := max(12, w-4)
-		prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
-			indent := strings.Repeat(" ", ansi.StringWidth(prefix))
-			width := max(12, textW-ansi.StringWidth(prefix))
-			var body []string
-			if plain {
-				body = m.plainLines(text, width, s.dim)
-			} else {
-				body = m.markdownLines(text, width)
-			}
-			for i, l := range body {
-				if i == 0 {
-					line(pstyle.Render(prefix) + l)
-					continue
-				}
-				line(indent + l)
-			}
-		}
-		for i := len(a.Tail) - 1; i >= 0; i-- {
-			e := a.Tail[i]
-			switch e.Kind {
-			case "you":
-				prose("you › ", s.muted, e.Text, true)
-			case "tool":
-				head := s.ok.Render("● ") + s.fg.Bold(true).Render(e.Tool)
-				if e.Text != "" {
-					head += "  " + s.dim.Render(ansi.Truncate(e.Text, max(8, textW-ansi.StringWidth(e.Tool)-4), "…"))
-				}
-				line(head)
-				if e.Code != "" && e.Tool != "Edit" && e.Tool != "Write" && e.Tool != "MultiEdit" {
-					for _, l := range m.codeBlockN(e.Code, textW-2, 3) {
-						line("  " + l)
-					}
-				}
-				// Changed files read like Claude Code's log: what changed, then
-				// the hunks with line numbers and coloured changed lines.
-				for _, c := range e.Changes {
-					added, removed := c.Counts()
-					what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
-					switch {
-					case c.Deleted:
-						what = "Deleted " + shortPath(c.Path, a.Session.CWD)
-					case c.Created:
-						what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
-					}
-					line("  " + s.muted.Render("⎿ ") + s.dim.Render(what))
-					if c.Deleted {
-						continue
-					}
-					for _, l := range m.diffLines(c.Hunks, textW-4) {
-						line("    " + l)
-					}
-				}
-				if e.Output != "" && len(e.Changes) == 0 {
-					first := true
-					for _, raw := range strings.Split(e.Output, "\n") {
-						for _, l := range strings.Split(ansi.Wrap(raw, max(8, textW-4), ""), "\n") {
-							if first {
-								line("  " + s.muted.Render("⎿ ") + s.dim.Render(l))
-								first = false
-								continue
-							}
-							line("    " + s.dim.Render(l))
-						}
-					}
-				}
-			default:
-				prose("", s.fg, e.Text, false)
-			}
-			if i > 0 {
-				b.WriteString("\n")
-			}
+		for _, l := range m.activityLines(a.Tail, a, w-4, true) {
+			line(l)
 		}
 	}
 	b.WriteString("\n")
@@ -848,6 +778,13 @@ func (m Model) prompt(w int) []string {
 			rows = append(rows, " "+strings.Join(chips, "   "))
 		}
 	}
+	if label := m.selectionLabel(); label != "" {
+		verb := "comment on "
+		if m.rev.editing != "" {
+			verb = "editing the comment on "
+		}
+		rows = append(rows, " "+s.attn.Render("✎ ")+s.dim.Render(verb)+s.fg.Render(label)+s.muted.Render(" · type, then Enter · @Name and /commands still work"))
+	}
 	for _, l := range strings.Split(m.input.View(), "\n") {
 		rows = append(rows, " "+l)
 	}
@@ -859,11 +796,13 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch /review", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+	case m.tab == tabReview:
+		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
 		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"^V", "paste image"}, {"↑ ↓", "scroll"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.focus == paneDetail:
@@ -921,4 +860,91 @@ func shortPath(path, cwd string) string {
 func (m Model) inAgentColor(a fleet.Agent) Model {
 	m.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(m.agentColor(a)))
 	return m
+}
+
+// activityLines renders transcript entries the way the detail pane shows
+// them: prompts and replies under a hanging indent with light markdown,
+// tool calls as the tool and what it was for with the call as a code block,
+// diffs and output underneath. Code takes the agent's colour. Entries are
+// separated by a blank line; newestFirst reverses the order.
+func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, newestFirst bool) []string {
+	s := m.st
+	m = m.inAgentColor(a)
+	textW = max(12, textW)
+	var out []string
+	prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
+		indent := strings.Repeat(" ", ansi.StringWidth(prefix))
+		width := max(12, textW-ansi.StringWidth(prefix))
+		var body []string
+		if plain {
+			body = m.plainLines(text, width, s.dim)
+		} else {
+			body = m.markdownLines(text, width)
+		}
+		for i, l := range body {
+			if i == 0 {
+				out = append(out, pstyle.Render(prefix)+l)
+				continue
+			}
+			out = append(out, indent+l)
+		}
+	}
+	for n := range tail {
+		i := n
+		if newestFirst {
+			i = len(tail) - 1 - n
+		}
+		e := tail[i]
+		switch e.Kind {
+		case "you":
+			prose("you › ", s.muted, e.Text, true)
+		case "tool":
+			head := s.ok.Render("● ") + s.fg.Bold(true).Render(e.Tool)
+			if e.Text != "" {
+				head += "  " + s.dim.Render(ansi.Truncate(e.Text, max(8, textW-ansi.StringWidth(e.Tool)-4), "…"))
+			}
+			out = append(out, head)
+			if e.Code != "" && e.Tool != "Edit" && e.Tool != "Write" && e.Tool != "MultiEdit" {
+				for _, l := range m.codeBlockN(e.Code, textW-2, 3) {
+					out = append(out, "  "+l)
+				}
+			}
+			for _, c := range e.Changes {
+				added, removed := c.Counts()
+				what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
+				switch {
+				case c.Deleted:
+					what = "Deleted " + shortPath(c.Path, a.Session.CWD)
+				case c.Created:
+					what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
+				}
+				out = append(out, "  "+s.muted.Render("⎿ ")+s.dim.Render(what))
+				if c.Deleted {
+					continue
+				}
+				for _, l := range m.diffLines(c.Hunks, textW-4) {
+					out = append(out, "    "+l)
+				}
+			}
+			if e.Output != "" && len(e.Changes) == 0 {
+				first := true
+				for _, raw := range strings.Split(e.Output, "\n") {
+					for _, l := range strings.Split(ansi.Wrap(raw, max(8, textW-4), ""), "\n") {
+						if first {
+							out = append(out, "  "+s.muted.Render("⎿ ")+s.dim.Render(l))
+							first = false
+							continue
+						}
+						out = append(out, "    "+s.dim.Render(l))
+					}
+				}
+			}
+		default:
+			prose("", s.fg, e.Text, false)
+		}
+		if n < len(tail)-1 {
+			out = append(out, "")
+		}
+	}
+	return out
 }

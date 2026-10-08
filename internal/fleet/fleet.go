@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -346,4 +347,74 @@ func Find(agents []Agent, query string) (Agent, bool) {
 		}
 	}
 	return Agent{}, false
+}
+
+// TouchedFolders lists where the agent's recent file changes landed, as
+// project folders (two levels under home, or the parent otherwise), most
+// recent first, so a reader can tell what an agent sitting in ~ works on.
+func TouchedFolders(a Agent) []string {
+	home, _ := os.UserHomeDir()
+	seen := map[string]bool{}
+	var out []string
+	for i := len(a.Tail) - 1; i >= 0; i-- {
+		for _, c := range a.Tail[i].Changes {
+			dir := filepath.Dir(c.Path)
+			if home != "" && strings.HasPrefix(dir, home+"/") {
+				parts := strings.Split(strings.TrimPrefix(dir, home+"/"), "/")
+				if len(parts) > 2 {
+					parts = parts[:2]
+				}
+				dir = "~/" + strings.Join(parts, "/")
+			}
+			if !seen[dir] {
+				seen[dir] = true
+				out = append(out, dir)
+			}
+		}
+		if len(out) == 4 {
+			break
+		}
+	}
+	return out
+}
+
+// RecentActivity is the agent's latest words and latest tool call, one line
+// each, newest first.
+func RecentActivity(a Agent) []string {
+	var out []string
+	gotText, gotTool := false, false
+	for i := len(a.Tail) - 1; i >= 0 && !(gotText && gotTool); i-- {
+		e := a.Tail[i]
+		switch {
+		case e.Kind == "text" && !gotText:
+			out = append(out, "said: "+clip(firstLine(e.Text), 140))
+			gotText = true
+		case e.Kind == "tool" && !gotTool:
+			call := e.Tool
+			if e.Text != "" {
+				call += " " + firstLine(e.Text)
+			} else if e.Code != "" {
+				call += " " + firstLine(e.Code)
+			}
+			out = append(out, "ran: "+clip(call, 140))
+			gotTool = true
+		}
+	}
+	return out
+}
+
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i]) + " …"
+	}
+	return s
+}
+
+func clip(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n-1]) + "…"
 }

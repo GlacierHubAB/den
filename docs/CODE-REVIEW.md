@@ -1,6 +1,6 @@
 # Code review view
 
-Design pass, 2026-10-08. Nothing here is implemented yet. Mockup: Screen 3
+Design pass, 2026-10-08. Build steps 1 to 4 are shipped: the Review tab shows each agent's work, its files and a diff with author stripes, and takes comments on lines (keyboard or mouse), saved to ~/.local/state/den/reviews.json; sending is next. Mockup: Screen 3
 and 3b in `docs/mockup/den-mockup.html`.
 
 ## Goal
