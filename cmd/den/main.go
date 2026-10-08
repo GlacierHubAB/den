@@ -7,6 +7,7 @@
 //	den explain <who>    say how Den arrived at what it shows for an agent
 //	den send <who> <msg> deliver a message to one agent's session
 //	den ask <text>       one orchestrator turn: ask about the fleet or have it relay
+//	den mcp              used by the orchestrator to open terminals and start agents; not for humans
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
 //	den events           headless: print hook events as they arrive
 //	den hook             used by Claude Code's hooks; not for humans
@@ -60,6 +61,8 @@ func main() {
 		send(os.Args[2:])
 	case "ask":
 		ask(os.Args[2:])
+	case "mcp":
+		runMCP()
 	case "hook":
 		runHook()
 	case "install-hooks":
@@ -185,7 +188,7 @@ func configCmd(args []string) {
 		state = "in use"
 	}
 	fmt.Printf("%s (%s)\n\n", path, state)
-	fmt.Printf("[orchestrator]\nmodel = %q\nname = %q\n\n", c.Orchestrator.Model, c.Orchestrator.Name)
+	fmt.Printf("[orchestrator]\nmodel = %q\nname = %q\nspawn = %v\n\n", c.Orchestrator.Model, c.Orchestrator.Name, c.Orchestrator.Spawn)
 	fmt.Printf("[inbox]\nhistory = %d\n\n", c.Inbox.History)
 	fmt.Printf("[detail]\nrecent = %d\n\n", c.Detail.Recent)
 	fmt.Printf("[hooks]\npermission_wait = %d\nlog = %v\n", c.Hooks.PermissionWait, c.Hooks.Log)

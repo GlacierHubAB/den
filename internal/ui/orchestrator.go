@@ -56,7 +56,7 @@ func startOrchestrator(cfg config.Config) tea.Cmd {
 		if name == "" {
 			name = OrchestratorName
 		}
-		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model})
+		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn})
 		return orchStartedMsg{o: o, err: err}
 	}
 }
@@ -182,18 +182,24 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 				m.orch.chat = append(m.orch.chat, chatEntry{role: "fan", to: name, sid: sid, text: firstLineOf(in.Message), status: "sending", toolUseID: ev.ToolUseID, at: now})
 			}
 		} else {
-			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "· " + ev.Tool, toolUseID: ev.ToolUseID, at: now})
+			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
 		}
 	case orch.ToolResult:
 		for i := range m.orch.chat {
 			e := &m.orch.chat[i]
-			if e.toolUseID == ev.ToolUseID && e.role == "fan" {
-				switch {
-				case ev.IsError, strings.HasPrefix(ev.Text, "Not sent"):
-					e.status = "failed: " + firstLineOf(ev.Text)
-				default:
-					e.status = "delivered"
-				}
+			if e.toolUseID != ev.ToolUseID {
+				continue
+			}
+			switch {
+			case e.role == "fan" && (ev.IsError || strings.HasPrefix(ev.Text, "Not sent")):
+				e.status = "failed: " + firstLineOf(ev.Text)
+			case e.role == "fan":
+				e.status = "delivered"
+			case e.role == "note" && ev.IsError:
+				e.status = "failed: " + firstLineOf(ev.Text)
+			case e.role == "note" && strings.HasPrefix(e.text, "▶"):
+				// A spawn's answer says what started and where; it earns a line.
+				e.status = firstLineOf(ev.Text)
 			}
 		}
 	case orch.Result:
@@ -304,7 +310,16 @@ func (m Model) orchPane(w, h int) string {
 			}
 			body = []string{s.dim.Render("→ ") + name + s.dim.Render(" · "+ansi.Truncate(e.text, max(10, bodyW-ansi.StringWidth(e.to)-len(e.status)-8), "…")+" · ") + st.Render(e.status)}
 		default:
-			body = m.plainLines(e.text, bodyW, s.muted)
+			text := e.text
+			if e.status != "" {
+				st := s.muted
+				if strings.HasPrefix(e.status, "failed") {
+					st = s.err
+				}
+				body = append(m.plainLines(text, bodyW, s.muted), m.plainLines(e.status, bodyW, st)...)
+				break
+			}
+			body = m.plainLines(text, bodyW, s.muted)
 		}
 		for i, l := range body {
 			prefix := strings.Repeat(" ", label+1)

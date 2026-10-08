@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -30,7 +31,8 @@ func ask(args []string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	o, err := orch.Start(ctx, orch.Options{Name: "den-orchestrator"})
+	cfg := config.Load()
+	o, err := orch.Start(ctx, orch.Options{Name: cfg.Orchestrator.Name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn})
 	if err != nil {
 		fail("den: %v", err)
 	}
@@ -50,7 +52,8 @@ func ask(args []string) {
 				fan[ev.ToolUseID] = in.To
 				fmt.Printf("→ %s · %s\n", in.To, firstN(in.Message, 100))
 			} else {
-				fmt.Printf("· %s\n", ev.Tool)
+				fan[ev.ToolUseID] = ev.Tool
+				fmt.Println(orch.Describe(ev.Tool, ev.Input))
 			}
 		case orch.ToolResult:
 			if to, ok := fan[ev.ToolUseID]; ok {

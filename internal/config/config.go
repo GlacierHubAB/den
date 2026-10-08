@@ -15,6 +15,7 @@ type Config struct {
 	Orchestrator struct {
 		Model string // claude --model; "off" keeps Claude Code's default
 		Name  string // the orchestrator session's display name
+		Spawn bool   // let it open terminals and start agents on your workspace
 	}
 	Inbox struct {
 		History int // finished turns kept as history
@@ -33,6 +34,7 @@ func Defaults() Config {
 	var c Config
 	c.Orchestrator.Model = "sonnet"
 	c.Orchestrator.Name = "den-orchestrator"
+	c.Orchestrator.Spawn = true
 	c.Inbox.History = 100
 	c.Detail.Recent = 20
 	c.Hooks.PermissionWait = 580
@@ -87,6 +89,7 @@ func (c *Config) apply(kv map[string]string) {
 	}
 	str(&c.Orchestrator.Model, "orchestrator.model")
 	str(&c.Orchestrator.Name, "orchestrator.name")
+	boolean(&c.Orchestrator.Spawn, "orchestrator.spawn")
 	num(&c.Inbox.History, "inbox.history")
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
@@ -97,6 +100,9 @@ func (c *Config) apply(kv map[string]string) {
 func (c *Config) env() {
 	if v := os.Getenv("DEN_ORCHESTRATOR_MODEL"); v != "" {
 		c.Orchestrator.Model = v
+	}
+	if os.Getenv("DEN_ORCHESTRATOR_SPAWN") == "off" {
+		c.Orchestrator.Spawn = false
 	}
 	if v := os.Getenv("DEN_PERMISSION_WAIT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -150,6 +156,7 @@ const Example = `# Den configuration. Every key is optional; these are the defau
 [orchestrator]
 model = "sonnet"            # any claude --model value, or "off" for Claude Code's default
 name = "den-orchestrator"   # how the orchestrator session names itself to peers
+spawn = true                # may open terminals and start agents on the workspace you are on
 
 [inbox]
 history = 100               # finished turns kept as history
