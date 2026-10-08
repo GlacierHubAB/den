@@ -36,10 +36,7 @@ func (m Model) View() tea.View {
 	// left, so a growing command line pushes them up rather than over them.
 	popup := m.completionRows(w)
 	prompt := m.prompt(w)
-	paneH := h - len(header) - len(prompt) - 1 - len(popup)
-	if paneH < 6 {
-		paneH = 6
-	}
+	_, paneH := m.paneArea()
 	out.WriteString(m.panes(w, paneH) + "\n")
 	for _, r := range popup {
 		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
@@ -51,6 +48,11 @@ func (m Model) View() tea.View {
 
 	v := tea.NewView(out.String())
 	v.AltScreen = true
+	if m.tab == tabReview {
+		// Clicks and drags pick lines in the diff. Only here, so the other
+		// views keep the terminal's own text selection.
+		v.MouseMode = tea.MouseModeCellMotion
+	}
 	// Ask for disambiguated keys so Shift+Enter is not plain Enter.
 	v.KeyboardEnhancements = tea.KeyboardEnhancements{ReportAlternateKeys: true}
 	return v
@@ -215,7 +217,7 @@ func (m Model) tabs(w int) string {
 		}
 		inboxCount = " " + badge.Render(fmt.Sprint(n))
 	}
-	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus
+	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus + "   " + style(tabReview).Render("Review")
 	return justify(left, s.keycap.Render("Tab ⇥")+"  ", w)
 }
 
@@ -225,6 +227,9 @@ func (m Model) panes(w, h int) string {
 	}
 	if m.tab == tabOrch {
 		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
+	}
+	if m.tab == tabReview {
+		return m.reviewPanes(w, h)
 	}
 	// Fleet: agents on the left, the selected agent on the right.
 	if w < 72 {
@@ -773,6 +778,13 @@ func (m Model) prompt(w int) []string {
 			rows = append(rows, " "+strings.Join(chips, "   "))
 		}
 	}
+	if label := m.selectionLabel(); label != "" {
+		verb := "comment on "
+		if m.rev.editing != "" {
+			verb = "editing the comment on "
+		}
+		rows = append(rows, " "+s.attn.Render("✎ ")+s.dim.Render(verb)+s.fg.Render(label)+s.muted.Render(" · type, then Enter · @Name and /commands still work"))
+	}
 	for _, l := range strings.Split(m.input.View(), "\n") {
 		rows = append(rows, " "+l)
 	}
@@ -784,11 +796,13 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch /review", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+	case m.tab == tabReview:
+		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
 		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"^V", "paste image"}, {"↑ ↓", "scroll"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.focus == paneDetail:

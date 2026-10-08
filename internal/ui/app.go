@@ -22,6 +22,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
@@ -39,6 +40,8 @@ const (
 	tabFleet tab = iota
 	tabInbox
 	tabOrch
+	tabReview
+	tabCount // number of tabs, for cycling
 )
 
 type tickMsg time.Time
@@ -94,6 +97,8 @@ type Model struct {
 
 	focus        pane // Fleet view: agents or detail
 	detailScroll int  // lines scrolled in the detail pane
+
+	rev reviewState // the Review view
 }
 
 // New returns the root model and starts listening for hook events.
@@ -113,6 +118,8 @@ func New(cfg config.Config) Model {
 	m.orch.reconcile = len(m.liveCards()) > 0
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
+	m.rev.commentsPath = review.CommentsPath()
+	m.rev.comments = review.LoadComments(m.rev.commentsPath)
 	m.input = newInput(m.st)
 	m.input.Focus()
 	m.fitInput()
@@ -358,7 +365,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		return m, tea.Batch(snapshot, tick(), m.watchOrchestrator())
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator()}
+		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
+			cmds = append(cmds, m.loadReview())
+		}
+		return m, tea.Batch(cmds...)
+	case reviewLoadedMsg:
+		m.applyReview(msg)
+		return m, nil
 	case changedMsg:
 		m.st = newStyles(theme.Load())
 		applyInputStyles(&m.input, m.st)
@@ -406,6 +420,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flash = ""
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
+	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
+		if m.tab == tabReview {
+			m.reviewMouse(msg)
+		}
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -513,7 +532,25 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
+		if m.tab == tabReview {
+			switch {
+			case m.rev.editing != "":
+				m.rev.editing = "" // drop the edit, keep the comment
+			case m.rev.ranged && strings.TrimSpace(m.input.Value()) == "":
+				m.rev.ranged = false
+				return m, nil
+			}
+		}
 		return m, m.clear()
+	case "shift+down", "shift+up":
+		if m.tab == tabReview && m.rev.focus == revDiff {
+			d := 1
+			if msg.String() == "shift+up" {
+				d = -1
+			}
+			m.moveReviewSel(d, true)
+			return m, nil
+		}
 	case "shift+enter", "alt+enter", "ctrl+j":
 		m.input.InsertString("\n")
 		m.fitInput()
@@ -527,11 +564,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.complIdx = 0
 			return m, nil
 		}
-		m.tab = (m.tab + 1) % 3
-		return m, nil
+		m.tab = (m.tab + 1) % tabCount
+		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
+		return m, cmd
 	case "shift+tab":
-		m.tab = (m.tab + 2) % 3
-		return m, nil
+		m.tab = (m.tab + tabCount - 1) % tabCount
+		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
+		return m, cmd
 	case "left":
 		switch {
 		case m.tab == tabFleet && m.orch.backToCard:
@@ -539,12 +578,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.tab = tabOrch
 		case m.tab == tabFleet:
 			m.focus = paneAgents
+		case m.tab == tabReview:
+			m.rev.focus = max(revWork, m.rev.focus-1)
 		}
 		return m, nil
 	case "right":
 		switch {
 		case m.tab == tabFleet:
 			m.focus = paneDetail
+		case m.tab == tabReview:
+			m.rev.focus = min(revDiff, m.rev.focus+1)
 		case m.tab == tabOrch:
 			if d := m.focusedCard(); d != nil {
 				return m.openCardAgent(d)
@@ -576,11 +619,19 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.orch.scroll = max(0, m.orch.scroll-5)
 			return m, nil
 		}
+		if m.tab == tabReview {
+			m.moveReview(max(5, m.height/2))
+			return m, nil
+		}
 		m.move(5)
 		return m, nil
 	case "pgup":
 		if m.tab == tabOrch {
 			m.orch.scroll += 5
+			return m, nil
+		}
+		if m.tab == tabReview {
+			m.moveReview(-max(5, m.height/2))
 			return m, nil
 		}
 		m.move(-5)
@@ -590,6 +641,27 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+n":
 		return m.answer("deny")
 	case "enter":
+		// An open edit always goes back to its comment, even if focus moved
+		// off the diff meanwhile, so it can never be sent as a message.
+		if m.tab == tabReview && (m.rev.focus == revDiff || m.rev.editing != "") && m.curFile() != nil {
+			text := strings.TrimSpace(m.input.Value())
+			switch {
+			case text == "":
+				if c := m.commentAtCursor(); c != nil {
+					m.rev.editing = c.ID
+					m.input.SetValue(c.Body)
+					m.input.CursorEnd()
+					m.fitInput()
+					return m, nil
+				}
+			case !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@"):
+				if err := m.addComment(text); err != nil {
+					return m.say("Comment not saved: "+err.Error(), true)
+				}
+				cmd := m.clear()
+				return m, cmd
+			}
+		}
 		if strings.TrimSpace(m.input.Value()) == "" {
 			if d := m.focusedCard(); d != nil && m.tab == tabOrch {
 				d.Expanded = !d.Expanded
@@ -631,7 +703,18 @@ func (m *Model) move(delta int) {
 		m.inboxCur = clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1))
 	case tabOrch:
 		m.moveCard(delta)
+	case tabReview:
+		m.moveReview(delta)
 	}
+}
+
+// enteredTab runs what a view needs on arrival: Review reloads when its
+// data is stale.
+func (m *Model) enteredTab() tea.Cmd {
+	if m.tab == tabReview && time.Since(m.rev.loadedAt) > 2*time.Second {
+		return m.loadReview()
+	}
+	return nil
 }
 
 // openCardAgent jumps from a card to its agent in the Fleet view; ← comes
@@ -661,6 +744,10 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 	case tabOrch:
 		if d := m.focusedCard(); d != nil {
 			target, ok = m.agentFor(d.SessionID)
+		}
+	case tabReview:
+		if w := m.curWork(); w != nil {
+			target, ok = m.agentFor(w.SessionID)
 		}
 	}
 	if !ok {
@@ -716,11 +803,29 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		}
 		return m.say("Select an inbox item first.", true)
 	case "/rescan", "/r":
+		if m.tab == tabReview {
+			// Separate statement: the load marks m as loading, and a return
+			// list does not promise that happens before m is copied.
+			cmd := m.loadReview()
+			return m, tea.Batch(snapshot, cmd)
+		}
 		return m, snapshot
 	case "/fleet":
 		m.tab = tabFleet
 	case "/inbox":
 		m.tab = tabInbox
+	case "/delete", "/del":
+		if m.tab != tabReview {
+			return m.say("/delete removes a review comment; open Review first.", true)
+		}
+		if !m.deleteComment() {
+			return m.say("No comment on this line.", true)
+		}
+		return m, nil
+	case "/review":
+		m.tab = tabReview
+		cmd := m.enteredTab()
+		return m, cmd
 	case "/orchestrator", "/orch":
 		m.tab = tabOrch
 		if len(fields) > 1 && fields[1] == "new" {

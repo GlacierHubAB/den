@@ -48,7 +48,7 @@ window is focused, or you switch to it, the normal dialog appears instead.
 
 The command line at the bottom is always open: type to ask the orchestrator,
 `@Name …` to message one agent (Tab completes the name), `/help` for commands.
-Keys: `Tab` switches between Fleet, Inbox and Orchestrator · `← →` move
+Keys: `Tab` switches between Fleet, Inbox, Orchestrator and Review · `← →` move
 between the panes of a view · `↑ ↓` select or scroll in the focused pane ·
 `Enter` sends, or with an empty line focuses the selected agent's terminal ·
 `Ctrl+Y` allow and `Ctrl+N` deny the waiting prompt (`/always` allows it again
