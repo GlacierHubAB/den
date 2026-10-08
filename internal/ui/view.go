@@ -67,9 +67,9 @@ func (m Model) counts() (needs, working, idle, unknown, gone int) {
 
 // wordmark is the three-row block-letter logo.
 var wordmark = []string{
-	"   █          ",
-	"▄▀▀█ ▄▀▀▄ █▀▀▄",
-	"▀▄▄█ ▀▄▄▀ █  █",
+	"█▀▀▄ █▀▀▀ █▄  █",
+	"█  █ █▀▀  █ ▀▄█",
+	"█▄▄▀ █▄▄▄ █   █",
 }
 
 // header draws the wordmark with fleet information beside it, padded above
@@ -168,7 +168,8 @@ func (m Model) tabs(w int) string {
 	if n := m.store.Waiting(); n > 0 {
 		inboxCount = " " + s.badgeN.Render(fmt.Sprint(n))
 	}
-	return "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus + "   " + s.muted.Render("Tab switches")
+	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus
+	return justify(left, s.keycap.Render("Tab ⇥")+"  ", w)
 }
 
 func (m Model) panes(w, h int) string {
@@ -281,9 +282,10 @@ func (m Model) agentsPane(w, h int) string {
 		return s.err.Render(ansi.Wrap("scan failed: "+m.err.Error(), w-2, ""))
 	}
 	if len(m.agents) == 0 {
-		return "\n " + s.dim.Render("No Claude Code sessions running.")
+		return "\n  " + s.dim.Render("No Claude Code sessions running.")
 	}
 	var b strings.Builder
+	b.WriteString("\n")
 	var last fleet.Status = -1
 	counts := map[fleet.Status]int{}
 	for _, a := range m.agents {
@@ -295,7 +297,7 @@ func (m Model) agentsPane(w, h int) string {
 				b.WriteString("\n")
 			}
 			title := strings.ToUpper(a.Status.String())
-			b.WriteString(" " + s.section.Render(fmt.Sprintf("%s · %d", title, counts[a.Status])) + "\n")
+			b.WriteString("  " + s.section.Render(fmt.Sprintf("%s · %d", title, counts[a.Status])) + "\n")
 			last = a.Status
 		}
 		selected := i == m.cursor
@@ -321,7 +323,7 @@ func (m Model) agentsPane(w, h int) string {
 		if a.Labels.Role != "" {
 			role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
 		}
-		l1 := marker + glyph + fg.Render(" ") + name + role
+		l1 := marker + fg.Render(" ") + glyph + fg.Render(" ") + name + role
 
 		taskMark := "▸ "
 		if a.Status == fleet.Idle || a.Status == fleet.Gone {
@@ -331,13 +333,13 @@ func (m Model) agentsPane(w, h int) string {
 		if selected {
 			taskStyle = fg
 		}
-		l2 := marker + fg.Render("  ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-4, "…"))
+		l2 := marker + fg.Render("   ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-5, "…"))
 
 		meta := a.Where()
 		if a.Status != fleet.Gone {
 			meta += "  " + humanAge(a.Since())
 		}
-		l3 := marker + fg.Render("  ") + dim.Render(ansi.Truncate(meta, w-4, "…"))
+		l3 := marker + fg.Render("   ") + dim.Render(ansi.Truncate(meta, w-5, "…"))
 		if a.HasUsage {
 			ctx := fmt.Sprintf("ctx %d%%", a.Usage.Percent())
 			cs := dim
@@ -346,8 +348,8 @@ func (m Model) agentsPane(w, h int) string {
 			} else if a.Usage.Percent() >= 75 {
 				cs = attn
 			}
-			if room := w - 3 - ansi.StringWidth(meta) - len(ctx) - 2; room >= 0 {
-				l3 = marker + fg.Render("  ") + dim.Render(meta) + fg.Render(strings.Repeat(" ", room+2)) + cs.Render(ctx)
+			if room := w - 4 - ansi.StringWidth(meta) - len(ctx) - 2; room >= 0 {
+				l3 = marker + fg.Render("   ") + dim.Render(meta) + fg.Render(strings.Repeat(" ", room+2)) + cs.Render(ctx)
 			}
 		}
 		for _, r := range []string{l1, l2, l3} {
