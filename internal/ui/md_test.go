@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
@@ -61,5 +62,19 @@ func TestDiffLines(t *testing.T) {
 	}
 	if w := ansi.StringWidth(got[1]); w != 40 {
 		t.Errorf("changed lines fill the width, got %d", w)
+	}
+}
+
+func TestCodeTakesTheAgentColour(t *testing.T) {
+	m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New()}
+	m.colors = map[string]string{"0123456789abcdef": "#ea9e9e"}
+	a := m.agents[0]
+	out, _, _ := m.inAgentColor(a).mdLine("run `go test` now", false, 80)
+	if !strings.Contains(out, "234;158;158") {
+		t.Errorf("inline code should carry the agent colour #ea9e9e: %q", out)
+	}
+	block := m.inAgentColor(a).codeBlock("ls", 20)
+	if !strings.Contains(block[0], "234;158;158") {
+		t.Errorf("code block should carry the agent colour: %q", block[0])
 	}
 }

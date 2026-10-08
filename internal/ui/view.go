@@ -710,6 +710,9 @@ func (m Model) detailPane(w, h int) string {
 		// Newest first. Prompts and replies wrap under a hanging indent with
 		// light markdown; tool calls read like Claude Code's own log: the
 		// tool and what it was for, then the call itself as a code block.
+		// Code and commands take the agent's own colour, so the pane reads
+		// as that agent's.
+		m := m.inAgentColor(a)
 		textW := max(12, w-4)
 		prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
 			indent := strings.Repeat(" ", ansi.StringWidth(prefix))
@@ -941,4 +944,11 @@ func shortPath(path, cwd string) string {
 		return "~/" + strings.TrimPrefix(path, home+"/")
 	}
 	return path
+}
+
+// inAgentColor returns a copy of the model whose code highlighting uses the
+// agent's colour instead of the theme's code colour.
+func (m Model) inAgentColor(a fleet.Agent) Model {
+	m.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(m.agentColor(a)))
+	return m
 }
