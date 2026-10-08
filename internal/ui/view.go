@@ -22,12 +22,14 @@ func (m Model) View() tea.View {
 		h = 40
 	}
 	var out strings.Builder
-	out.WriteString(ansi.Truncate(m.topBar(w), w, "…") + "\n")
-	out.WriteString(ansi.Truncate(m.tabs(w), w, "…") + "\n")
+	header := m.header(w)
+	for _, r := range header {
+		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+	}
 
-	// Rows: top bar, tabs, panes, [completions], prompt, hints.
+	// Rows: header, panes, [completions], prompt (3 rows with rules), hints.
 	popup := m.completionRows(w)
-	paneH := h - 4 - len(popup)
+	paneH := h - len(header) - 4 - len(popup)
 	if paneH < 6 {
 		paneH = 6
 	}
@@ -35,7 +37,9 @@ func (m Model) View() tea.View {
 	for _, r := range popup {
 		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
 	}
-	out.WriteString(ansi.Truncate(m.prompt(w), w, "…") + "\n")
+	for _, r := range m.prompt(w) {
+		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+	}
 	out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 
 	v := tea.NewView(out.String())
@@ -61,26 +65,86 @@ func (m Model) counts() (needs, working, idle, unknown, gone int) {
 	return
 }
 
-func (m Model) topBar(w int) string {
+// wordmark is the three-row block-letter logo.
+var wordmark = []string{
+	"   █          ",
+	"▄▀▀█ ▄▀▀▄ █▀▀▄",
+	"▀▄▄█ ▀▄▄▀ █  █",
+}
+
+// header draws the wordmark with fleet information beside it, padded above
+// and below, then the view tabs. Narrow terminals fall back to one line.
+func (m Model) header(w int) []string {
 	s := m.st
 	needs, working, idle, unknown, _ := m.counts()
-	parts := []string{fmt.Sprintf("%d agents", len(m.agents))}
+	fleetParts := []string{fmt.Sprintf("%d agents", len(m.agents))}
 	if needs > 0 {
-		parts = append(parts, s.attn.Render(fmt.Sprintf("%d need you", needs)))
+		fleetParts = append(fleetParts, s.attn.Render(fmt.Sprintf("%d need you", needs)))
 	}
-	parts = append(parts, fmt.Sprintf("%d working", working), fmt.Sprintf("%d idle", idle))
+	fleetParts = append(fleetParts, fmt.Sprintf("%d working", working), fmt.Sprintf("%d idle", idle))
 	if unknown > 0 {
-		parts = append(parts, fmt.Sprintf("%d unknown", unknown))
+		fleetParts = append(fleetParts, fmt.Sprintf("%d unknown", unknown))
 	}
-	left := s.brand.Render("den") + "  " + s.dim.Render(strings.Join(parts, " · "))
-	right := s.dim.Render(time.Now().Format("15:04"))
+	fleetLine := s.dim.Render(strings.Join(fleetParts, " · "))
+
+	var links []string
+	if n := m.store.Waiting(); n > 0 {
+		links = append(links, s.attn.Render(fmt.Sprintf("inbox %d waiting", n)))
+	} else {
+		links = append(links, "inbox clear")
+	}
+	if m.orch.status != "" {
+		links = append(links, "orchestrator "+m.orch.status)
+	} else {
+		links = append(links, "orchestrator off")
+	}
+	linksLine := s.dim.Render(strings.Join(links, " · "))
+
+	var sys []string
+	if m.hooksReady {
+		sys = append(sys, "hooks on")
+	} else {
+		sys = append(sys, s.attn.Render("hooks off · den install-hooks"))
+	}
+	if m.srvErr != nil {
+		sys = append(sys, s.err.Render("bridge: "+m.srvErr.Error()))
+	}
+	sysLine := s.muted.Render(strings.Join(sys, " · "))
+
+	clock := s.dim.Render(time.Now().Format("15:04"))
+	flash := ""
 	if m.flash != "" {
 		if m.flashErr {
-			right = s.err.Render(m.flash) + "  " + right
+			flash = s.err.Render(m.flash)
 		} else {
-			right = s.ok.Render(m.flash) + "  " + right
+			flash = s.ok.Render(m.flash)
 		}
 	}
+	if w < 72 {
+		left := s.brand.Render("den") + "  " + fleetLine
+		right := clock
+		if flash != "" {
+			right = flash + "  " + clock
+		}
+		return []string{justify(left, right, w), ansi.Truncate(m.tabs(w), w, "…")}
+	}
+	logo := make([]string, len(wordmark))
+	for i, r := range wordmark {
+		logo[i] = "  " + s.bright.Render(r) + "    "
+	}
+	rows := []string{
+		"",
+		justify(logo[0]+fleetLine, clock+"  ", w),
+		justify(logo[1]+linksLine, "", w),
+		justify(logo[2]+sysLine, flash+"  ", w),
+		"",
+		m.tabs(w),
+	}
+	return rows
+}
+
+// justify spaces left and right apart to fill w.
+func justify(left, right string, w int) string {
 	gap := w - ansi.StringWidth(left) - ansi.StringWidth(right)
 	if gap < 1 {
 		gap = 1
@@ -126,10 +190,7 @@ func (m Model) panes(w, h int) string {
 }
 
 func (m Model) detailTitle() string {
-	if a, ok := m.selected(); ok {
-		return a.Name
-	}
-	return "Agent"
+	return "Details"
 }
 
 // box draws a pane with its title set into the top border, the way TUIs do.
@@ -404,17 +465,21 @@ func (m Model) detailPane(w, h int) string {
 		return "\n " + s.dim.Render("Select an agent.")
 	}
 	var b strings.Builder
-	line := func(str string) { b.WriteString(" " + ansi.Truncate(str, w-2, "…") + "\n") }
+	const indent = "  "
+	line := func(str string) { b.WriteString(indent + ansi.Truncate(str, w-4, "…") + "\n") }
 	role := ""
 	if a.Labels.Role != "" {
 		role = "  " + s.roleChip.Render(strings.ToUpper(a.Labels.Role))
 	}
-	// Header: the critter on the left, identity on the right.
+	// Identity on top, then the critter with its task beside it.
+	b.WriteString("\n")
+	line(s.bright.Bold(true).Render(a.Name) + role)
+	b.WriteString("\n")
 	const spriteW = 16
 	var head []string
-	textW := w - 2 - spriteW - 2
+	textW := w - 4 - spriteW - 2
 	if textW < 16 {
-		textW = w - 2
+		textW = w - 4
 	}
 	wrapTo := func(prefix, text string, style lipgloss.Style, dst *[]string) {
 		for i, l := range strings.Split(ansi.Wrap(text, max(8, textW-ansi.StringWidth(prefix)), ""), "\n") {
@@ -425,7 +490,6 @@ func (m Model) detailPane(w, h int) string {
 			*dst = append(*dst, style.Render(p+l))
 		}
 	}
-	head = append(head, ansi.Truncate(s.bright.Bold(true).Render(a.Name)+role, textW, "…"))
 	wrapTo("▸ ", a.Task(), s.fg, &head)
 	for i, h := range a.Labels.History {
 		if i >= 3 {
@@ -443,7 +507,7 @@ func (m Model) detailPane(w, h int) string {
 	}
 	sub += a.Session.ShortCWD()
 	head = append(head, s.dim.Render(ansi.Truncate(sub, textW, "…")))
-	if textW == w-2 {
+	if textW == w-4 {
 		for _, l := range head {
 			line(l)
 		}
@@ -459,7 +523,7 @@ func (m Model) detailPane(w, h int) string {
 			if i < len(head) {
 				right = head[i]
 			}
-			b.WriteString(" " + left + "  " + right + "\n")
+			b.WriteString(indent + left + "  " + right + "\n")
 		}
 	}
 	b.WriteString("\n")
@@ -485,7 +549,7 @@ func (m Model) detailPane(w, h int) string {
 		}
 	}
 	if len(gauges) > 0 {
-		cols := max(1, min(len(gauges), (w-2)/20))
+		cols := max(1, min(len(gauges), (w-4)/20))
 		for i := 0; i < len(gauges); i += cols {
 			group := gauges[i:min(i+cols, len(gauges))]
 			for r := 0; r < 3; r++ {
@@ -561,9 +625,11 @@ func (m Model) completionRows(w int) []string {
 	return rows
 }
 
-func (m Model) prompt(w int) string {
+// prompt draws the command line between two rules, the way Claude Code does.
+func (m Model) prompt(w int) []string {
 	m.input.SetWidth(max(10, w-4))
-	return " " + m.input.View()
+	rule := m.st.border.Render(strings.Repeat("─", max(0, w)))
+	return []string{rule, " " + m.input.View(), rule}
 }
 
 func (m Model) hints(w int) string {
