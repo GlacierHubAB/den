@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestUsageAndTail(t *testing.T) {
@@ -79,5 +80,29 @@ func TestTailAttachesResults(t *testing.T) {
 	}
 	if len(write.Changes) != 1 || !write.Changes[0].Created || len(write.Changes[0].Hunks[0].Lines) != 2 || write.Changes[0].Hunks[0].Lines[1] != "+two" {
 		t.Errorf("write = %+v", write)
+	}
+}
+
+func TestTurnCutsByTimestamp(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	lines := []string{
+		`{"type":"user","timestamp":"2026-10-08T10:00:00.000Z","message":{"content":"first prompt"}}`,
+		`{"type":"assistant","timestamp":"2026-10-08T10:00:05.000Z","message":{"content":[{"type":"text","text":"first reply"}]}}`,
+		`{"type":"user","timestamp":"2026-10-08T10:10:00.000Z","message":{"content":"second prompt"}}`,
+		`{"type":"assistant","timestamp":"2026-10-08T10:10:05.000Z","message":{"content":[{"type":"text","text":"second reply"}]}}`,
+		`{"type":"user","timestamp":"2026-10-08T10:20:00.000Z","message":{"content":"third prompt"}}`,
+	}
+	os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	from := time.Date(2026, 10, 8, 10, 9, 0, 0, time.UTC)
+	to := time.Date(2026, 10, 8, 10, 15, 0, 0, time.UTC)
+	got := Turn(p, from, to, 10)
+	if len(got) != 2 || got[0].Text != "second prompt" || got[1].Text != "second reply" {
+		t.Errorf("turn = %+v", got)
+	}
+	if got[0].At.IsZero() {
+		t.Error("entries should carry their timestamp")
+	}
+	if all := Turn(p, from, time.Time{}, 10); len(all) != 3 {
+		t.Errorf("open end should include the third prompt: %+v", all)
 	}
 }

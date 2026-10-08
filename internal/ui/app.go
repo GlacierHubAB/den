@@ -78,6 +78,7 @@ type Model struct {
 	inboxCur   int
 	hooksReady bool
 	cfg        config.Config
+	chatLog    string // the orchestrator log on disk
 	// Images attached to the command line, and whether the terminal can
 	// draw them inline (kitty graphics, confirmed by a probe reply).
 	attachments []attachment
@@ -99,6 +100,7 @@ type Model struct {
 func New(cfg config.Config) Model {
 	m := Model{
 		cfg:   cfg,
+		orch:  orchState{cardCur: -1},
 		st:    newStyles(theme.Load()),
 		watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile()),
 		store: inbox.New(),
@@ -106,6 +108,9 @@ func New(cfg config.Config) Model {
 	fleet.Recent = cfg.Detail.Recent
 	m.store.HistoryLimit(cfg.Inbox.History)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
+	m.chatLog = ChatLogPath()
+	m.orch.chat, m.orch.resume = loadChatLog(m.chatLog, maxChatLog)
+	m.orch.reconcile = len(m.liveCards()) > 0
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
 	m.input = newInput(m.st)
@@ -285,6 +290,11 @@ func (m *Model) refresh() {
 		}
 	}
 	m.assignColors()
+	if m.orch.reconcile && len(m.base) > 0 {
+		m.orch.reconcile = false
+		m.reconcileCards()
+	}
+	m.settleCards()
 	sort.SliceStable(m.agents, func(i, j int) bool {
 		if m.agents[i].Status != m.agents[j].Status {
 			return m.agents[i].Status < m.agents[j].Status
@@ -411,6 +421,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		return nil
 	}
 	it := m.store.Apply(r)
+	m.trackHook(r, it)
 	if it != nil {
 		if a, ok := m.agentFor(it.SessionID); ok {
 			it.Role, it.Task = a.Labels.Role, a.Labels.Task
@@ -519,13 +530,22 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.tab = (m.tab + 2) % 3
 		return m, nil
 	case "left":
-		if m.tab == tabFleet {
+		switch {
+		case m.tab == tabFleet && m.orch.backToCard:
+			m.orch.backToCard = false
+			m.tab = tabOrch
+		case m.tab == tabFleet:
 			m.focus = paneAgents
 		}
 		return m, nil
 	case "right":
-		if m.tab == tabFleet {
+		switch {
+		case m.tab == tabFleet:
 			m.focus = paneDetail
+		case m.tab == tabOrch:
+			if d := m.focusedCard(); d != nil {
+				return m.openCardAgent(d)
+			}
 		}
 		return m, nil
 	case "down":
@@ -549,9 +569,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(-1)
 		return m, nil
 	case "pgdown":
+		if m.tab == tabOrch {
+			m.orch.scroll = max(0, m.orch.scroll-5)
+			return m, nil
+		}
 		m.move(5)
 		return m, nil
 	case "pgup":
+		if m.tab == tabOrch {
+			m.orch.scroll += 5
+			return m, nil
+		}
 		m.move(-5)
 		return m, nil
 	case "ctrl+y":
@@ -560,6 +588,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.answer("deny")
 	case "enter":
 		if strings.TrimSpace(m.input.Value()) == "" {
+			if d := m.focusedCard(); d != nil && m.tab == tabOrch {
+				d.Expanded = !d.Expanded
+				if d.Expanded && !d.turnLoaded {
+					m.loadTurn(d)
+				}
+				return m, nil
+			}
 			return m.openSelected()
 		}
 		if len(compl) > 0 && resolveMention(m.input.Value(), m.agents).target == nil {
@@ -587,12 +622,26 @@ func (m *Model) move(delta int) {
 		if next := clamp(m.cursor+delta, 0, max(0, len(m.agents)-1)); next != m.cursor {
 			m.cursor = next
 			m.detailScroll = 0
+			m.orch.backToCard = false
 		}
 	case tabInbox:
 		m.inboxCur = clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1))
 	case tabOrch:
-		m.orch.scroll = max(0, m.orch.scroll-delta)
+		m.moveCard(delta)
 	}
+}
+
+// openCardAgent jumps from a card to its agent in the Fleet view; ← comes
+// back to the card.
+func (m Model) openCardAgent(d *dispatch) (tea.Model, tea.Cmd) {
+	for i, a := range m.agents {
+		if a.Session.SessionID == d.SessionID {
+			m.cursor, m.tab, m.focus, m.detailScroll = i, tabFleet, paneDetail, 0
+			m.orch.backToCard = true
+			return m, nil
+		}
+	}
+	return m.say(d.Agent+" is not in the fleet any more.", true)
 }
 
 // openSelected focuses the terminal of the selected agent or inbox item.
@@ -606,6 +655,10 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 		}
 	case tabFleet:
 		target, ok = m.selected()
+	case tabOrch:
+		if d := m.focusedCard(); d != nil {
+			target, ok = m.agentFor(d.SessionID)
+		}
 	}
 	if !ok {
 		return m, nil
@@ -622,6 +675,15 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	it := m.topAnswerable()
 	if m.tab == tabInbox {
 		it = m.inboxSelected()
+	}
+	if d := m.focusedCard(); d != nil && m.tab == tabOrch {
+		it = nil
+		for _, o := range m.store.Items() {
+			if o.SessionID == d.SessionID && o.Answerable() {
+				it = o
+				break
+			}
+		}
 	}
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
@@ -658,6 +720,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		m.tab = tabInbox
 	case "/orchestrator", "/orch":
 		m.tab = tabOrch
+		if len(fields) > 1 && fields[1] == "new" {
+			return m, m.newOrchestratorSession()
+		}
 	case "/help", "/?":
 		m.help = true
 	case "/quit", "/q", "/exit":

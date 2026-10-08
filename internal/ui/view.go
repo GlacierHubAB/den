@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 func (m Model) View() tea.View {
@@ -707,84 +708,8 @@ func (m Model) detailPane(w, h int) string {
 	if len(a.Tail) > 0 {
 		b.WriteString("\n")
 		line(s.muted.Render("recent"))
-		// Newest first. Prompts and replies wrap under a hanging indent with
-		// light markdown; tool calls read like Claude Code's own log: the
-		// tool and what it was for, then the call itself as a code block.
-		// Code and commands take the agent's own colour, so the pane reads
-		// as that agent's.
-		m := m.inAgentColor(a)
-		textW := max(12, w-4)
-		prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
-			indent := strings.Repeat(" ", ansi.StringWidth(prefix))
-			width := max(12, textW-ansi.StringWidth(prefix))
-			var body []string
-			if plain {
-				body = m.plainLines(text, width, s.dim)
-			} else {
-				body = m.markdownLines(text, width)
-			}
-			for i, l := range body {
-				if i == 0 {
-					line(pstyle.Render(prefix) + l)
-					continue
-				}
-				line(indent + l)
-			}
-		}
-		for i := len(a.Tail) - 1; i >= 0; i-- {
-			e := a.Tail[i]
-			switch e.Kind {
-			case "you":
-				prose("you › ", s.muted, e.Text, true)
-			case "tool":
-				head := s.ok.Render("● ") + s.fg.Bold(true).Render(e.Tool)
-				if e.Text != "" {
-					head += "  " + s.dim.Render(ansi.Truncate(e.Text, max(8, textW-ansi.StringWidth(e.Tool)-4), "…"))
-				}
-				line(head)
-				if e.Code != "" && e.Tool != "Edit" && e.Tool != "Write" && e.Tool != "MultiEdit" {
-					for _, l := range m.codeBlockN(e.Code, textW-2, 3) {
-						line("  " + l)
-					}
-				}
-				// Changed files read like Claude Code's log: what changed, then
-				// the hunks with line numbers and coloured changed lines.
-				for _, c := range e.Changes {
-					added, removed := c.Counts()
-					what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
-					switch {
-					case c.Deleted:
-						what = "Deleted " + shortPath(c.Path, a.Session.CWD)
-					case c.Created:
-						what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
-					}
-					line("  " + s.muted.Render("⎿ ") + s.dim.Render(what))
-					if c.Deleted {
-						continue
-					}
-					for _, l := range m.diffLines(c.Hunks, textW-4) {
-						line("    " + l)
-					}
-				}
-				if e.Output != "" && len(e.Changes) == 0 {
-					first := true
-					for _, raw := range strings.Split(e.Output, "\n") {
-						for _, l := range strings.Split(ansi.Wrap(raw, max(8, textW-4), ""), "\n") {
-							if first {
-								line("  " + s.muted.Render("⎿ ") + s.dim.Render(l))
-								first = false
-								continue
-							}
-							line("    " + s.dim.Render(l))
-						}
-					}
-				}
-			default:
-				prose("", s.fg, e.Text, false)
-			}
-			if i > 0 {
-				b.WriteString("\n")
-			}
+		for _, l := range m.activityLines(a.Tail, a, w-4, true) {
+			line(l)
 		}
 	}
 	b.WriteString("\n")
@@ -921,4 +846,91 @@ func shortPath(path, cwd string) string {
 func (m Model) inAgentColor(a fleet.Agent) Model {
 	m.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(m.agentColor(a)))
 	return m
+}
+
+// activityLines renders transcript entries the way the detail pane shows
+// them: prompts and replies under a hanging indent with light markdown,
+// tool calls as the tool and what it was for with the call as a code block,
+// diffs and output underneath. Code takes the agent's colour. Entries are
+// separated by a blank line; newestFirst reverses the order.
+func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, newestFirst bool) []string {
+	s := m.st
+	m = m.inAgentColor(a)
+	textW = max(12, textW)
+	var out []string
+	prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
+		indent := strings.Repeat(" ", ansi.StringWidth(prefix))
+		width := max(12, textW-ansi.StringWidth(prefix))
+		var body []string
+		if plain {
+			body = m.plainLines(text, width, s.dim)
+		} else {
+			body = m.markdownLines(text, width)
+		}
+		for i, l := range body {
+			if i == 0 {
+				out = append(out, pstyle.Render(prefix)+l)
+				continue
+			}
+			out = append(out, indent+l)
+		}
+	}
+	for n := range tail {
+		i := n
+		if newestFirst {
+			i = len(tail) - 1 - n
+		}
+		e := tail[i]
+		switch e.Kind {
+		case "you":
+			prose("you › ", s.muted, e.Text, true)
+		case "tool":
+			head := s.ok.Render("● ") + s.fg.Bold(true).Render(e.Tool)
+			if e.Text != "" {
+				head += "  " + s.dim.Render(ansi.Truncate(e.Text, max(8, textW-ansi.StringWidth(e.Tool)-4), "…"))
+			}
+			out = append(out, head)
+			if e.Code != "" && e.Tool != "Edit" && e.Tool != "Write" && e.Tool != "MultiEdit" {
+				for _, l := range m.codeBlockN(e.Code, textW-2, 3) {
+					out = append(out, "  "+l)
+				}
+			}
+			for _, c := range e.Changes {
+				added, removed := c.Counts()
+				what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
+				switch {
+				case c.Deleted:
+					what = "Deleted " + shortPath(c.Path, a.Session.CWD)
+				case c.Created:
+					what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
+				}
+				out = append(out, "  "+s.muted.Render("⎿ ")+s.dim.Render(what))
+				if c.Deleted {
+					continue
+				}
+				for _, l := range m.diffLines(c.Hunks, textW-4) {
+					out = append(out, "    "+l)
+				}
+			}
+			if e.Output != "" && len(e.Changes) == 0 {
+				first := true
+				for _, raw := range strings.Split(e.Output, "\n") {
+					for _, l := range strings.Split(ansi.Wrap(raw, max(8, textW-4), ""), "\n") {
+						if first {
+							out = append(out, "  "+s.muted.Render("⎿ ")+s.dim.Render(l))
+							first = false
+							continue
+						}
+						out = append(out, "    "+s.dim.Render(l))
+					}
+				}
+			}
+		default:
+			prose("", s.fg, e.Text, false)
+		}
+		if n < len(tail)-1 {
+			out = append(out, "")
+		}
+	}
+	return out
 }

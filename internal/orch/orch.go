@@ -66,6 +66,7 @@ type Options struct {
 	Model   string   // --model; default $DEN_ORCHESTRATOR_MODEL, then "sonnet"; "off" keeps Claude Code's default
 	Name    string   // session display name, default "den-orchestrator"
 	Dir     string   // working directory, default $HOME
+	Resume  string   // a session id to continue, so the orchestrator keeps its memory
 }
 
 // Orchestrator is a running orchestrator process.
@@ -103,9 +104,11 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
 		"--allowedTools", "ListAgents,SendMessage",
-		"--no-session-persistence",
 		"--append-system-prompt", SystemPrompt,
 	)
+	if o.Resume != "" {
+		args = append(args, "--resume", o.Resume)
+	}
 	if o.Model == "" {
 		o.Model = os.Getenv("DEN_ORCHESTRATOR_MODEL")
 	}

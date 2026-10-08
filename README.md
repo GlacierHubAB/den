@@ -68,6 +68,34 @@ hunting around. It cannot approve anything. Its turns are billed like any
 other session; it uses `sonnet` unless the config file or
 `DEN_ORCHESTRATOR_MODEL` says otherwise.
 
+## Dispatch cards
+
+When the orchestrator hands a brief to an agent, that agent's turn shows up
+in the chat as a card the agent owns: its avatar and colour, the role chip,
+the brief, and a state chip through queued, working, needs you, done or
+failed. While it works the card shows the latest tool call from the hook
+stream; done, it collapses to the agent's last message in one sentence and
+the call and file counts. With two or more cards live, an in-flight strip at
+the top of the pane keeps them in view. Everything on a card comes from the
+agent's own hooks and transcript, never from the orchestrator's retelling.
+
+| Key | On a focused card |
+| --- | --- |
+| `↑ ↓` | move between cards; past the last one the chat follows its tail again |
+| `Enter` (empty line) | expand to the agent's full turn, with diffs and output, and its last message verbatim |
+| `→` | open the agent in the Fleet view; `←` comes back to the card |
+| `^Y ^N` | answer the card's permission, exactly as in the inbox |
+| `/open` | focus the agent's terminal |
+| `PgUp PgDn` | scroll the chat |
+
+The chat persists: every entry and card state is appended to
+`~/.local/state/den/orchestrator.jsonl` and restored on launch (newest 500).
+Cards that were live when Den quit are settled from the agent's transcript or
+marked gone. The orchestrator itself resumes its previous session, so it
+remembers the conversation; if that fails, Den starts a fresh one and replays
+the last exchanges. `/orch new` starts a fresh session on purpose and marks
+the chat; the history stays.
+
 ## The command line
 
 The line at the bottom is always open. It grows with what you type, one row
