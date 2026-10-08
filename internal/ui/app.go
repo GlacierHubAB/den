@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/critter"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/hooks"
@@ -73,6 +74,7 @@ type Model struct {
 	store      *inbox.Store
 	inboxCur   int
 	hooksReady bool
+	colors     map[string]string // session id → body colour, unique while hues last
 
 	input    textinput.Model
 	complIdx int
@@ -211,6 +213,43 @@ func (m Model) agentFor(sessionID string) (fleet.Agent, bool) {
 	return fleet.Agent{}, false
 }
 
+// assignColors gives every agent a body colour: its own seed picks the first
+// choice, and the oldest sessions win collisions so colours stay stable as
+// agents come and go.
+func (m *Model) assignColors() {
+	hues := m.st.pal.Bodies
+	if len(hues) == 0 {
+		return
+	}
+	order := make([]fleet.Agent, len(m.agents))
+	copy(order, m.agents)
+	sort.SliceStable(order, func(i, j int) bool { return order[i].Session.StartedAt < order[j].Session.StartedAt })
+	taken := map[int]bool{}
+	m.colors = map[string]string{}
+	for _, a := range order {
+		idx := int(critter.Hash(a.Session.SessionID) % uint32(len(hues)))
+		if len(taken) < len(hues) {
+			for taken[idx] {
+				idx = (idx + 1) % len(hues)
+			}
+		}
+		taken[idx] = true
+		m.colors[a.Session.SessionID] = hues[idx]
+	}
+}
+
+// agentColor is the colour that stands for this agent everywhere in the UI.
+func (m Model) agentColor(a fleet.Agent) string {
+	if c, ok := m.colors[a.Session.SessionID]; ok {
+		return c
+	}
+	hues := m.st.pal.Bodies
+	if len(hues) == 0 {
+		return m.st.pal.Bright
+	}
+	return hues[int(critter.Hash(a.Session.SessionID)%uint32(len(hues)))]
+}
+
 // refresh recomputes the displayed agents from base plus inbox state, and
 // keeps the cursor on the same agent.
 func (m *Model) refresh() {
@@ -231,6 +270,7 @@ func (m *Model) refresh() {
 			a.Status = fleet.NeedsYou
 		}
 	}
+	m.assignColors()
 	sort.SliceStable(m.agents, func(i, j int) bool {
 		if m.agents[i].Status != m.agents[j].Status {
 			return m.agents[i].Status < m.agents[j].Status

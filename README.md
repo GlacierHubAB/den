@@ -31,6 +31,8 @@ den send mossy "rebase on main first"   # message an agent from a script
 den ask "who is blocked on what?"       # one orchestrator turn from a script
 den events            # headless: print hook events as they arrive
 den uninstall-hooks   # undo
+# Every hook run appends a line to ~/.local/state/den/hooks.log (event,
+# session, delivered or not). DEN_HOOK_LOG=off silences it.
 ```
 
 Hooks apply to Claude Code sessions started after installing. Den holds a

@@ -25,7 +25,7 @@ func animTick() tea.Cmd {
 // critterRows renders the agent's creature as 8 lines of half-blocks.
 func (m Model) critterRows(a fleet.Agent) []string {
 	seed := critter.Hash(a.Session.SessionID)
-	colors := critter.Colors{Bodies: m.st.pal.Bodies, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
+	colors := critter.Colors{Bodies: []string{m.agentColor(a)}, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
 	pose := critter.PoseAt(seed, m.anim, a.Status == fleet.Working)
 	px := critter.Pixels(seed, colors, pose)
 	rows := critter.Rows(px)

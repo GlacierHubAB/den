@@ -33,7 +33,7 @@ var Deepharness = Palette{
 	Fg: "#dfdfdf", FgDim: "#7c7c7c", Muted: "#575757",
 	Bright: "#f8f8f8",
 	Ok:     "#66cb8e", Attn: "#e8b84a", Err: "#ea9e9e",
-	Bodies: []string{"#66cb8e", "#e8b84a", "#ea9e9e"}, Blush: "#f4c4c4",
+	Bodies: fillHues(nil, "#000000"), Blush: "#f4c4c4",
 }
 
 // Surface2 is the raised surface used for inactive borders and tracks.
@@ -75,6 +75,63 @@ var paletteKeys = []string{
 	"red", "yellow", "orange", "green", "cyan", "blue", "magenta",
 	"bright_red", "bright_yellow", "bright_green", "bright_cyan", "bright_blue", "bright_magenta",
 	"accent",
+}
+
+// Hues is the curated set of body colours: soft, distinct, readable on a
+// dark background. Themes with real hues come first; these fill the rest.
+var Hues = []string{
+	"#ea9e9e", // rose
+	"#f0b07a", // apricot
+	"#e8d27a", // straw
+	"#a7d98c", // leaf
+	"#66cb8e", // mint
+	"#7fd3c4", // teal
+	"#86c6e8", // sky
+	"#9bb0f0", // periwinkle
+	"#b9a3f0", // lilac
+	"#e39ad8", // orchid
+	"#f0a8c0", // pink
+	"#c9b89a", // sand
+}
+
+// MinHues is how many body colours a palette should offer.
+const MinHues = 10
+
+// fillHues appends curated hues until the list has MinHues entries, skipping
+// ones that are already present or that vanish against the background.
+func fillHues(bodies []string, bg string) []string {
+	have := map[string]bool{}
+	for _, b := range bodies {
+		have[strings.ToLower(b)] = true
+	}
+	for _, h := range Hues {
+		if len(bodies) >= MinHues {
+			break
+		}
+		if have[h] {
+			continue
+		}
+		if d := luminance(h) - luminance(bg); d > -60 && d < 60 {
+			continue
+		}
+		bodies = append(bodies, h)
+		have[h] = true
+	}
+	return bodies
+}
+
+// saturation is the spread between the strongest and weakest channel; greys
+// score 0.
+func saturation(hex string) float64 {
+	c, ok := parseHex(hex)
+	if !ok {
+		return 0
+	}
+	lo, hi := c[0], c[0]
+	for _, v := range c[1:] {
+		lo, hi = min(lo, v), max(hi, v)
+	}
+	return float64(hi - lo)
 }
 
 func luminance(hex string) float64 {
@@ -133,7 +190,9 @@ func Load() Palette {
 	set(&p.Ok, "green")
 	set(&p.Attn, "yellow", "orange")
 	set(&p.Err, "red")
-	// Body colours: every palette hue that stands out against the background.
+	// Body colours: every real hue in the palette that stands out against the
+	// background, topped up from the curated set so agents stay telling apart
+	// even on a monochrome theme.
 	var bodies []string
 	seen := map[string]bool{}
 	for _, k := range paletteKeys {
@@ -142,13 +201,11 @@ func Load() Palette {
 			continue
 		}
 		seen[v] = true
-		if d := luminance(v) - luminance(p.Bg); d > 60 || d < -60 {
+		if d := luminance(v) - luminance(p.Bg); (d > 60 || d < -60) && saturation(v) >= 40 {
 			bodies = append(bodies, v)
 		}
 	}
-	if len(bodies) > 0 {
-		p.Bodies = bodies
-	}
+	p.Bodies = fillHues(bodies, p.Bg)
 	set(&p.Blush, "bright_red", "red")
 	return p
 }

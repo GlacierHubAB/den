@@ -19,7 +19,7 @@ import (
 )
 
 // Header introduces every message Den relays.
-const Header = "From the operator via Den (the fleet TUI). This is the human's own message, typed in another terminal:"
+const Header = "Operator message via Den (typed by your human in another terminal):"
 
 // Compose wraps the operator's text with the header.
 func Compose(text string) string {

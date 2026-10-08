@@ -11,10 +11,15 @@ import (
 type styles struct {
 	pal                                            theme.Palette
 	fg, dim, muted, bright, ok, attn, err          lipgloss.Style
-	brand, roleChip, sel, section                  lipgloss.Style
+	brand, sel, section                            lipgloss.Style
 	border, borderFocus, paneTitle, paneTitleFocus lipgloss.Style
 	tabOn, tabOff, badgeN                          lipgloss.Style
 	key, keyLabel, keycap                          lipgloss.Style
+}
+
+// chip is the role badge in the agent's own colour.
+func (s styles) chip(color string) lipgloss.Style {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color(s.pal.Bg)).Background(lipgloss.Color(color)).Bold(true).Padding(0, 1)
 }
 
 func newStyles(p theme.Palette) styles {
@@ -28,7 +33,6 @@ func newStyles(p theme.Palette) styles {
 	s.attn = lipgloss.NewStyle().Foreground(c(p.Attn))
 	s.err = lipgloss.NewStyle().Foreground(c(p.Err))
 	s.brand = lipgloss.NewStyle().Foreground(c(p.Bg)).Background(c(p.Bright)).Bold(true).Padding(0, 1)
-	s.roleChip = lipgloss.NewStyle().Foreground(c(p.Bg)).Background(c(p.Bright)).Bold(true).Padding(0, 1)
 	s.sel = lipgloss.NewStyle().Background(c(p.Sel))
 	s.section = lipgloss.NewStyle().Foreground(c(p.Muted))
 	s.border = lipgloss.NewStyle().Foreground(c(p.Surface2()))

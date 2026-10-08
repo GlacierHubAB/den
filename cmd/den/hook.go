@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -30,7 +31,7 @@ func runHook() {
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: in.HookEventName, SessionID: in.SessionID, Payload: raw}
 	path := bridge.SocketPath()
 	if in.HookEventName != "PermissionRequest" {
-		bridge.Send(path, env)
+		logHook(in, bridge.Send(path, env))
 		return
 	}
 	wait := 580 * time.Second
@@ -40,6 +41,7 @@ func runHook() {
 		}
 	}
 	d, ok := bridge.Ask(path, env, wait)
+	logHook(in, ok)
 	if !ok || d.Behavior == "" {
 		return // no decision: Claude Code shows its own dialog
 	}
@@ -50,6 +52,41 @@ func runHook() {
 		},
 	}
 	json.NewEncoder(os.Stdout).Encode(out)
+}
+
+// logHook appends one line per hook run to the state directory so "did the
+// hook fire for that session?" can be answered without a debugger. Set
+// DEN_HOOK_LOG=off to disable it.
+func logHook(in bridge.HookInput, delivered bool) {
+	if os.Getenv("DEN_HOOK_LOG") == "off" {
+		return
+	}
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		dir = filepath.Join(home, ".local", "state")
+	}
+	dir = filepath.Join(dir, "den")
+	if os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "hooks.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	status := "delivered"
+	if !delivered {
+		status = "no den listening"
+	}
+	sid := in.SessionID
+	if len(sid) > 8 {
+		sid = sid[:8]
+	}
+	fmt.Fprintf(f, "%s %-18s %s %s\n", time.Now().Format("2006-01-02 15:04:05"), in.HookEventName, sid, status)
 }
 
 func installHooks() {

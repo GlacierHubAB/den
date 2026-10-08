@@ -321,7 +321,7 @@ func (m Model) agentsPane(w, h int) string {
 		}
 		role := ""
 		if a.Labels.Role != "" {
-			role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
+			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
 		}
 		l1 := marker + fg.Render(" ") + glyph + fg.Render(" ") + name + role
 
@@ -471,7 +471,7 @@ func (m Model) detailPane(w, h int) string {
 	line := func(str string) { b.WriteString(indent + ansi.Truncate(str, w-4, "…") + "\n") }
 	role := ""
 	if a.Labels.Role != "" {
-		role = "  " + s.roleChip.Render(strings.ToUpper(a.Labels.Role))
+		role = "  " + s.chip(m.agentColor(a)).Render(strings.ToUpper(a.Labels.Role))
 	}
 	// Identity on top, then the critter with its task beside it.
 	b.WriteString("\n")
