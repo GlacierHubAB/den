@@ -124,7 +124,7 @@ func (m Model) smallCritter(sessionID string, selected bool) []string {
 	seed := critter.Hash(sessionID)
 	colors := critter.Colors{Bodies: []string{m.colorFor(sessionID)}, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
 	px := critter.Pixels(seed, colors, critter.Pose{})
-	rows := critter.OctantRows(px)
+	rows := critter.OctantRows(px, critter.Ink(seed, colors))
 	gap := lipgloss.NewStyle()
 	if selected {
 		gap = gap.Background(lipgloss.Color(m.st.pal.Sel))

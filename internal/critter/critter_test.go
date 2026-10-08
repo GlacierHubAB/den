@@ -54,9 +54,11 @@ func TestSpriteIsDeterministicAndBounded(t *testing.T) {
 }
 
 func TestOctantRowsCoverTheSprite(t *testing.T) {
-	px := Pixels(Hash("octant-test"), Colors{}, Pose{})
-	rows := OctantRows(px)
-	painted := 0
+	seed := Hash("octant-test")
+	px := Pixels(seed, Colors{}, Pose{})
+	ink := Ink(seed, Colors{})
+	rows := OctantRows(px, ink)
+	painted, inked := 0, 0
 	for _, row := range rows {
 		for _, c := range row {
 			if c.Char != " " {
@@ -64,11 +66,26 @@ func TestOctantRowsCoverTheSprite(t *testing.T) {
 				if c.Top == "" {
 					t.Errorf("painted cell without a colour: %+v", c)
 				}
+				if c.Bottom == ink {
+					inked++
+				}
 			}
 		}
 	}
-	if painted < 8 {
-		t.Errorf("only %d cells painted", painted)
+	if painted < 8 || inked == 0 {
+		t.Errorf("painted %d cells, %d with ink", painted, inked)
+	}
+	// The ink the generator used must be the ink the renderer looks for.
+	found := false
+	for _, row := range px {
+		for _, v := range row {
+			if v == ink {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ink %s not present in the sprite", ink)
 	}
 	if octants[0b00000001] != 0x1CEA8 || octants[0b11111111] != '█' || octants[0b01010101] != '▌' || octants[0b00000111] < 0x1CD00 {
 		t.Errorf("octant table is off: %x %x %x %x", octants[1], octants[255], octants[0x55], octants[7])
