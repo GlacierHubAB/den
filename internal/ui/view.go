@@ -12,6 +12,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/theme"
 )
 
 func (m Model) View() tea.View {
@@ -133,8 +134,8 @@ func (m Model) header(w int) []string {
 		return []string{justify(left, right, w), ansi.Truncate(m.tabs(w), w, "…")}
 	}
 	logo := make([]string, len(wordmark))
-	for i, r := range wordmark {
-		logo[i] = "  " + s.bright.Render(r) + "    "
+	for i, r := range m.logoRows() {
+		logo[i] = "  " + r + "    "
 	}
 	rows := []string{
 		"",
@@ -145,6 +146,35 @@ func (m Model) header(w int) []string {
 		m.tabs(w),
 	}
 	return rows
+}
+
+// logoRows draws the wordmark with depth: the block letters are split into
+// half-cell pixel rows and shaded from dark grey at the foot through two
+// lighter greys to white at the top, so most of the mark is grey and the
+// light sits on its upper edge.
+func (m Model) logoRows() []string {
+	p := m.st.pal
+	// Six pixel rows, top first: white, then three greys stepping darker.
+	bands := []string{p.Bright, p.Fg, p.Fg, theme.Tint(p.Fg, p.FgDim), p.FgDim, p.FgDim}
+	out := make([]string, len(wordmark))
+	for i, r := range wordmark {
+		top, bottom := bands[2*i], bands[2*i+1]
+		var b strings.Builder
+		for _, ch := range r {
+			switch ch {
+			case '█':
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(top)).Background(lipgloss.Color(bottom)).Render("▀"))
+			case '▀':
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(top)).Render("▀"))
+			case '▄':
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(bottom)).Render("▄"))
+			default:
+				b.WriteRune(ch)
+			}
+		}
+		out[i] = b.String()
+	}
+	return out
 }
 
 // justify spaces left and right apart to fill w.
