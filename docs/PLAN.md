@@ -144,6 +144,7 @@ filtering; relay loop guards (depth cap plus visited set).
 - Single binary with subcommands: `den` (TUI), `den hook <event>`, `den install-hooks`, `den explain`.
 - No daemon. Den's socket lives only while the TUI runs; hooks fail open.
 - Mods ship with Den: `mods/agent-badge` is a git submodule embedded into the binary; `den install-mods` copies it to `~/.claude/skills/<name>` (auto-loaded by Claude Code). Den stays the source of truth for agent colours through `~/.local/state/den/colors.json`, which the badge follows.
+- Inbox doubles as history: every finished turn stays (newest 100, persisted to `~/.local/state/den/history.jsonl`) with the agent's avatar, colour, role chip, the task it was on and a one-sentence gist of the reply. The tab counter is what you have not dealt with: unseen notices plus anything waiting, amber when an answer is needed.
 - Keys: the command line is always open, so letters are text. `Tab` switches views, `← →` panes, `↑ ↓` select or scroll, `Enter` sends (empty line: focus terminal), `Ctrl+Y`/`Ctrl+N` answer, slash commands for the rest. The Fleet view shows agents and the selected agent only; the inbox has its own view with a count on its tab.
 
 ## Open questions

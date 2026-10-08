@@ -35,7 +35,8 @@ den install-mods      # once; puts the bundled agent-badge mod into ~/.claude/sk
 den mods              # what ships in this binary and where it is loaded from
 den uninstall-mods    # undo
 # Every hook run appends a line to ~/.local/state/den/hooks.log (event,
-# session, delivered or not). DEN_HOOK_LOG=off silences it.
+# session, delivered or not). DEN_HOOK_LOG=off silences it. Finished turns
+# are appended to ~/.local/state/den/history.jsonl and come back on restart.
 ```
 
 Hooks apply to Claude Code sessions started after installing. Den holds a

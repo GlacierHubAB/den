@@ -103,3 +103,47 @@ func untilText(iso string) string {
 	}
 	return fmt.Sprintf("resets in %dd %dh", int(d.Hours())/24, int(d.Hours())%24)
 }
+
+// colorFor is the agent colour for a session that may already be gone: the
+// record first, then the seed, the same way the badge decides.
+func (m Model) colorFor(sessionID string) string {
+	if c, ok := m.colors[sessionID]; ok {
+		return c
+	}
+	hues := m.st.pal.Bodies
+	if len(hues) == 0 {
+		return m.st.pal.Bright
+	}
+	return hues[int(critter.Hash(sessionID)%uint32(len(hues)))]
+}
+
+// smallCritter renders the session's creature at half size, 8 columns by 4
+// rows, resting; on a selection row the gaps carry the selection colour.
+func (m Model) smallCritter(sessionID string, selected bool) []string {
+	seed := critter.Hash(sessionID)
+	colors := critter.Colors{Bodies: []string{m.colorFor(sessionID)}, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
+	px := critter.Pixels(seed, colors, critter.Pose{})
+	rows := critter.SmallRows(px)
+	gap := lipgloss.NewStyle()
+	if selected {
+		gap = gap.Background(lipgloss.Color(m.st.pal.Sel))
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		var b strings.Builder
+		for _, c := range row {
+			switch {
+			case c.Char == " ":
+				b.WriteString(gap.Render(" "))
+			case c.Top != "" && c.Bottom != "":
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(c.Top)).Background(lipgloss.Color(c.Bottom)).Render("▀"))
+			case c.Top != "":
+				b.WriteString(gap.Foreground(lipgloss.Color(c.Top)).Render("▀"))
+			default:
+				b.WriteString(gap.Foreground(lipgloss.Color(c.Bottom)).Render("▄"))
+			}
+		}
+		out = append(out, b.String())
+	}
+	return out
+}

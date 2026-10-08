@@ -88,9 +88,12 @@ func (m Model) header(w int) []string {
 	fleetLine := s.dim.Render(strings.Join(fleetParts, " · "))
 
 	var links []string
-	if n := m.store.Waiting(); n > 0 {
-		links = append(links, s.attn.Render(fmt.Sprintf("inbox %d waiting", n)))
-	} else {
+	switch waiting, unseen := m.store.Waiting(), m.store.Unseen(); {
+	case waiting > 0:
+		links = append(links, s.attn.Render(fmt.Sprintf("inbox %d waiting", waiting)))
+	case unseen > 0:
+		links = append(links, fmt.Sprintf("inbox %d new", unseen))
+	default:
 		links = append(links, "inbox clear")
 	}
 	if m.orch.status != "" {
@@ -164,9 +167,15 @@ func (m Model) tabs(w int) string {
 	if m.orch.status != "" {
 		orchStatus = " " + s.muted.Render(m.orch.status)
 	}
+	// The counter is what you have not dealt with: unseen notices and
+	// anything still waiting. Amber when an answer is needed.
 	inboxCount := ""
-	if n := m.store.Waiting(); n > 0 {
-		inboxCount = " " + s.badgeN.Render(fmt.Sprint(n))
+	if n := m.store.Unseen(); n > 0 {
+		badge := s.badgeNew
+		if m.store.Waiting() > 0 {
+			badge = s.badgeN
+		}
+		inboxCount = " " + badge.Render(fmt.Sprint(n))
 	}
 	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus
 	return justify(left, s.keycap.Render("Tab ⇥")+"  ", w)
@@ -377,6 +386,7 @@ func (m Model) inboxPane(w, h int) string {
 	}
 	active := m.inboxActive()
 	var blocks [][]string
+	const avatarW = 8
 	for i, it := range items {
 		selected := active && i == m.inboxCur
 		fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
@@ -387,8 +397,11 @@ func (m Model) inboxPane(w, h int) string {
 			stripe, kindStyle = attn.Render("▌"), attn
 		case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
 			stripe, kindStyle = attn.Render("▏"), attn
-		case it.Kind == inbox.Done && it.State != inbox.Resolved:
-			stripe, kindStyle = ok.Render("▌"), ok
+		case it.Kind == inbox.Done:
+			stripe, kindStyle = ok.Render("▏"), ok
+			if !it.Seen {
+				stripe = ok.Render("▌")
+			}
 		case it.Kind == inbox.Sent:
 			switch {
 			case strings.HasPrefix(it.Resolved, "failed"):
@@ -399,37 +412,47 @@ func (m Model) inboxPane(w, h int) string {
 				stripe, kindStyle = attn.Render("▏"), attn
 			}
 		}
-		name := fg.Render(m.nameFor(it.SessionID))
-		if selected {
-			name = bright.Render(m.nameFor(it.SessionID))
-		}
 		sp := fg.Render(" ")
-		head := stripe + sp + name + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
-		rows := []string{head}
+		color := m.colorFor(it.SessionID)
+		name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(it.SessionID))
+		role := ""
+		if it.Role != "" {
+			role = sp + s.chip(color).Render(strings.ToUpper(it.Role))
+		}
+		head := name + role + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
+
+		textW := w - 4 - avatarW - 1
+		var text []string
+		text = append(text, head)
 		body := fg
 		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
 			body = dim
 		}
-		titleLines := strings.Split(ansi.Wrap(it.Title, w-4, ""), "\n")
-		bodyLines := it.Body
-		if it.Kind >= inbox.Done || it.State == inbox.Resolved {
-			// Notices are a glance, not a transcript: two lines of title, one of body.
-			if len(titleLines) > 2 {
-				titleLines = titleLines[:2]
-				titleLines[1] = ansi.Truncate(titleLines[1], w-6, "…")
+		// Headline: for a finished turn, what the agent was working on; for
+		// everything else, what is being asked. Then the one-line gist.
+		switch {
+		case it.Kind == inbox.Done && it.Task != "":
+			text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
+			text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
+		default:
+			lines := strings.Split(ansi.Wrap(it.Title, textW, ""), "\n")
+			if len(lines) > 2 {
+				lines = lines[:2]
+				lines[1] = ansi.Truncate(lines[1], textW-2, "…")
 			}
-			if len(bodyLines) > 1 {
-				bodyLines = bodyLines[:1]
+			for _, l := range lines {
+				text = append(text, body.Render(l))
 			}
 		}
-		for _, l := range titleLines {
-			rows = append(rows, stripe+sp+body.Render(l))
+		bodyLines := it.Body
+		if (it.Kind >= inbox.Done || it.State == inbox.Resolved) && len(bodyLines) > 1 {
+			bodyLines = bodyLines[:1]
 		}
 		for _, l := range bodyLines {
-			rows = append(rows, stripe+sp+dim.Render(ansi.Truncate(l, w-4, "…")))
+			text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
 		}
 		for j, o := range it.Options {
-			rows = append(rows, stripe+sp+bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, w-6, "…")))
+			text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
 		}
 		key := func(k, label string) string {
 			if label == "" {
@@ -439,26 +462,40 @@ func (m Model) inboxPane(w, h int) string {
 		}
 		switch {
 		case it.Kind == inbox.Sent:
-			rows = append(rows, stripe+sp+dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
+			text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
 		case it.Answerable():
 			acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
 			if it.Kind == inbox.Plan {
 				acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
 			}
-			rows = append(rows, stripe+sp+acts)
+			text = append(text, acts)
 		case it.State == inbox.InTerminal:
 			why := "answer in the terminal"
 			if it.Resolved != "" {
 				why = it.Resolved + " · answer in the terminal"
 			}
-			rows = append(rows, stripe+sp+dim.Render(why)+sp+sp+key("/open", ""))
+			text = append(text, dim.Render(why)+sp+sp+key("/open", ""))
+		case it.Kind == inbox.Done:
+			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
 		case it.State == inbox.Resolved:
-			rows = append(rows, stripe+sp+muted.Render(it.Resolved))
+			text = append(text, muted.Render(it.Resolved))
 		default:
-			rows = append(rows, stripe+sp+key("/open", "")+sp+sp+key("/dismiss", ""))
+			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
 		}
-		for j, r := range rows {
-			rows[j] = fill(r, w, fg)
+		// Avatar on the left, 8 columns by 4 rows; the text runs beside it.
+		avatar := m.smallCritter(it.SessionID, selected)
+		n := max(len(text), len(avatar))
+		rows := make([]string, 0, n+1)
+		for r := 0; r < n; r++ {
+			left := fg.Render(strings.Repeat(" ", avatarW))
+			if r < len(avatar) {
+				left = avatar[r]
+			}
+			right := ""
+			if r < len(text) {
+				right = text[r]
+			}
+			rows = append(rows, fill(stripe+sp+left+sp+right, w, fg))
 		}
 		blocks = append(blocks, append(rows, ""))
 	}

@@ -63,6 +63,9 @@ type Item struct {
 	Body      []string // detail lines (a command, a path, a plan excerpt)
 	Options   []string // AskUserQuestion choices, display only
 	Resolved  string   // how it was resolved, for the dim trailer
+	Role      string   // the agent's role when this happened
+	Task      string   // what the agent was working on when this happened
+	Seen      bool     // shown on the Inbox view at least once
 	req       *bridge.Request
 }
 
@@ -176,14 +179,10 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 			return s.add(&Item{SessionID: in.SessionID, Kind: Question, State: InTerminal, Title: firstNonEmpty(in.Message, "Needs your input")})
 		}
 	case "UserPromptSubmit":
-		s.resolveSession(in.SessionID, "you replied", func(it *Item) bool { return true })
+		s.resolveSession(in.SessionID, "you replied", func(it *Item) bool { return it.Kind != Done })
 	case "Stop":
 		s.resolveSession(in.SessionID, "turn finished", func(it *Item) bool { return it.Kind != Done })
-		msg := strings.TrimSpace(in.LastAssistant)
-		if msg == "" {
-			msg = "Turn finished."
-		}
-		return s.add(&Item{SessionID: in.SessionID, Kind: Done, Title: firstLine(msg), Body: moreLines(msg, 4)})
+		return s.add(&Item{SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
 	case "SessionEnd":
 		s.resolveSession(in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
@@ -256,16 +255,28 @@ func (s *Store) Dismiss(it *Item) {
 	}
 }
 
-// Prune drops resolved items older than keep and dismissible notices beyond max.
+// MaxHistory is how many finished turns the inbox keeps as history.
+const MaxHistory = 100
+
+// Prune drops resolved items older than keep and dismissible notices beyond
+// max. Finished turns are history: they stay, newest MaxHistory of them.
 func (s *Store) Prune(keep time.Duration, maxNotices int) {
 	var out []*Item
-	notices := 0
+	notices, history := 0, 0
 	for i := len(s.items) - 1; i >= 0; i-- {
 		it := s.items[i]
+		if it.Kind == Done {
+			history++
+			if history > MaxHistory {
+				continue
+			}
+			out = append(out, it)
+			continue
+		}
 		if it.State == Resolved && time.Since(it.At) > keep {
 			continue
 		}
-		if it.Kind >= Done {
+		if it.Kind > Done {
 			notices++
 			if notices > maxNotices {
 				continue
@@ -277,6 +288,40 @@ func (s *Store) Prune(keep time.Duration, maxNotices int) {
 		out[i], out[j] = out[j], out[i]
 	}
 	s.items = out
+}
+
+// Unseen counts items that have not been shown on the Inbox view yet, plus
+// anything still waiting for an answer.
+func (s *Store) Unseen() int {
+	n := 0
+	for _, it := range s.items {
+		if !it.Seen || it.Answerable() {
+			n++
+		}
+	}
+	return n
+}
+
+// MarkSeen records that the Inbox view showed everything it holds.
+func (s *Store) MarkSeen() {
+	for _, it := range s.items {
+		it.Seen = true
+	}
+}
+
+// Restore puts history loaded from disk in front of everything else, already
+// seen.
+func (s *Store) Restore(items []*Item) {
+	for _, it := range items {
+		s.seq++
+		it.ID = fmt.Sprintf("h%d", s.seq)
+		it.Seen = true
+		if it.Kind == 0 {
+			it.Kind = Done
+		}
+		it.State = Resolved
+	}
+	s.items = append(items, s.items...)
 }
 
 func (s *Store) add(it *Item) *Item {
@@ -418,6 +463,51 @@ func diffLines(oldS, newS string) []string {
 		}
 	}
 	return out
+}
+
+// Summarize turns an assistant reply into one plain sentence for a notice:
+// no code blocks, no markdown furniture, cut at the first sentence end.
+func Summarize(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "Turn finished."
+	}
+	// Drop fenced code blocks wholesale.
+	var kept []string
+	inFence := false
+	for _, l := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if strings.HasPrefix(t, "#") {
+			continue // headings name sections, they do not say what was done
+		}
+		t = strings.TrimLeft(t, ">-*• ")
+		t = strings.TrimSpace(strings.NewReplacer("**", "", "__", "", "`", "").Replace(t))
+		if t != "" {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) == 0 {
+		return "Turn finished."
+	}
+	flat := strings.Join(strings.Fields(strings.Join(kept, " ")), " ")
+	// First sentence: a terminator followed by a space, or the whole thing.
+	for i := 0; i+1 < len(flat); i++ {
+		if (flat[i] == '.' || flat[i] == '!' || flat[i] == '?') && flat[i+1] == ' ' && i >= 12 {
+			flat = flat[:i+1]
+			break
+		}
+	}
+	if r := []rune(flat); len(r) > 160 {
+		flat = strings.TrimSpace(string(r[:159])) + "…"
+	}
+	return flat
 }
 
 func firstLine(s string) string {

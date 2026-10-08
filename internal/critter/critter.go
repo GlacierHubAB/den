@@ -373,3 +373,46 @@ func Rows(px [N][N]string) [N / 2][N]Cell {
 	}
 	return rows
 }
+
+// SmallRows renders the sprite at half size, 8 columns by 4 rows, for places
+// where the full creature would not fit. Each 2x2 block becomes the colour
+// most of its pixels share, so the silhouette and body colour survive.
+func SmallRows(px [N][N]string) [N / 4][N / 2]Cell {
+	var small [N / 2][N / 2]string
+	for y := 0; y < N/2; y++ {
+		for x := 0; x < N/2; x++ {
+			counts := map[string]int{}
+			var best string
+			for _, c := range []string{px[2*y][2*x], px[2*y][2*x+1], px[2*y+1][2*x], px[2*y+1][2*x+1]} {
+				if c == "" {
+					continue
+				}
+				counts[c]++
+				if best == "" || counts[c] > counts[best] {
+					best = c
+				}
+			}
+			if len(counts) > 0 && counts[best] < 2 {
+				best = "" // a lone pixel in a mostly empty block is noise
+			}
+			small[y][x] = best
+		}
+	}
+	var rows [N / 4][N / 2]Cell
+	for r := 0; r < N/4; r++ {
+		for x := 0; x < N/2; x++ {
+			t, b := small[2*r][x], small[2*r+1][x]
+			switch {
+			case t == "" && b == "":
+				rows[r][x] = Cell{Char: " "}
+			case b == "":
+				rows[r][x] = Cell{Char: "▀", Top: t}
+			case t == "":
+				rows[r][x] = Cell{Char: "▄", Bottom: b}
+			default:
+				rows[r][x] = Cell{Char: "▀", Top: t, Bottom: b}
+			}
+		}
+	}
+	return rows
+}

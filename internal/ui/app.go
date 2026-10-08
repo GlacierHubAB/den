@@ -94,6 +94,7 @@ func New() Model {
 		watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile()),
 		store: inbox.New(),
 	}
+	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), inbox.MaxHistory))
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
 	m.input = newInput(m.st)
@@ -290,6 +291,9 @@ func (m *Model) refresh() {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.tab == tabInbox {
+		m.store.MarkSeen() // whatever was on screen before this message counts as seen
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -361,6 +365,14 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		return nil
 	}
 	it := m.store.Apply(r)
+	if it != nil {
+		if a, ok := m.agentFor(it.SessionID); ok {
+			it.Role, it.Task = a.Labels.Role, a.Labels.Task
+		}
+		if it.Kind == inbox.Done {
+			_ = inbox.AppendHistory(inbox.HistoryPath(), it) // best effort
+		}
+	}
 	var cmds []tea.Cmd
 	switch r.Event {
 	case "SessionStart", "SessionEnd":

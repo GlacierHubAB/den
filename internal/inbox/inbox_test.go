@@ -3,6 +3,7 @@ package inbox
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,7 +78,7 @@ func TestNoticesAndResolution(t *testing.T) {
 		t.Error("question should resolve on PostToolUse")
 	}
 	done := store.Apply(mk("Stop", map[string]any{"last_assistant_message": "Pushed the repo.\n\nOpened issue #10463."}))
-	if done == nil || done.Kind != Done || done.Title != "Pushed the repo." || len(done.Body) != 1 {
+	if done == nil || done.Kind != Done || done.Title != "Pushed the repo." {
 		t.Fatalf("done = %+v", done)
 	}
 	if store.Waiting() != 0 {
@@ -88,5 +89,23 @@ func TestNoticesAndResolution(t *testing.T) {
 		if it == done {
 			t.Error("dismiss did not remove the item")
 		}
+	}
+}
+
+func TestSummarize(t *testing.T) {
+	cases := map[string]string{
+		"":                    "Turn finished.",
+		"```\ncode only\n```": "Turn finished.",
+		"## Done\n\n**Pushed** `af0ca69` to main. Restart `den` to pick it up.\n\n```sh\ngo build\n```": "Pushed af0ca69 to main.",
+		"- first bullet item here\n- second":                 "first bullet item here second",
+		"Short. Then a longer second sentence follows here.": "Short. Then a longer second sentence follows here.",
+	}
+	for in, want := range cases {
+		if got := Summarize(in); got != want {
+			t.Errorf("Summarize(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := Summarize(strings.Repeat("word ", 60)); len([]rune(got)) > 160 {
+		t.Errorf("long text not capped: %d", len([]rune(got)))
 	}
 }

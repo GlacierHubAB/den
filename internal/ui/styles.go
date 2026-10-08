@@ -13,7 +13,7 @@ type styles struct {
 	fg, dim, muted, bright, ok, attn, err          lipgloss.Style
 	brand, sel, section                            lipgloss.Style
 	border, borderFocus, paneTitle, paneTitleFocus lipgloss.Style
-	tabOn, tabOff, badgeN                          lipgloss.Style
+	tabOn, tabOff, badgeN, badgeNew                lipgloss.Style
 	key, keyLabel, keycap                          lipgloss.Style
 }
 
@@ -42,6 +42,7 @@ func newStyles(p theme.Palette) styles {
 	s.tabOn = lipgloss.NewStyle().Foreground(c(p.Bright)).Underline(true)
 	s.tabOff = lipgloss.NewStyle().Foreground(c(p.FgDim))
 	s.badgeN = lipgloss.NewStyle().Foreground(c(p.Bg)).Background(c(p.Attn)).Bold(true).Padding(0, 1)
+	s.badgeNew = lipgloss.NewStyle().Foreground(c(p.Bg)).Background(c(p.Fg)).Bold(true).Padding(0, 1)
 	s.key = lipgloss.NewStyle().Foreground(c(p.Fg))
 	s.keyLabel = lipgloss.NewStyle().Foreground(c(p.FgDim))
 	s.keycap = lipgloss.NewStyle().Foreground(c(p.Fg)).Background(c(p.Sel)).Padding(0, 1)
