@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
@@ -46,9 +47,13 @@ type orchState struct {
 	status   string
 }
 
-func startOrchestrator() tea.Cmd {
+func startOrchestrator(cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		o, err := orch.Start(context.Background(), orch.Options{Name: OrchestratorName})
+		name := cfg.Orchestrator.Name
+		if name == "" {
+			name = OrchestratorName
+		}
+		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model})
 		return orchStartedMsg{o: o, err: err}
 	}
 }
@@ -110,7 +115,7 @@ func (m *Model) askOrchestrator(text string) tea.Cmd {
 		}
 		m.orch.starting = true
 		m.orch.status = "starting…"
-		return startOrchestrator()
+		return startOrchestrator(m.cfg)
 	}
 	return m.sendToOrchestrator(text)
 }

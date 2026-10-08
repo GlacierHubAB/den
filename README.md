@@ -7,7 +7,7 @@ terminals, shows who they are (the agent-badge critter, role and task), streams
 everything that needs your answer into one inbox, and lets you talk to one
 agent with an `@mention` or to an orchestrator that speaks to all of them.
 
-Status: milestone 5 in progress. The Fleet view is live: agents grouped by
+Status: milestones 0 to 5 shipped; Den is a daily driver. The Fleet view is live: agents grouped by
 state with their critter, role, task, repo, branch and context usage, a detail
 pane with the agent's animated critter, context and usage gauges and recent
 activity, and Enter brings the
@@ -21,7 +21,7 @@ fleet and can relay for you. See
 [docs/mockup/den-mockup.html](docs/mockup/den-mockup.html) for the target UI.
 
 ```
-go build -o ~/.local/bin/den ./cmd/den
+make install          # builds ~/.local/bin/den with the version from git
 den install-hooks     # once; wires den into ~/.claude/settings.json (backed up)
 den                   # the TUI
 den list [-json]      # what Den sees, for scripts and debugging
@@ -34,6 +34,9 @@ den uninstall-hooks   # undo
 den install-mods      # once; puts the bundled agent-badge mod into ~/.claude/skills
 den mods              # what ships in this binary and where it is loaded from
 den uninstall-mods    # undo
+den config            # the config file path and the settings in effect
+den config init       # write a documented ~/.config/den/config.toml
+den version
 # Every hook run appends a line to ~/.local/state/den/hooks.log (event,
 # session, delivered or not). DEN_HOOK_LOG=off silences it. Finished turns
 # are appended to ~/.local/state/den/history.jsonl and come back on restart.
@@ -62,7 +65,40 @@ first plain-text message. It has exactly two tools, ListAgents and SendMessage,
 and gets a fresh roster of the fleet with every message, so it can answer
 "who is blocked on what?" or relay "tell Mossy to rebase first" without
 hunting around. It cannot approve anything. Its turns are billed like any
-other session; it uses `sonnet` unless `DEN_ORCHESTRATOR_MODEL` says otherwise.
+other session; it uses `sonnet` unless the config file or
+`DEN_ORCHESTRATOR_MODEL` says otherwise.
+
+## Configuration
+
+Everything has a default, so the file is optional. `den config init` writes
+this starting point to `~/.config/den/config.toml` (`DEN_CONFIG` overrides
+the path):
+
+```toml
+[orchestrator]
+model = "sonnet"            # any claude --model value, or "off" for Claude Code's default
+name = "den-orchestrator"   # how the orchestrator session names itself to peers
+
+[inbox]
+history = 100               # finished turns kept as history
+
+[detail]
+recent = 20                 # activity entries shown in the details pane
+
+[hooks]
+permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
+log = true                  # append every hook run to ~/.local/state/den/hooks.log
+```
+
+`DEN_ORCHESTRATOR_MODEL`, `DEN_PERMISSION_WAIT` and `DEN_HOOK_LOG=off` still
+win over the file, so scripts keep working.
+
+## Releases
+
+`make release` builds static `linux/amd64` and `linux/arm64` binaries into
+`dist/` with a checksum file, stamped with `git describe`. Pushing a `v*` tag
+runs the same build on GitHub Actions and attaches the binaries to a release;
+`make test` runs on every push.
 
 Requirements: Claude Code 2.1.289+ and Hyprland (for focusing). The
 [agent-badge](https://github.com/GlacierHubAB/agent-badge) mod ships inside

@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/colors"
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/critter"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -75,6 +76,7 @@ type Model struct {
 	store      *inbox.Store
 	inboxCur   int
 	hooksReady bool
+	cfg        config.Config
 	colors     map[string]string // session id → body colour, unique while hues last
 
 	input    textinput.Model
@@ -88,13 +90,16 @@ type Model struct {
 }
 
 // New returns the root model and starts listening for hook events.
-func New() Model {
+func New(cfg config.Config) Model {
 	m := Model{
+		cfg:   cfg,
 		st:    newStyles(theme.Load()),
 		watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile()),
 		store: inbox.New(),
 	}
-	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), inbox.MaxHistory))
+	fleet.Recent = cfg.Detail.Recent
+	m.store.HistoryLimit(cfg.Inbox.History)
+	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
 	m.input = newInput(m.st)

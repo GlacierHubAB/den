@@ -76,9 +76,10 @@ func (it *Item) Answerable() bool {
 
 // Store holds items and the per-session "always allow" rules.
 type Store struct {
-	items  []*Item
-	always map[string]map[string]bool // sessionID -> allow key
-	seq    int
+	history int // see HistoryLimit
+	items   []*Item
+	always  map[string]map[string]bool // sessionID -> allow key
+	seq     int
 }
 
 // New returns an empty store.
@@ -255,8 +256,19 @@ func (s *Store) Dismiss(it *Item) {
 	}
 }
 
-// MaxHistory is how many finished turns the inbox keeps as history.
+// MaxHistory is how many finished turns the inbox keeps as history unless
+// the store says otherwise.
 const MaxHistory = 100
+
+// HistoryLimit overrides MaxHistory for this store when positive.
+func (s *Store) HistoryLimit(n int) { s.history = n }
+
+func (s *Store) historyLimit() int {
+	if s.history > 0 {
+		return s.history
+	}
+	return MaxHistory
+}
 
 // Prune drops resolved items older than keep and dismissible notices beyond
 // max. Finished turns are history: they stay, newest MaxHistory of them.
@@ -267,7 +279,7 @@ func (s *Store) Prune(keep time.Duration, maxNotices int) {
 		it := s.items[i]
 		if it.Kind == Done {
 			history++
-			if history > MaxHistory {
+			if history > s.historyLimit() {
 				continue
 			}
 			out = append(out, it)

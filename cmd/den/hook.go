@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/hooks"
 )
 
@@ -34,12 +34,7 @@ func runHook() {
 		logHook(in, bridge.Send(path, env))
 		return
 	}
-	wait := 580 * time.Second
-	if v := os.Getenv("DEN_PERMISSION_WAIT"); v != "" {
-		if secs, err := strconv.Atoi(v); err == nil {
-			wait = time.Duration(secs) * time.Second
-		}
-	}
+	wait := time.Duration(config.Load().Hooks.PermissionWait) * time.Second
 	d, ok := bridge.Ask(path, env, wait)
 	logHook(in, ok)
 	if !ok || d.Behavior == "" {
@@ -58,7 +53,7 @@ func runHook() {
 // hook fire for that session?" can be answered without a debugger. Set
 // DEN_HOOK_LOG=off to disable it.
 func logHook(in bridge.HookInput, delivered bool) {
-	if os.Getenv("DEN_HOOK_LOG") == "off" {
+	if !config.Load().Hooks.Log {
 		return
 	}
 	dir := os.Getenv("XDG_STATE_HOME")

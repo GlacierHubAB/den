@@ -17,14 +17,19 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/ui"
 )
+
+// version is set by the Makefile from git describe.
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -32,6 +37,10 @@ func main() {
 		return
 	}
 	switch os.Args[1] {
+	case "version", "-v", "--version":
+		fmt.Println("den " + version)
+	case "config":
+		configCmd(os.Args[2:])
 	case "list":
 		fs := flag.NewFlagSet("list", flag.ExitOnError)
 		asJSON := fs.Bool("json", false, "print JSON")
@@ -66,14 +75,14 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text>\n       den install-hooks | den uninstall-hooks | den events | den mods | den install-mods | den uninstall-mods")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text>\n       den install-hooks | den uninstall-hooks | den events | den mods | den install-mods | den uninstall-mods\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
 }
 
 func runTUI() {
-	m := ui.New()
+	m := ui.New(config.Load())
 	defer m.Close()
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fail("den: %v", err)
@@ -151,4 +160,33 @@ func trunc(s string, n int) string {
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)
 	os.Exit(1)
+}
+
+// configCmd is `den config`: show the file path and the effective settings;
+// `den config init` writes the documented example when there is no file.
+func configCmd(args []string) {
+	path := config.Path()
+	if len(args) > 0 && args[0] == "init" {
+		if _, err := os.Stat(path); err == nil {
+			fail("den: %s already exists", path)
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			fail("den: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(config.Example), 0o644); err != nil {
+			fail("den: %v", err)
+		}
+		fmt.Println("Wrote " + path)
+		return
+	}
+	c := config.Load()
+	state := "not present, using defaults"
+	if _, err := os.Stat(path); err == nil {
+		state = "in use"
+	}
+	fmt.Printf("%s (%s)\n\n", path, state)
+	fmt.Printf("[orchestrator]\nmodel = %q\nname = %q\n\n", c.Orchestrator.Model, c.Orchestrator.Name)
+	fmt.Printf("[inbox]\nhistory = %d\n\n", c.Inbox.History)
+	fmt.Printf("[detail]\nrecent = %d\n\n", c.Detail.Recent)
+	fmt.Printf("[hooks]\npermission_wait = %d\nlog = %v\n", c.Hooks.PermissionWait, c.Hooks.Log)
 }
