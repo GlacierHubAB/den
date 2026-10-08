@@ -44,6 +44,31 @@ const (
 	tabCount // number of tabs, for cycling
 )
 
+// cycleTab moves through the views in the tab row. The Orchestrator view
+// is not in the row: Ctrl+O opens and closes it, and sending plain text
+// opens it too.
+func (m *Model) cycleTab(delta int) {
+	next := m.tab
+	for {
+		next = (next + tab(delta) + tabCount) % tabCount
+		if next != tabOrch {
+			break
+		}
+	}
+	m.tab = next
+}
+
+// toggleOrchestrator opens the Orchestrator view, or returns to the view
+// it was opened from.
+func (m *Model) toggleOrchestrator() {
+	if m.tab == tabOrch {
+		m.tab = m.orch.prevTab
+		return
+	}
+	m.orch.prevTab = m.tab
+	m.tab = tabOrch
+}
+
 type tickMsg time.Time
 type holdTickMsg time.Time
 type changedMsg struct{}
@@ -564,11 +589,15 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.complIdx = 0
 			return m, nil
 		}
-		m.tab = (m.tab + 1) % tabCount
+		m.cycleTab(1)
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
 		return m, cmd
 	case "shift+tab":
-		m.tab = (m.tab + tabCount - 1) % tabCount
+		m.cycleTab(-1)
+		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
+		return m, cmd
+	case "ctrl+o":
+		m.toggleOrchestrator()
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
 		return m, cmd
 	case "left":

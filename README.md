@@ -68,6 +68,10 @@ hunting around. It cannot approve anything. Its turns are billed like any
 other session; it uses `sonnet` unless the config file or
 `DEN_ORCHESTRATOR_MODEL` says otherwise.
 
+The Orchestrator view has no tab: `Ctrl+O` opens it and brings you back,
+and sending plain text opens it too. Its state sits beside the keycap on the
+tab row.
+
 ## Dispatch cards
 
 When the orchestrator hands a brief to an agent, that agent's turn shows up

@@ -71,6 +71,7 @@ type orchState struct {
 	lastEvent  time.Time
 	unanswered []string
 	restarts   int
+	prevTab    tab // where Ctrl+O came from
 }
 
 // Silence thresholds: the status line says so after stallWarn, and Den
@@ -184,6 +185,9 @@ func (m *Model) askOrchestrator(text string) tea.Cmd {
 	m.logEntry(e)
 	m.orch.scroll = 0
 	m.orch.cardCur = -1
+	if m.tab != tabOrch {
+		m.orch.prevTab = m.tab
+	}
 	m.tab = tabOrch
 	if m.orch.proc == nil {
 		m.orch.pending = append(m.orch.pending, text)

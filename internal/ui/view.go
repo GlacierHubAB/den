@@ -203,10 +203,6 @@ func (m Model) tabs(w int) string {
 		}
 		return s.tabOff
 	}
-	orchStatus := ""
-	if m.orch.status != "" {
-		orchStatus = " " + s.muted.Render(m.orch.status)
-	}
 	// The counter is what you have not dealt with: unseen notices and
 	// anything still waiting. Amber when an answer is needed.
 	inboxCount := ""
@@ -217,8 +213,17 @@ func (m Model) tabs(w int) string {
 		}
 		inboxCount = " " + badge.Render(fmt.Sprint(n))
 	}
-	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabOrch).Render("Orchestrator") + orchStatus + "   " + style(tabReview).Render("Review")
-	return justify(left, s.keycap.Render("Tab ⇥")+"  ", w)
+	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabReview).Render("Review")
+	// The Orchestrator view has no tab: Ctrl+O opens it. Its keycap lights
+	// up while it is open, with the orchestrator's state beside it.
+	orchKey := s.keycap.Render("^O orchestrator")
+	if m.tab == tabOrch {
+		orchKey = s.keycapOn.Render("^O orchestrator")
+	}
+	if m.orch.status != "" {
+		orchKey = s.muted.Render(m.orch.status) + "  " + orchKey
+	}
+	return justify(left, orchKey+"  "+s.keycap.Render("Tab ⇥")+"  ", w)
 }
 
 func (m Model) panes(w, h int) string {
@@ -800,15 +805,15 @@ func (m Model) hints(w int) string {
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabInbox:
-		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:
 		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
-		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"^V", "paste image"}, {"↑ ↓", "scroll"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
 	case m.focus == paneDetail:
 		items = [][2]string{{"↑ ↓", "scroll"}, {"←", "agents"}, {"Enter", "send · empty: focus terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	default:
-		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	}
 	var parts []string
 	for _, it := range items {

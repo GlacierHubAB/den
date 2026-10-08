@@ -212,3 +212,29 @@ func TestOrchestratorWatchdog(t *testing.T) {
 		t.Error("only one automatic restart per silence")
 	}
 }
+
+func TestOrchestratorOpensWithCtrlO(t *testing.T) {
+	st := newStyles(theme.Deepharness)
+	m := Model{st: st, agents: sample(), store: inbox.New(), tab: tabInbox, width: 120, height: 30, orch: orchState{cardCur: -1}}
+	m.input = newInput(st)
+	if out := ansi.Strip(m.View().Content); strings.Contains(out, "  Orchestrator  ") || !strings.Contains(out, "^O orchestrator") {
+		t.Errorf("tab row should offer ^O instead of a tab:\n%s", out)
+	}
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if m.tab != tabOrch {
+		t.Fatalf("ctrl+o should open the orchestrator, got %v", m.tab)
+	}
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if m.tab != tabInbox {
+		t.Errorf("ctrl+o again should return to the inbox, got %v", m.tab)
+	}
+	for i := 0; i < 6; i++ {
+		mm, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeyTab})
+		m = mm.(Model)
+		if m.tab == tabOrch {
+			t.Fatal("Tab must not land on the orchestrator")
+		}
+	}
+}
