@@ -52,3 +52,25 @@ func TestSpriteIsDeterministicAndBounded(t *testing.T) {
 		t.Errorf("working pose = %+v", w)
 	}
 }
+
+func TestOctantRowsCoverTheSprite(t *testing.T) {
+	px := Pixels(Hash("octant-test"), Colors{}, Pose{})
+	rows := OctantRows(px)
+	painted := 0
+	for _, row := range rows {
+		for _, c := range row {
+			if c.Char != " " {
+				painted++
+				if c.Top == "" {
+					t.Errorf("painted cell without a colour: %+v", c)
+				}
+			}
+		}
+	}
+	if painted < 8 {
+		t.Errorf("only %d cells painted", painted)
+	}
+	if octants[0b00000001] != 0x1CEA8 || octants[0b11111111] != '█' || octants[0b01010101] != '▌' || octants[0b00000111] < 0x1CD00 {
+		t.Errorf("octant table is off: %x %x %x %x", octants[1], octants[255], octants[0x55], octants[7])
+	}
+}

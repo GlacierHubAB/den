@@ -117,13 +117,14 @@ func (m Model) colorFor(sessionID string) string {
 	return hues[int(critter.Hash(sessionID)%uint32(len(hues)))]
 }
 
-// smallCritter renders the session's creature at half size, 8 columns by 4
-// rows, resting; on a selection row the gaps carry the selection colour.
+// smallCritter renders the session's creature in 8 columns by 4 rows with
+// octant characters, the badge's footprint at full resolution; on a
+// selection row the gaps carry the selection colour.
 func (m Model) smallCritter(sessionID string, selected bool) []string {
 	seed := critter.Hash(sessionID)
 	colors := critter.Colors{Bodies: []string{m.colorFor(sessionID)}, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
 	px := critter.Pixels(seed, colors, critter.Pose{})
-	rows := critter.SmallRows(px)
+	rows := critter.OctantRows(px)
 	gap := lipgloss.NewStyle()
 	if selected {
 		gap = gap.Background(lipgloss.Color(m.st.pal.Sel))
@@ -135,12 +136,10 @@ func (m Model) smallCritter(sessionID string, selected bool) []string {
 			switch {
 			case c.Char == " ":
 				b.WriteString(gap.Render(" "))
-			case c.Top != "" && c.Bottom != "":
-				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(c.Top)).Background(lipgloss.Color(c.Bottom)).Render("▀"))
-			case c.Top != "":
-				b.WriteString(gap.Foreground(lipgloss.Color(c.Top)).Render("▀"))
+			case c.Bottom != "":
+				b.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(c.Top)).Background(lipgloss.Color(c.Bottom)).Render(c.Char))
 			default:
-				b.WriteString(gap.Foreground(lipgloss.Color(c.Bottom)).Render("▄"))
+				b.WriteString(gap.Foreground(lipgloss.Color(c.Top)).Render(c.Char))
 			}
 		}
 		out = append(out, b.String())

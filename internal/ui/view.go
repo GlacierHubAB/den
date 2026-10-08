@@ -734,7 +734,7 @@ func (m Model) detailPane(w, h int) string {
 				}
 				line(head)
 				if e.Code != "" && e.Tool != "Edit" && e.Tool != "Write" && e.Tool != "MultiEdit" {
-					for _, l := range m.codeBlock(e.Code, textW-2) {
+					for _, l := range m.codeBlockN(e.Code, textW-2, 3) {
 						line("  " + l)
 					}
 				}

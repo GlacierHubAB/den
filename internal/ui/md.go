@@ -43,11 +43,22 @@ func (m Model) mdLine(line string, inFence bool, width int) (out string, code, f
 // codeBlock draws lines as a block: a bar down the left and the code in the
 // code colour, wrapped to width.
 func (m Model) codeBlock(text string, width int) []string {
+	return m.codeBlockN(text, width, 0)
+}
+
+// codeBlockN is codeBlock capped at n wrapped lines (0 for no cap), ending
+// in an ellipsis when cut; a call reads as a glance, not a listing.
+func (m Model) codeBlockN(text string, width, n int) []string {
 	s := m.st
 	inner := max(8, width-2)
 	var out []string
 	for _, raw := range strings.Split(text, "\n") {
 		for _, l := range strings.Split(ansi.Wrap(raw, inner, ""), "\n") {
+			if n > 0 && len(out) == n {
+				last := out[n-1]
+				out[n-1] = ansi.Truncate(last, inner+2-1, "") + s.muted.Render("…")
+				return out
+			}
 			out = append(out, s.muted.Render("┃ ")+s.code.Render(l))
 		}
 	}

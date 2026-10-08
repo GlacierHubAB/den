@@ -416,3 +416,79 @@ func SmallRows(px [N][N]string) [N / 4][N / 2]Cell {
 	}
 	return rows
 }
+
+// OctantRows renders the sprite with octant characters, 2x4 pixels per
+// cell, so the whole 16x16 creature fits 8 columns by 4 rows at full
+// resolution. A cell can carry two colours: the pixels nearest the most
+// common colour are drawn in it as the character's foreground, the rest as
+// the background, and transparent pixels stay unpainted.
+func OctantRows(px [N][N]string) [N / 4][N / 2]Cell {
+	var rows [N / 4][N / 2]Cell
+	for r := 0; r < N/4; r++ {
+		for c := 0; c < N/2; c++ {
+			var block [8]string
+			counts := map[string]int{}
+			for i := 0; i < 8; i++ {
+				v := px[4*r+i/2][2*c+i%2]
+				block[i] = v
+				if v != "" {
+					counts[v]++
+				}
+			}
+			if len(counts) == 0 {
+				rows[r][c] = Cell{Char: " "}
+				continue
+			}
+			fg, bg := topTwo(counts)
+			transparent := counts[fg]+counts[bg] < 8
+			if transparent {
+				bg = "" // some pixels are empty, so nothing may paint the cell
+			}
+			var bits int
+			for i, v := range block {
+				if v == "" {
+					continue
+				}
+				if bg == "" || closer(v, fg, bg) {
+					bits |= 1 << i
+				}
+			}
+			switch {
+			case bits == 0 && bg != "":
+				rows[r][c] = Cell{Char: "█", Top: bg}
+			case bits == 0:
+				rows[r][c] = Cell{Char: " "}
+			default:
+				rows[r][c] = Cell{Char: string(octants[bits]), Top: fg, Bottom: bg}
+			}
+		}
+	}
+	return rows
+}
+
+// topTwo returns the two most common colours, the first being the most.
+func topTwo(counts map[string]int) (first, second string) {
+	for c, n := range counts {
+		switch {
+		case first == "" || n > counts[first] || (n == counts[first] && c < first):
+			first, second = c, first
+		case second == "" || n > counts[second] || (n == counts[second] && c < second):
+			second = c
+		}
+	}
+	return
+}
+
+// closer reports whether colour v is nearer a than b.
+func closer(v, a, b string) bool {
+	if v == a {
+		return true
+	}
+	if v == b {
+		return false
+	}
+	pv, pa, pb := hexToRGB(v), hexToRGB(a), hexToRGB(b)
+	da := (pv[0]-pa[0])*(pv[0]-pa[0]) + (pv[1]-pa[1])*(pv[1]-pa[1]) + (pv[2]-pa[2])*(pv[2]-pa[2])
+	db := (pv[0]-pb[0])*(pv[0]-pb[0]) + (pv[1]-pb[1])*(pv[1]-pb[1]) + (pv[2]-pb[2])*(pv[2]-pb[2])
+	return da <= db
+}
