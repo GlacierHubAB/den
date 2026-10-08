@@ -89,7 +89,10 @@ func (s *Store) Items() []*Item {
 		if wi != wj {
 			return wi
 		}
-		return out[i].At.Before(out[j].At)
+		if wi {
+			return out[i].At.Before(out[j].At) // answer in the order they asked
+		}
+		return out[i].At.After(out[j].At) // newest notice on top
 	})
 	return out
 }

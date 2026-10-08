@@ -57,3 +57,20 @@ func TestInboxRendersAllKinds(t *testing.T) {
 		}
 	}
 }
+
+func TestInboxKeepsSelectionVisibleAndNewestOnTop(t *testing.T) {
+	m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New(), tab: tabInbox, width: 100, height: 24}
+	m.input = newInput(m.st)
+	for i := 0; i < 20; i++ {
+		m.store.Apply(req("Stop", "0123456789abcdef", map[string]any{"last_assistant_message": fmt.Sprintf("done number %02d", i)}))
+	}
+	out := ansi.Strip(m.View().Content)
+	if !strings.Contains(out, "done number 19") {
+		t.Errorf("newest notice should be on top:\n%s", out)
+	}
+	m.inboxCur = 19
+	out = ansi.Strip(m.View().Content)
+	if !strings.Contains(out, "done number 00") {
+		t.Errorf("selected (oldest) notice should scroll into view:\n%s", out)
+	}
+}

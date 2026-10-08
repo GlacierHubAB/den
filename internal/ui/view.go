@@ -375,8 +375,8 @@ func (m Model) inboxPane(w, h int) string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	var b strings.Builder
 	active := m.inboxActive()
+	var blocks [][]string
 	for i, it := range items {
 		selected := active && i == m.inboxCur
 		fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
@@ -431,14 +431,19 @@ func (m Model) inboxPane(w, h int) string {
 		for j, o := range it.Options {
 			rows = append(rows, stripe+sp+bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, w-6, "…")))
 		}
-		key := func(k, label string) string { return bright.Render(k) + dim.Render(" "+label) }
+		key := func(k, label string) string {
+			if label == "" {
+				return bright.Render(k)
+			}
+			return bright.Render(k) + dim.Render(" "+label)
+		}
 		switch {
 		case it.Kind == inbox.Sent:
-			rows = append(rows, stripe+sp+dim.Render(it.Resolved)+sp+sp+key("x", "dismiss"))
+			rows = append(rows, stripe+sp+dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
 		case it.Answerable():
-			acts := key("y", "allow") + sp + sp + key("a", "always this session") + sp + sp + key("n", "deny") + sp + sp + key("o", "open terminal")
+			acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
 			if it.Kind == inbox.Plan {
-				acts = key("y", "approve") + sp + sp + key("n", "ask for changes") + sp + sp + key("o", "read it in the terminal")
+				acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
 			}
 			rows = append(rows, stripe+sp+acts)
 		case it.State == inbox.InTerminal:
@@ -446,18 +451,38 @@ func (m Model) inboxPane(w, h int) string {
 			if it.Resolved != "" {
 				why = it.Resolved + " · answer in the terminal"
 			}
-			rows = append(rows, stripe+sp+dim.Render(why)+sp+sp+key("o", "open"))
+			rows = append(rows, stripe+sp+dim.Render(why)+sp+sp+key("/open", ""))
 		case it.State == inbox.Resolved:
 			rows = append(rows, stripe+sp+muted.Render(it.Resolved))
 		default:
-			rows = append(rows, stripe+sp+key("o", "open")+sp+sp+key("x", "dismiss"))
+			rows = append(rows, stripe+sp+key("/open", "")+sp+sp+key("/dismiss", ""))
 		}
-		for _, r := range rows {
-			b.WriteString(fill(r, w, fg) + "\n")
+		for j, r := range rows {
+			rows[j] = fill(r, w, fg)
 		}
-		b.WriteString("\n")
+		blocks = append(blocks, append(rows, ""))
 	}
-	return strings.TrimRight(b.String(), "\n")
+	// Keep the selected item in view: drop whole blocks from the top until
+	// the selection fits in h rows.
+	start := 0
+	if h > 0 && active {
+		cur := clamp(m.inboxCur, 0, len(blocks)-1)
+		for start < cur {
+			used := 0
+			for _, bl := range blocks[start : cur+1] {
+				used += len(bl)
+			}
+			if used <= h {
+				break
+			}
+			start++
+		}
+	}
+	var lines []string
+	for _, bl := range blocks[start:] {
+		lines = append(lines, bl...)
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
 func (m Model) detailPane(w, h int) string {
