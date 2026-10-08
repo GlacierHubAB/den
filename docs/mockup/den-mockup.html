@@ -137,6 +137,89 @@ h1,h2,h3,p{margin:0}
 .fan{display:grid;gap:2px;margin:2px 0 0 0;padding:4px 10px;border-left:2px solid var(--border);color:var(--fg-3);font-size:12px}
 .fan .to{color:var(--fg-2)} .fan .st{color:var(--ok)} .fan .st.p{color:var(--attn)}
 
+/* review view: work + files | diff | comments */
+.rv{display:grid;grid-template-columns:minmax(250px,300px) minmax(0,1fr) minmax(260px,320px);gap:8px;min-width:0;margin-top:8px}
+.rv-left{display:grid;gap:18px;align-content:start;min-width:0}
+.c-moss{--ac:#9fd6a8} .c-maple{--ac:#e8c39e} .c-sunny{--ac:#a9c8ec} .c-you{--ac:var(--fg-2)}
+.work{display:grid;grid-template-columns:3px minmax(0,1fr);gap:0 9px;padding:4px 6px 5px;margin:0 -6px}
+.work::before{content:"";grid-row:1/4;background:var(--ac)}
+.work.sel{background:var(--sel)}
+.work .who{font-weight:500;color:var(--ac);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.work .who .role{font-size:10px;letter-spacing:.06em;color:var(--fg-3);margin-left:8px;font-weight:500}
+.work .what{color:var(--fg-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.work.sel .what{color:var(--fg)}
+.work .meta{color:var(--fg-3);font-size:12px;display:flex;gap:10px;white-space:nowrap;overflow:hidden}
+.add{color:var(--ok)} .del{color:var(--err)} .cc{color:var(--attn)}
+.tree{display:grid;gap:0;font-size:12.5px}
+.tree div{display:flex;gap:8px;padding:0 6px;margin:0 -6px;white-space:nowrap}
+.tree .d{color:var(--fg-3)}
+.tree .f{color:var(--fg-2)}
+.tree .f .own{width:6px;height:6px;align-self:center;background:var(--ac);flex:none}
+.tree .f .n{margin-left:auto;display:flex;gap:8px;font-variant-numeric:tabular-nums;font-size:12px}
+.tree .f.sel{background:var(--sel);color:var(--bright)}
+.tree .ind1{padding-left:calc(6px + 2ch)} .tree .ind2{padding-left:calc(6px + 4ch)}
+
+.dv{display:grid;gap:0;font-size:12.5px;min-width:0}
+.dv .fh{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:6px}
+.dv .fh .p{color:var(--bright);font-weight:500}
+.dv .fh .by{color:var(--fg-3);font-size:12px}
+.dv .fh .by b{font-weight:500;color:var(--ac)}
+.dv .hh{color:var(--muted);padding:2px 0 2px 0;margin-top:4px}
+.ln{display:grid;grid-template-columns:3px 4ch 4ch 2ch minmax(0,1fr);gap:0 8px;white-space:pre;tab-size:4;cursor:pointer;min-width:0}
+.ln>*{overflow:hidden;text-overflow:ellipsis}
+.ln .o{background:var(--ac);opacity:.9}
+.ln.ctx .o{background:transparent}
+.ln .a,.ln .b{color:var(--muted);text-align:right;font-variant-numeric:tabular-nums}
+.ln .s{color:var(--muted)}
+.ln.plus{background:#0f1e15} .ln.plus .s{color:var(--ok)}
+.ln.minus{background:#231818} .ln.minus .s{color:var(--err)} .ln.minus .t{color:var(--fg-2)}
+.ln.ctx .t{color:var(--fg-2)}
+.ln:hover{outline:1px solid var(--border)}
+.ln.rng{background:#262626} .ln.rng.plus{background:#1b2a20}
+.ln.cur{outline:1px solid var(--bright);outline-offset:-1px}
+.ln.cur .b{color:var(--bright)}
+.cm{margin:3px 0 6px calc(3px + 8ch + 24px);border-left:2px solid var(--attn);background:var(--surface);padding:5px 10px 6px;display:grid;gap:2px;max-width:78ch}
+.cm.sent{border-left-color:var(--ok)}
+.cm .h{display:flex;gap:10px;font-size:12px;color:var(--fg-3)}
+.cm .h .st{color:var(--attn);text-transform:uppercase;letter-spacing:.08em;font-size:10px;align-self:center}
+.cm .h .to{margin-left:auto;color:var(--ac)}
+.cm .x{color:var(--fg);white-space:normal}
+.cm .x code{background:var(--surface-2);padding:0 4px;color:var(--bright)}
+
+.grp{display:grid;gap:3px;padding:6px 0 8px;border-bottom:1px solid var(--border-dim)}
+.grp:last-of-type{border-bottom:0}
+.grp .gh{display:flex;gap:8px;align-items:baseline}
+.grp .gh .nm{font-weight:500;color:var(--ac)}
+.grp .gh .k{margin-left:auto;color:var(--attn);font-size:12px;font-variant-numeric:tabular-nums}
+.grp .ctxl{color:var(--fg-3);font-size:12px}
+.grp .ctxl .ok{color:var(--ok)}
+.grp .ci{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 8px;font-size:12px;color:var(--fg-2)}
+.grp .ci span:first-child{color:var(--muted);font-variant-numeric:tabular-nums}
+.grp .ci span:last-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.verdict{display:flex;gap:6px;margin-top:2px;font-size:12px}
+.verdict span{padding:0 6px;border:1px solid var(--border);color:var(--fg-3)}
+.verdict span.on{border-color:var(--attn);color:var(--attn)}
+.sendbar{margin-top:10px;border:1px solid var(--border);padding:6px 10px;display:grid;gap:2px}
+.sendbar .t{color:var(--bright);font-weight:500}
+.sendbar .d{color:var(--fg-3);font-size:12px}
+.cmd .ctxchip{background:var(--sel);color:var(--fg-2);padding:0 6px;font-size:12px}
+
+/* send sheet */
+.sheet{border:1px solid var(--border);background:var(--bg);padding:14px 16px;display:grid;gap:12px;max-width:920px;margin:6px auto;width:100%}
+.sheet h3{font-size:13px;font-weight:600;color:var(--bright)}
+.sheet .row{display:grid;grid-template-columns:3px minmax(0,1fr) auto;gap:0 12px;align-items:start}
+.sheet .row::before{content:"";align-self:stretch;background:var(--ac)}
+.sheet .row .nm{font-weight:500;color:var(--ac)}
+.sheet .row .via{color:var(--fg-3);font-size:12px}
+.sheet .row .st{font-size:12px;color:var(--fg-2);text-align:right;white-space:nowrap}
+.sheet .row .st.ok{color:var(--ok)} .sheet .row .st.attn{color:var(--attn)}
+.sheet pre{margin:6px 0 0;padding:8px 10px;background:var(--surface-2);color:var(--fg-2);white-space:pre-wrap;font:12px/1.5 var(--mono)}
+.sheet pre b{color:var(--bright);font-weight:500}
+.sheet .acts{display:flex;gap:18px;flex-wrap:wrap;color:var(--fg-3);font-size:12px;border-top:1px solid var(--border-dim);padding-top:10px}
+.sheet .acts b{font-weight:500;color:var(--bright)}
+@media (max-width:1100px){.rv{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.rv .rv-diff{grid-column:1/-1;order:-1}}
+@media (max-width:700px){.rv{grid-template-columns:1fr}.cm{margin-left:0}.sheet .row{grid-template-columns:3px minmax(0,1fr)}.sheet .row .st{grid-column:2;text-align:left}}
+
 /* notes */
 .notes{display:grid;gap:14px;max-width:80ch}
 .notes h2{font-size:14px;font-weight:600;color:var(--bright)}
@@ -180,6 +263,7 @@ h1,h2,h3,p{margin:0}
         <span class="tab on"><b>1</b>Fleet</span>
         <span class="tab"><b>2</b>Inbox<span class="n">3</span></span>
         <span class="tab"><b>3</b>Orchestrator</span>
+        <span class="tab"><b>4</b>Review</span>
         <span class="tab"><b>?</b>help</span>
       </div>
 
@@ -359,6 +443,7 @@ h1,h2,h3,p{margin:0}
         <span class="tab"><b>1</b>Fleet</span>
         <span class="tab"><b>2</b>Inbox<span class="n">2</span></span>
         <span class="tab on"><b>3</b>Orchestrator</span>
+        <span class="tab"><b>4</b>Review</span>
         <span class="tab"><b>?</b>help</span>
       </div>
 
@@ -392,6 +477,220 @@ h1,h2,h3,p{margin:0}
     </div>
   </section>
 
+  <!-- ───────────────────────── Screen 3: Review ───────────────────────── -->
+  <section>
+    <div class="frame-head"><h2>Screen 3 · Review</h2><span>recent work by agent · file tree · diff with line cursor · comments collect per agent and go back to the session that wrote the code</span></div>
+    <div class="term" aria-label="Den TUI, Review view">
+      <div class="bar">
+        <span class="brand">den</span>
+        <span class="dim">4 agents with unreviewed work · 13 files · <span class="attn">5 draft comments</span></span>
+        <span class="right">grvlle@omarchy · 10:42</span>
+      </div>
+      <div class="tabs">
+        <span class="tab"><b>1</b>Fleet</span>
+        <span class="tab"><b>2</b>Inbox<span class="n">2</span></span>
+        <span class="tab"><b>3</b>Orchestrator</span>
+        <span class="tab on"><b>4</b>Review</span>
+        <span class="tab"><b>?</b>help</span>
+      </div>
+
+      <div class="rv">
+
+        <!-- left: recent work over the file tree -->
+        <div class="rv-left">
+          <div class="pane">
+            <div class="title">Recent work</div>
+
+            <div class="work c-moss sel">
+              <span class="who">Mossy Lemur<span class="role">CODING AGENT</span></span>
+              <span class="what">implement --pending flag for list command</span>
+              <span class="meta"><span>tasklog · feat-pending-filter</span><span><span class="add">+86</span> <span class="del">−12</span></span><span class="cc">3</span><span>14m</span></span>
+            </div>
+            <div class="work c-maple">
+              <span class="who">Maple Owl<span class="role">CODING AGENT</span></span>
+              <span class="what">match theme borders, gaps, fix progress bars</span>
+              <span class="meta"><span>agent-badge · main</span><span><span class="add">+41</span> <span class="del">−27</span></span><span class="cc">1</span><span>1h</span></span>
+            </div>
+            <div class="work c-sunny">
+              <span class="who">Sunny Puffin<span class="role">DESIGNER</span></span>
+              <span class="what">push project to public repo and plugin page</span>
+              <span class="meta"><span>omarchy-super-hints</span><span><span class="add">+18</span> <span class="del">−3</span></span><span class="ok">✓ reviewed</span></span>
+            </div>
+            <div class="work c-you">
+              <span class="who">Fuzzy Sprite<span class="role">CODING ASSISTANT</span></span>
+              <span class="what">review Python code for optimization</span>
+              <span class="meta"><span>herdr-nvim-test</span><span><span class="add">+9</span> <span class="del">−4</span></span><span class="cc">1</span><span class="err">✕ gone 3h</span></span>
+            </div>
+
+            <div class="foot"><b>↑ ↓</b> pick work <b>→</b> files</div>
+          </div>
+
+          <div class="pane">
+            <div class="title">Files · tasklog vs main</div>
+            <div class="tree">
+              <div class="d">cmd/</div>
+              <div class="f c-moss sel ind1"><i class="own"></i>list.go<span class="n"><span class="add">+34</span><span class="del">−6</span><span class="cc">2</span></span></div>
+              <div class="f c-you ind1"><i class="own"></i>root.go<span class="n"><span class="add">+3</span><span class="del">−1</span></span></div>
+              <div class="d">internal/</div>
+              <div class="d ind1">store/</div>
+              <div class="f c-moss ind2"><i class="own"></i>filter.go<span class="n"><span class="add">+41</span><span class="del">−5</span><span class="cc">1</span></span></div>
+              <div class="f c-moss ind2"><i class="own"></i>filter_test.go<span class="n"><span class="add">+8</span><span class="dim">new</span></span></div>
+            </div>
+            <div class="foot"><span class="dim">■ colour = who wrote it · grey = not an agent</span></div>
+          </div>
+        </div>
+
+        <!-- centre: the diff -->
+        <div class="pane focus rv-diff">
+          <div class="title">cmd/list.go</div>
+          <div class="dv c-moss">
+            <div class="fh"><span class="p">cmd/list.go</span><span class="by">by <b>Mossy Lemur</b> · 2 edits · 14m ago · working tree vs main</span></div>
+
+            <div class="hh">@@ -18,9 +18,14 @@ func newListCmd()</div>
+            <div class="ln ctx"><i class="o"></i><span class="a">18</span><span class="b">18</span><span class="s"> </span><span class="t">	cmd := &amp;cobra.Command{</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">19</span><span class="b">19</span><span class="s"> </span><span class="t">		Use:   "list",</span></div>
+            <div class="ln minus"><i class="o"></i><span class="a">20</span><span class="b"></span><span class="s">-</span><span class="t">		RunE:  runList,</span></div>
+            <div class="ln plus"><i class="o"></i><span class="a"></span><span class="b">20</span><span class="s">+</span><span class="t">		RunE: func(cmd *cobra.Command, args []string) error {</span></div>
+            <div class="ln plus"><i class="o"></i><span class="a"></span><span class="b">21</span><span class="s">+</span><span class="t">			pending, _ := cmd.Flags().GetBool("pending")</span></div>
+            <div class="cm">
+              <div class="h"><span>you</span><span class="st">draft</span><span>L21</span><span class="to">→ Mossy Lemur</span></div>
+              <div class="x">Handle the error from <code>GetBool</code> instead of dropping it. A typo in the flag name would silently list everything.</div>
+            </div>
+            <div class="ln plus"><i class="o"></i><span class="a"></span><span class="b">22</span><span class="s">+</span><span class="t">			return runList(cmd.Context(), pending)</span></div>
+            <div class="ln plus"><i class="o"></i><span class="a"></span><span class="b">23</span><span class="s">+</span><span class="t">		},</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">21</span><span class="b">24</span><span class="s"> </span><span class="t">	}</span></div>
+            <div class="ln plus"><i class="o"></i><span class="a"></span><span class="b">25</span><span class="s">+</span><span class="t">	cmd.Flags().Bool("pending", false, "only tasks that are not done")</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">22</span><span class="b">26</span><span class="s"> </span><span class="t">	return cmd</span></div>
+
+            <div class="hh">@@ -40,7 +44,13 @@ func runList()</div>
+            <div class="ln minus"><i class="o"></i><span class="a">40</span><span class="b"></span><span class="s">-</span><span class="t">func runList(cmd *cobra.Command, args []string) error {</span></div>
+            <div class="ln plus"><i class="o"></i><span class="a"></span><span class="b">44</span><span class="s">+</span><span class="t">func runList(ctx context.Context, pending bool) error {</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">41</span><span class="b">45</span><span class="s"> </span><span class="t">	tasks, err := store.Load(ctx)</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">42</span><span class="b">46</span><span class="s"> </span><span class="t">	if err != nil {</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">43</span><span class="b">47</span><span class="s"> </span><span class="t">		return err</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">44</span><span class="b">48</span><span class="s"> </span><span class="t">	}</span></div>
+            <div class="ln plus rng cur"><i class="o"></i><span class="a"></span><span class="b">49</span><span class="s">+</span><span class="t">	if pending {</span></div>
+            <div class="ln plus rng"><i class="o"></i><span class="a"></span><span class="b">50</span><span class="s">+</span><span class="t">		tasks = store.Pending(tasks)</span></div>
+            <div class="ln plus rng"><i class="o"></i><span class="a"></span><span class="b">51</span><span class="s">+</span><span class="t">	}</span></div>
+            <div class="ln ctx"><i class="o"></i><span class="a">45</span><span class="b">52</span><span class="s"> </span><span class="t">	return render(tasks)</span></div>
+          </div>
+          <div class="foot"><b>↑ ↓</b> line <b>Shift+↑ ↓</b> extend <b>click · drag</b> select <b>Ctrl+↑ ↓</b> hunk <b>PgUp PgDn</b> file</div>
+        </div>
+
+        <!-- right: comments grouped by the agent that will receive them -->
+        <div class="pane">
+          <div class="title">Review · <em>5 drafts</em></div>
+
+          <div class="grp c-moss">
+            <div class="gh"><span class="nm">Mossy Lemur</span><span class="k">3</span></div>
+            <div class="ctxl"><span class="ok">●</span> live · idle · ctx 38% · wrote all three</div>
+            <div class="ci"><span>list.go:21</span><span>Handle the error from GetBool instead of…</span></div>
+            <div class="ci"><span>list.go:49</span><span class="hi">writing… Pending should also exclude archived</span></div>
+            <div class="ci"><span>filter.go:31</span><span>Name the predicate isOpen, it reads better…</span></div>
+            <div class="verdict"><span>approve</span><span class="on">request changes</span><span>comment</span></div>
+          </div>
+
+          <div class="grp c-maple">
+            <div class="gh"><span class="nm">Maple Owl</span><span class="k">1</span></div>
+            <div class="ctxl"><span class="hi">●</span> live · working · lands between tool calls</div>
+            <div class="ci"><span>gauge.tsx:88</span><span>Use the theme's muted grey for the empty track</span></div>
+            <div class="verdict"><span>approve</span><span>request changes</span><span class="on">comment</span></div>
+          </div>
+
+          <div class="grp c-you">
+            <div class="gh"><span class="nm">Fuzzy Sprite</span><span class="k">1</span></div>
+            <div class="ctxl"><span class="err">✕</span> session ended 3h ago · resume it to keep its context</div>
+            <div class="ci"><span>parse.py:12</span><span>The cache never evicts; cap it or use lru_cache</span></div>
+          </div>
+
+          <div class="sendbar">
+            <span class="t">Ctrl+S  send review</span>
+            <span class="d">5 comments to 3 agents · you check each message first</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="cmd">
+        <span class="p">›</span>
+        <span class="ctxchip">list.go L49–51</span>
+        <span class="text">Pending should also exclude archived tasks, see filter.go:31</span><span class="caret"></span>
+        <span class="hint">Enter add comment · Esc cancel · @ still messages an agent</span>
+      </div>
+      <div class="hints">
+        <span><b>type</b> comment on the selected lines</span>
+        <span><b>Enter</b> on a comment edits it</span>
+        <span><b>/delete</b> remove it</span>
+        <span><b>← →</b> panes</span>
+        <span><b>Ctrl+S</b> send review</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Screen 3b: Send review ───────────────────────── -->
+  <section>
+    <div class="frame-head"><h2>Screen 3b · Send review</h2><span>Ctrl+S opens this sheet over the Review view · one message per agent, written into the session that holds the context</span></div>
+    <div class="term" aria-label="Den TUI, send review sheet">
+      <div class="bar">
+        <span class="brand">den</span>
+        <span class="dim">Review · 5 comments ready</span>
+        <span class="right">grvlle@omarchy · 10:44</span>
+      </div>
+
+      <div class="sheet">
+        <h3>Send review · 5 comments to 3 agents</h3>
+
+        <div class="row c-moss">
+          <div>
+            <div><span class="nm">Mossy Lemur</span> <span class="dim">· tasklog · feat-pending-filter</span></div>
+            <div class="via">to its own session over the inbox socket · idle, so it starts a turn right away</div>
+            <pre><b>Review from you via Den · request changes</b>
+tasklog · feat-pending-filter · 3 comments
+
+cmd/list.go:21
+  &gt; pending, _ := cmd.Flags().GetBool("pending")
+  Handle the error from GetBool instead of dropping it. A typo in the flag
+  name would silently list everything.
+
+cmd/list.go:49-51
+  &gt; if pending { tasks = store.Pending(tasks) }
+  Pending should also exclude archived tasks, see filter.go:31.
+
+internal/store/filter.go:31
+  &gt; func open(t Task) bool {
+  Name the predicate isOpen, it reads better at the call site.
+
+Fix these, then say which comment each change addresses.</pre>
+          </div>
+          <span class="st attn">request changes · 3</span>
+        </div>
+
+        <div class="row c-maple">
+          <div>
+            <div><span class="nm">Maple Owl</span> <span class="dim">· agent-badge · main</span></div>
+            <div class="via">to its own session · working, delivered between tool calls</div>
+          </div>
+          <span class="st">comment · 1</span>
+        </div>
+
+        <div class="row c-you">
+          <div>
+            <div><span class="nm">Fuzzy Sprite</span> <span class="dim">· herdr-nvim-test</span></div>
+            <div class="via">session ended 3h ago · <b class="hi">r</b> resume it in a new terminal (claude --resume 7f3a…) and send · <b class="hi">o</b> hand to the orchestrator · <b class="hi">k</b> keep as a note</div>
+          </div>
+          <span class="st attn">choose</span>
+        </div>
+
+        <div class="acts">
+          <span><b>Enter</b> send all</span>
+          <span><b>↑ ↓</b> pick agent</span>
+          <span><b>Tab</b> cycle verdict</span>
+          <span><b>Ctrl+E</b> edit the message</span>
+          <span><b>Esc</b> back to review</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- ───────────────────────── Notes ───────────────────────── -->
   <section class="notes">
     <h2>Decisions to react to</h2>
@@ -401,6 +700,8 @@ h1,h2,h3,p{margin:0}
       <li><b>Identity comes from agent-badge.</b> <span>Critter, role, task and the earlier trail are read from the badge's plugin store, so both tools agree on who an agent is.</span></li>
       <li><b>No @ means the orchestrator.</b> <span>@Name addresses one agent directly. Anything else goes to an orchestrator that can see all agents and relay on your behalf. It never acts on permissions without you saying so in the message.</span></li>
       <li><b>Hue only for status.</b> <span>Following Deepharness: white opacity ladder for everything, yellow for "needs you", green for finished, red for an agent that crashed or vanished.</span></li>
+      <li><b>Review sends comments to the session that wrote the code.</b> <span>Every changed line is attributed from the transcripts (Edit, Write and Bash file changes), so a comment goes back to the agent that still holds the context, not to a fresh one. Lines no agent wrote stay grey and can only be kept as notes or handed to the orchestrator.</span></li>
+      <li><b>The diff is git's, the attribution is Den's.</b> <span>Den shows the working tree against the base branch, so you review what is really on disk, and colours each line by the transcript hunk it came from.</span></li>
       <li><b>Other harnesses appear read-only.</b> <span>pi, Codex and friends show up as dim rows when detected, until an adapter exists. Claude Code is the only first-class harness in v1.</span></li>
     </ol>
     <p class="src">Names, tasks and limits shown are the real agent-badge records for the six Claude Code sessions running on this machine when the mockup was made.</p>

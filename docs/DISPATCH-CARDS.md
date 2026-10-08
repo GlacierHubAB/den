@@ -1,6 +1,8 @@
 # Dispatch cards and a persistent orchestrator chat
 
-Design pass, 2026-10-08. Nothing here is implemented yet.
+Design pass, 2026-10-08. Nothing here is implemented yet. HTML mockup:
+`docs/mockup/den-dispatch-mockup.html` (published at
+https://claude.ai/artifact/Q6en97GP4b7gG4cUA495zH).
 
 ## Goal
 
