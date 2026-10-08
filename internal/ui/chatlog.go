@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -143,6 +144,10 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 		}
 		chat = append(chat, chatEntry{role: r.Kind, text: r.Text, to: r.To, status: r.Status, at: r.At})
 	}
+	// Streamed text is logged when its final block lands, which can be after
+	// the card for a dispatch made in the same turn; the screen order is by
+	// time, so restore that.
+	sort.SliceStable(chat, func(i, j int) bool { return chat[i].at.Before(chat[j].at) })
 	if len(chat) > 0 {
 		first, last := chat[0].at, chat[len(chat)-1].at
 		note := fmt.Sprintf("restored %d entries · %s to %s", len(chat), first.Format("Jan 2 15:04"), last.Format("15:04"))

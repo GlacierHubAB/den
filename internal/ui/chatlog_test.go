@@ -29,7 +29,9 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 	m.logCard(d)
 	d.State, d.StartedAt, d.Calls = cardWorking, time.Now(), 3
 	m.logCard(d)
-	reply := chatEntry{role: "orchestrator", text: "Mossy is on it.", at: time.Now()}
+	// The orchestrator's text started streaming before the dispatch, but is
+	// logged after it; restore must put it back in front of the card.
+	reply := chatEntry{role: "orchestrator", text: "Mossy is on it.", at: d.SentAt.Add(-time.Second)}
 	m.orch.chat = append(m.orch.chat, reply)
 	m.logEntry(reply)
 	m.logSession("sess-123")
@@ -39,7 +41,7 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 		t.Errorf("session = %q", session)
 	}
 	// restored note + you + card + orchestrator; the card appears once, in its last state.
-	if len(chat) != 4 || chat[0].role != "note" || chat[2].card == nil || chat[2].card.State != cardWorking || chat[2].card.Calls != 3 || chat[3].text != "Mossy is on it." {
+	if len(chat) != 4 || chat[0].role != "note" || chat[2].text != "Mossy is on it." || chat[3].card == nil || chat[3].card.State != cardWorking || chat[3].card.Calls != 3 {
 		t.Fatalf("chat = %+v", chat)
 	}
 
@@ -55,7 +57,7 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 	gone := &dispatch{ID: "t2", SessionID: "nope", Agent: "Comet Newt", Brief: "x", SentAt: time.Now(), State: cardWorking, StartedAt: time.Now()}
 	m2.orch.chat = append(m2.orch.chat, chatEntry{role: "card", card: gone, at: gone.SentAt})
 	m2.refresh()
-	restored := chat[2].card
+	restored := chat[3].card
 	if restored.State != cardDone || !strings.Contains(restored.Result, "fixed the install path") {
 		t.Errorf("restored card should finish from the transcript: %+v", restored)
 	}

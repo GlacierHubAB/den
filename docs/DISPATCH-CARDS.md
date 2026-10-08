@@ -192,12 +192,11 @@ dump it for scripts.
 5. **Orchestrator session id.** Already in the stream's init event; it has to
    be stored, and `--no-session-persistence` dropped.
 6. **Agents replying to the orchestrator.** An agent may call its own
-   `SendMessage` back to `den-orchestrator`. That reply reaches the
-   orchestrator process as a user turn; whether it surfaces as a stream event
-   Den can see needs a check. If it does not, the Stop message is still the
-   agent's result, so the card is complete either way; the orchestrator's
-   follow-up text would be the only thing missing, and it shows up as soon as
-   the orchestrator speaks.
+   `SendMessage` back to `den-orchestrator`. Confirmed 2026-10-08: the reply
+   reaches the orchestrator as a turn and the orchestrator's relay of it
+   streams into the chat like any of its text. The card still shows the
+   agent's own words from Stop, so both views exist: the agent's result on
+   the card, the orchestrator's reading of it below.
 7. **Nothing new from the badge.** Avatar, colour and role come from what Den
    already has.
 
