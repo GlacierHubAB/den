@@ -37,7 +37,7 @@ var Deepharness = Palette{
 	Bright: "#f8f8f8",
 	Ok:     "#66cb8e", Attn: "#e8b84a", Err: "#ea9e9e",
 	Bodies: fillHues(nil, "#000000"), Blush: "#f4c4c4",
-	Code:   "#cccccc",
+	Code: "#cccccc",
 }
 
 // Surface2 is the raised surface used for inactive borders and tracks.
