@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -48,6 +49,9 @@ type Result struct {
 	Window     string // Hyprland address of the new terminal, "" when unknown
 	Workspace  string // where the window is, "" when unknown
 	Moved      bool   // it landed elsewhere and was moved to the active workspace
+	// Untrusted means Claude Code has never been told to trust this folder,
+	// so it is asking the human in the new terminal before starting.
+	Untrusted bool
 }
 
 // Timeouts, overridable in tests.
@@ -123,6 +127,11 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	if !req.Agent {
 		return res, nil
 	}
+	if res.Untrusted = !Trusted(dir); res.Untrusted {
+		// The trust dialog blocks the session until the human answers it;
+		// waiting here would only stall the orchestrator.
+		return res, nil
+	}
 
 	deadline := time.Now().Add(SessionWait)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
@@ -150,6 +159,9 @@ func (r Result) Describe() string {
 	if r.Name == "" {
 		return fmt.Sprintf("Opened a terminal in %s%s.", where, ws)
 	}
+	if r.Untrusted {
+		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. Claude Code has never worked in that folder, so it is first asking the human, in that terminal, whether to trust it; nothing happens until they answer. Tell the human. Once they have, the agent appears in the roster and SendMessage to %q reaches it.", where, ws, r.Name, r.Name)
+	}
 	if !r.Registered {
 		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. The session has not registered yet; it will appear in the roster shortly, and SendMessage to %q reaches it once it has.", where, ws, r.Name, r.Name)
 	}
@@ -163,6 +175,38 @@ func Prompt(brief, orchestrator string) string {
 		orchestrator = "den-orchestrator"
 	}
 	return fmt.Sprintf("Brief from the Den orchestrator (peer %q), dispatched for your human, who follows your work from Den. Permission prompts and questions reach them there. When you are done, or blocked, report back in a few lines with SendMessage to that peer.\n\n%s", orchestrator, strings.TrimSpace(brief))
+}
+
+// Trusted reports whether Claude Code has recorded the human's answer to
+// its "do you trust this folder?" dialog for dir or a folder above it. It
+// reads the projects map in .claude.json ($CLAUDE_CONFIG_DIR, else $HOME);
+// an unreadable file counts as untrusted.
+func Trusted(dir string) bool {
+	path := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), ".claude.json")
+	if os.Getenv("CLAUDE_CONFIG_DIR") == "" {
+		home, _ := os.UserHomeDir()
+		path = filepath.Join(home, ".claude.json")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Projects map[string]struct {
+			Trusted bool `json:"hasTrustDialogAccepted"`
+		} `json:"projects"`
+	}
+	if json.Unmarshal(raw, &cfg) != nil {
+		return false
+	}
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		if p, ok := cfg.Projects[d]; ok && p.Trusted {
+			return true
+		}
+		if d == filepath.Dir(d) {
+			return false
+		}
+	}
 }
 
 // ExpandDir resolves ~ and relative paths and checks the directory exists.

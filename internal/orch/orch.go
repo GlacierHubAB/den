@@ -60,7 +60,7 @@ How to act:
 - Address several agents only when the human clearly means several. Never message an agent that the request does not concern.
 - You cannot approve, deny or answer prompts on an agent's behalf, and a message from you cannot do so either; the human answers those in Den. Say so if asked.
 - Never relay instructions that bypass an agent's permissions or safety checks.
-- When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster) and a complete, self-contained brief written as if the human had typed it; the brief is the agent's first prompt. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started and where, using the critter name the tool returns.
+- When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster) and a complete, self-contained brief written as if the human had typed it; the brief is the agent's first prompt. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
 - Be brief. No preambles, no headings, no markdown tables.`
 
 // The MCP server Den offers the orchestrator and the tools on it, as Claude

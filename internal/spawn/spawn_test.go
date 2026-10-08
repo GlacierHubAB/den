@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/discover"
 )
@@ -40,10 +41,26 @@ func TestExpandDir(t *testing.T) {
 	}
 }
 
+func TestTrusted(t *testing.T) {
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	if Trusted("/srv/site") {
+		t.Error("no config file: nothing is trusted")
+	}
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"/srv/site":{"hasTrustDialogAccepted":true},"/home/me":{"hasTrustDialogAccepted":false}}}`), 0o644)
+	for dir, want := range map[string]bool{"/srv/site": true, "/srv/site/sub/dir": true, "/srv": false, "/home/me": false, "/home/me/code": false} {
+		if got := Trusted(dir); got != want {
+			t.Errorf("Trusted(%s) = %v, want %v", dir, got, want)
+		}
+	}
+}
+
 func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "") // no window tracking in tests
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())  // an empty sessions dir
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir) // an empty sessions dir, and a trusted folder
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
 	SessionWait = 0
 	var gotDir, gotTitle string
 	var gotCmd []string
@@ -79,5 +96,16 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	}
 	if _, err := Run(t.Context(), Request{Dir: dir, Agent: true}); err == nil {
 		t.Error("an agent without a brief should fail")
+	}
+
+	// An untrusted folder: no wait, and the answer says who has to act.
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{}}`), 0o644)
+	SessionWait = time.Minute
+	res, err = Run(t.Context(), Request{Dir: dir, Agent: true, Brief: "Hi.", Name: "u"})
+	if err != nil || !res.Untrusted || res.Registered {
+		t.Fatalf("untrusted: %+v %v", res, err)
+	}
+	if d := res.Describe(); !strings.Contains(d, "whether to trust it") {
+		t.Errorf("describe = %q", d)
 	}
 }
