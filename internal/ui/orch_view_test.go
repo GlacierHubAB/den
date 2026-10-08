@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 func TestOrchestratorTabRendersConversation(t *testing.T) {
@@ -160,5 +162,28 @@ func TestDispatchCardLifecycle(t *testing.T) {
 	m.handleRequest(req("SessionEnd", "fedcba9876543210", map[string]any{}))
 	if c := m.cards()[1]; c.State != cardFailed {
 		t.Errorf("session end: %+v", c)
+	}
+}
+
+func TestRosterTellsWhatAnAgentInHomeWorksOn(t *testing.T) {
+	st := newStyles(theme.Deepharness)
+	m := Model{st: st, agents: sample(), store: inbox.New()}
+	home, _ := os.UserHomeDir()
+	a := &m.agents[0]
+	a.Title = "TUI agent orchestration platform"
+	a.Tail = append(a.Tail, transcript.Entry{Kind: "tool", Tool: "Edit", Changes: []transcript.FileChange{{Path: home + "/code/den/internal/ui/view.go"}}})
+	a.Tail = append(a.Tail, transcript.Entry{Kind: "text", Text: "Pushed as abc123.\nMore."})
+	r := m.roster()[0]
+	if len(r.Files) != 1 || r.Files[0] != "~/code/den" {
+		t.Errorf("files = %v", r.Files)
+	}
+	if len(r.Recent) != 2 || !strings.HasPrefix(r.Recent[0], "said: Pushed as abc123.") || !strings.HasPrefix(r.Recent[1], "ran: Edit") {
+		t.Errorf("recent = %v", r.Recent)
+	}
+	text := orch.Compose(m.roster(), "status?")
+	for _, want := range []string{"title: TUI agent orchestration platform", "recently changed files in: ~/code/den", "recent: said: Pushed as abc123."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("roster text missing %q:\n%s", want, text)
+		}
 	}
 }

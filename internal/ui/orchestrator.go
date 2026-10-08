@@ -143,6 +143,7 @@ func (m Model) roster() []orch.RosterAgent {
 		r := orch.RosterAgent{
 			Critter: a.Name, Peer: a.Session.Name, Role: a.Labels.Role,
 			Status: a.Status.String(), Task: a.Task(), Where: a.Where(),
+			Title: a.Title, Files: fleet.TouchedFolders(a), Recent: fleet.RecentActivity(a),
 			Earlier: a.Labels.History,
 			IsSelf:  m.isOrchestrator(a), Terminal: a.Window != nil,
 		}

@@ -26,7 +26,7 @@ func ask(args []string) {
 		if a.Status == fleet.Gone || a.Session.Name == "den-orchestrator" {
 			continue
 		}
-		roster = append(roster, orch.RosterAgent{Critter: a.Name, Peer: a.Session.Name, Role: a.Labels.Role, Status: a.Status.String(), Task: a.Task(), Earlier: a.Labels.History, Where: a.Where(), Terminal: a.Window != nil})
+		roster = append(roster, orch.RosterAgent{Critter: a.Name, Peer: a.Session.Name, Role: a.Labels.Role, Status: a.Status.String(), Task: a.Task(), Earlier: a.Labels.History, Where: a.Where(), Title: a.Title, Files: fleet.TouchedFolders(a), Recent: fleet.RecentActivity(a), Terminal: a.Window != nil})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
