@@ -31,6 +31,9 @@ den send mossy "rebase on main first"   # message an agent from a script
 den ask "who is blocked on what?"       # one orchestrator turn from a script
 den events            # headless: print hook events as they arrive
 den uninstall-hooks   # undo
+den install-mods      # once; puts the bundled agent-badge mod into ~/.claude/skills
+den mods              # what ships in this binary and where it is loaded from
+den uninstall-mods    # undo
 # Every hook run appends a line to ~/.local/state/den/hooks.log (event,
 # session, delivered or not). DEN_HOOK_LOG=off silences it.
 ```
@@ -60,8 +63,21 @@ and gets a fresh roster of the fleet with every message, so it can answer
 hunting around. It cannot approve anything. Its turns are billed like any
 other session; it uses `sonnet` unless `DEN_ORCHESTRATOR_MODEL` says otherwise.
 
-Requirements: Claude Code 2.1.289+, Hyprland (for focusing), and optionally
-the [agent-badge](https://github.com/GlacierHubAB/agent-badge) mod for roles,
-tasks and the 5-hour and weekly gauges (agent-badge 1.1.0+). Critter names
-and faces are generated the same way the badge does, so they match with or
-without it. Colours follow the current Omarchy theme.
+Requirements: Claude Code 2.1.289+ and Hyprland (for focusing). The
+[agent-badge](https://github.com/GlacierHubAB/agent-badge) mod ships inside
+the binary (git submodule `mods/agent-badge`, embedded at build time) and
+`den install-mods` drops it into `~/.claude/skills`, which Claude Code loads
+without further setup; if a development checkout is already loaded through
+`CLAUDE_CODE_PLUGIN_DIRS` the installer says so and leaves it alone. The
+badge supplies roles, tasks and the 5-hour and weekly gauges (1.1.0+).
+Critter names and faces are generated the same way the badge does, so they
+match with or without it.
+
+Colours follow the current Omarchy theme. Only the theme's real hues are used
+for agents, topped up from a built-in set of twelve soft colours to at least
+ten. Den gives every live session its own colour, oldest session first, and
+records the choice in `~/.local/state/den/colors.json`; the badge (1.2.0+)
+reads that file so the critter in each terminal matches the one in Den.
+
+Clone with `git clone --recurse-submodules`, or run `git submodule update
+--init` afterwards, before building.

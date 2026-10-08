@@ -143,6 +143,7 @@ filtering; relay loop guards (depth cap plus visited set).
 - Module: `github.com/GlacierHubAB/den`. Private repository to start.
 - Single binary with subcommands: `den` (TUI), `den hook <event>`, `den install-hooks`, `den explain`.
 - No daemon. Den's socket lives only while the TUI runs; hooks fail open.
+- Mods ship with Den: `mods/agent-badge` is a git submodule embedded into the binary; `den install-mods` copies it to `~/.claude/skills/<name>` (auto-loaded by Claude Code). Den stays the source of truth for agent colours through `~/.local/state/den/colors.json`, which the badge follows.
 - Keys: the command line is always open, so letters are text. `Tab` switches views, `← →` panes, `↑ ↓` select or scroll, `Enter` sends (empty line: focus terminal), `Ctrl+Y`/`Ctrl+N` answer, slash commands for the rest. The Fleet view shows agents and the selected agent only; the inbox has its own view with a count on its tab.
 
 ## Open questions

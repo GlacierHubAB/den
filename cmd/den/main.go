@@ -59,8 +59,14 @@ func main() {
 		uninstallHooks()
 	case "events":
 		runEvents()
+	case "mods":
+		listMods()
+	case "install-mods":
+		installMods()
+	case "uninstall-mods":
+		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text> | den install-hooks | den uninstall-hooks | den events")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text>\n       den install-hooks | den uninstall-hooks | den events | den mods | den install-mods | den uninstall-mods")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}

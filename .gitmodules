@@ -1,0 +1,3 @@
+[submodule "mods/agent-badge"]
+	path = mods/agent-badge
+	url = https://github.com/GlacierHubAB/agent-badge.git

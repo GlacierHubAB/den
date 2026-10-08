@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/colors"
 	"github.com/GlacierHubAB/den/internal/critter"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -213,28 +214,28 @@ func (m Model) agentFor(sessionID string) (fleet.Agent, bool) {
 	return fleet.Agent{}, false
 }
 
-// assignColors gives every agent a body colour: its own seed picks the first
-// choice, and the oldest sessions win collisions so colours stay stable as
-// agents come and go.
+// assignColors gives every live agent a body colour through the shared
+// record, so the badge in each terminal shows the same one. The record is
+// read once and rewritten only when the fleet changes.
 func (m *Model) assignColors() {
 	hues := m.st.pal.Bodies
 	if len(hues) == 0 {
 		return
 	}
-	order := make([]fleet.Agent, len(m.agents))
-	copy(order, m.agents)
-	sort.SliceStable(order, func(i, j int) bool { return order[i].Session.StartedAt < order[j].Session.StartedAt })
-	taken := map[int]bool{}
-	m.colors = map[string]string{}
-	for _, a := range order {
-		idx := int(critter.Hash(a.Session.SessionID) % uint32(len(hues)))
-		if len(taken) < len(hues) {
-			for taken[idx] {
-				idx = (idx + 1) % len(hues)
-			}
+	if m.colors == nil {
+		m.colors = colors.Load(colors.Path())
+	}
+	var live []colors.Agent
+	for _, a := range m.agents {
+		if a.Status == fleet.Gone {
+			continue
 		}
-		taken[idx] = true
-		m.colors[a.Session.SessionID] = hues[idx]
+		live = append(live, colors.Agent{SessionID: a.Session.SessionID, StartedAt: a.Session.StartedAt})
+	}
+	next, changed := colors.Assign(m.colors, live, hues)
+	if changed {
+		m.colors = next
+		_ = colors.Save(colors.Path(), next) // best effort: the UI works without the file
 	}
 }
 
