@@ -3,6 +3,7 @@ package transcript
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestUsageAndTail(t *testing.T) {
 		t.Fatalf("tail = %+v", tail)
 	}
 	for i := range want {
-		if tail[i] != want[i] {
+		if tail[i].Kind != want[i].Kind || tail[i].Text != want[i].Text || tail[i].Tool != want[i].Tool || tail[i].Code != want[i].Code {
 			t.Errorf("tail[%d] = %+v, want %+v", i, tail[i], want[i])
 		}
 	}
@@ -48,5 +49,30 @@ func TestExcerptKeepsLinesAndMarksCut(t *testing.T) {
 	}
 	if got := excerpt("   ", 3); got != "" {
 		t.Errorf("blank excerpt = %q", got)
+	}
+}
+
+func TestTailAttachesResults(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	lines := []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/x/a.go","old_string":"a","new_string":"b"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"toolUseResult":{"filePath":"/x/a.go","structuredPatch":[{"oldStart":3,"newStart":3,"lines":[" ctx","-a","+b","+c"]}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"go test ./...","description":"Run tests"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]},"toolUseResult":{"stdout":"ok  pkg\n\nFAIL other","stderr":"","interrupted":false}}`,
+	}
+	os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	tail := Tail(p, 10)
+	if len(tail) != 2 {
+		t.Fatalf("tail = %+v", tail)
+	}
+	edit, bash := tail[0], tail[1]
+	if edit.Tool != "Edit" || edit.File != "/x/a.go" || len(edit.Patch) != 1 || edit.Patch[0].NewStart != 3 || len(edit.Patch[0].Lines) != 4 {
+		t.Errorf("edit = %+v", edit)
+	}
+	if a, r := edit.Added(); a != 2 || r != 1 {
+		t.Errorf("added/removed = %d/%d", a, r)
+	}
+	if bash.Output != "ok  pkg\n\nFAIL other" {
+		t.Errorf("output = %q", bash.Output)
 	}
 }

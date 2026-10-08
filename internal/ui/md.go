@@ -1,10 +1,14 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // mdLine renders one line of lightweight markdown for the detail pane:
@@ -76,4 +80,52 @@ func (m Model) inline(text string, base lipgloss.Style) string {
 		}
 	}
 	return b.String()
+}
+
+// diffLines renders hunks the way Claude Code does: a line-number gutter,
+// the sign, and removed or added lines on a tinted background filled to
+// width. Context lines stay dim.
+func (m Model) diffLines(hunks []transcript.Hunk, width int) []string {
+	s := m.st
+	p := s.pal
+	del := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Err)).Background(lipgloss.Color(theme.Tint(p.Err, p.Bg)))
+	add := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Ok)).Background(lipgloss.Color(theme.Tint(p.Ok, p.Bg)))
+	var out []string
+	for hi, h := range hunks {
+		if hi > 0 {
+			out = append(out, s.muted.Render("…"))
+		}
+		oldN, newN := h.OldStart, h.NewStart
+		for _, l := range h.Lines {
+			if l == "" {
+				l = " "
+			}
+			sign, text := l[:1], l[1:]
+			var num int
+			style := s.dim
+			switch sign {
+			case "-":
+				num, style = oldN, del
+				oldN++
+			case "+":
+				num, style = newN, add
+				newN++
+			default:
+				num = newN
+				oldN++
+				newN++
+			}
+			gutter := fmt.Sprintf("%4d %s ", num, sign)
+			if sign == " " {
+				gutter = fmt.Sprintf("%4d   ", num)
+			}
+			body := ansi.Truncate(strings.ReplaceAll(text, "\t", "    "), max(4, width-len(gutter)), "…")
+			row := gutter + body
+			if pad := width - ansi.StringWidth(row); pad > 0 && sign != " " {
+				row += strings.Repeat(" ", pad)
+			}
+			out = append(out, style.Render(row))
+		}
+	}
+	return out
 }

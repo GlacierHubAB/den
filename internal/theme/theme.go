@@ -49,6 +49,21 @@ func (p Palette) Surface2() string {
 }
 
 // blend returns the midpoint of two hex colours (#rrggbb).
+// Tint mixes a little of colour into bg: the background for a changed line
+// in a diff, readable under the colour itself.
+func Tint(color, bg string) string {
+	pc, okC := parseHex(color)
+	pb, okB := parseHex(bg)
+	if !okC || !okB {
+		return bg
+	}
+	var out [3]int
+	for i := range out {
+		out[i] = (pb[i]*3 + pc[i]) / 4
+	}
+	return fmt.Sprintf("#%02x%02x%02x", out[0], out[1], out[2])
+}
+
 func blend(a, b string) string {
 	pa, okA := parseHex(a)
 	pb, okB := parseHex(b)

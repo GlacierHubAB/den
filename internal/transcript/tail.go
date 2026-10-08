@@ -66,17 +66,59 @@ func windowFor(model string, tokens int) int {
 
 // Entry is one line of recent activity.
 type Entry struct {
-	Kind string // "you", "text", "tool"
-	Text string // the prompt, the reply, or a tool call's description
-	Tool string // tool name, for Kind "tool"
-	Code string // the command, path or other main argument of a tool call
+	Kind   string // "you", "text", "tool"
+	Text   string // the prompt, the reply, or a tool call's description
+	Tool   string // tool name, for Kind "tool"
+	Code   string // the command, path or other main argument of a tool call
+	File   string // the file an Edit or Write touched
+	Patch  []Hunk // what an Edit changed, as Claude Code recorded it
+	Output string // the first lines a command printed
+}
+
+// Hunk is one changed region of a file.
+type Hunk struct {
+	OldStart, NewStart int
+	Lines              []string // each prefixed " ", "-" or "+"
+}
+
+// Added and Removed count the changed lines across the patch.
+func (e Entry) Added() (added, removed int) {
+	for _, h := range e.Patch {
+		for _, l := range h.Lines {
+			switch {
+			case strings.HasPrefix(l, "+"):
+				added++
+			case strings.HasPrefix(l, "-"):
+				removed++
+			}
+		}
+	}
+	return
 }
 
 // Tail returns the last n human prompts, assistant texts and tool calls,
 // oldest first. Tool results, system notices and slash-command echoes are
 // skipped.
+// outputLines is how much of a command's output the tail keeps.
+const outputLines = 5
+
+// toolResult is what Claude Code records next to a tool's result.
+type toolResult struct {
+	FilePath        string `json:"filePath"`
+	StructuredPatch []struct {
+		OldStart int      `json:"oldStart"`
+		NewStart int      `json:"newStart"`
+		Lines    []string `json:"lines"`
+	} `json:"structuredPatch"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
+
 func Tail(path string, n int) []Entry {
 	var rev []Entry
+	// Results follow their calls in the file, so scanning backwards we meet
+	// each result first and attach it when its call turns up.
+	results := map[string]toolResult{}
 	scanBackwards(path, 4<<20, func(line []byte) bool {
 		var rec struct {
 			Type    string `json:"type"`
@@ -84,6 +126,7 @@ func Tail(path string, n int) []Entry {
 			Message struct {
 				Content json.RawMessage `json:"content"`
 			} `json:"message"`
+			ToolUseResult json.RawMessage `json:"toolUseResult"`
 		}
 		if json.Unmarshal(line, &rec) != nil || rec.IsMeta {
 			return false
@@ -98,14 +141,21 @@ func Tail(path string, n int) []Entry {
 				break
 			}
 			var blocks []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
+				Type      string `json:"type"`
+				Text      string `json:"text"`
+				ToolUseID string `json:"tool_use_id"`
 			}
 			if json.Unmarshal(rec.Message.Content, &blocks) == nil {
 				for _, b := range blocks {
-					if b.Type == "text" {
+					switch b.Type {
+					case "text":
 						if t := cleanPrompt(b.Text); t != "" {
 							rev = append(rev, Entry{Kind: "you", Text: t})
+						}
+					case "tool_result":
+						var r toolResult
+						if b.ToolUseID != "" && len(rec.ToolUseResult) > 0 && json.Unmarshal(rec.ToolUseResult, &r) == nil {
+							results[b.ToolUseID] = r
 						}
 					}
 				}
@@ -114,6 +164,7 @@ func Tail(path string, n int) []Entry {
 			var blocks []struct {
 				Type  string          `json:"type"`
 				Text  string          `json:"text"`
+				ID    string          `json:"id"`
 				Name  string          `json:"name"`
 				Input json.RawMessage `json:"input"`
 			}
@@ -130,7 +181,19 @@ func Tail(path string, n int) []Entry {
 					}
 				case "tool_use":
 					desc, code := toolBrief(b.Input)
-					rev = append(rev, Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code})
+					e := Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code}
+					if r, ok := results[b.ID]; ok {
+						e.File = r.FilePath
+						for _, h := range r.StructuredPatch {
+							e.Patch = append(e.Patch, Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: h.Lines})
+						}
+						if out := strings.TrimSpace(r.Stdout); out != "" {
+							e.Output = excerpt(out, outputLines)
+						} else if out := strings.TrimSpace(r.Stderr); out != "" {
+							e.Output = excerpt(out, outputLines)
+						}
+					}
+					rev = append(rev, e)
 				}
 			}
 		}
