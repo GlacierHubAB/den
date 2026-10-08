@@ -346,23 +346,44 @@ func (m Model) agentsPane(w, h int) string {
 
 		// Third line: age · harness · model · ctx, all inline. Where it runs
 		// lives in the details pane.
-		var meta []string
-		if a.Status != fleet.Gone {
-			meta = append(meta, humanAge(a.Since()))
-		}
-		meta = append(meta, "Claude Code")
-		if pm := prettyModel(a.Model); pm != "" {
-			meta = append(meta, pm)
-		}
-		l3 := marker + fg.Render("   ") + dim.Render(strings.Join(meta, " · "))
+		ctx := ""
+		cs := dim
 		if a.HasUsage {
-			cs := dim
+			ctx = fmt.Sprintf("ctx %d%%", a.Usage.Percent())
 			if a.Usage.Percent() >= 90 {
 				cs = err
 			} else if a.Usage.Percent() >= 75 {
 				cs = attn
 			}
-			l3 += dim.Render(" · ") + cs.Render(fmt.Sprintf("ctx %d%%", a.Usage.Percent()))
+		}
+		age := ""
+		if a.Status != fleet.Gone {
+			age = humanAge(a.Since())
+		}
+		// Narrow panes drop the harness first, then the model; age and
+		// context always fit.
+		var l3 string
+		for _, parts := range [][]string{
+			{age, "Claude Code", prettyModel(a.Model)},
+			{age, prettyModel(a.Model)},
+			{age},
+		} {
+			var meta []string
+			for _, p := range parts {
+				if p != "" {
+					meta = append(meta, p)
+				}
+			}
+			l3 = marker + fg.Render("   ") + dim.Render(strings.Join(meta, " · "))
+			if ctx != "" {
+				if len(meta) > 0 {
+					l3 += dim.Render(" · ")
+				}
+				l3 += cs.Render(ctx)
+			}
+			if ansi.StringWidth(l3) <= w {
+				break
+			}
 		}
 		l3 = ansi.Truncate(l3, w, "…")
 		for _, r := range []string{l1, l2, l3} {
