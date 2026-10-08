@@ -198,7 +198,13 @@ func (o *Orchestrator) Close() {
 		return
 	}
 	o.closed = true
-	o.stdin.Close()
+	if o.cmd == nil || o.cmd.Process == nil {
+		o.mu.Unlock()
+		return // never started
+	}
+	if o.stdin != nil {
+		o.stdin.Close()
+	}
 	o.mu.Unlock()
 	select {
 	case <-o.done:

@@ -187,3 +187,28 @@ func TestRosterTellsWhatAnAgentInHomeWorksOn(t *testing.T) {
 		}
 	}
 }
+
+func TestOrchestratorWatchdog(t *testing.T) {
+	st := newStyles(theme.Deepharness)
+	m := Model{st: st, agents: sample(), store: inbox.New(), tab: tabOrch, width: 120, height: 30, orch: orchState{cardCur: -1}}
+	m.input = newInput(st)
+	m.orch.proc = &orch.Orchestrator{}
+	m.orch.chat = []chatEntry{{role: "you", text: "any work left?", at: time.Now()}}
+	m.orch.thinking = true
+	m.orch.unanswered = []string{"any work left?"}
+	m.orch.lastEvent = time.Now().Add(-2 * time.Minute)
+	if cmd := m.watchOrchestrator(); cmd != nil || !strings.Contains(m.orch.status, "no reply for 2m") {
+		t.Errorf("after two minutes: cmd=%v status=%q", cmd != nil, m.orch.status)
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "thinking… 2m") {
+		t.Error("the chat should say how long it has been thinking")
+	}
+	m.orch.lastEvent = time.Now().Add(-6 * time.Minute)
+	cmd := m.watchOrchestrator()
+	if cmd == nil || m.orch.restarts != 1 || m.orch.proc != nil || len(m.orch.pending) != 1 || m.orch.pending[0] != "any work left?" {
+		t.Errorf("after six minutes: restart expected, pending=%v restarts=%d", m.orch.pending, m.orch.restarts)
+	}
+	if m.watchOrchestrator() != nil {
+		t.Error("only one automatic restart per silence")
+	}
+}

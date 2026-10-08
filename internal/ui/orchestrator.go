@@ -34,7 +34,10 @@ type chatEntry struct {
 	card *dispatch
 }
 
-type orchEventMsg struct{ ev orch.Event }
+type orchEventMsg struct {
+	ev   orch.Event
+	from *orch.Orchestrator // the process it came from; a replaced one is ignored
+}
 type orchStartedMsg struct {
 	o   *orch.Orchestrator
 	err error
@@ -62,7 +65,20 @@ type orchState struct {
 	started   bool
 	reconcile bool
 	replay    string
+	// lastEvent is when the process last said anything; unanswered holds
+	// the messages sent since its last result, so a restart can resend
+	// them; restarts counts automatic restarts for the current silence.
+	lastEvent  time.Time
+	unanswered []string
+	restarts   int
 }
+
+// Silence thresholds: the status line says so after stallWarn, and Den
+// restarts the process once after stallRestart, resending what it owes.
+const (
+	stallWarn    = 90 * time.Second
+	stallRestart = 5 * time.Minute
+)
 
 func startOrchestrator(cfg config.Config, resume string) tea.Cmd {
 	return func() tea.Msg {
@@ -121,7 +137,7 @@ func waitOrch(o *orch.Orchestrator) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return orchEventMsg{ev: ev}
+		return orchEventMsg{ev: ev, from: o}
 	}
 }
 
@@ -187,6 +203,8 @@ func (m *Model) askOrchestrator(text string) tea.Cmd {
 func (m *Model) sendToOrchestrator(text string) tea.Cmd {
 	m.orch.thinking = true
 	m.orch.status = "thinking…"
+	m.orch.lastEvent = time.Now()
+	m.orch.unanswered = append(m.orch.unanswered, text)
 	if m.orch.replay != "" {
 		text = m.orch.replay + "\n\nNow the human says:\n" + text
 		m.orch.replay = ""
@@ -222,6 +240,7 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 
 func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	now := time.Now()
+	m.orch.lastEvent = now
 	switch ev.Kind {
 	case orch.Started:
 		m.orch.started = true
@@ -286,6 +305,8 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 		}
 	case orch.Result:
 		m.orch.thinking = false
+		m.orch.unanswered = nil
+		m.orch.restarts = 0
 		m.orch.cost = ev.CostUSD
 		m.orch.status = fmt.Sprintf("ready · $%.2f", ev.CostUSD)
 		// The result text repeats the last assistant text; only add it when
@@ -436,7 +457,11 @@ func (m Model) orchPane(w, h int) string {
 		lines = append(lines, "")
 	}
 	if m.orch.thinking {
-		lines = append(lines, strings.Repeat(" ", label+1)+s.dim.Render("thinking…"))
+		think := "thinking…"
+		if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
+			think = "thinking… " + humanAge(q)
+		}
+		lines = append(lines, strings.Repeat(" ", label+1)+s.dim.Render(think))
 	}
 	// The strip stays put; the chat scrolls under it. With a card focused
 	// the window is anchored to that card, otherwise it follows the tail,
@@ -464,4 +489,44 @@ func (m Model) closeOrchestrator() {
 	if m.orch.proc != nil {
 		m.orch.proc.Close()
 	}
+}
+
+// watchOrchestrator runs every tick: a turn that has gone quiet is named
+// in the status line, and after stallRestart the process is restarted
+// once and owed messages are resent. A stuck API connection looks exactly
+// like deep thought from outside, so the thresholds are generous.
+func (m *Model) watchOrchestrator() tea.Cmd {
+	if !m.orch.thinking || m.orch.proc == nil {
+		return nil
+	}
+	quiet := time.Since(m.orch.lastEvent)
+	switch {
+	case quiet > stallRestart && m.orch.restarts == 0:
+		m.orch.restarts++
+		note := chatEntry{role: "note", text: fmt.Sprintf("no reply for %s · restarting the orchestrator and resending", humanAge(quiet)), at: time.Now()}
+		m.orch.chat = append(m.orch.chat, note)
+		m.logEntry(note)
+		return m.restartOrchestrator()
+	case quiet > stallWarn:
+		m.orch.status = fmt.Sprintf("thinking… no reply for %s · /orch restart", humanAge(quiet))
+	}
+	return nil
+}
+
+// restartOrchestrator kills the process, resumes the same session and
+// resends the messages it never answered.
+func (m *Model) restartOrchestrator() tea.Cmd {
+	owed := append([]string(nil), m.orch.unanswered...)
+	if m.orch.proc != nil {
+		proc := m.orch.proc
+		m.orch.proc = nil
+		go proc.Close() // may take a few seconds to kill a stuck process
+	}
+	m.orch.thinking = false
+	m.orch.unanswered = nil
+	m.orch.pending = append(m.orch.pending, owed...)
+	m.orch.started = false
+	m.orch.starting = true
+	m.orch.status = "restarting…"
+	return startOrchestrator(m.cfg, m.orch.resume)
 }

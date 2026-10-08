@@ -358,7 +358,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		return m, tea.Batch(snapshot, tick())
+		return m, tea.Batch(snapshot, tick(), m.watchOrchestrator())
 	case changedMsg:
 		m.st = newStyles(theme.Load())
 		applyInputStyles(&m.input, m.st)
@@ -383,6 +383,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case orchStartedMsg:
 		return m, m.handleOrchStarted(msg)
 	case orchEventMsg:
+		if msg.from != nil && msg.from != m.orch.proc {
+			return m, nil // a process that was restarted away; its tail is noise
+		}
 		cmd := m.handleOrchEvent(msg.ev)
 		m.refresh()
 		return m, cmd
@@ -722,6 +725,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		m.tab = tabOrch
 		if len(fields) > 1 && fields[1] == "new" {
 			return m, m.newOrchestratorSession()
+		}
+		if len(fields) > 1 && fields[1] == "restart" {
+			return m, m.restartOrchestrator()
 		}
 	case "/help", "/?":
 		m.help = true
