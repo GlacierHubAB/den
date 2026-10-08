@@ -123,7 +123,7 @@ func Tail(path string, n int) []Entry {
 				b := blocks[i]
 				switch b.Type {
 				case "text":
-					if t := firstLine(b.Text); t != "" {
+					if t := excerpt(b.Text, excerptLines); t != "" {
 						rev = append(rev, Entry{Kind: "text", Text: t})
 					}
 				case "tool_use":
@@ -143,12 +143,34 @@ func Tail(path string, n int) []Entry {
 	return out
 }
 
+// excerptLines is how much of a prompt or reply the tail keeps.
+const excerptLines = 8
+
 func cleanPrompt(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" || strings.HasPrefix(s, "<") {
 		return "" // command echoes, caveats, reminders
 	}
-	return firstLine(s)
+	return excerpt(s, excerptLines)
+}
+
+// excerpt keeps the first n non-empty lines of s, marking a cut with an
+// ellipsis, so the detail pane can show the gist of a turn rather than
+// only its opening line.
+func excerpt(s string, n int) string {
+	var out []string
+	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
+		l = strings.TrimRight(l, " \t")
+		if strings.TrimSpace(l) == "" {
+			continue
+		}
+		if len(out) == n {
+			out = append(out, "…")
+			break
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
 }
 
 func firstLine(s string) string {
@@ -164,10 +186,17 @@ func toolBrief(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &in) != nil {
 		return ""
 	}
-	for _, k := range []string{"description", "command", "file_path", "pattern", "url", "query", "prompt", "to", "skill"} {
+	// The description says what a command is for; the command itself follows
+	// so the pane shows both.
+	var parts []string
+	if v, ok := in["description"].(string); ok && strings.TrimSpace(v) != "" {
+		parts = append(parts, firstLine(v))
+	}
+	for _, k := range []string{"command", "file_path", "pattern", "url", "query", "prompt", "to", "skill"} {
 		if v, ok := in[k].(string); ok && strings.TrimSpace(v) != "" {
-			return firstLine(v)
+			parts = append(parts, excerpt(v, 3))
+			break
 		}
 	}
-	return ""
+	return strings.Join(parts, "\n")
 }

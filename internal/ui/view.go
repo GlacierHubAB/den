@@ -645,14 +645,31 @@ func (m Model) detailPane(w, h int) string {
 	if len(a.Tail) > 0 {
 		b.WriteString("\n")
 		line(s.muted.Render("recent"))
+		// Each entry wraps in full under a hanging indent; the pane scrolls.
+		entry := func(prefix string, pstyle, tstyle lipgloss.Style, text string) {
+			indent := strings.Repeat(" ", ansi.StringWidth(prefix))
+			width := max(12, w-4-ansi.StringWidth(prefix))
+			first := true
+			for _, raw := range strings.Split(text, "\n") {
+				for _, l := range strings.Split(ansi.Wrap(raw, width, ""), "\n") {
+					if first {
+						line(pstyle.Render(prefix) + tstyle.Render(l))
+						first = false
+						continue
+					}
+					line(indent + tstyle.Render(l))
+				}
+			}
+		}
 		for _, e := range a.Tail {
 			switch e.Kind {
 			case "you":
-				line(s.muted.Render("you › ") + s.dim.Render(e.Text))
+				entry("you › ", s.muted, s.dim, e.Text)
 			case "tool":
-				line(s.ok.Render("● ") + s.dim.Render(e.Text))
+				name, rest, _ := strings.Cut(e.Text, " ")
+				entry("● "+name+" ", s.ok, s.dim, rest)
 			default:
-				line(s.fg.Render(e.Text))
+				entry("", s.fg, s.fg, e.Text)
 			}
 		}
 	}

@@ -27,7 +27,7 @@ func TestUsageAndTail(t *testing.T) {
 		t.Errorf("usage = %+v %v", u, ok)
 	}
 	tail := Tail(p, 10)
-	want := []Entry{{"you", "fix the login redirect"}, {"text", "Looking at it."}, {"tool", "Bash Run tests"}}
+	want := []Entry{{"you", "fix the login redirect"}, {"text", "Looking at it.\nMore."}, {"tool", "Bash Run tests\ngo test ./..."}}
 	if len(tail) != len(want) {
 		t.Fatalf("tail = %+v", tail)
 	}
@@ -38,5 +38,15 @@ func TestUsageAndTail(t *testing.T) {
 	}
 	if got := Tail(p, 2); len(got) != 2 || got[0].Kind != "text" {
 		t.Errorf("tail(2) = %+v", got)
+	}
+}
+
+func TestExcerptKeepsLinesAndMarksCut(t *testing.T) {
+	in := "one\n\n  two  \nthree\nfour"
+	if got := excerpt(in, 3); got != "one\n  two\nthree\n…" {
+		t.Errorf("excerpt = %q", got)
+	}
+	if got := excerpt("   ", 3); got != "" {
+		t.Errorf("blank excerpt = %q", got)
 	}
 }

@@ -165,7 +165,7 @@ func Snapshot() ([]Agent, error) {
 		a.Title, a.Model = facts.Title, facts.Model
 		if a.Path != "" {
 			a.Usage, a.HasUsage = transcript.ReadUsage(a.Path)
-			a.Tail = transcript.Tail(a.Path, 8)
+			a.Tail = transcript.Tail(a.Path, 20)
 		}
 		a.Usage, a.HasUsage, a.UsageFromBadge = mergeUsage(a.Usage, a.HasUsage, a.Limits, a.HasLimit)
 		switch {
