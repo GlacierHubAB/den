@@ -87,7 +87,7 @@ func startOrchestrator(cfg config.Config, resume string) tea.Cmd {
 		if name == "" {
 			name = OrchestratorName
 		}
-		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model, Resume: resume})
+		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume})
 		return orchStartedMsg{o: o, err: err}
 	}
 }
@@ -285,7 +285,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 				m.logCard(d)
 			}
 		} else {
-			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "· " + ev.Tool, toolUseID: ev.ToolUseID, at: now})
+			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
 		}
 	case orch.ToolResult:
 		for i := range m.orch.chat {
@@ -301,6 +301,15 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			case e.card != nil:
 				e.card.Reason = "delivered"
 				m.logCard(e.card)
+			case e.role == "note":
+				// A spawn's answer says what started and where; it earns a
+				// line. Other tool notes stay as they are.
+				switch {
+				case ev.IsError:
+					e.status = "failed: " + firstLineOf(ev.Text)
+				case strings.HasPrefix(e.text, "▶"):
+					e.status = firstLineOf(ev.Text)
+				}
 			case failed:
 				e.status = "failed: " + firstLineOf(ev.Text)
 			default:
@@ -445,7 +454,16 @@ func (m Model) orchPane(w, h int) string {
 			}
 			body = []string{s.dim.Render("→ ") + name + s.dim.Render(" · "+ansi.Truncate(e.text, max(10, bodyW-ansi.StringWidth(e.to)-len(e.status)-8), "…")+" · ") + st.Render(e.status)}
 		default:
-			body = m.plainLines(e.text, bodyW, s.muted)
+			text := e.text
+			if e.status != "" {
+				st := s.muted
+				if strings.HasPrefix(e.status, "failed") {
+					st = s.err
+				}
+				body = append(m.plainLines(text, bodyW, s.muted), m.plainLines(e.status, bodyW, st)...)
+				break
+			}
+			body = m.plainLines(text, bodyW, s.muted)
 		}
 		for i, l := range body {
 			prefix := strings.Repeat(" ", label+1)

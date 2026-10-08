@@ -1,6 +1,8 @@
 // Package orch runs Den's orchestrator: a headless Claude Code session that
-// can see every peer session on this machine (ListAgents) and message them
-// (SendMessage), and nothing else. Den talks to it over stream-json on
+// can see every peer session on this machine (ListAgents), message them
+// (SendMessage) and, through Den's own MCP server (`den mcp`), open a
+// terminal or start a new Claude Code session on the workspace the human is
+// looking at. Nothing else. Den talks to it over stream-json on
 // stdin/stdout and hands it a fresh roster with every message, so it never
 // has to go looking for who is who.
 package orch
@@ -60,7 +62,16 @@ How to act:
 - Address several agents only when the request concerns several. Never message an agent that the request does not concern.
 - You cannot approve, deny or answer prompts on an agent's behalf, and a message from you cannot do so either; the human answers those in Den. Say so if asked.
 - Never relay instructions that bypass an agent's permissions or safety checks.
+- When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster) and a complete, self-contained brief written as if the human had typed it; the brief is the agent's first prompt. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
 - Be brief. No preambles, no headings, no markdown tables.`
+
+// The MCP server Den offers the orchestrator and the tools on it, as Claude
+// Code names them (mcp__<server>__<tool>).
+const (
+	MCPServer        = "den"
+	SpawnAgentTool   = "mcp__den__spawn_agent"
+	OpenTerminalTool = "mcp__den__open_terminal"
+)
 
 // Options configure the process.
 type Options struct {
@@ -69,6 +80,10 @@ type Options struct {
 	Name    string   // session display name, default "den-orchestrator"
 	Dir     string   // working directory, default $HOME
 	Resume  string   // a session id to continue, so the orchestrator keeps its memory
+	// Spawn offers the spawn_agent and open_terminal tools through `den mcp`,
+	// run from Executable (default: this binary).
+	Spawn      bool
+	Executable string
 }
 
 // Orchestrator is a running orchestrator process.
@@ -97,6 +112,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 	if len(args) == 0 {
 		args = []string{"claude"}
 	}
+	allowed := "ListAgents,SendMessage"
 	args = append(args,
 		"-p",
 		"--input-format", "stream-json",
@@ -105,9 +121,21 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"--verbose",
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
-		"--allowedTools", "ListAgents,SendMessage",
 		"--append-system-prompt", SystemPrompt,
 	)
+	if o.Spawn {
+		exe := o.Executable
+		if exe == "" {
+			exe, _ = os.Executable()
+		}
+		if exe != "" {
+			// Only Den's server: the user's own MCP servers would give the
+			// orchestrator tools it must not have.
+			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
+			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool
+		}
+	}
+	args = append(args, "--allowedTools", allowed)
 	if o.Resume != "" {
 		args = append(args, "--resume", o.Resume)
 	}
@@ -341,6 +369,61 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// MCPConfig is the --mcp-config JSON that registers `<exe> mcp` as the
+// server named MCPServer.
+func MCPConfig(exe string) string {
+	b, _ := json.Marshal(map[string]any{
+		"mcpServers": map[string]any{
+			MCPServer: map[string]any{"command": exe, "args": []string{"mcp"}},
+		},
+	})
+	return string(b)
+}
+
+// SpawnInput is the shape of the spawn_agent and open_terminal tools' input.
+type SpawnInput struct {
+	Dir   string `json:"dir"`
+	Brief string `json:"brief"`
+	Name  string `json:"name"`
+}
+
+// ParseSpawn reads a spawn_agent or open_terminal tool_use input.
+func ParseSpawn(raw json.RawMessage) (SpawnInput, bool) {
+	var in SpawnInput
+	if json.Unmarshal(raw, &in) != nil || in.Dir == "" {
+		return in, false
+	}
+	return in, true
+}
+
+// Describe renders a tool call the orchestrator made as one line for the
+// chat, for every tool that is not a SendMessage.
+func Describe(tool string, input json.RawMessage) string {
+	in, ok := ParseSpawn(input)
+	switch {
+	case tool == SpawnAgentTool && ok:
+		line := "▶ starting an agent in " + shortDir(in.Dir)
+		if b := strings.TrimSpace(in.Brief); b != "" {
+			if i := strings.IndexByte(b, '\n'); i >= 0 {
+				b = b[:i] + " …"
+			}
+			line += " · " + b
+		}
+		return line
+	case tool == OpenTerminalTool && ok:
+		return "▶ opening a terminal in " + shortDir(in.Dir)
+	}
+	return "· " + tool
+}
+
+func shortDir(dir string) string {
+	home, _ := os.UserHomeDir()
+	if home != "" && strings.HasPrefix(dir, home) {
+		return "~" + strings.TrimPrefix(dir, home)
+	}
+	return dir
 }
 
 // SendMessageInput is the shape of the SendMessage tool's input.

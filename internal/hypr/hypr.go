@@ -169,3 +169,63 @@ func Find(clients []Client, title, cwd, hostPrefix string) (Match, bool) {
 	}
 	return Match{}, false
 }
+
+// Workspace is one Hyprland workspace as `hyprctl activeworkspace -j` reports it.
+type Workspace struct {
+	ID      int    `json:"id"`
+	Name    string `json:"name"`
+	Monitor string `json:"monitor"`
+}
+
+// ActiveWorkspace returns the workspace the human is looking at, or ok false
+// when Hyprland cannot be asked.
+func ActiveWorkspace() (ws Workspace, ok bool) {
+	out, err := exec.Command("hyprctl", "activeworkspace", "-j").Output()
+	if err != nil {
+		return Workspace{}, false
+	}
+	if json.Unmarshal(out, &ws) != nil || ws.ID == 0 {
+		return Workspace{}, false
+	}
+	return ws, true
+}
+
+// MoveToWorkspace moves a window to a workspace (by id or name) without
+// changing which workspace is shown. Lua first (Hyprland 0.56+), then the
+// classic dispatcher.
+func MoveToWorkspace(address, workspace string) error {
+	if address == "" {
+		return errors.New("no window address")
+	}
+	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", silent = true })`, workspace, address)
+	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err == nil && (msg == "ok" || msg == "") {
+		return nil
+	}
+	out, err = exec.Command("hyprctl", "dispatch", "movetoworkspacesilent", workspace+",address:"+address).CombinedOutput()
+	msg = strings.TrimSpace(string(out))
+	if err != nil || (msg != "ok" && msg != "") {
+		return fmt.Errorf("hyprctl movetoworkspacesilent: %s", firstLine(msg))
+	}
+	return nil
+}
+
+// NewTerminal returns the terminal window that is in after but not in
+// before, if exactly one appeared.
+func NewTerminal(before, after []Client) (Client, bool) {
+	seen := map[string]bool{}
+	for _, c := range before {
+		seen[c.Address] = true
+	}
+	var found []Client
+	for _, c := range after {
+		if !seen[c.Address] && IsTerminal(c.Class) {
+			found = append(found, c)
+		}
+	}
+	if len(found) == 1 {
+		return found[0], true
+	}
+	return Client{}, false
+}

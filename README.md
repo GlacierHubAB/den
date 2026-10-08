@@ -61,16 +61,33 @@ you are at that agent's terminal, Den holds the message and delivers it when
 you leave, so it never lands under something you are typing.
 
 The orchestrator (tab `3`) is a headless Claude Code session Den starts on your
-first plain-text message. It has exactly two tools, ListAgents and SendMessage,
-and gets a fresh roster of the fleet with every message, so it can answer
-"who is blocked on what?" or relay "tell Mossy to rebase first" without
-hunting around. It cannot approve anything. Its turns are billed like any
-other session; it uses `sonnet` unless the config file or
+first plain-text message. It has four tools: ListAgents and SendMessage,
+plus two Den gives it through its own MCP server (`den mcp`), spawn_agent
+and open_terminal. It gets a fresh roster of the fleet with every message,
+so it can answer "who is blocked on what?" or relay "tell Mossy to rebase
+first" without hunting around. It cannot approve anything. Its turns are
+billed like any other session; it uses `sonnet` unless the config file or
 `DEN_ORCHESTRATOR_MODEL` says otherwise.
 
 The Orchestrator view has no tab: `Ctrl+O` opens it and brings you back,
 and sending plain text opens it too. Its state sits beside the keycap on the
 tab row.
+
+Ask it for a new agent ("start an agent in ~/code/site that fixes the login
+redirect", "spawn someone on the release notes") and it opens your default
+terminal on the workspace you are looking at, in that directory, with
+`claude --name <peer>` running and the brief it wrote as the first prompt.
+The brief arrives introduced as coming from the orchestrator on your behalf,
+and asks the agent to report back to it when done or blocked. The new agent
+shows up in the Fleet and the roster like any other, and the orchestrator
+tells you its critter name. "Open a terminal in ~/code/site" gives you a
+plain shell the same way. The terminal is launched as Omarchy's own keybinding
+does it (`uwsm-app -- xdg-terminal-exec --dir=…`), so it is detached from Den;
+Den records your active workspace first and moves the window there if it
+landed anywhere else. Set `spawn = false` under `[orchestrator]`, or
+`DEN_ORCHESTRATOR_SPAWN=off`, to take the two tools away again. Only Den's
+MCP server is loaded into the orchestrator (`--strict-mcp-config`); your own
+MCP servers never are.
 
 ## Dispatch cards
 
@@ -127,6 +144,7 @@ the path):
 [orchestrator]
 model = "sonnet"            # any claude --model value, or "off" for Claude Code's default
 name = "den-orchestrator"   # how the orchestrator session names itself to peers
+spawn = true                # may open terminals and start agents on the workspace you are on
 
 [inbox]
 history = 100               # finished turns kept as history
@@ -139,8 +157,8 @@ permission_wait = 580       # seconds Den may hold a permission before the termi
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
 ```
 
-`DEN_ORCHESTRATOR_MODEL`, `DEN_PERMISSION_WAIT` and `DEN_HOOK_LOG=off` still
-win over the file, so scripts keep working.
+`DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`
+and `DEN_HOOK_LOG=off` still win over the file, so scripts keep working.
 
 ## Releases
 
