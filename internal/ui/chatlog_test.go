@@ -21,17 +21,18 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 	m.refresh()
 	sid := m.agents[0].Session.SessionID
 
-	you := chatEntry{role: "you", text: "review the notes", at: time.Now()}
+	base := time.Now()
+	you := chatEntry{role: "you", text: "review the notes", at: base}
 	m.orch.chat = append(m.orch.chat, you)
 	m.logEntry(you)
-	d := &dispatch{ID: "t1", SessionID: sid, Agent: "Mossy Lemur", Brief: "Review the notes.", SentAt: time.Now()}
+	d := &dispatch{ID: "t1", SessionID: sid, Agent: "Mossy Lemur", Brief: "Review the notes.", SentAt: base.Add(2 * time.Second)}
 	m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, at: d.SentAt})
 	m.logCard(d)
 	d.State, d.StartedAt, d.Calls = cardWorking, time.Now(), 3
 	m.logCard(d)
 	// The orchestrator's text started streaming before the dispatch, but is
 	// logged after it; restore must put it back in front of the card.
-	reply := chatEntry{role: "orchestrator", text: "Mossy is on it.", at: d.SentAt.Add(-time.Second)}
+	reply := chatEntry{role: "orchestrator", text: "Mossy is on it.", at: base.Add(time.Second)}
 	m.orch.chat = append(m.orch.chat, reply)
 	m.logEntry(reply)
 	m.logSession("sess-123")
