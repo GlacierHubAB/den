@@ -90,7 +90,12 @@ func (m Model) diffLines(hunks []transcript.Hunk, width int) []string {
 	p := s.pal
 	del := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Err)).Background(lipgloss.Color(theme.Tint(p.Err, p.Bg)))
 	add := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Ok)).Background(lipgloss.Color(theme.Tint(p.Ok, p.Bg)))
+	total := 0
+	for _, h := range hunks {
+		total += len(h.Lines)
+	}
 	var out []string
+	shown := 0
 	for hi, h := range hunks {
 		if hi > 0 {
 			out = append(out, s.muted.Render("…"))
@@ -125,7 +130,15 @@ func (m Model) diffLines(hunks []transcript.Hunk, width int) []string {
 				row += strings.Repeat(" ", pad)
 			}
 			out = append(out, style.Render(row))
+			shown++
+			if shown == maxDiffLines && total > maxDiffLines {
+				out = append(out, s.muted.Render(fmt.Sprintf("… %d more lines", total-shown)))
+				return out
+			}
 		}
 	}
 	return out
 }
+
+// maxDiffLines caps one file's diff in the pane; the terminal has the rest.
+const maxDiffLines = 30

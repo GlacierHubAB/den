@@ -66,13 +66,19 @@ func windowFor(model string, tokens int) int {
 
 // Entry is one line of recent activity.
 type Entry struct {
-	Kind   string // "you", "text", "tool"
-	Text   string // the prompt, the reply, or a tool call's description
-	Tool   string // tool name, for Kind "tool"
-	Code   string // the command, path or other main argument of a tool call
-	File   string // the file an Edit or Write touched
-	Patch  []Hunk // what an Edit changed, as Claude Code recorded it
-	Output string // the first lines a command printed
+	Kind    string       // "you", "text", "tool"
+	Text    string       // the prompt, the reply, or a tool call's description
+	Tool    string       // tool name, for Kind "tool"
+	Code    string       // the command, path or other main argument of a tool call
+	Changes []FileChange // files the call changed, as Claude Code recorded them
+	Output  string       // the first lines a command printed
+}
+
+// FileChange is one file an Edit, Write or Bash call changed.
+type FileChange struct {
+	Path             string
+	Hunks            []Hunk
+	Created, Deleted bool
 }
 
 // Hunk is one changed region of a file.
@@ -81,9 +87,9 @@ type Hunk struct {
 	Lines              []string // each prefixed " ", "-" or "+"
 }
 
-// Added and Removed count the changed lines across the patch.
-func (e Entry) Added() (added, removed int) {
-	for _, h := range e.Patch {
+// Counts returns the added and removed lines of the change.
+func (c FileChange) Counts() (added, removed int) {
+	for _, h := range c.Hunks {
 		for _, l := range h.Lines {
 			switch {
 			case strings.HasPrefix(l, "+"):
@@ -102,16 +108,67 @@ func (e Entry) Added() (added, removed int) {
 // outputLines is how much of a command's output the tail keeps.
 const outputLines = 5
 
-// toolResult is what Claude Code records next to a tool's result.
+// toolResult is what Claude Code records next to a tool's result: a patch
+// for Edit and Write, output and any files a command changed for Bash.
 type toolResult struct {
-	FilePath        string `json:"filePath"`
-	StructuredPatch []struct {
-		OldStart int      `json:"oldStart"`
-		NewStart int      `json:"newStart"`
-		Lines    []string `json:"lines"`
-	} `json:"structuredPatch"`
-	Stdout string `json:"stdout"`
-	Stderr string `json:"stderr"`
+	Type            string    `json:"type"` // Write: "create" or "update"
+	FilePath        string    `json:"filePath"`
+	Content         string    `json:"content"`
+	StructuredPatch []rawHunk `json:"structuredPatch"`
+	Stdout          string    `json:"stdout"`
+	Stderr          string    `json:"stderr"`
+	BashEditDiff    struct {
+		Files []struct {
+			FilePath string    `json:"filePath"`
+			Hunks    []rawHunk `json:"hunks"`
+			Created  bool      `json:"created"`
+			Deleted  bool      `json:"deleted"`
+		} `json:"files"`
+	} `json:"bashEditDiff"`
+}
+
+type rawHunk struct {
+	OldStart int      `json:"oldStart"`
+	NewStart int      `json:"newStart"`
+	Lines    []string `json:"lines"`
+}
+
+func hunks(raw []rawHunk) []Hunk {
+	out := make([]Hunk, 0, len(raw))
+	for _, h := range raw {
+		out = append(out, Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: h.Lines})
+	}
+	return out
+}
+
+// changes turns a result into the files it changed.
+func (r toolResult) changes(tool string) []FileChange {
+	switch tool {
+	case "Edit", "MultiEdit", "NotebookEdit":
+		if r.FilePath != "" && len(r.StructuredPatch) > 0 {
+			return []FileChange{{Path: r.FilePath, Hunks: hunks(r.StructuredPatch)}}
+		}
+	case "Write":
+		if r.FilePath == "" {
+			return nil
+		}
+		if r.Type == "create" || len(r.StructuredPatch) == 0 {
+			// A new file: every line is an addition.
+			var lines []string
+			for _, l := range strings.Split(strings.TrimRight(r.Content, "\n"), "\n") {
+				lines = append(lines, "+"+l)
+			}
+			return []FileChange{{Path: r.FilePath, Created: true, Hunks: []Hunk{{OldStart: 0, NewStart: 1, Lines: lines}}}}
+		}
+		return []FileChange{{Path: r.FilePath, Hunks: hunks(r.StructuredPatch)}}
+	case "Bash":
+		var out []FileChange
+		for _, f := range r.BashEditDiff.Files {
+			out = append(out, FileChange{Path: f.FilePath, Hunks: hunks(f.Hunks), Created: f.Created, Deleted: f.Deleted})
+		}
+		return out
+	}
+	return nil
 }
 
 func Tail(path string, n int) []Entry {
@@ -183,10 +240,7 @@ func Tail(path string, n int) []Entry {
 					desc, code := toolBrief(b.Input)
 					e := Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code}
 					if r, ok := results[b.ID]; ok {
-						e.File = r.FilePath
-						for _, h := range r.StructuredPatch {
-							e.Patch = append(e.Patch, Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: h.Lines})
-						}
+						e.Changes = r.changes(b.Name)
 						if out := strings.TrimSpace(r.Stdout); out != "" {
 							e.Output = excerpt(out, outputLines)
 						} else if out := strings.TrimSpace(r.Stderr); out != "" {

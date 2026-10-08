@@ -733,21 +733,31 @@ func (m Model) detailPane(w, h int) string {
 					head += "  " + s.dim.Render(ansi.Truncate(e.Text, max(8, textW-ansi.StringWidth(e.Tool)-4), "…"))
 				}
 				line(head)
-				switch {
-				case len(e.Patch) > 0:
-					// An edit reads like Claude Code's log: what changed, then
-					// the hunks with line numbers and coloured changed lines.
-					added, removed := e.Added()
-					line("  " + s.muted.Render("⎿ ") + s.dim.Render(fmt.Sprintf("Updated %s (+%d -%d)", shortPath(e.File, a.Session.CWD), added, removed)))
-					for _, l := range m.diffLines(e.Patch, textW-4) {
-						line("    " + l)
-					}
-				case e.Code != "":
+				if e.Code != "" && e.Tool != "Edit" && e.Tool != "Write" && e.Tool != "MultiEdit" {
 					for _, l := range m.codeBlock(e.Code, textW-2) {
 						line("  " + l)
 					}
 				}
-				if e.Output != "" && len(e.Patch) == 0 {
+				// Changed files read like Claude Code's log: what changed, then
+				// the hunks with line numbers and coloured changed lines.
+				for _, c := range e.Changes {
+					added, removed := c.Counts()
+					what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
+					switch {
+					case c.Deleted:
+						what = "Deleted " + shortPath(c.Path, a.Session.CWD)
+					case c.Created:
+						what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
+					}
+					line("  " + s.muted.Render("⎿ ") + s.dim.Render(what))
+					if c.Deleted {
+						continue
+					}
+					for _, l := range m.diffLines(c.Hunks, textW-4) {
+						line("    " + l)
+					}
+				}
+				if e.Output != "" && len(e.Changes) == 0 {
 					first := true
 					for _, raw := range strings.Split(e.Output, "\n") {
 						for _, l := range strings.Split(ansi.Wrap(raw, max(8, textW-4), ""), "\n") {

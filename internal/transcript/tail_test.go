@@ -58,21 +58,26 @@ func TestTailAttachesResults(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/x/a.go","old_string":"a","new_string":"b"}}]}}`,
 		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"toolUseResult":{"filePath":"/x/a.go","structuredPatch":[{"oldStart":3,"newStart":3,"lines":[" ctx","-a","+b","+c"]}]}}`,
 		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"go test ./...","description":"Run tests"}}]}}`,
-		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]},"toolUseResult":{"stdout":"ok  pkg\n\nFAIL other","stderr":"","interrupted":false}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]},"toolUseResult":{"stdout":"ok  pkg\n\nFAIL other","stderr":"","interrupted":false,"bashEditDiff":{"files":[{"filePath":"/x/b.go","hunks":[{"oldStart":1,"newStart":1,"lines":["-x","+y"]}]},{"filePath":"/x/gone.go","hunks":[],"deleted":true}],"moreFiles":0}}}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t3","name":"Write","input":{"file_path":"/x/new.txt","content":"one\ntwo\n"}}]}}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t3","content":"ok"}]},"toolUseResult":{"type":"create","filePath":"/x/new.txt","content":"one\ntwo\n","structuredPatch":[]}}`,
 	}
 	os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 	tail := Tail(p, 10)
-	if len(tail) != 2 {
+	if len(tail) != 3 {
 		t.Fatalf("tail = %+v", tail)
 	}
-	edit, bash := tail[0], tail[1]
-	if edit.Tool != "Edit" || edit.File != "/x/a.go" || len(edit.Patch) != 1 || edit.Patch[0].NewStart != 3 || len(edit.Patch[0].Lines) != 4 {
+	edit, bash, write := tail[0], tail[1], tail[2]
+	if edit.Tool != "Edit" || len(edit.Changes) != 1 || edit.Changes[0].Path != "/x/a.go" || len(edit.Changes[0].Hunks) != 1 || edit.Changes[0].Hunks[0].NewStart != 3 {
 		t.Errorf("edit = %+v", edit)
 	}
-	if a, r := edit.Added(); a != 2 || r != 1 {
+	if a, r := edit.Changes[0].Counts(); a != 2 || r != 1 {
 		t.Errorf("added/removed = %d/%d", a, r)
 	}
-	if bash.Output != "ok  pkg\n\nFAIL other" {
-		t.Errorf("output = %q", bash.Output)
+	if bash.Output != "ok  pkg\n\nFAIL other" || len(bash.Changes) != 2 || bash.Changes[0].Path != "/x/b.go" || !bash.Changes[1].Deleted {
+		t.Errorf("bash = %+v", bash)
+	}
+	if len(write.Changes) != 1 || !write.Changes[0].Created || len(write.Changes[0].Hunks[0].Lines) != 2 || write.Changes[0].Hunks[0].Lines[1] != "+two" {
+		t.Errorf("write = %+v", write)
 	}
 }
