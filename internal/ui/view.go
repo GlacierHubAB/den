@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,9 +30,12 @@ func (m Model) View() tea.View {
 		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
 	}
 
-	// Rows: header, panes, [completions], prompt (3 rows with rules), hints.
+	// Rows: header, panes, [completions], prompt (rules, attachments, the
+	// command line at its current height), hints. The panes take what is
+	// left, so a growing command line pushes them up rather than over them.
 	popup := m.completionRows(w)
-	paneH := h - len(header) - 4 - len(popup)
+	prompt := m.prompt(w)
+	paneH := h - len(header) - len(prompt) - 1 - len(popup)
 	if paneH < 6 {
 		paneH = 6
 	}
@@ -39,13 +43,15 @@ func (m Model) View() tea.View {
 	for _, r := range popup {
 		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
 	}
-	for _, r := range m.prompt(w) {
+	for _, r := range prompt {
 		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
 	}
 	out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 
 	v := tea.NewView(out.String())
 	v.AltScreen = true
+	// Ask for disambiguated keys so Shift+Enter is not plain Enter.
+	v.KeyboardEnhancements = tea.KeyboardEnhancements{ReportAlternateKeys: true}
 	return v
 }
 
@@ -841,11 +847,38 @@ func (m Model) completionRows(w int) []string {
 	return rows
 }
 
-// prompt draws the command line between two rules, the way Claude Code does.
+// prompt draws the command line between two rules, the way Claude Code
+// does: attachments first (thumbnails when the terminal draws them, the
+// chip and file name always), then the text at its current height.
 func (m Model) prompt(w int) []string {
-	m.input.SetWidth(max(10, w-4))
-	rule := m.st.border.Render(strings.Repeat("─", max(0, w)))
-	return []string{rule, " " + m.input.View(), rule}
+	s := m.st
+	rule := s.border.Render(strings.Repeat("─", max(0, w)))
+	rows := []string{rule}
+	if list := m.referenced(m.input.Value()); len(list) > 0 {
+		if m.kitty {
+			strip := make([]string, thumbRows)
+			for _, a := range list {
+				for r, tr := range thumbRowsFor(a) {
+					label := ""
+					if r == 0 {
+						label = " " + s.dim.Render(a.Chip()+" "+filepath.Base(a.Path))
+					}
+					strip[r] += " " + tr + label + "  "
+				}
+			}
+			rows = append(rows, strip...)
+		} else {
+			var chips []string
+			for _, a := range list {
+				chips = append(chips, s.dim.Render(a.Chip()+" "+filepath.Base(a.Path)))
+			}
+			rows = append(rows, " "+strings.Join(chips, "   "))
+		}
+	}
+	for _, l := range strings.Split(m.input.View(), "\n") {
+		rows = append(rows, " "+l)
+	}
+	return append(rows, rule)
 }
 
 func (m Model) hints(w int) string {
@@ -853,13 +886,13 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch", "switch view"}, {"/quit", ""}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabOrch:
-		items = [][2]string{{"Enter", "send"}, {"@Name", "one agent"}, {"↑ ↓", "scroll"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"^V", "paste image"}, {"↑ ↓", "scroll"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.focus == paneDetail:
 		items = [][2]string{{"↑ ↓", "scroll"}, {"←", "agents"}, {"Enter", "send · empty: focus terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	default:

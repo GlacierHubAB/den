@@ -7,8 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/GlacierHubAB/den/internal/badge"
@@ -77,9 +78,14 @@ type Model struct {
 	inboxCur   int
 	hooksReady bool
 	cfg        config.Config
-	colors     map[string]string // session id → body colour, unique while hues last
+	// Images attached to the command line, and whether the terminal can
+	// draw them inline (kitty graphics, confirmed by a probe reply).
+	attachments []attachment
+	nextImage   int
+	kitty       bool
+	colors      map[string]string // session id → body colour, unique while hues last
 
-	input    textinput.Model
+	input    textarea.Model
 	complIdx int
 	queue    []outgoing
 	orch     orchState
@@ -104,6 +110,7 @@ func New(cfg config.Config) Model {
 	m.hooksReady = hooks.Installed("")
 	m.input = newInput(m.st)
 	m.input.Focus()
+	m.fitInput()
 	return m
 }
 
@@ -117,7 +124,7 @@ func (m Model) Close() {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick()}
+	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
 	}
@@ -302,6 +309,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.fitInput()
+		return m, nil
+	case uv.KittyGraphicsEvent:
+		if kittyReply(msg) {
+			m.kitty = true
+		}
+		return m, nil
+	case tea.PasteMsg:
+		// Image paths (dragged files, copied paths) become chips; anything
+		// else is text for the command line.
+		if paths := imagePaths(msg.Content); len(paths) > 0 {
+			var cmds []tea.Cmd
+			for _, p := range paths {
+				cmds = append(cmds, m.attach(p))
+			}
+			return m, tea.Batch(cmds...)
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		m.fitInput()
+		return m, cmd
+	case clipMsg:
+		switch {
+		case msg.err != nil:
+			m.flash, m.flashErr = "clipboard: "+msg.err.Error(), true
+			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		case msg.path != "":
+			return m, m.attach(msg.path)
+		case msg.text != "":
+			m.input.InsertString(msg.text)
+			m.fitInput()
+		}
+		return m, nil
 	case animTickMsg:
 		m.anim++
 		return m, animTick()
@@ -356,6 +396,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.fitInput()
 	return m, cmd
 }
 
@@ -458,9 +499,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
-		m.input.SetValue("")
-		m.complIdx = 0
+		return m, m.clear()
+	case "shift+enter", "alt+enter", "ctrl+j":
+		m.input.InsertString("\n")
+		m.fitInput()
 		return m, nil
+	case "ctrl+v":
+		return m, readClipboard()
 	case "tab":
 		if len(compl) > 0 {
 			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
@@ -488,12 +533,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.complIdx = (m.complIdx + 1) % len(compl)
 			return m, nil
 		}
+		if m.input.LineCount() > 1 && m.input.Line() < m.input.LineCount()-1 {
+			break // move within a multi-line prompt
+		}
 		m.move(1)
 		return m, nil
 	case "up":
 		if len(compl) > 0 {
 			m.complIdx = (m.complIdx + len(compl) - 1) % len(compl)
 			return m, nil
+		}
+		if m.input.LineCount() > 1 && m.input.Line() > 0 {
+			break
 		}
 		m.move(-1)
 		return m, nil
@@ -520,6 +571,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.fitInput()
 	m.complIdx = 0
 	return m, cmd
 }

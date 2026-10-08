@@ -68,6 +68,23 @@ hunting around. It cannot approve anything. Its turns are billed like any
 other session; it uses `sonnet` unless the config file or
 `DEN_ORCHESTRATOR_MODEL` says otherwise.
 
+## The command line
+
+The line at the bottom is always open. It grows with what you type, one row
+for a short message and up to eight as text wraps or you add line breaks,
+then scrolls; the panes above shrink to make room. `Enter` sends,
+`Shift+Enter`, `Alt+Enter` or `Ctrl+J` insert a newline, `Esc` clears.
+
+Images travel with a message. Paste or drag an image file (a path, a
+`file://` URL or several lines of them) and it becomes a chip, `[Image #1]`,
+in the text; `Ctrl+V` takes an image straight from the clipboard (saved
+under `~/.local/state/den/attachments/`). When the message goes out the
+chip reads `[Image #1: /full/path.png]`, so the receiving session can open
+the file. Den asks the terminal whether it speaks the kitty graphics
+protocol; if it answers, a small thumbnail is drawn next to each chip, and
+otherwise the chip and file name stand alone. Delete a chip from the text
+and its image is left out.
+
 ## Configuration
 
 Everything has a default, so the file is optional. `den config init` writes
