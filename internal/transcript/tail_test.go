@@ -27,7 +27,7 @@ func TestUsageAndTail(t *testing.T) {
 		t.Errorf("usage = %+v %v", u, ok)
 	}
 	tail := Tail(p, 10)
-	want := []Entry{{"you", "fix the login redirect"}, {"text", "Looking at it.\nMore."}, {"tool", "Bash Run tests\ngo test ./..."}}
+	want := []Entry{{Kind: "you", Text: "fix the login redirect"}, {Kind: "text", Text: "Looking at it.\nMore."}, {Kind: "tool", Tool: "Bash", Text: "Run tests", Code: "go test ./..."}}
 	if len(tail) != len(want) {
 		t.Fatalf("tail = %+v", tail)
 	}

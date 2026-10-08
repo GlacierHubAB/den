@@ -67,7 +67,9 @@ func windowFor(model string, tokens int) int {
 // Entry is one line of recent activity.
 type Entry struct {
 	Kind string // "you", "text", "tool"
-	Text string
+	Text string // the prompt, the reply, or a tool call's description
+	Tool string // tool name, for Kind "tool"
+	Code string // the command, path or other main argument of a tool call
 }
 
 // Tail returns the last n human prompts, assistant texts and tool calls,
@@ -127,7 +129,8 @@ func Tail(path string, n int) []Entry {
 						rev = append(rev, Entry{Kind: "text", Text: t})
 					}
 				case "tool_use":
-					rev = append(rev, Entry{Kind: "tool", Text: b.Name + " " + toolBrief(b.Input)})
+					desc, code := toolBrief(b.Input)
+					rev = append(rev, Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code})
 				}
 			}
 		}
@@ -181,22 +184,22 @@ func firstLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-func toolBrief(raw json.RawMessage) string {
+// toolBrief returns what a tool call was for (its description, when the
+// model gave one) and the call itself: the command, path or other main
+// argument, up to six lines.
+func toolBrief(raw json.RawMessage) (desc, code string) {
 	var in map[string]any
 	if json.Unmarshal(raw, &in) != nil {
-		return ""
+		return "", ""
 	}
-	// The description says what a command is for; the command itself follows
-	// so the pane shows both.
-	var parts []string
 	if v, ok := in["description"].(string); ok && strings.TrimSpace(v) != "" {
-		parts = append(parts, firstLine(v))
+		desc = firstLine(v)
 	}
 	for _, k := range []string{"command", "file_path", "pattern", "url", "query", "prompt", "to", "skill"} {
 		if v, ok := in[k].(string); ok && strings.TrimSpace(v) != "" {
-			parts = append(parts, excerpt(v, 3))
+			code = excerpt(v, 6)
 			break
 		}
 	}
-	return strings.Join(parts, "\n")
+	return desc, code
 }
