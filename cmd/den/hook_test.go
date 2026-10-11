@@ -8,6 +8,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/notify"
 )
 
@@ -37,5 +38,35 @@ func TestNotifyWithoutDen(t *testing.T) {
 	got := string(raw)
 	if strings.Count(got, "--app-name=Den") != 1 || !strings.Contains(got, badge.Name(in.SessionID)+" needs your permission") || strings.Contains(got, "Bash") || strings.Contains(got, "--action") {
 		t.Errorf("args = %q", got)
+	}
+}
+
+func TestPermissionOutputForQuestions(t *testing.T) {
+	input := []byte(`{"questions":[{"question":"Which one?","header":"Pick","options":[{"label":"Warm","description":""},{"label":"Cool","description":""}],"multiSelect":false}]}`)
+	in := bridge.HookInput{HookEventName: "PermissionRequest", ToolName: "AskUserQuestion", ToolInput: input}
+	answered := bridge.Decision{Behavior: "allow", Answers: map[string]string{"Which one?": "Cool"}}
+	var on, off config.Config
+	on.Hooks.AnswerQuestions = true
+
+	if out := permissionOutput(in, answered, off); out != nil {
+		t.Errorf("option off: printed %s", out)
+	}
+	out := permissionOutput(in, answered, on)
+	if !strings.Contains(string(out), `"updatedInput":{"answers":{"Which one?":"Cool"},"questions":[`) || !strings.Contains(string(out), `"behavior":"allow"`) {
+		t.Errorf("answer = %s", out)
+	}
+	for name, d := range map[string]bridge.Decision{
+		"released":   {},
+		"incomplete": {Behavior: "allow", Answers: map[string]string{"Another?": "Cool"}},
+		"deny":       {Behavior: "deny", Answers: map[string]string{"Which one?": "Cool"}},
+	} {
+		if out := permissionOutput(in, d, on); out != nil {
+			t.Errorf("%s: printed %s", name, out)
+		}
+	}
+	// Ordinary permissions are unchanged.
+	bash := bridge.HookInput{HookEventName: "PermissionRequest", ToolName: "Bash"}
+	if got := string(permissionOutput(bash, bridge.Decision{Behavior: "deny", Message: "no"}, off)); got != `{"hookSpecificOutput":{"decision":{"behavior":"deny","message":"no"},"hookEventName":"PermissionRequest"}}`+"\n" {
+		t.Errorf("bash deny = %s", got)
 	}
 }

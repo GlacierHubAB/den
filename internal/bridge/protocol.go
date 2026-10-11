@@ -22,10 +22,13 @@ type Envelope struct {
 }
 
 // Decision is Den's answer to a PermissionRequest. Behavior is "allow",
-// "deny" or "" for "no decision, let the terminal dialog show".
+// "deny" or "" for "no decision, let the terminal dialog show". Answers
+// goes with an allow of an AskUserQuestion call answered in Den: question
+// text to answer, as Claude Code keys them.
 type Decision struct {
-	Behavior string `json:"behavior"`
-	Message  string `json:"message,omitempty"`
+	Behavior string            `json:"behavior"`
+	Message  string            `json:"message,omitempty"`
+	Answers  map[string]string `json:"answers,omitempty"`
 }
 
 // CloseEvent is not a hook: `den mcp` sends it when the orchestrator asks

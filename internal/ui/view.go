@@ -530,6 +530,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 	}
 	key := func(k, label string) string { return s.key.Render(k) + s.keyLabel.Render(" "+label) }
 	switch {
+	case it.AsksInDen():
+		out = append(out, key(optionKeys(it), "or your own answer, Enter (Inbox)")+"  "+key("^N", "answer in the terminal")+"  "+key("/open", "terminal"))
 	case it.Answerable() && it.Kind == inbox.Plan:
 		out = append(out, key("^Y", "approve")+"  "+key("^N", "ask for changes")+"  "+key("/open", "read it in the terminal"))
 	case it.Answerable() && it.Kind == inbox.Close:
@@ -710,6 +712,9 @@ func (m Model) inboxPane(w, h int) string {
 			}
 			if it.Kind == inbox.Cleanup {
 				acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
+			}
+			if it.AsksInDen() {
+				acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:
@@ -991,7 +996,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":

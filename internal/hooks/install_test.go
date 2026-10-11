@@ -59,3 +59,35 @@ func TestInstallKeepsOtherHooksAndUninstallRestores(t *testing.T) {
 		t.Error("Installed should be false")
 	}
 }
+
+// Answering a question from Den (hooks.answer_questions) rides on the held
+// PermissionRequest hook: its timeout must outlast the longest wait Den
+// allows (hooks.permission_wait, 580 seconds by default), and installing
+// twice must not duplicate it.
+func TestPermissionHookOutlastsTheWait(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	for i := 0; i < 2; i++ {
+		if _, err := Install("/usr/local/bin/den"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "settings.json"))
+	var s struct {
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Timeout int `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	json.Unmarshal(raw, &s)
+	perm := s.Hooks["PermissionRequest"]
+	if len(perm) != 1 || perm[0].Matcher != "" || perm[0].Hooks[0].Timeout < 590 {
+		t.Errorf("PermissionRequest = %+v", perm)
+	}
+	pre := s.Hooks["PreToolUse"]
+	if len(pre) != 1 || pre[0].Matcher != "AskUserQuestion" {
+		t.Errorf("PreToolUse = %+v", pre)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/question"
 )
 
 // runHook is `den hook`: Claude Code runs it for each subscribed event with
@@ -46,19 +47,46 @@ func runHook() {
 		}
 		return
 	}
-	wait := time.Duration(config.Load().Hooks.PermissionWait) * time.Second
+	cfg := config.Load()
+	wait := time.Duration(cfg.Hooks.PermissionWait) * time.Second
 	d, ok := bridge.Ask(path, env, wait)
 	logHook(in, ok)
-	if !ok || d.Behavior == "" {
+	if !ok {
 		return // no decision: Claude Code shows its own dialog
 	}
-	out := map[string]any{
+	if out := permissionOutput(in, d, cfg); out != nil {
+		os.Stdout.Write(out)
+	}
+}
+
+// permissionOutput is what the hook prints for Den's decision, nil for
+// nothing: Claude Code's own dialog then stays. An AskUserQuestion call
+// answered in Den becomes allow plus the answers, only with
+// hooks.answer_questions on and every question answered.
+func permissionOutput(in bridge.HookInput, d bridge.Decision, cfg config.Config) []byte {
+	if d.Behavior == "" {
+		return nil
+	}
+	if in.ToolName == question.Tool && len(d.Answers) > 0 {
+		if !cfg.Hooks.AnswerQuestions || d.Behavior != "allow" {
+			return nil
+		}
+		out, ok := question.Output(in.ToolInput, d.Answers)
+		if !ok {
+			return nil
+		}
+		return append(out, '\n')
+	}
+	out, err := json.Marshal(map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName": "PermissionRequest",
 			"decision":      map[string]any{"behavior": d.Behavior, "message": d.Message},
 		},
+	})
+	if err != nil {
+		return nil
 	}
-	json.NewEncoder(os.Stdout).Encode(out)
+	return append(out, '\n')
 }
 
 // notifyWithoutDen is the fallback for when no Den is listening: with

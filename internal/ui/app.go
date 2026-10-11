@@ -171,6 +171,7 @@ func New(cfg config.Config) Model {
 	fleet.Prices = cost.NewTable(config.Prices())
 	m.store.HistoryLimit(cfg.Inbox.History)
 	m.store.ToolFailureLimit(cfg.Stuck.ToolFailures)
+	m.store.AnswerQuestions(cfg.Hooks.AnswerQuestions)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
 	m.chatLog = ChatLogPath()
 	m.orch.chat, m.orch.resume = loadChatLog(m.chatLog, maxChatLog)
@@ -570,8 +571,10 @@ func (m Model) atTerminal(sessionID string) bool {
 }
 
 // releaseIfAtTerminal releases held permissions whose terminal became the
-// active window. It returns true while anything is still held.
+// active window, and lets go of held questions whose hook stopped waiting.
+// It returns true while anything is still held.
 func (m *Model) releaseIfAtTerminal() bool {
+	m.store.LetGo()
 	held := false
 	for _, it := range m.store.Items() {
 		if !it.Answerable() {
@@ -794,6 +797,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+		if it := m.inboxSelected(); m.tab == tabInbox && it != nil && it.AsksInDen() {
+			if text := strings.TrimSpace(m.input.Value()); text != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") {
+				return m.answerQuestion(it, text)
+			}
+		}
 		if strings.TrimSpace(m.input.Value()) == "" {
 			if m.tab == tabOverview {
 				m.toggleMission()
@@ -928,6 +936,14 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
 	}
+	if it.Kind == inbox.Question {
+		if verb == "deny" {
+			m.store.Release(it, "you chose the terminal")
+			m.refresh()
+			return m.say(m.nameFor(it.SessionID)+"'s question is back in its terminal", false)
+		}
+		return m.say(questionHint(it), true)
+	}
 	if it.Kind == inbox.Close {
 		return m.decideClose(it, verb)
 	}
@@ -961,6 +977,25 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.answer("deny")
 	case "/always", "/a":
 		return m.answer("always")
+	case "/answer":
+		it := m.inboxSelected()
+		if m.tab != tabInbox || it == nil || !it.AsksInDen() {
+			it = nil
+			for _, o := range m.store.Items() {
+				if o.AsksInDen() {
+					it = o
+					break
+				}
+			}
+		}
+		if it == nil {
+			return m.say("No question is waiting for an answer in Den.", true)
+		}
+		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), fields[0]))
+		if text == "" {
+			return m.say(questionHint(it), true)
+		}
+		return m.answerQuestion(it, text)
 	case "/open", "/o", "/focus":
 		return m.openSelected()
 	case "/copy":

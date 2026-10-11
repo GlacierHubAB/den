@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/question"
 )
 
 // Kind is what an item asks of you.
@@ -18,7 +19,7 @@ type Kind int
 const (
 	Permission Kind = iota // a tool wants to run; y/n/a answer it
 	Plan                   // ExitPlanMode: approve or ask for changes
-	Question               // AskUserQuestion: answer in the terminal
+	Question               // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
 	Done                   // a turn finished while you were elsewhere
 	Idle                   // Claude Code's idle notice
 	Sent                   // a message you sent, with its delivery status
@@ -86,12 +87,17 @@ type Item struct {
 	Title     string   // one line, what is being asked
 	Intent    string   // the agent's own words for why, when the tool call carries them
 	Body      []string // the thing being decided, in full: the command, the diff, the arguments
-	Options   []string // AskUserQuestion choices, display only
+	Options   []string // AskUserQuestion choices, numbered from 1 as Den shows them
 	Resolved  string   // how it was resolved, for the dim trailer
 	Role      string   // the agent's role when this happened
 	Task      string   // what the agent was working on when this happened
 	Seen      bool     // shown on the Inbox view at least once
 	Unread    bool     // kept unread by the human: counts as new until opened or dismissed
+	// A question Den holds (hooks.answer_questions): all of the call's
+	// questions, the answers so far by question text, and the one asked now.
+	Questions []question.Question
+	Answers   map[string]string
+	Step      int
 	req       *bridge.Request
 }
 
@@ -100,7 +106,13 @@ func (it *Item) Answerable() bool {
 	if it.DenAsks() {
 		return it.State == Waiting
 	}
-	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan) && it.req != nil && it.req.WantsReply()
+	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan || it.Kind == Question) && it.req != nil && it.req.WantsReply()
+}
+
+// AsksInDen reports whether the item is an agent's question that Den holds
+// and the human can answer here, one question at a time.
+func (it *Item) AsksInDen() bool {
+	return it.Kind == Question && it.Answerable() && it.Step < len(it.Questions)
 }
 
 // DenAsks reports whether the item is Den's own question, carried out by
@@ -125,6 +137,7 @@ type Store struct {
 	items   []*Item
 	always  map[string]map[string]bool // sessionID -> allow key
 	seq     int
+	asks    bool // hold AskUserQuestion permission requests to be answered here
 }
 
 // New returns an empty store.
@@ -139,6 +152,11 @@ const DefaultToolFailures = 3
 // ToolFailureLimit sets how many tool calls must fail in a row before a
 // Failed item appears; 0 turns that off.
 func (s *Store) ToolFailureLimit(n int) { s.failing = n }
+
+// AnswerQuestions lets the store hold an agent's AskUserQuestion call so
+// the human can answer it in Den (hooks.answer_questions). Off, a question
+// is a notice to answer in the terminal, as before.
+func (s *Store) AnswerQuestions(on bool) { s.asks = on }
 
 // Items returns items newest-last, waiting ones first.
 func (s *Store) Items() []*Item {
@@ -185,6 +203,9 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 	s.resolveSession(in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
 	switch r.Event {
 	case "PermissionRequest":
+		if it := s.holdQuestion(r); it != nil {
+			return it
+		}
 		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
@@ -206,8 +227,11 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		}
 		return it
 	case "PreToolUse":
-		if in.ToolName != "AskUserQuestion" {
+		if in.ToolName != question.Tool {
 			return nil
+		}
+		if s.holdsQuestion(in.SessionID) {
+			return nil // already held for Den
 		}
 		it := s.add(&Item{SessionID: in.SessionID, Kind: Question, State: InTerminal, Tool: in.ToolName})
 		it.Title, it.Options = describeQuestion(in.ToolInput)
@@ -245,8 +269,8 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 	case "Notification":
 		switch in.NotificationType {
 		case "permission_prompt":
-			if s.hasOpen(in.SessionID, Permission, Plan) {
-				return nil
+			if s.hasOpen(in.SessionID, Permission, Plan) || s.holdsQuestion(in.SessionID) {
+				return nil // Claude Code's notice for a dialog Den already shows
 			}
 			it := s.add(&Item{SessionID: in.SessionID, Kind: Permission, State: InTerminal, Title: firstNonEmpty(in.Message, "Waiting for your permission")})
 			return it
@@ -270,6 +294,127 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		s.resolveSession(in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
+}
+
+// holdQuestion turns an AskUserQuestion permission request into a question
+// the human answers in Den, when that is on and the call can be read. The
+// question item PreToolUse made a moment earlier becomes it, so it keeps
+// its place and its notification. nil leaves the request to the usual path.
+func (s *Store) holdQuestion(r *bridge.Request) *Item {
+	in := r.Input
+	if !s.asks || in.ToolName != question.Tool || !r.WantsReply() {
+		return nil
+	}
+	qs, ok := question.Parse(in.ToolInput)
+	if !ok {
+		return nil
+	}
+	var it *Item
+	for _, o := range s.items {
+		if o.SessionID == in.SessionID && o.Kind == Question && o.State == InTerminal && o.req == nil && o.Tool == question.Tool {
+			it = o
+		}
+	}
+	if it == nil {
+		it = s.add(&Item{SessionID: in.SessionID, Kind: Question, Tool: in.ToolName})
+	}
+	it.State, it.Resolved, it.req = Waiting, "", r
+	it.Questions, it.Answers, it.Step = qs, map[string]string{}, 0
+	it.describeStep()
+	// Claude Code's "permission_prompt" notice is this dialog too, and an
+	// earlier question of the session is gone from its terminal by now.
+	for _, o := range s.items {
+		if o != it && o.SessionID == in.SessionID && o.State != Resolved && ((o.Kind == Permission && o.req == nil) || o.Kind == Question) {
+			o.State, o.Resolved = Resolved, "superseded"
+		}
+	}
+	return it
+}
+
+// holdsQuestion reports whether a question of the session waits in Den.
+func (s *Store) holdsQuestion(sessionID string) bool {
+	for _, it := range s.items {
+		if it.SessionID == sessionID && it.AsksInDen() {
+			return true
+		}
+	}
+	return false
+}
+
+// describeStep shows the question being asked now: its text, where it is
+// among the call's questions, its numbered options and the answers given.
+func (it *Item) describeStep() {
+	if it.Step >= len(it.Questions) {
+		return
+	}
+	q := it.Questions[it.Step]
+	it.Title = q.Text
+	var intent []string
+	if len(it.Questions) > 1 {
+		intent = append(intent, fmt.Sprintf("Question %d of %d", it.Step+1, len(it.Questions)))
+	}
+	if q.Header != "" {
+		intent = append(intent, q.Header)
+	}
+	if q.Multi {
+		intent = append(intent, "choose one or more")
+	}
+	it.Intent = strings.Join(intent, " · ")
+	it.Options = nil
+	for _, o := range q.Options {
+		label := o.Label
+		if o.Description != "" {
+			label += " — " + o.Description
+		}
+		it.Options = append(it.Options, label)
+	}
+	it.Body = nil
+	for _, done := range it.Questions[:it.Step] {
+		it.Body = append(it.Body, "✓ "+done.Text+" → "+it.Answers[done.Text])
+	}
+}
+
+// AnswerQuestion takes the human's answer to the question being asked now:
+// an option's number (several for a multi-select question) or their own
+// words. With every question answered, the answers go to the waiting hook.
+// done reports that; ok is false when the answer could not be read.
+func (s *Store) AnswerQuestion(it *Item, typed string) (done, ok bool) {
+	if !it.AsksInDen() {
+		return false, false
+	}
+	q := it.Questions[it.Step]
+	a, ok := question.Pick(q, typed)
+	if !ok {
+		return false, false
+	}
+	it.Answers[q.Text] = a
+	it.Step++
+	if it.Step < len(it.Questions) {
+		it.describeStep()
+		return false, true
+	}
+	answers := make(map[string]string, len(it.Answers))
+	for k, v := range it.Answers {
+		answers[k] = v
+	}
+	it.Body = append(it.Body, "✓ "+q.Text+" → "+a)
+	it.req.Reply(bridge.Decision{Behavior: "allow", Answers: answers})
+	it.State, it.Resolved = Resolved, "answered in den"
+	return true, true
+}
+
+// LetGo hands held questions whose hook stopped waiting back to the
+// terminal: Claude Code ended the hook because the dialog was dismissed
+// there, or Den's wait ran out. It reports whether any changed.
+func (s *Store) LetGo() bool {
+	changed := false
+	for _, it := range s.items {
+		if it.Kind == Question && it.State == Waiting && it.req != nil && it.req.HungUp() {
+			it.State, it.Resolved = InTerminal, "no longer held"
+			changed = true
+		}
+	}
+	return changed
 }
 
 // AddStalled adds a Stalled notice for a session that has been working
@@ -322,8 +467,8 @@ func (s *Store) SetStatus(it *Item, status string, final bool) {
 
 // Answer resolves an answerable item. verb is "allow", "deny" or "always".
 func (s *Store) Answer(it *Item, verb string) bool {
-	if !it.Answerable() || it.DenAsks() {
-		return false // Den's own questions are carried out by Den, not answered here
+	if !it.Answerable() || it.DenAsks() || it.Kind == Question {
+		return false // Den's own questions are carried out by Den, an agent's question takes an answer
 	}
 	switch verb {
 	case "allow":

@@ -18,10 +18,33 @@ type Request struct {
 	Input HookInput
 	reply chan Decision
 	once  sync.Once
+	gone  chan struct{} // closed when the waiting hook hangs up
+	bye   sync.Once
 }
 
 // WantsReply reports whether the sender is waiting for a decision.
 func (r *Request) WantsReply() bool { return r.reply != nil }
+
+// HungUp reports whether the hook stopped waiting before a reply: Claude
+// Code killed it (its timeout, or the dialog answered or dismissed in the
+// terminal) or it gave up itself.
+func (r *Request) HungUp() bool {
+	if r.gone == nil {
+		return false
+	}
+	select {
+	case <-r.gone:
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *Request) hangUp() {
+	if r.gone != nil {
+		r.bye.Do(func() { close(r.gone) })
+	}
+}
 
 // Reply sends the decision to the waiting hook. Safe to call more than once;
 // only the first call counts.
@@ -99,6 +122,7 @@ func (s *Server) serve(conn net.Conn) {
 	_ = json.Unmarshal(env.Payload, &req.Input)
 	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent {
 		req.reply = make(chan Decision, 1)
+		req.gone = make(chan struct{})
 	}
 	s.out <- req
 	if req.reply == nil {
@@ -106,6 +130,12 @@ func (s *Server) serve(conn net.Conn) {
 		return
 	}
 	conn.SetReadDeadline(time.Time{})
+	// The hook writes nothing more, so a read returns only when it hangs up.
+	go func() {
+		var b [1]byte
+		conn.Read(b[:])
+		req.hangUp()
+	}()
 	// Hold the connection until Den decides. If the hook goes away first
 	// (its own timeout), the write fails and the decision is dropped.
 	d := <-req.reply
@@ -117,10 +147,13 @@ func (s *Server) serve(conn net.Conn) {
 // TestRequest builds a request that wants a reply, for tests of whoever
 // answers; Decided reads the reply without blocking.
 func TestRequest(env Envelope) *Request {
-	req := &Request{Envelope: env, reply: make(chan Decision, 1)}
+	req := &Request{Envelope: env, reply: make(chan Decision, 1), gone: make(chan struct{})}
 	_ = json.Unmarshal(env.Payload, &req.Input)
 	return req
 }
+
+// TestHangUp makes a TestRequest's hook hang up.
+func TestHangUp(r *Request) { r.hangUp() }
 
 // Decided returns the reply if one was sent.
 func (r *Request) Decided() (Decision, bool) {

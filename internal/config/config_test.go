@@ -123,3 +123,15 @@ nonsense = "ignored"
 		t.Error("no [on] command by default; the event log is on")
 	}
 }
+
+func TestAnswerQuestionsIsOptIn(t *testing.T) {
+	if Defaults().Hooks.AnswerQuestions {
+		t.Fatal("answering questions from Den must be off by default")
+	}
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte("[hooks]\nanswer_questions = true\n"), 0o644)
+	t.Setenv("DEN_CONFIG", p)
+	if !Load().Hooks.AnswerQuestions {
+		t.Error("hooks.answer_questions = true not read")
+	}
+}

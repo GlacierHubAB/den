@@ -46,3 +46,43 @@ func TestSendAndAskRoundTrip(t *testing.T) {
 		t.Error("send to missing socket should fail open")
 	}
 }
+
+func TestAnswersRoundTripAndHangUp(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "den.sock")
+	srv, err := Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	payload, _ := json.Marshal(map[string]any{"session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion"})
+	env := Envelope{Event: "PermissionRequest", SessionID: "s1", Payload: payload}
+
+	go func() {
+		r := <-srv.Requests()
+		r.Reply(Decision{Behavior: "allow", Answers: map[string]string{"Which one?": "Warm"}})
+	}()
+	d, ok := Ask(path, env, 2*time.Second)
+	if !ok || d.Answers["Which one?"] != "Warm" {
+		t.Errorf("ask = %+v %v", d, ok)
+	}
+
+	// A hook that gives up first: Den sees the hang-up.
+	done := make(chan struct{})
+	go func() {
+		Ask(path, env, 50*time.Millisecond)
+		close(done)
+	}()
+	r := <-srv.Requests()
+	if r.HungUp() {
+		t.Error("hung up before the hook gave up")
+	}
+	<-done
+	deadline := time.Now().Add(2 * time.Second)
+	for !r.HungUp() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !r.HungUp() {
+		t.Error("hang-up not noticed")
+	}
+	r.Reply(Decision{}) // nobody listens; must not block or panic
+}

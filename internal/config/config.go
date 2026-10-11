@@ -24,8 +24,9 @@ type Config struct {
 		Recent int // activity entries in the details pane
 	}
 	Hooks struct {
-		PermissionWait int  // seconds a held permission waits for your answer before Claude Code's own dialog
-		Log            bool // append every hook run to hooks.log
+		PermissionWait  int  // seconds a held permission waits for your answer before Claude Code's own dialog
+		Log             bool // append every hook run to hooks.log
+		AnswerQuestions bool // answer an agent's AskUserQuestion from the inbox; undocumented Claude Code behaviour
 	}
 	Restore struct {
 		Ask bool // after a restart, ask once whether to reopen the agents that were live
@@ -171,6 +172,7 @@ func (c *Config) apply(kv map[string]string) {
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
 	boolean(&c.Hooks.Log, "hooks.log")
+	boolean(&c.Hooks.AnswerQuestions, "hooks.answer_questions")
 	boolean(&c.Restore.Ask, "restore.ask")
 	boolean(&c.Notify.NeedsYou, "notify.needs_you")
 	count(&c.Notify.Remind, "notify.remind")
@@ -268,6 +270,7 @@ recent = 20                 # activity entries shown in the details pane
 [hooks]
 permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
+answer_questions = false    # answer an agent's questions (AskUserQuestion) from the inbox; waits permission_wait
 
 [restore]
 ask = true                  # after a restart, ask once whether to reopen the agents that were live
