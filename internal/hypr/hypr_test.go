@@ -4,10 +4,10 @@ import "testing"
 
 func TestStripStatusGlyph(t *testing.T) {
 	for in, want := range map[string]string{
-		"✳ Install herdr":         "Install herdr",
-		"◑ TUI agent platform":    "TUI agent platform",
-		"~/projects/x":            "~/projects/x",
-		"  ✳  Fix login  ":        "Fix login",
+		"✳ Install herdr":      "Install herdr",
+		"◑ TUI agent platform": "TUI agent platform",
+		"~/projects/x":         "~/projects/x",
+		"  ✳  Fix login  ":     "Fix login",
 		"devbox: Main Session": "devbox: Main Session",
 	} {
 		if got := StripStatusGlyph(in); got != want {
