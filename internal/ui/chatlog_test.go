@@ -22,7 +22,7 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 	sid := m.agents[0].Session.SessionID
 
 	base := time.Now()
-	you := chatEntry{role: "you", text: "review the notes", at: base}
+	you := chatEntry{role: "you", text: "review the notes", at: base, mission: "m1"}
 	m.orch.chat = append(m.orch.chat, you)
 	m.logEntry(you)
 	d := &dispatch{ID: "t1", SessionID: sid, Agent: "Mossy Lemur", Brief: "Review the notes.", SentAt: base.Add(2 * time.Second)}
@@ -42,7 +42,7 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 		t.Errorf("session = %q", session)
 	}
 	// restored note + you + card + orchestrator; the card appears once, in its last state.
-	if len(chat) != 4 || chat[0].role != "note" || chat[2].text != "Mossy is on it." || chat[3].card == nil || chat[3].card.State != cardWorking || chat[3].card.Calls != 3 {
+	if len(chat) != 4 || chat[0].role != "note" || chat[1].mission != "m1" || chat[2].text != "Mossy is on it." || chat[3].card == nil || chat[3].card.State != cardWorking || chat[3].card.Calls != 3 {
 		t.Fatalf("chat = %+v", chat)
 	}
 

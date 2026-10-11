@@ -46,7 +46,6 @@ func (m *Model) proposeMission(text string) tea.Cmd {
 	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, Text: text, State: mission.Proposed, Created: now, Updated: now}
 	m.missions.Save(ms)
 	m.ov.proposal = ms.ID
-	m.ov.reply = ""
 	prompt := fmt.Sprintf("Propose a mission for project %s (repository %s, branch %s). The human's words:\n%s", p.Name, p.Root, p.Branch, text)
 	return m.sendMission(ms.ID, true, text, prompt)
 }
@@ -57,7 +56,6 @@ func (m *Model) refineMission(text string) tea.Cmd {
 	if ms == nil {
 		return nil
 	}
-	m.ov.reply = ""
 	prompt := fmt.Sprintf("Refine the mission proposal. Current proposal:\n%sThe human says:\n%s\nReply with the full updated json block.", ms.Describe(), text)
 	return m.sendMission(ms.ID, false, text, prompt)
 }
@@ -71,35 +69,21 @@ func (m *Model) messageMission(ms *mission.Mission, text string) tea.Cmd {
 }
 
 // sendMission sends a mission message to the orchestrator without leaving
-// the Overview tab. The chat logs the human's own words; the orchestrator
-// receives the framed prompt, with the mission vocabulary the first time.
+// the Overview tab. The mission's thread shows the human's own words; the
+// orchestrator receives the framed prompt, with the mission vocabulary the
+// first time.
 func (m *Model) sendMission(id string, withDir bool, shown, prompt string) tea.Cmd {
 	if !m.missionDirSent {
 		prompt = missionsDir + "\n\n" + prompt
 		m.missionDirSent = true
 	}
-	e := chatEntry{role: "you", text: shown, at: time.Now()}
-	m.orch.chat = append(m.orch.chat, e)
-	m.logEntry(e)
 	m.turn.pending = true
-	if m.orch.proc == nil {
-		m.orch.pending = append(m.orch.pending, prompt)
-		if m.orch.starting {
-			return nil
-		}
-		m.orch.starting = true
-		m.orch.status = "starting…"
-		if m.orch.resume != "" {
-			m.orch.status = "resuming…"
-		}
-		return startOrchestrator(m.cfg, m.orch.resume)
-	}
-	return m.sendToOrchestrator(prompt)
+	return m.tell(id, shown, prompt)
 }
 
 // missionReply reads what the orchestrator said for a mission: a proposal
 // fills the pending one, an update moves a mission on. It returns the text
-// with the json blocks removed, for the chat.
+// with the json blocks removed, for the chat and the mission's thread.
 func (m *Model) missionReply(text string) string {
 	shown := text
 	if p, ok := mission.ParseProposal(text); ok && m.ov.proposal != "" {
@@ -113,9 +97,6 @@ func (m *Model) missionReply(text string) string {
 	if u, ok := mission.ParseUpdate(text); ok {
 		m.applyUpdate(u)
 		shown = mission.Strip(text)
-	}
-	if m.ov.proposal != "" || m.ov.open != "" {
-		m.ov.reply = shown
 	}
 	return shown
 }
@@ -159,7 +140,6 @@ func (m *Model) startMission() tea.Cmd {
 	ms.Updated = time.Now()
 	m.ov.proposal = ""
 	m.ov.open = ms.ID
-	m.ov.reply = ""
 	m.missions.Save(ms)
 	return m.runMission(ms, "Start")
 }
@@ -172,7 +152,6 @@ func (m *Model) dropMission() {
 		m.missions.Save(ms)
 	}
 	m.ov.proposal = ""
-	m.ov.reply = ""
 }
 
 // runMission opens a run and asks the orchestrator to dispatch it.
@@ -394,7 +373,7 @@ func (m *Model) missionText(text string) tea.Cmd {
 // the open one.
 func (m *Model) toggleMission() {
 	if m.ov.open != "" {
-		m.ov.open, m.ov.reply, m.ov.scroll = "", "", 0
+		m.ov.open, m.ov.scroll = "", 0
 		return
 	}
 	if m.ov.proposal != "" {
@@ -404,7 +383,7 @@ func (m *Model) toggleMission() {
 	if ms == nil {
 		return
 	}
-	m.ov.reply, m.ov.scroll = "", 0
+	m.ov.scroll = 0
 	if ms.State == mission.Proposed {
 		m.ov.proposal = ms.ID
 		return

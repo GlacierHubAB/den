@@ -33,6 +33,9 @@ type chatEntry struct {
 	at        time.Time
 	// card is set for role "card": a dispatch to a fleet agent.
 	card *dispatch
+	// mission is the thread the entry belongs to: the mission the human's
+	// latest message was about, "" for the plain chat.
+	mission string
 }
 
 type orchEventMsg struct {
@@ -54,6 +57,11 @@ type orchState struct {
 	cost     float64
 	pending  []string // messages typed before the process was ready
 	status   string
+	// thread is the mission the latest message was about; what the
+	// orchestrator says next joins it. said reports that this turn's answer
+	// already came as a text block.
+	thread string
+	said   bool
 	// cardCur is the chat index of the focused dispatch card, -1 for none;
 	// backToCard remembers that → left the Orchestrator view from a card.
 	cardCur    int
@@ -104,9 +112,7 @@ func (m *Model) newOrchestratorSession() tea.Cmd {
 	m.orch.started = false
 	m.orch.status = ""
 	m.logSession("")
-	note := chatEntry{role: "note", text: "new orchestrator session · the chat above is history", at: time.Now()}
-	m.orch.chat = append(m.orch.chat, note)
-	m.logEntry(note)
+	m.logEntry(m.addChat(chatEntry{role: "note", text: "new orchestrator session · the chat above is history", at: time.Now()}))
 	return nil
 }
 
@@ -179,19 +185,26 @@ func (m Model) roster() []orch.RosterAgent {
 	return out
 }
 
-// askOrchestrator queues or sends a human message to the orchestrator.
+// askOrchestrator sends a message typed outside the Overview: the plain
+// chat, shown on the Orchestrator tab.
 func (m *Model) askOrchestrator(text string) tea.Cmd {
-	e := chatEntry{role: "you", text: text, at: time.Now()}
-	m.orch.chat = append(m.orch.chat, e)
-	m.logEntry(e)
-	m.orch.scroll = 0
 	m.orch.cardCur = -1
 	if m.tab != tabOrch {
 		m.orch.prevTab = m.tab
 	}
 	m.tab = tabOrch
+	return m.tell("", text, text)
+}
+
+// tell is the one way a message reaches the orchestrator. The chat shows
+// the human's words in the mission's thread ("" for the plain chat) and
+// the orchestrator receives the prompt, queued until the process is ready.
+func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
+	m.orch.thread = mission
+	m.logEntry(m.addChat(chatEntry{role: "you", text: shown, at: time.Now()}))
+	m.orch.scroll, m.ov.scroll = 0, 0
 	if m.orch.proc == nil {
-		m.orch.pending = append(m.orch.pending, text)
+		m.orch.pending = append(m.orch.pending, prompt)
 		if m.orch.starting {
 			return nil
 		}
@@ -202,7 +215,26 @@ func (m *Model) askOrchestrator(text string) tea.Cmd {
 		}
 		return startOrchestrator(m.cfg, m.orch.resume)
 	}
-	return m.sendToOrchestrator(text)
+	return m.sendToOrchestrator(prompt)
+}
+
+// addChat appends an entry to the thread of the latest message and returns
+// it, for logging.
+func (m *Model) addChat(e chatEntry) chatEntry {
+	e.mission = m.orch.thread
+	m.orch.chat = append(m.orch.chat, e)
+	return e
+}
+
+// streaming is the index of the entry whose text is still arriving, -1 for
+// none. The human may have typed since it began, so it need not be last.
+func (o orchState) streaming() int {
+	for i := len(o.chat) - 1; i >= 0; i-- {
+		if o.chat[i].streaming {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *Model) sendToOrchestrator(text string) tea.Cmd {
@@ -228,12 +260,13 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 	m.orch.starting = false
 	if msg.err != nil {
 		m.orch.status = "failed to start"
-		m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "Could not start the orchestrator: " + msg.err.Error(), at: time.Now()})
+		m.addChat(chatEntry{role: "note", text: "Could not start the orchestrator: " + msg.err.Error(), at: time.Now()})
 		m.orch.pending = nil
 		return nil
 	}
 	m.orch.proc = msg.o
 	m.orch.started = false
+	m.orch.said = false
 	m.orch.status = "ready"
 	cmds := []tea.Cmd{waitOrch(msg.o)}
 	for _, p := range m.orch.pending {
@@ -257,21 +290,20 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	case orch.Delta:
 		// Streamed text grows the entry in place; the full block replaces it.
 		m.orch.thinking = false
-		if n := len(m.orch.chat); n > 0 && m.orch.chat[n-1].streaming {
-			m.orch.chat[n-1].text += ev.Text
+		if i := m.orch.streaming(); i >= 0 {
+			m.orch.chat[i].text += ev.Text
 		} else {
-			m.orch.chat = append(m.orch.chat, chatEntry{role: "orchestrator", text: ev.Text, streaming: true, at: now})
+			m.addChat(chatEntry{role: "orchestrator", text: ev.Text, streaming: true, at: now})
 		}
 	case orch.Text:
+		m.orch.said = true
 		text := m.missionReply(strings.TrimSpace(ev.Text))
-		if n := len(m.orch.chat); n > 0 && m.orch.chat[n-1].streaming {
-			m.orch.chat[n-1].text = text
-			m.orch.chat[n-1].streaming = false
-			m.logEntry(m.orch.chat[n-1])
+		if i := m.orch.streaming(); i >= 0 {
+			m.orch.chat[i].text = text
+			m.orch.chat[i].streaming = false
+			m.logEntry(m.orch.chat[i])
 		} else {
-			e := chatEntry{role: "orchestrator", text: text, at: now}
-			m.orch.chat = append(m.orch.chat, e)
-			m.logEntry(e)
+			m.logEntry(m.addChat(chatEntry{role: "orchestrator", text: text, at: now}))
 		}
 	case orch.ToolUse:
 		if ev.Tool == "SendMessage" {
@@ -279,12 +311,12 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			if ok {
 				name, sid := m.agentForPeer(in.To)
 				if sid == "" {
-					m.orch.chat = append(m.orch.chat, chatEntry{role: "fan", to: name, text: firstLineOf(in.Message), status: "sending", toolUseID: ev.ToolUseID, at: now})
+					m.addChat(chatEntry{role: "fan", to: name, text: firstLineOf(in.Message), status: "sending", toolUseID: ev.ToolUseID, at: now})
 					break
 				}
 				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(in.Message), SentAt: now}
 				m.attachCard(d)
-				m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, toolUseID: ev.ToolUseID, at: now})
+				m.addChat(chatEntry{role: "card", card: d, toolUseID: ev.ToolUseID, at: now})
 				m.logCard(d)
 				m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: sid, Brief: firstLineOf(in.Message), At: now, Source: "dispatch"})
 			}
@@ -292,7 +324,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			if in, ok := orch.ParseSpawn(ev.Input); ok && ev.Tool == orch.SpawnAgentTool {
 				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, now)
 			}
-			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
+			m.addChat(chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
 		}
 	case orch.ToolResult:
 		for i := range m.orch.chat {
@@ -332,17 +364,16 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 		m.orch.cost = ev.CostUSD
 		m.orch.status = fmt.Sprintf("ready · $%.2f", ev.CostUSD)
 		// The result text repeats the last assistant text; only add it when
-		// no text block was streamed this turn.
-		if n := len(m.orch.chat); n > 0 && m.orch.chat[n-1].role == "you" && strings.TrimSpace(ev.Text) != "" {
-			e := chatEntry{role: "orchestrator", text: strings.TrimSpace(ev.Text), at: now}
-			m.orch.chat = append(m.orch.chat, e)
-			m.logEntry(e)
+		// no text block came this turn.
+		if !m.orch.said && strings.TrimSpace(ev.Text) != "" {
+			m.logEntry(m.addChat(chatEntry{role: "orchestrator", text: m.missionReply(strings.TrimSpace(ev.Text)), at: now}))
 		}
+		m.orch.said = false
 	case orch.Error:
 		m.orch.thinking = false
 		m.turn.pending = false
 		m.orch.status = "error"
-		m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: ev.Text, at: now})
+		m.addChat(chatEntry{role: "note", text: ev.Text, at: now})
 	case orch.Exited:
 		m.orch.thinking = false
 		m.orch.proc = nil
@@ -352,16 +383,16 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			m.orch.resume = ""
 			m.orch.replay = m.replayText()
 			m.logSession("")
-			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "the previous orchestrator session could not be resumed · starting a fresh one with the conversation so far", at: now})
+			m.addChat(chatEntry{role: "note", text: "the previous orchestrator session could not be resumed · starting a fresh one with the conversation so far", at: now})
 			m.orch.starting = true
 			m.orch.status = "starting…"
 			return startOrchestrator(m.cfg, "")
 		}
 		m.orch.status = "stopped"
-		m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: ev.Text + " · it restarts with your next message", at: now})
+		m.addChat(chatEntry{role: "note", text: ev.Text + " · it restarts with your next message", at: now})
 		return nil
 	}
-	m.orch.scroll = 0
+	m.orch.scroll, m.ov.scroll = 0, 0
 	if m.orch.proc != nil {
 		return waitOrch(m.orch.proc)
 	}
@@ -407,6 +438,35 @@ func (m Model) orchPane(w, h int) string {
 		}
 		return strings.Join(lines, "\n")
 	}
+	strip := m.stripLines(w-2, time.Now())
+	lines, focusStart, focusEnd := m.chatLines(w, func(chatEntry) bool { return true })
+	// The strip stays put; the chat scrolls under it. With a card focused
+	// the window is anchored to that card, otherwise it follows the tail,
+	// honouring scroll-back.
+	body := h - len(strip)
+	if body < 3 {
+		body = 3
+	}
+	if len(lines) > body {
+		start := len(lines) - body - m.orch.scroll
+		if focusStart >= 0 {
+			start = focusStart
+			if focusEnd-focusStart < body {
+				start = min(focusStart, len(lines)-body)
+			}
+		}
+		start = clamp(start, 0, len(lines)-body)
+		lines = lines[start : start+body]
+	}
+	return strings.Join(append(strip, lines...), "\n")
+}
+
+// chatLines renders the conversation entries keep picks, streaming text
+// with its cursor, and the thinking line while the orchestrator works on
+// their thread. The Orchestrator tab shows every entry, a mission pane its
+// own thread. focusStart and focusEnd bound the focused card, -1 for none.
+func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focusStart, focusEnd int) {
+	s := m.st
 	label := 16
 	bodyW := w - label - 3
 	if bodyW < 20 {
@@ -421,9 +481,11 @@ func (m Model) orchPane(w, h int) string {
 	mo := m
 	mo.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor))
 	now := time.Now()
-	strip := m.stripLines(w-2, now)
-	focusStart, focusEnd := -1, -1
+	focusStart, focusEnd = -1, -1
 	for i, e := range m.orch.chat {
+		if !keep(e) {
+			continue
+		}
 		var from string
 		var body []string
 		if e.card != nil {
@@ -488,32 +550,16 @@ func (m Model) orchPane(w, h int) string {
 		}
 		lines = append(lines, "")
 	}
-	if m.orch.thinking {
+	if (m.orch.thinking || m.orch.starting) && keep(chatEntry{role: "orchestrator", mission: m.orch.thread}) {
 		think := "thinking…"
-		if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
+		if m.orch.starting {
+			think = m.orch.status
+		} else if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
 			think = "thinking… " + humanAge(q)
 		}
 		lines = append(lines, strings.Repeat(" ", label+1)+s.dim.Render(think))
 	}
-	// The strip stays put; the chat scrolls under it. With a card focused
-	// the window is anchored to that card, otherwise it follows the tail,
-	// honouring scroll-back.
-	body := h - len(strip)
-	if body < 3 {
-		body = 3
-	}
-	if len(lines) > body {
-		start := len(lines) - body - m.orch.scroll
-		if focusStart >= 0 {
-			start = focusStart
-			if focusEnd-focusStart < body {
-				start = min(focusStart, len(lines)-body)
-			}
-		}
-		start = clamp(start, 0, len(lines)-body)
-		lines = lines[start : start+body]
-	}
-	return strings.Join(append(strip, lines...), "\n")
+	return lines, focusStart, focusEnd
 }
 
 // closeOrchestrator stops the process if running.
@@ -535,9 +581,7 @@ func (m *Model) watchOrchestrator() tea.Cmd {
 	switch {
 	case quiet > stallRestart && m.orch.restarts == 0:
 		m.orch.restarts++
-		note := chatEntry{role: "note", text: fmt.Sprintf("no reply for %s · restarting the orchestrator and resending", humanAge(quiet)), at: time.Now()}
-		m.orch.chat = append(m.orch.chat, note)
-		m.logEntry(note)
+		m.logEntry(m.addChat(chatEntry{role: "note", text: fmt.Sprintf("no reply for %s · restarting the orchestrator and resending", humanAge(quiet)), at: time.Now()}))
 		return m.restartOrchestrator()
 	case quiet > stallWarn:
 		m.orch.status = fmt.Sprintf("thinking… no reply for %s · /orch restart", humanAge(quiet))

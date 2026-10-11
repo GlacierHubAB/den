@@ -9,6 +9,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
@@ -141,5 +142,43 @@ func TestTeamLinesDrawLeadsAboveTheirPeople(t *testing.T) {
 	ms := &mission.Mission{Name: "Site", Mission: "Build it", Shape: mission.FanOut, Team: team}
 	if b := m.missionBrief(ms); !strings.Contains(b, "team of 4") {
 		t.Errorf("brief = %q", b)
+	}
+}
+
+// TestOpenMissionShowsEveryMessage types to an open mission twice, the
+// second time while the first answer is still streaming: both messages and
+// the streamed text show in the mission pane as they arrive.
+func TestOpenMissionShowsEveryMessage(t *testing.T) {
+	m := missionModel()
+	m.orch.starting = true
+	now := time.Now()
+	ms := &mission.Mission{ID: "m1", Project: m.proj.cur, Name: "Site", Mission: "Ship the site.", State: mission.Running, Created: now, Updated: now}
+	m.missions.Save(ms)
+	m.ov.open = ms.ID
+	m.missionText("cover the Review section too")
+	m.handleOrchEvent(orch.Event{Kind: orch.Delta, Text: "Sending that to "})
+	m.missionText("and the avatar badge")
+	out := ansi.Strip(m.missionsPane(80, 40))
+	for _, want := range []string{"cover the Review section too", "Sending that to", "and the avatar badge"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mission pane lacks %q:\n%s", want, out)
+		}
+	}
+	m.handleOrchEvent(orch.Event{Kind: orch.Delta, Text: "Plucky Otter."})
+	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "Sending that to Plucky Otter."})
+	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "The badge goes along too."})
+	out = ansi.Strip(m.missionsPane(80, 40))
+	for _, want := range []string{"cover the Review section too", "Sending that to Plucky Otter.", "and the avatar badge", "The badge goes along too."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("mission pane lacks %q:\n%s", want, out)
+		}
+	}
+	if i := m.orch.streaming(); i >= 0 || strings.Count(out, "Sending that to") != 1 {
+		t.Errorf("streamed entry %d not finished in place:\n%s", i, out)
+	}
+	// The plain chat is its own thread.
+	m.askOrchestrator("what is everyone doing?")
+	if out := ansi.Strip(m.missionsPane(80, 40)); strings.Contains(out, "everyone doing") {
+		t.Errorf("plain chat leaked into the mission:\n%s", out)
 	}
 }

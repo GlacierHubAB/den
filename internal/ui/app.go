@@ -586,9 +586,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
 			switch {
 			case m.ov.proposal != "":
-				m.ov.proposal, m.ov.reply = "", "" // the proposal stays in the list
+				m.ov.proposal = "" // the proposal stays in the list
 			case m.ov.open != "":
-				m.ov.open, m.ov.reply, m.ov.scroll = "", "", 0
+				m.ov.open, m.ov.scroll = "", 0
 			}
 			return m, nil
 		}
@@ -796,7 +796,7 @@ func (m *Model) move(delta int) {
 		m.inboxCur = clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1))
 	case tabOverview:
 		if m.ov.open != "" || m.ov.proposal != "" {
-			m.ov.scroll = max(0, m.ov.scroll+delta)
+			m.ov.scroll = max(0, m.ov.scroll-delta)
 		} else {
 			m.ov.cur = clamp(m.ov.cur+delta, 0, max(0, len(m.missions.ForProject(m.proj.cur))-1))
 		}

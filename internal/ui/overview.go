@@ -12,14 +12,12 @@ import (
 )
 
 // overviewState is the Overview tab: which mission row is selected, which
-// mission is open, the proposal waiting for ^Y, and the orchestrator's
-// last words about either.
+// mission is open, and the proposal waiting for ^Y.
 type overviewState struct {
 	cur      int
 	open     string // mission id shown in full
 	proposal string // mission id of the pending proposal
-	reply    string // orchestrator's latest words, json stripped
-	scroll   int
+	scroll   int    // lines from the bottom of the open mission or proposal
 }
 
 // projectStrip is the row under the tabs that names the projects and the
@@ -121,7 +119,9 @@ func (m Model) projectAgentsPane(w, h int) string {
 }
 
 // missionsPane shows the proposal while one is pending, the open mission
-// in full, or the project's missions as rows.
+// in full, or the project's missions as rows. A proposal or a mission ends
+// in its conversation, so like the chat it follows the tail, honouring
+// scroll-back.
 func (m Model) missionsPane(w, h int) string {
 	var lines []string
 	switch {
@@ -131,13 +131,14 @@ func (m Model) missionsPane(w, h int) string {
 		lines = m.missionLines(w)
 	default:
 		lines = m.missionRows(w)
-	}
-	if m.ov.scroll > 0 && len(lines) > h {
-		off := min(m.ov.scroll, len(lines)-h)
-		lines = lines[off:]
+		if len(lines) > h {
+			lines = lines[:h]
+		}
+		return strings.Join(lines, "\n")
 	}
 	if len(lines) > h {
-		lines = lines[:h]
+		start := clamp(len(lines)-h-m.ov.scroll, 0, len(lines)-h)
+		lines = lines[start : start+h]
 	}
 	return strings.Join(lines, "\n")
 }
@@ -374,49 +375,36 @@ func (m Model) proposalLines(w int) []string {
 	}
 	var out []string
 	out = append(out, "")
-	out = append(out, "  "+s.dim.Render("you › ")+s.fg.Render(ansi.Truncate(ms.Text, w-8, "…")))
-	out = append(out, "")
-	if ms.Mission == "" {
-		if m.orch.thinking || m.turn.pending {
-			out = append(out, "  "+s.dim.Render(m.spinner()+" the orchestrator is reading the project and the fleet…"))
-		} else if m.ov.reply != "" {
-			out = append(out, m.replyLines(w)...)
-		} else {
-			out = append(out, "  "+s.dim.Render("waiting for the orchestrator"))
-		}
+	if ms.Mission != "" {
+		head := "  " + s.bright.Bold(true).Render(ms.Name) + "  " + s.chip(m.st.pal.Bright).Render("PROPOSAL")
+		out = append(out, ansi.Truncate(head, w, "…"))
 		out = append(out, "")
+		out = append(out, m.fieldLines(ms, w)...)
+		out = append(out, "")
+	}
+	out = append(out, m.threadLines(ms, w)...)
+	if ms.Mission == "" {
 		out = append(out, "  "+s.key.Render("^N")+s.keyLabel.Render(" drop")+"   "+s.key.Render("Esc")+s.keyLabel.Render(" keep it for later"))
 		return out
 	}
-	head := "  " + s.bright.Bold(true).Render(ms.Name) + "  " + s.chip(m.st.pal.Bright).Render("PROPOSAL")
-	out = append(out, ansi.Truncate(head, w, "…"))
-	out = append(out, "")
-	out = append(out, m.fieldLines(ms, w)...)
-	if m.ov.reply != "" {
-		out = append(out, "")
-		out = append(out, m.replyLines(w)...)
-	}
-	out = append(out, "")
 	out = append(out, "  "+s.key.Render("^Y")+s.keyLabel.Render(" start")+"   "+s.key.Render("^N")+s.keyLabel.Render(" drop")+"   "+s.dim.Render("or type to refine: \"make it a schedule\", \"use Mossy\""))
 	return out
 }
 
-// replyLines is the orchestrator's latest words, as markdown.
-func (m Model) replyLines(w int) []string {
-	var out []string
-	from := m.orchStyle().Render("orchestrator › ")
-	for i, l := range m.markdownLines(m.ov.reply, max(10, w-18)) {
-		prefix := from
-		if i > 0 {
-			prefix = strings.Repeat(" ", 15)
-		}
-		out = append(out, "  "+prefix+l)
+// threadLines is the mission's conversation with the orchestrator, drawn
+// the way the Orchestrator tab draws it. Cards show under their runs, not
+// here. A proposal from before threads were kept shows the words it
+// started from.
+func (m Model) threadLines(ms *mission.Mission, w int) []string {
+	lines, _, _ := m.chatLines(w, func(e chatEntry) bool { return e.mission == ms.ID && e.card == nil })
+	if len(lines) == 0 && ms.Text != "" {
+		lines = append(m.plainLines("you › "+ms.Text, w-4, m.st.dim), "")
 	}
-	return out
+	return lines
 }
 
-// missionLines is an open mission: its fields, then its runs with their
-// cards, newest run first.
+// missionLines is an open mission: its fields, its runs with their cards,
+// newest run first, then its conversation.
 func (m Model) missionLines(w int) []string {
 	s := m.st
 	ms := m.missions.Get(m.ov.open)
@@ -443,10 +431,6 @@ func (m Model) missionLines(w int) []string {
 	out = append(out, justify("  "+s.bright.Bold(true).Render(ms.Name), st+" ", w))
 	out = append(out, "")
 	out = append(out, m.fieldLines(ms, w)...)
-	if m.ov.reply != "" {
-		out = append(out, "")
-		out = append(out, m.replyLines(w)...)
-	}
 	for i := len(ms.Runs) - 1; i >= 0; i-- {
 		r := ms.Runs[i]
 		out = append(out, "")
@@ -470,6 +454,7 @@ func (m Model) missionLines(w int) []string {
 		}
 	}
 	out = append(out, "")
+	out = append(out, m.threadLines(ms, w)...)
 	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
 	return out
 }

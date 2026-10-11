@@ -23,6 +23,7 @@ type chatRecord struct {
 	To      string      `json:"to,omitempty"`
 	Status  string      `json:"status,omitempty"`
 	Session string      `json:"session,omitempty"` // kind "session": the orchestrator's session id
+	Mission string      `json:"mission,omitempty"` // the thread: the mission it was about
 	Card    *cardRecord `json:"card,omitempty"`
 }
 
@@ -86,7 +87,7 @@ func (m *Model) logEntry(e chatEntry) {
 		m.logCard(e.card)
 		return
 	}
-	appendChatRecord(m.chatLog, chatRecord{Kind: e.role, At: e.at, Text: e.text, To: e.to, Status: e.status})
+	appendChatRecord(m.chatLog, chatRecord{Kind: e.role, At: e.at, Text: e.text, To: e.to, Status: e.status, Mission: e.mission})
 }
 
 // logCard persists the card's current state.
@@ -144,7 +145,7 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At})
 			continue
 		}
-		chat = append(chat, chatEntry{role: r.Kind, text: r.Text, to: r.To, status: r.Status, at: r.At})
+		chat = append(chat, chatEntry{role: r.Kind, text: r.Text, to: r.To, status: r.Status, at: r.At, mission: r.Mission})
 	}
 	// Streamed text is logged when its final block lands, which can be after
 	// the card for a dispatch made in the same turn; the screen order is by
