@@ -6,7 +6,7 @@ Code agents; this file is the short version of how to change it.
 ## Build and test
 
 ```
-git clone --recurse-submodules <repo-url>   # the badge mod is a submodule
+git clone --recurse-submodules https://github.com/OWNER/den   # the badge mod is a submodule
 cd den
 make build        # ./den
 make test         # go vet ./... and go test ./..., against a scratch XDG_STATE_HOME
@@ -60,8 +60,9 @@ helps to include:
   involved.
 
 Remove anything private from pasted output (paths, prompts, transcripts).
-Security problems: please do not file a public issue; contact the maintainers
-privately instead.
+Security problems: please do not file a public issue. Report vulnerabilities
+through GitHub's private vulnerability reporting (the repository's Security
+tab, "Report a vulnerability").
 
 ## Pull requests
 

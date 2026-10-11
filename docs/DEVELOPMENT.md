@@ -7,7 +7,7 @@ see the [README](../README.md); for how to submit changes see
 ## Setup
 
 ```
-git clone --recurse-submodules <repo-url>
+git clone --recurse-submodules https://github.com/OWNER/den
 cd den
 make build && make test
 ```
