@@ -9,7 +9,7 @@ Fleet tab draws the tree as it grows. The site lands in `~/code/den-site`.
 ## Once, before recording
 
 1. Install and restart Den: `make install`, quit the running `den`, start
-   it again. The demo needs v0.1.0-40 or later (`den --version`).
+   it again. The demo needs v0.1.0-41 or later (`den --version`).
 2. Trust the folder: run `claude` once in `~/code/den-site`, accept the
    trust dialog, `/exit`. Without this the first spawned terminal stops at
    that dialog and the orchestrator tells you so.

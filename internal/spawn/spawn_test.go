@@ -82,11 +82,11 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gotCmd) != 4 || gotCmd[0] != "claude" || gotCmd[1] != "--name" || gotCmd[2] != "helper" {
+	if len(gotCmd) != 5 || gotCmd[0] != "claude" || gotCmd[1] != "--name" || gotCmd[2] != "helper" || gotCmd[3] != "--" {
 		t.Errorf("command = %v", gotCmd)
 	}
-	if !strings.Contains(gotCmd[3], `peer "orc"`) || !strings.HasSuffix(gotCmd[3], "Fix the tests.") || strings.Contains(gotCmd[3], "spawn_agent") {
-		t.Errorf("prompt = %q", gotCmd[3])
+	if !strings.Contains(gotCmd[4], `peer "orc"`) || !strings.HasSuffix(gotCmd[4], "Fix the tests.") || strings.Contains(gotCmd[4], "spawn_agent") {
+		t.Errorf("prompt = %q", gotCmd[4])
 	}
 	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=helper" {
 		t.Errorf("env = %v", gotEnv)
@@ -109,7 +109,7 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "--name", "designer", "--model", "opus", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
+	want := []string{"claude", "--name", "designer", "--model", "opus", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal", "--"}
 	if len(gotCmd) != len(want)+1 || strings.Join(gotCmd[:len(want)], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v", gotCmd)
 	}
@@ -132,5 +132,16 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	}
 	if d := res.Describe(); !strings.Contains(d, "whether to trust it") {
 		t.Errorf("describe = %q", d)
+	}
+}
+
+func TestChildEnvDropsWhatAParentSessionSet(t *testing.T) {
+	in := []string{"HOME=/home/me", "CLAUDECODE=1", "CLAUDE_PID=42", "CLAUDE_EFFORT=high", "CLAUDE_CODE_SESSION_ID=abc", "CLAUDE_CODE_SESSION_ATTENDED=1",
+		"CLAUDE_CODE_MESSAGING_SOCKET=/run/x.sock", "CLAUDE_CODE_MESSAGING_TOKEN=t", "CLAUDE_CODE_CHILD_SESSION=1", "CLAUDE_CODE_ENTRYPOINT=cli", "CLAUDE_CODE_EXECPATH=/opt/claude",
+		"DEN_ORCHESTRATOR=1", "DEN_PEER=old", "CLAUDE_CONFIG_DIR=/home/me/.claude", "CLAUDE_CODE_PLUGIN_DIRS=~/.claude/mods", "ANTHROPIC_API_KEY=k"}
+	got := strings.Join(childEnv(in, []string{"DEN_PEER=new"}), " ")
+	want := "HOME=/home/me CLAUDE_CONFIG_DIR=/home/me/.claude CLAUDE_CODE_PLUGIN_DIRS=~/.claude/mods ANTHROPIC_API_KEY=k DEN_PEER=new"
+	if got != want {
+		t.Errorf("childEnv = %q, want %q", got, want)
 	}
 }

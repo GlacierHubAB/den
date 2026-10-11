@@ -231,7 +231,9 @@ func Command(req Request, name string) []string {
 		// work without a permission prompt per teammate.
 		command = append(command, "--mcp-config", MCPConfig(req.Spawner), "--allowedTools", strings.Join(SpawnTools, ","))
 	}
-	return append(command, Prompt(req.Brief, req.Orchestrator, req.Lead, req.Spawner != ""))
+	// --allowedTools takes a list, so the prompt after it would be read as
+	// one more tool; "--" ends the options.
+	return append(command, "--", Prompt(req.Brief, req.Orchestrator, req.Lead, req.Spawner != ""))
 }
 
 // The MCP server Den offers and the tools on it, as Claude Code names them.
@@ -393,18 +395,41 @@ func launch(dir, title string, command, extra []string) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	var env []string
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "DEN_ORCHESTRATOR=") && !strings.HasPrefix(kv, "DEN_PEER=") {
-			env = append(env, kv)
-		}
-	}
-	cmd.Env = append(env, extra...)
+	cmd.Env = childEnv(os.Environ(), extra)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch terminal: %w", err)
 	}
 	go cmd.Wait() // reap; the terminal outlives us either way
 	return nil
+}
+
+// inherited are the variables a Claude Code session sets for the processes
+// it runs: its id, its messaging socket, its child-session flag. The spawn
+// tool runs under a session, and a new session that inherits them takes
+// itself for a child of it and stops registering and saving transcripts.
+// Den's own markers go too: the orchestrator's must not leak, and the
+// agent gets its own peer name.
+var inherited = []string{
+	"CLAUDECODE=", "CLAUDE_PID=", "CLAUDE_EFFORT=",
+	"CLAUDE_CODE_SESSION_", "CLAUDE_CODE_MESSAGING_", "CLAUDE_CODE_CHILD_SESSION=",
+	"CLAUDE_CODE_ENTRYPOINT=", "CLAUDE_CODE_EXECPATH=",
+	"DEN_ORCHESTRATOR=", "DEN_PEER=",
+}
+
+// childEnv is the environment for the new terminal: the current one
+// without what a parent session set, plus extra.
+func childEnv(environ, extra []string) []string {
+	var env []string
+next:
+	for _, kv := range environ {
+		for _, p := range inherited {
+			if strings.HasPrefix(kv, p) {
+				continue next
+			}
+		}
+		env = append(env, kv)
+	}
+	return append(env, extra...)
 }
 
 func shortDir(dir string) string {
