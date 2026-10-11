@@ -9,7 +9,8 @@ in your terminals, shows who they are (the agent-badge critter, role and task),
 streams everything that needs your answer into one inbox, and lets you talk to
 one agent with an `@mention` or to an orchestrator that speaks to all of them.
 It also draws who directs whom, keeps standing goals as missions, and shows what
-each agent changed as a diff you can comment on.
+each agent changed as a diff you can comment on and send back to the agent,
+and adds up what the work cost.
 
 Den is Linux software. It reads `/proc` and `~/.claude/sessions`, brings
 terminals to the front through Hyprland, and starts new ones through
@@ -739,7 +740,10 @@ What Den does that is its own:
 - **Missions:** standing goals run once, in a loop, fanned out or on a schedule.
 - **Who directs whom,** drawn as a tree from the messages agents send each other.
 - **Review:** every agent's changes as a highlighted diff, each line in the
-  colour of the agent that wrote it, with comments kept as drafts.
+  colour of the agent that wrote it, with comments you send back to the agent
+  and see marked addressed once the lines change.
+- **Cost:** tokens per agent, per team and per mission run, an estimate in
+  dollars at list price, and an optional budget on a mission.
 - **The agent badge:** a name, critter, role and task for each session.
 
 Where the others go further: Herdr keeps agents alive when you close the
