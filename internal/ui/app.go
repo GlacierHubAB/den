@@ -1052,6 +1052,12 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) nameFor(sessionID string) string {
+	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
+		if ms := m.missions.Get(id); ms != nil {
+			return ms.Name
+		}
+		return "mission"
+	}
 	if a, ok := m.agentFor(sessionID); ok {
 		return a.Name
 	}

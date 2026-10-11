@@ -180,6 +180,37 @@ func TestBudgetAnswerContinueAndStop(t *testing.T) {
 	}
 }
 
+func TestNewBudgetReplacesAnUnansweredQuestion(t *testing.T) {
+	m, ms := costModel(t)
+	ms.Budget = mission.Budget{Tokens: 100_000}
+	m.settleCosts()
+	if ms.State != mission.Paused || m.budgetItem(ms.ID) == nil {
+		t.Fatal("setup: not paused and asked")
+	}
+	m.ov.open = ms.ID
+	m.budgetCommand([]string{"5M"})
+	if ms.State != mission.Running || m.budgetItem(ms.ID) != nil || ms.Budget.Asked {
+		t.Fatalf("a new budget should release the pause: state=%s budget=%+v", ms.State, ms.Budget)
+	}
+	m.settleCosts()
+	if ms.State != mission.Running {
+		t.Errorf("under the new budget: state=%s", ms.State)
+	}
+	// A new budget that is also crossed pauses and asks again, once.
+	m.budgetCommand([]string{"10k"})
+	m.settleCosts()
+	m.settleCosts()
+	n := 0
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.Budget && it.State == inbox.Waiting {
+			n++
+		}
+	}
+	if ms.State != mission.Paused || n != 1 {
+		t.Errorf("state=%s open questions=%d", ms.State, n)
+	}
+}
+
 func TestBudgetCommand(t *testing.T) {
 	m, ms := costModel(t)
 	m.ov.open = ms.ID
@@ -227,7 +258,7 @@ func TestCostShowsInViewsAndMarksEstimates(t *testing.T) {
 	}
 	m.focus = paneDetail
 	out = ansi.Strip(m.View().Content)
-	for _, want := range []string{"tokens", "300k tok", "with team", "600k tok", "≈ $"} {
+	for _, want := range []string{"tokens", "300k tok", "team", "600k tok", "≈ $"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("details lack %q:\n%s", want, out)
 		}

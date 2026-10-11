@@ -32,7 +32,7 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
 | `internal/gitinfo` | repo and branch for a directory without shelling out |
 | `internal/procs` | process tree from `/proc` |
 | `internal/hypr` | `hyprctl` wrapper: windows, focus, workspaces |
-| `internal/transcript` | the few facts Den reads from a session's JSONL transcript, and the file changes Review needs |
+| `internal/transcript` | the few facts Den reads from a session's JSONL transcript, the file changes Review needs, and the incremental token ledger (`ledger.go`) |
 | `internal/hooks` | installs and removes Den's entries in Claude Code's `settings.json` |
 | `internal/bridge` | Unix-socket protocol between `den hook` and the running TUI; carries permission decisions back |
 | `internal/inbox` | turns hook events into inbox items (permission, plan, question, done) and keeps history |
@@ -41,7 +41,8 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
 | `internal/mcp` | minimal stdio MCP server |
 | `internal/spawn` | opens a terminal and starts an agent on a brief; the work behind `spawn_agent` and `open_terminal` |
 | `internal/tree` | who directs whom, persisted as `edges.jsonl` |
-| `internal/mission` | missions, their shapes, cadences and run log |
+| `internal/mission` | missions, their shapes, cadences, run log and budgets |
+| `internal/cost` | the price table, estimates, tree roll-ups and budget parsing |
 | `internal/review` | diff against a base, per-line attribution to sessions, review comments |
 | `internal/mods` | list, install and uninstall the embedded mods |
 | `internal/config` | `config.toml` and the environment overrides |

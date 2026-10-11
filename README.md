@@ -24,6 +24,7 @@ Hyprland.
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
 - [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Skills for roles](#skills-for-roles)
 - [Overview, projects and missions](#overview-projects-and-missions)
+- [Cost](#cost)
 - [Review](#review) · [The agent badge](#the-agent-badge)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
 - [Troubleshooting](#troubleshooting) · [Den, Herdr and OpenRig](#den-herdr-and-openrig) · [Contributing](#contributing) · [License](#license)
@@ -240,6 +241,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/orchestrator` `/orch` | open the orchestrator; `/orch new` starts a fresh session, `/orch restart` restarts it |
 | `/project <name>`, `/project add <dir>`, `/project drop` | pick, list or unlist a project |
 | `/mission <goal>`, `/pause`, `/resume`, `/stop` | missions |
+| `/budget 2M`, `/budget $5`, `/budget off` | set, show (`/budget` alone) or remove the budget on the open or selected mission |
 | `/delete` `/del` | remove the review comment under the cursor |
 | `/send`, `/send <Name>`, `/send orchestrator` | send review drafts to their agents, to one agent, or those no live session can take to the orchestrator |
 | `/help` `/?`, `/quit` `/q` `/exit` | |
@@ -524,6 +526,46 @@ talk about a finished mission shows there too. `/pause` holds the next run,
 persist in `~/.local/state/den/missions.jsonl`; the project pick and pinned
 projects in `overview.json` beside it.
 
+## Cost
+
+Den adds up the tokens in each session's transcript, exactly: every assistant
+message counts once (Claude Code writes a message once per content block, so
+the repeats are skipped), cache reads and writes are kept apart, and a session's
+subagents, which Claude Code keeps in files beside the session's own, are shown
+as a separate figure. A transcript is read once and then only what was appended.
+The format is Claude Code's own and may change; what does not parse is skipped.
+
+Tokens come first. Dollars are an estimate: the same tokens at API list prices
+from a small built-in table taken 2026-09-25, written `≈ $1.23`, with a `+` when
+a model has no price and its tokens are left out. On a subscription nothing is
+billed per token, so read it as what the work would cost at list price. When a
+transcript carries Claude Code's own cost record, the details pane shows it as
+`reported`, beside the estimate and never added to it. Prices can be overridden
+by model-id prefix in `config.toml`, in dollars per million tokens (input,
+output, cache write, cache read; the last two are optional):
+
+```toml
+[prices]
+claude-opus-5-5 = "4, 20, 5, 0.2"
+```
+
+The Fleet details pane shows an agent's tokens, subagents, estimate and, for an
+agent that directs others, the figures for its whole team. The Overview strip
+shows the fleet total: every session Den sees, plus what the orchestrator
+reports for itself. An open mission shows what it used, and each run its own:
+the tokens of the agents its dispatches went to, and of everyone they direct,
+from the first dispatch until the run ended. A run's figure is kept in
+`missions.jsonl` when it ends. `den list -json` gains a `Cost` object on every
+agent (`tokens`, `subagent_tokens`, `estimated_usd`, `partial`,
+`claude_code_reported_usd`) and a `TeamCost` for agents that direct others.
+
+A mission can have a budget, off unless set: `/budget 2M` (tokens) or
+`/budget $5` (estimated dollars) on the open or selected mission, counting all
+its runs. When the mission crosses it Den pauses it, as `/pause` does, and asks
+once in the inbox: `Ctrl+Y` keeps going past the budget, `Ctrl+N` stops the
+mission. Den never stops agents itself; a pause only holds the next run.
+Setting a new budget while the question is open replaces it.
+
 ## Review
 
 The Review tab shows what each agent changed, as git sees it on disk, with
@@ -622,6 +664,9 @@ recent = 20                 # activity entries shown in the details pane
 [hooks]
 permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
+
+# [prices]                  # override the cost estimate's price table, see Cost
+# claude-opus-5-5 = "4, 20, 5, 0.2"
 ```
 
 `DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`
@@ -638,7 +683,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `history.jsonl` | finished turns |
 | `orchestrator.jsonl` | the orchestrator chat and card states |
 | `edges.jsonl` | who directs whom |
-| `missions.jsonl` | missions and their runs |
+| `missions.jsonl` | missions, their runs, each run's tokens and estimate, and budgets |
 | `protected.json` | agents a close leaves alone, folders that protect their agents, and flagged agents with their notes |
 | `skills.json` | every skill Den installed: where from, where to, when, who approved |
 | `skills/agents/` | skills installed for one agent only |

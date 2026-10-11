@@ -274,7 +274,16 @@ func (m *Model) budgetCommand(args []string) (note string, isErr bool) {
 		}
 		return ms.Name + ": " + m.missionSpent(ms).line() + " of " + budgetLabel(ms.Budget), false
 	}
+	// A budget that paused the mission and is still unanswered is replaced
+	// by the new one: the mission goes on, and is paused again at the next
+	// tick if the new ceiling is also crossed.
+	releasePause := func() {
+		if ms.Budget.Asked && !ms.Budget.Waived && ms.State == mission.Paused {
+			ms.State = mission.Running
+		}
+	}
 	if strings.EqualFold(args[0], "off") || args[0] == "0" {
+		releasePause()
 		ms.SetBudget(0, 0)
 		m.settleBudgetItem(ms.ID, "budget removed")
 		ms.Updated = time.Now()
@@ -285,6 +294,7 @@ func (m *Model) budgetCommand(args []string) (note string, isErr bool) {
 	if err != nil {
 		return err.Error(), true
 	}
+	releasePause()
 	ms.SetBudget(tokens, usd)
 	m.settleBudgetItem(ms.ID, "budget changed")
 	ms.Updated = time.Now()
@@ -322,11 +332,11 @@ func (m Model) agentCostLines(a fleet.Agent) [][2]string {
 	}
 	rows := [][2]string{{"tokens", cost.Tok(a.Cost.Tokens.Total()) + " tok" + cacheNote(a.Cost)}}
 	if a.Cost.Subagents.Total() > 0 {
-		rows = append(rows, [2]string{"subagents", cost.Tok(a.Cost.Subagents.Total()) + " tok"})
+		rows = append(rows, [2]string{"subs", cost.Tok(a.Cost.Subagents.Total()) + " tok"})
 	}
 	rows = append(rows, [2]string{"cost", cost.Dollars(a.Cost.USD, a.Cost.Partial) + " estimate"})
 	if kids := m.treeCost(a.Session.SessionID); len(m.childrenOf(a.Session.SessionID)) > 0 {
-		rows = append(rows, [2]string{"with team", kids.Line()})
+		rows = append(rows, [2]string{"team", kids.Line()})
 	}
 	if a.Cost.ReportedUSD != nil {
 		rows = append(rows, [2]string{"reported", "Claude Code says ≈ $" + fmt.Sprintf("%.2f", *a.Cost.ReportedUSD)})
