@@ -12,7 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 )
 
-const sid = "6070ed32-568e-46a3-9690-ac2048b12385"
+const sid = "11111111-2222-4333-8444-555555555555"
 
 func hook(event string, in map[string]any) bridge.HookInput {
 	in["session_id"] = sid

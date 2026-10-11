@@ -177,11 +177,11 @@ func TestRunNeverTouchesDensWindowAndIgnoresAClosedOne(t *testing.T) {
 }
 
 func TestGuardRulesAndIdleParsing(t *testing.T) {
-	g := &Guard{Names: []string{"Pebble Capybara", "grvlle-44"}, Paths: []string{"/srv/xml-converter"}, Flagged: []Flag{{Name: "Plucky Narwhal", Note: "issue pending"}}}
+	g := &Guard{Names: []string{"Pebble Capybara", "user-44"}, Paths: []string{"/srv/xml-converter"}, Flagged: []Flag{{Name: "Plucky Narwhal", Note: "issue pending"}}}
 	if why := g.Protected("Pebble Capybara", "x", nil, ""); why != "protected (Pebble Capybara)" {
 		t.Errorf("by name: %q", why)
 	}
-	if why := g.Protected("Fuzzy Sprite", "grvlle-44", nil, ""); why != "protected (grvlle-44)" {
+	if why := g.Protected("Fuzzy Sprite", "user-44", nil, ""); why != "protected (user-44)" {
 		t.Errorf("by peer: %q", why)
 	}
 	if why := g.Protected("A", "a", []string{"/srv/xml-converter/src"}, ""); why != "protected: works in /srv/xml-converter" {

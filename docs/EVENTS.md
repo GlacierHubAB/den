@@ -67,7 +67,7 @@ and, by kind:
 | `still_waiting` | a request is still waiting on you after `notify.remind` minutes (Den) | `request`, `minutes` |
 
 ```json
-{"v":1,"time":"2026-10-11T21:22:46.685Z","kind":"needs_you","session":"6070ed32-568e-46a3-9690-ac2048b12385","agent":"Mossy Lemur","request":"permission","tool":"Bash"}
+{"v":1,"time":"2026-10-11T21:22:46.685Z","kind":"needs_you","session":"11111111-2222-4333-8444-555555555555","agent":"Mossy Lemur","request":"permission","tool":"Bash"}
 ```
 
 A `needs_you` from `den hook` is written before Den has seen the request, so

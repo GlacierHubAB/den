@@ -24,7 +24,7 @@ func TestNotifyWithoutDen(t *testing.T) {
 	cfg := filepath.Join(dir, "config.toml")
 	t.Setenv("DEN_CONFIG", cfg)
 
-	in := bridge.HookInput{SessionID: "6070ed32-568e-46a3-9690-ac2048b12385", HookEventName: "Notification", NotificationType: "permission_prompt", Message: "Claude needs your permission to use Bash"}
+	in := bridge.HookInput{SessionID: "11111111-2222-4333-8444-555555555555", HookEventName: "Notification", NotificationType: "permission_prompt", Message: "Claude needs your permission to use Bash"}
 	notifyWithoutDen(in) // off by default
 	if _, err := os.Stat(argsFile); err == nil {
 		t.Fatal("notified with without_den off")
