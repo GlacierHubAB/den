@@ -144,6 +144,8 @@ type Model struct {
 	missionDirSent bool           // the orchestrator has had the mission vocabulary
 
 	rev reviewState // the Review view
+
+	restore restoreState // the roster of agents seen live, and the questions to reopen them
 }
 
 // New returns the root model and starts listening for hook events.
@@ -173,6 +175,7 @@ func New(cfg config.Config) Model {
 	m.hooksReady = hooks.Installed("")
 	m.rev.commentsPath = review.CommentsPath()
 	m.rev.comments = review.LoadComments(m.rev.commentsPath)
+	m.restore = newRestoreState()
 	m.input = newInput(m.st)
 	m.input.Focus()
 	m.fitInput()
@@ -438,6 +441,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.base = msg.agents
 			m.lastScan = time.Now()
 			m.refresh()
+			m.afterScan()
 		}
 	case requestMsg:
 		cmd := m.handleRequest(msg.req)
@@ -466,6 +470,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
 		return m, m.finishSkills(msg)
+	case restoreDoneMsg:
+		return m, m.finishRestore(msg)
 	case serverClosedMsg:
 		m.srv = nil
 	case focusedMsg:
@@ -925,6 +931,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Budget {
 		return m.decideBudget(it, verb)
 	}
+	if it.Kind == inbox.Restore {
+		return m.decideRestore(it, verb)
+	}
 	m.store.Answer(it, verb)
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
@@ -949,6 +958,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.say("No command block in view to copy.", true)
 	case "/close", "/kill":
 		return m.closeCommand(fields[1:])
+	case "/reopen":
+		return m.reopenCommand(fields[1:])
 	case "/protect", "/unprotect", "/flag", "/unflag":
 		return m.guardCommand(strings.ToLower(fields[0]), fields[1:])
 	case "/dismiss", "/x":
@@ -1064,6 +1075,9 @@ func (m Model) nameFor(sessionID string) string {
 	}
 	if a, ok := m.agentFor(sessionID); ok {
 		return a.Name
+	}
+	if name := m.rosterName(sessionID); name != "" {
+		return name
 	}
 	if len(sessionID) > 8 {
 		return sessionID[:8]

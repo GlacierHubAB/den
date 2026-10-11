@@ -158,3 +158,40 @@ func TestCommandGivesApprovedSkillsFolder(t *testing.T) {
 		t.Errorf("the prompt is not after --: %q", got)
 	}
 }
+
+func TestCommandResumes(t *testing.T) {
+	got := Command(Request{Resume: "s1", Model: "claude-opus-5-5", AddDirs: []string{"/s/agents/ui-1"}, Spawner: "/bin/den"}, "ui")
+	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("command = %q, want %q", got, want)
+	}
+	got = Command(Request{Resume: "s1", Fork: true}, "ui-2")
+	if strings.Join(got, " ") != "claude --resume s1 --fork-session --name ui-2" {
+		t.Errorf("fork command = %q", got)
+	}
+}
+
+func TestRunResumesWithoutBrief(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
+	SessionWait = 0
+	var gotCmd, gotEnv []string
+	Launch = func(d, title string, command, env []string) error {
+		gotCmd, gotEnv = command, env
+		return nil
+	}
+	t.Cleanup(func() { Launch = launch })
+	res, err := Run(t.Context(), Request{Dir: dir, Agent: true, Resume: "s1", Name: "demo-app-1a2b", Model: "claude-sonnet-5-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(gotCmd, " ") != "claude --resume s1 --name demo-app-1a2b --model claude-sonnet-5-5" {
+		t.Errorf("command = %q", gotCmd)
+	}
+	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=demo-app-1a2b" || res.Name != "demo-app-1a2b" {
+		t.Errorf("env %v result %+v", gotEnv, res)
+	}
+}

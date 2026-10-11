@@ -215,4 +215,5 @@ func configCmd(args []string) {
 			fmt.Printf("%s = %q\n", k, v)
 		}
 	}
+	fmt.Printf("\n[restore]\nask = %v\n", c.Restore.Ask)
 }

@@ -27,6 +27,9 @@ type Config struct {
 		PermissionWait int  // seconds a held permission waits for your answer before Claude Code's own dialog
 		Log            bool // append every hook run to hooks.log
 	}
+	Restore struct {
+		Ask bool // after a restart, ask once whether to reopen the agents that were live
+	}
 }
 
 // Defaults are what you get with no file and no environment.
@@ -39,6 +42,7 @@ func Defaults() Config {
 	c.Detail.Recent = 20
 	c.Hooks.PermissionWait = 580
 	c.Hooks.Log = true
+	c.Restore.Ask = true
 	return c
 }
 
@@ -107,6 +111,7 @@ func (c *Config) apply(kv map[string]string) {
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
 	boolean(&c.Hooks.Log, "hooks.log")
+	boolean(&c.Restore.Ask, "restore.ask")
 }
 
 // env applies the overrides that predate the file, so scripts keep working.
@@ -124,6 +129,9 @@ func (c *Config) env() {
 	}
 	if os.Getenv("DEN_HOOK_LOG") == "off" {
 		c.Hooks.Log = false
+	}
+	if os.Getenv("DEN_RESTORE") == "off" {
+		c.Restore.Ask = false
 	}
 }
 
@@ -180,6 +188,9 @@ recent = 20                 # activity entries shown in the details pane
 [hooks]
 permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
+
+[restore]
+ask = true                  # after a restart, ask once whether to reopen the agents that were live
 
 # The cost estimate prices tokens from a built-in table (taken 2026-09-25).
 # Override a model, by id prefix, in dollars per million tokens:

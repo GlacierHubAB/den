@@ -25,6 +25,7 @@ const (
 	Close                  // Den asks: close these agents? y/n answer it
 	Skills                 // Den asks: install these catalogue skills? y/n answer it
 	Budget                 // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
+	Restore                // Den asks: reopen these agents with claude --resume? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -47,6 +48,8 @@ func (k Kind) String() string {
 		return "skills"
 	case Budget:
 		return "budget"
+	case Restore:
+		return "restore"
 	}
 	return "?"
 }
@@ -89,7 +92,9 @@ func (it *Item) Answerable() bool {
 
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
-func (it *Item) DenAsks() bool { return it.Kind == Close || it.Kind == Skills || it.Kind == Budget }
+func (it *Item) DenAsks() bool {
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore
+}
 
 // needsYou reports whether the item still waits on the human.
 func (it *Item) needsYou() bool {
@@ -276,7 +281,13 @@ func (s *Store) AddBudget(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Budget, Tool: "mission_budget", Title: title, Body: body})
 }
 
-// Settle resolves a Close or Skills item with the outcome and sends it to whoever
+// AddRestore adds Den's question: reopen these agents? sessionID is the
+// first agent it lists.
+func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Restore, Tool: "restore", Title: title, Body: body})
+}
+
+// Settle resolves a Close, Skills, Budget or Restore item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 	it.State, it.Resolved = Resolved, outcome

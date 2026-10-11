@@ -451,6 +451,7 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 			continue
 		}
 		m.store.SessionClosed(r.Target.SessionID)
+		m.markClosed(r.Target.SessionID)
 		parent := m.parentOf(r.Target.SessionID)
 		if parent == "" {
 			parent = tree.Orchestrator

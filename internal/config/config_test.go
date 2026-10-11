@@ -54,3 +54,22 @@ func TestExampleParsesToDefaults(t *testing.T) {
 		t.Errorf("example differs from defaults: %+v", c)
 	}
 }
+
+func TestRestoreAsk(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	t.Setenv("DEN_RESTORE", "")
+	if !Load().Restore.Ask {
+		t.Error("the restore question is on by default")
+	}
+	os.WriteFile(p, []byte("[restore]\nask = false\n"), 0o644)
+	if Load().Restore.Ask {
+		t.Error("restore.ask = false turns it off")
+	}
+	os.WriteFile(p, []byte(""), 0o644)
+	t.Setenv("DEN_RESTORE", "off")
+	if Load().Restore.Ask {
+		t.Error("DEN_RESTORE=off turns it off")
+	}
+}

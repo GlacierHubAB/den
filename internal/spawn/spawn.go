@@ -49,6 +49,11 @@ type Request struct {
 	// Spawner is the Den binary; when set, the agent gets Den's MCP server
 	// and so the spawn_agent tool, to start teammates of its own.
 	Spawner string
+	// Resume is the session id of a conversation to reopen with claude
+	// --resume instead of starting on a brief; Fork gives the reopened
+	// conversation a new session id (--fork-session).
+	Resume string
+	Fork   bool
 }
 
 // Models the spawn tool offers, cheapest first, with when to pick each.
@@ -116,10 +121,11 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	res.Dir = dir
 	var command []string
 	if req.Agent {
-		if strings.TrimSpace(req.Brief) == "" {
+		if strings.TrimSpace(req.Brief) == "" && req.Resume == "" {
 			return res, errors.New("an agent needs a brief")
 		}
-		if req.Model != "" && !ValidModel(req.Model) {
+		// A resumed agent keeps the exact model id its transcript names.
+		if req.Model != "" && req.Resume == "" && !ValidModel(req.Model) {
 			return res, fmt.Errorf("unknown model %q: pick one of %s", req.Model, strings.Join(ModelNames(), ", "))
 		}
 		sessions, _ := discover.Scan()
@@ -225,6 +231,13 @@ func (r Result) Describe() string {
 // Command is the claude command line for an agent named name.
 func Command(req Request, name string) []string {
 	command := []string{"claude", "--name", name}
+	if req.Resume != "" {
+		command = []string{"claude", "--resume", req.Resume}
+		if req.Fork {
+			command = append(command, "--fork-session")
+		}
+		command = append(command, "--name", name)
+	}
 	for _, d := range req.AddDirs {
 		command = append(command, "--add-dir", d)
 	}
@@ -236,6 +249,9 @@ func Command(req Request, name string) []string {
 		// tools and gains spawn_agent, pre-approved so a lead can staff its
 		// work without a permission prompt per teammate.
 		command = append(command, "--mcp-config", MCPConfig(req.Spawner), "--allowedTools", strings.Join(SpawnTools, ","))
+	}
+	if req.Resume != "" {
+		return command // the conversation carries on; there is no new prompt
 	}
 	// --allowedTools takes a list, so the prompt after it would be read as
 	// one more tool; "--" ends the options.

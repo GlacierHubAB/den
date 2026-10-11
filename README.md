@@ -23,7 +23,7 @@ Hyprland.
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
-- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Skills for roles](#skills-for-roles)
+- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Skills for roles](#skills-for-roles)
 - [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
 - [Review](#review) · [The agent badge](#the-agent-badge)
@@ -188,8 +188,8 @@ the tab row.
 ![Den's Inbox: a waiting permission request from a backend developer agent to run go test, with Ctrl+Y allow, /always and Ctrl+N deny, above two finished turns from a technical writer and a reviewer.](docs/images/inbox.png)
 
 With the hooks installed, each item is a permission, a plan review, a question
-or a finished turn; Den adds its own questions, to close agents or to install
-skills. Waiting permissions and plans can be answered from Den:
+or a finished turn; Den adds its own questions, to close agents, to install
+skills or to reopen agents after a restart. Waiting permissions and plans can be answered from Den:
 `Ctrl+Y` allows and `Ctrl+N` denies the waiting one, `/always` allows it and
 the same tool again this session, `/open` focuses the terminal, `/dismiss`
 clears an item. Finished turns are appended to
@@ -234,6 +234,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/dismiss` `/x` | clear the selected inbox item |
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
+| `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
@@ -430,6 +431,42 @@ not using" or "close what has not been used for an hour" (`idle_for: "1h"`)
 becomes the same question in your inbox, marked as its request with its
 reason, protected agents skipped and flagged ones unselected, and it only
 hears what you decided. It cannot force.
+
+## Bringing agents back
+
+Den keeps a snapshot of every live agent in `~/.local/state/den/roster.json`:
+its session id, working directory, peer name, critter name, role, model,
+who directs it, its mission, whether Den started it, its private skills
+folder if it has one, and when Den last saw it. The file is rewritten
+atomically when the fleet changes, and otherwise at most once a minute to keep
+the last-seen times current.
+
+When Den starts and agents that were live when it last stopped are gone (after
+a reboot, say), one question lands in the inbox: `Restore 3 agents?`, one line
+per agent with its name, role, model and folder, who directed it, its mission,
+when Den last saw it, and how many tokens of conversation it would reload with
+an estimated cost at its model's cache-write rate from the price table (see
+[Cost](#cost)). `Ctrl+Y` reopens them, each in a new terminal on your workspace, the
+way spawned agents start: `claude --resume <id>` with the same peer name,
+model and skills folder, and Den's tools again for agents Den started.
+`Ctrl+N` leaves them closed, and later restarts do not ask about them again.
+Nothing reopens without `Ctrl+Y`.
+
+The question leaves out agents you closed through Den (`/close`, `Ctrl+X` or
+the orchestrator's close_agent) and agents that ended on their own while Den
+was running, unless they ended within two minutes of Den's own last write,
+which is how a shutdown looks. Agents whose conversation is no longer on disk
+are left out too.
+
+A resumed session keeps its session id, so it takes its old place in the tree
+and its mission. Den puts each reopened agent back under the agent that
+directed it once both are running again. `/reopen <name>` asks the same
+question for one agent, closed or ended; `/reopen --fork <name>` works on a
+running agent too and opens a copy of its conversation under a new session
+id, which Den records so the copy takes the original's place in the tree.
+
+`restore.ask = false` in the config, or `DEN_RESTORE=off`, turns the restart
+question off; the roster is still kept for `/reopen`.
 
 ## Skills for roles
 
@@ -700,15 +737,18 @@ recent = 20                 # activity entries shown in the details pane
 permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
 
+[restore]
+ask = true                  # after a restart, ask once whether to reopen the agents that were live
+
 # [prices]                  # override the cost estimate's price table, see Cost
 # claude-opus-5-5 = "4, 20, 5, 0.2"
 ```
 
 Mission templates are in `templates.json` beside it (see Templates).
 
-`DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`
-and `DEN_HOOK_LOG=off` win over the file. `DEN_SOCKET` moves the socket the
-hooks talk to (default `$XDG_RUNTIME_DIR/den.sock`).
+`DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`,
+`DEN_HOOK_LOG=off` and `DEN_RESTORE=off` win over the file. `DEN_SOCKET` moves
+the socket the hooks talk to (default `$XDG_RUNTIME_DIR/den.sock`).
 
 ## Files Den writes
 
@@ -721,6 +761,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `orchestrator.jsonl` | the orchestrator chat and card states |
 | `edges.jsonl` | who directs whom |
 | `missions.jsonl` | missions, their runs, each run's tokens and estimate, and budgets |
+| `roster.json` | the agents Den has seen live in the last two weeks, to reopen them |
 | `protected.json` | agents a close leaves alone, folders that protect their agents, and flagged agents with their notes |
 | `skills.json` | every skill Den installed: where from, where to, when, who approved |
 | `skills/agents/` | skills installed for one agent only |

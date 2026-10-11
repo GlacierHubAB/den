@@ -538,6 +538,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "install them")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.Budget:
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
+	case it.Answerable() && it.Kind == inbox.Restore:
+		out = append(out, key("^Y", "reopen")+"  "+key("^N", "leave closed"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	default:
@@ -688,6 +690,9 @@ func (m Model) inboxPane(w, h int) string {
 			}
 			if it.Kind == inbox.Budget {
 				acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
+			}
+			if it.Kind == inbox.Restore {
+				acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:
@@ -969,7 +974,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
