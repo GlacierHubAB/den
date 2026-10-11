@@ -240,7 +240,7 @@ func (m Model) panes(w, h int) string {
 		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
 	}
 	if m.tab == tabReview {
-		return m.projectStrip(w) + "\n" + m.reviewPanes(w, h-1)
+		return m.stripBlock(w) + "\n" + m.reviewPanes(w, h-stripRows)
 	}
 	if m.tab == tabOverview {
 		return m.overviewPanes(w, h)

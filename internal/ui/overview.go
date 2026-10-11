@@ -57,11 +57,19 @@ func (m Model) projectStrip(w int) string {
 	return ansi.Truncate(justify(left, right, w), w, "…")
 }
 
+// stripRows is the project strip with a blank line above and below, so it
+// sits apart from the tabs and the panes.
+const stripRows = 3
+
+func (m Model) stripBlock(w int) string {
+	return "\n" + m.projectStrip(w) + "\n"
+}
+
 // overviewPanes lays the tab out: the strip, the project's agents on the
 // left and its missions on the right.
 func (m Model) overviewPanes(w, h int) string {
-	strip := m.projectStrip(w)
-	h--
+	strip := m.stripBlock(w)
+	h -= stripRows
 	if h < 4 {
 		return strip
 	}
