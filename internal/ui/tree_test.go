@@ -224,3 +224,25 @@ func TestLeadCardWaitsForItsTeam(t *testing.T) {
 		t.Errorf("plain card = %+v", e)
 	}
 }
+
+// Claude Code's idle notice says "waiting for your input"; an agent with a
+// lead is waiting for the lead, and the inbox says so.
+func TestIdleNoticeNamesTheLead(t *testing.T) {
+	m := treeModel()
+	for _, sid := range []string{"mossy-lemur", "snug-capybara"} {
+		m.store.Apply(req("Notification", sid, map[string]any{"notification_type": "idle_prompt", "message": "Claude is waiting for your input"}))
+	}
+	m.tab = tabInbox
+	out := ansi.Strip(m.View().Content)
+	if strings.Contains(out, "waiting for your input") {
+		t.Errorf("idle notice still says it waits for you:\n%s", out)
+	}
+	for _, want := range []string{"Waiting for its lead, Snug Capybara", "Waiting for the orchestrator"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if got := m.idleTitle("nobody", "Claude is waiting for your input"); got != "Claude is waiting for your input" {
+		t.Errorf("agent without a lead = %q", got)
+	}
+}

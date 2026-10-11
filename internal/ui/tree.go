@@ -451,6 +451,20 @@ func (m Model) viaLine(id string) string {
 	return s.dim.Render("via ") + strings.Join(chain, s.muted.Render(" › "))
 }
 
+// idleTitle is what an idle notice says. Claude Code words it as waiting
+// for you, but an agent someone directs is waiting for its lead, who gets
+// its report and decides what comes next.
+func (m Model) idleTitle(id, title string) string {
+	switch p := m.parentOf(id); p {
+	case "":
+		return title
+	case tree.Orchestrator:
+		return "Waiting for the orchestrator"
+	default:
+		return "Waiting for its lead, " + m.nameFor(p)
+	}
+}
+
 // childLines lists what an agent directs: one line per child with its
 // state, name, brief and age. With guides, the lines hang off a card.
 func (m Model) childLines(id string, w int, guides bool) []string {

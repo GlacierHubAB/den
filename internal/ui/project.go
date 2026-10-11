@@ -158,8 +158,18 @@ func addProject(byRoot map[string]*project, root string) *project {
 	return p
 }
 
-// rootsOf lists the repositories an agent works in.
+// recentEdits is how long an edit keeps an agent on a project that is not
+// its own folder's. A side errand (a skill dropped into another repository,
+// a fix in a sibling checkout) should not list the agent there all session.
+const recentEdits = 30 * time.Minute
+
+// rootsOf lists the repositories an agent works in: the one its folder is
+// in, the one it edited last, and any it edited in the last recentEdits.
 func rootsOf(a fleet.Agent) []string {
+	return rootsAt(a, time.Now())
+}
+
+func rootsAt(a fleet.Agent, now time.Time) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(dir string) {
@@ -175,12 +185,22 @@ func rootsOf(a fleet.Agent) []string {
 		add(a.Session.CWD)
 	}
 	if a.Path != "" {
+		var last string
+		var lastAt time.Time
 		dirs := map[string]bool{}
 		for _, c := range transcript.Changes(a.Path, time.UnixMilli(a.Session.StartedAt)) {
-			if filepath.IsAbs(c.Path) {
-				dirs[filepath.Dir(c.Path)] = true
+			if !filepath.IsAbs(c.Path) {
+				continue
+			}
+			dir := filepath.Dir(c.Path)
+			if !c.At.Before(lastAt) {
+				last, lastAt = dir, c.At
+			}
+			if c.At.IsZero() || now.Sub(c.At) <= recentEdits {
+				dirs[dir] = true
 			}
 		}
+		add(last)
 		for d := range dirs {
 			add(d)
 		}

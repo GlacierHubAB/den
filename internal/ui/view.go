@@ -627,7 +627,11 @@ func (m Model) inboxPane(w, h int) string {
 			text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
 			text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
 		default:
-			lines := strings.Split(ansi.Wrap(it.Title, textW, ""), "\n")
+			title := it.Title
+			if it.Kind == inbox.Idle {
+				title = m.idleTitle(it.SessionID, title)
+			}
+			lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
 			if len(lines) > 2 {
 				lines = lines[:2]
 				lines[1] = ansi.Truncate(lines[1], textW-2, "…")

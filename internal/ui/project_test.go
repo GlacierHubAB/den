@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/GlacierHubAB/den/internal/fleet"
 )
 
 func TestPinnedProjectIsListedWithNobodyOnIt(t *testing.T) {
@@ -37,5 +40,34 @@ func TestPinnedProjectIsListedWithNobodyOnIt(t *testing.T) {
 	}
 	if _, err := m.pinProject(filepath.Join(dir, "missing")); err == nil {
 		t.Error("a missing folder should fail")
+	}
+}
+
+// An edit in another repository lists the agent there only while it is
+// recent, or while it is the agent's latest edit.
+func TestOldSideEditDoesNotKeepAgentOnProject(t *testing.T) {
+	side, main := t.TempDir(), t.TempDir()
+	for _, r := range []string{side, main} {
+		gitRun(t, r, "init", "-q", "-b", "main")
+	}
+	now := time.Date(2026, 10, 11, 15, 30, 0, 0, time.UTC)
+	edit := func(id, file string, at time.Time) []string {
+		ts := at.Format(time.RFC3339)
+		return []string{
+			`{"type":"assistant","timestamp":"` + ts + `","message":{"content":[{"type":"tool_use","id":"` + id + `","name":"Write","input":{"file_path":"` + file + `"}}]}}`,
+			`{"type":"user","timestamp":"` + ts + `","message":{"content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"ok"}]},"toolUseResult":{"filePath":"` + file + `","structuredPatch":[{"oldStart":1,"newStart":1,"lines":["+x"]}]}}`,
+		}
+	}
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	lines := append(edit("t1", filepath.Join(side, "SKILL.md"), now.Add(-45*time.Minute)), edit("t2", filepath.Join(main, "doc.md"), now.Add(-40*time.Minute))...)
+	os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600)
+	a := fleet.Agent{Path: p}
+	a.Session.StartedAt = now.Add(-2 * time.Hour).UnixMilli()
+
+	if got := rootsAt(a, now); len(got) != 1 || got[0] != main {
+		t.Errorf("45 minutes on = %v, want only the latest edit's repo %s", got, main)
+	}
+	if got := rootsAt(a, now.Add(-30*time.Minute)); len(got) != 2 {
+		t.Errorf("15 minutes on = %v, want both repos", got)
 	}
 }
