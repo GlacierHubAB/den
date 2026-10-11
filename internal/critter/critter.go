@@ -419,46 +419,75 @@ func SmallRows(px [N][N]string) [N / 4][N / 2]Cell {
 
 // OctantRows renders the sprite with octant characters, 2x4 pixels per
 // cell, so the whole 16x16 creature fits 8 columns by 4 rows at full
-// resolution. A cell can carry two colours: the pixels nearest the most
-// common colour are drawn in it as the character's foreground, the rest as
-// the background, and transparent pixels stay unpainted.
-// OctantRows renders the sprite with octant characters, 2x4 pixels per
-// cell, so the whole 16x16 creature fits 8 columns by 4 rows at full
-// resolution. At this size only two things matter: the silhouette and the
-// ink of the eyes and mouth. Every body-coloured pixel (outline, shade,
-// belly, blush and highlights included) is drawn in the cell's most common
-// body colour; ink pixels show through as the background colour.
+// resolution. A cell carries up to two colours, like the half-block
+// renderer: the most common colour is the character's foreground and the
+// second most common its background, and every other pixel joins
+// whichever of the two it is nearer, so outlines, shading and eyes survive.
+// A cell on the sprite's edge, with transparent pixels, can only paint one
+// colour (the background would fill the transparent pixels too), so there
+// every pixel takes the most common colour.
 func OctantRows(px [N][N]string, ink string) [N / 4][N / 2]Cell {
 	var rows [N / 4][N / 2]Cell
 	for r := 0; r < N/4; r++ {
 		for c := 0; c < N/2; c++ {
+			var cell [8]string
 			counts := map[string]int{}
+			filled := 0
+			for i := range cell {
+				cell[i] = px[4*r+i/2][2*c+i%2]
+				if cell[i] != "" {
+					counts[cell[i]]++
+					filled++
+				}
+			}
+			if filled == 0 {
+				rows[r][c] = Cell{Char: " "}
+				continue
+			}
+			fg := mostCommon(counts)
+			bg := ""
+			if filled == 8 && len(counts) > 1 {
+				delete(counts, fg)
+				bg = mostCommon(counts)
+			}
 			var bits int
-			hasInk := false
-			for i := 0; i < 8; i++ {
-				v := px[4*r+i/2][2*c+i%2]
-				switch {
-				case v == "":
-				case v == ink:
-					hasInk = true
-				default:
-					counts[v]++
+			for i, v := range cell {
+				if v == "" {
+					continue
+				}
+				if bg == "" || nearer(v, fg, bg) {
 					bits |= 1 << i
 				}
 			}
-			switch {
-			case bits == 0 && hasInk:
-				rows[r][c] = Cell{Char: "█", Top: ink}
-			case bits == 0:
-				rows[r][c] = Cell{Char: " "}
-			case hasInk:
-				rows[r][c] = Cell{Char: string(octants[bits]), Top: mostCommon(counts), Bottom: ink}
-			default:
-				rows[r][c] = Cell{Char: string(octants[bits]), Top: mostCommon(counts)}
+			if bits == 0 {
+				// Everything sits nearer the background; swap so the
+				// character still has a foreground to draw.
+				fg, bg = bg, fg
+				bits = 0xff
 			}
+			rows[r][c] = Cell{Char: string(octants[bits]), Top: fg, Bottom: bg}
 		}
 	}
 	return rows
+}
+
+// nearer reports whether colour v is at least as close to a as to b.
+func nearer(v, a, b string) bool {
+	if v == a {
+		return true
+	}
+	if v == b {
+		return false
+	}
+	return dist(hexToRGB(v), hexToRGB(a)) <= dist(hexToRGB(v), hexToRGB(b))
+}
+
+func dist(a, b rgb) float64 {
+	d := 0.0
+	for i := range a {
+		d += (a[i] - b[i]) * (a[i] - b[i])
+	}
+	return d
 }
 
 // Ink is the colour Pixels draws eyes and mouths with for this body.
