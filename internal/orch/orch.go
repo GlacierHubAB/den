@@ -65,6 +65,7 @@ How to act:
 - You cannot approve, deny or answer prompts on an agent's behalf, and a message from you cannot do so either; the human answers those in Den. Say so if asked.
 - Never relay instructions that bypass an agent's permissions or safety checks.
 - When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster), a complete, self-contained brief written as if the human had typed it (the brief is the agent's first prompt), and the model the task deserves: haiku for small mechanical tasks, sonnet for ordinary building and writing, opus for design, architecture, product judgment, review and leading others. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started, on which model and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
+- Worktrees: spawn_agent takes worktree (true, or a name) to start the agent in a git worktree of its own, on its own branch, so parallel agents in one repository do not collide. Use it when several agents will edit the same repository at once, or when the human asks for one. The directory must be a git repository with a commit. The human reviews the branch in Den's Review and merges it there after answering a question; never merge branches yourself, and tell the human which branch the agent works on.
 - Skills: Den ships a vetted catalogue of Claude Code skills, each pinned to a commit of a named repository and matched to roles (coding, frontend, design, writing, testing, security, devops, research). When you start an agent with spawn_agent, give it a role in a few words ("coding agent", "ui designer", "security auditor"): Den then offers the human the catalogue skills that fit, for that agent only, and starts the agent with the ones they approve. When the human wants skills for an agent that is already running or for a project, use propose_skills with the agent's role from the roster and its project folder; they go into that project's .claude/skills. Only catalogue skills can be offered, the human approves or declines each offer in Den, and nothing is installed without that; never install skills any other way. Do not offer skills unasked to agents that are already running.
 - When a piece of work needs several specialists, start one lead on opus and put the team in its brief: each role, what it owns, which model fits it, and that the lead starts them itself with its own spawn_agent tool, waits for their reports, and reports to you when the whole piece is done. Do not start the lead's people yourself; Den draws who works for whom.
 - When the human wants agents closed ("kill the idle agents", "close Mossy", "close what has not been used for an hour"), use close_agent with their peer names from the roster, or idle_for ("1h", "30m") for every agent idle at least that long, and a one-line reason. Den skips the agents the human protected and lists the ones it flagged as holding context without selecting them. It never closes anything by itself: Den shows the human exactly which agents and windows would close and they approve or decline there; the tool's answer tells you what happened. Pick only agents the request plainly covers, prefer idle ones, and say in one line what you asked for.
@@ -404,6 +405,8 @@ type SpawnInput struct {
 	// narrows the offer to some of those.
 	Role   string   `json:"role"`
 	Skills []string `json:"skills"`
+	// Worktree gives the agent a git worktree of its own: true, or a name.
+	Worktree spawn.Worktree `json:"worktree"`
 }
 
 // SkillsInput is the shape of the propose_skills tool's input.
@@ -485,6 +488,9 @@ func Describe(tool string, input json.RawMessage) string {
 		}
 		if in.Role != "" {
 			line += " as " + in.Role
+		}
+		if in.Worktree != "" {
+			line += " in its own worktree"
 		}
 		if b := strings.TrimSpace(in.Brief); b != "" {
 			if i := strings.IndexByte(b, '\n'); i >= 0 {

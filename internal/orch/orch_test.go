@@ -2,10 +2,14 @@ package orch
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/spawn"
 )
 
 // fakeClaude speaks just enough stream-json to exercise the parser.
@@ -75,4 +79,22 @@ func TestRoundTripWithFakeClaude(t *testing.T) {
 	}
 	o.Close()
 	next(Exited)
+}
+
+func TestSpawnInputWorktree(t *testing.T) {
+	for in, want := range map[string]spawn.Worktree{
+		`{"dir":"/r","worktree":true}`:      spawn.WorktreeAuto,
+		`{"dir":"/r","worktree":"fix-one"}`: "fix-one",
+		`{"dir":"/r","worktree":false}`:     "",
+		`{"dir":"/r"}`:                      "",
+	} {
+		got, ok := ParseSpawn(json.RawMessage(in))
+		if !ok || got.Worktree != want {
+			t.Errorf("%s -> %q ok=%v, want %q", in, got.Worktree, ok, want)
+		}
+	}
+	line := Describe(SpawnAgentTool, json.RawMessage(`{"dir":"/r","brief":"x","worktree":true}`))
+	if !strings.Contains(line, "in its own worktree") {
+		t.Errorf("describe = %q", line)
+	}
 }

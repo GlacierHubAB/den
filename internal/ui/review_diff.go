@@ -278,7 +278,11 @@ func (m Model) workPane(w, h int) string {
 			nameS = nameS.Background(lipgloss.Color(s.pal.Sel))
 		}
 		bar := stripe.Render("▌")
-		meta := dim.Render(wk.Repo+" · ") + ok.Render(fmt.Sprintf("+%d", wk.Added)) + dim.Render(" ") + errS.Render(fmt.Sprintf("−%d", wk.Removed))
+		meta := dim.Render(wk.Repo + " · ")
+		if wk.Worktree && wk.Ahead > 0 {
+			meta += attn.Render(commitWord(wk.Ahead)) + dim.Render(" · ")
+		}
+		meta += ok.Render(fmt.Sprintf("+%d", wk.Added)) + dim.Render(" ") + errS.Render(fmt.Sprintf("−%d", wk.Removed))
 		if n := m.draftCount(wk.Root, wk.SessionID, ""); n > 0 {
 			meta += dim.Render(" · ") + attn.Render(fmt.Sprintf("%d ✎", n))
 		}

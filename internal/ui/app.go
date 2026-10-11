@@ -111,6 +111,7 @@ type Model struct {
 	srv        *bridge.Server
 	closing    map[string]closer.Plan     // close questions in the inbox, by item id
 	offers     map[string]skills.Approval // skills offers in the inbox, by item id
+	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard      *closer.Guard              // agents a close must leave alone or only propose when named
 	guardPath  string
@@ -939,6 +940,12 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Restore {
 		return m.decideRestore(it, verb)
 	}
+	if it.Kind == inbox.Merge {
+		return m.decideMerge(it, verb)
+	}
+	if it.Kind == inbox.Cleanup {
+		return m.decideCleanup(it, verb)
+	}
 	m.store.Answer(it, verb)
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
@@ -1012,6 +1019,10 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m.say("/send delivers review comments; open Review first.", true)
 		}
 		return m.sendReview(fields[1:])
+	case "/merge":
+		return m.mergeCommand(fields[1:])
+	case "/cleanup":
+		return m.cleanupCommand(fields[1:])
 	case "/review":
 		m.tab = tabReview
 		cmd := m.enteredTab()

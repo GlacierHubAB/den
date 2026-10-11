@@ -28,6 +28,8 @@ const (
 	Restore                // Den asks: reopen these agents with claude --resume? y/n answer it
 	Stalled                // working, but no hook event for a while; never "needs you"
 	Failed                 // a turn ended on an API error, or tool calls keep failing
+	Merge                  // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
+	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -56,6 +58,10 @@ func (k Kind) String() string {
 		return "stalled"
 	case Failed:
 		return "failed"
+	case Merge:
+		return "merge"
+	case Cleanup:
+		return "cleanup"
 	}
 	return "?"
 }
@@ -100,7 +106,7 @@ func (it *Item) Answerable() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -363,6 +369,18 @@ func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
 }
 
 // Settle resolves a Close, Skills, Budget or Restore item with the outcome and sends it to whoever
+// AddMerge adds Den's question: merge this agent's worktree branch? sessionID
+// is the agent that works in the worktree.
+func (s *Store) AddMerge(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Merge, Tool: "worktree_merge", Title: title, Body: body})
+}
+
+// AddCleanup adds Den's question: remove this agent's worktree?
+func (s *Store) AddCleanup(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Cleanup, Tool: "worktree_cleanup", Title: title, Body: body})
+}
+
+// Settle resolves a Close or Skills item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 	it.State, it.Resolved = Resolved, outcome

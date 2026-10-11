@@ -1,7 +1,9 @@
 package spawn
 
 import (
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -193,5 +195,95 @@ func TestRunResumesWithoutBrief(t *testing.T) {
 	}
 	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=demo-app-1a2b" || res.Name != "demo-app-1a2b" {
 		t.Errorf("env %v result %+v", gotEnv, res)
+	}
+}
+
+func TestWorktreeInputAcceptsABooleanOrAName(t *testing.T) {
+	for in, want := range map[string]Worktree{`true`: WorktreeAuto, `false`: "", `null`: "", `"feature-x"`: "feature-x", `"true"`: WorktreeAuto, `" "`: "", `"false"`: ""} {
+		var got Worktree
+		if err := got.UnmarshalJSON([]byte(in)); err != nil || got != want {
+			t.Errorf("%s -> %q (%v), want %q", in, got, err, want)
+		}
+	}
+	var req struct {
+		Worktree Worktree `json:"worktree"`
+	}
+	if err := json.Unmarshal([]byte(`{"worktree": true}`), &req); err != nil || req.Worktree != WorktreeAuto {
+		t.Errorf("inside a struct: %q %v", req.Worktree, err)
+	}
+	if err := json.Unmarshal([]byte(`{"worktree": 3}`), &req); err != nil || req.Worktree != "" {
+		t.Errorf("a number is ignored: %q %v", req.Worktree, err)
+	}
+}
+
+func TestRunStartsAnAgentInItsOwnWorktree(t *testing.T) {
+	repo := t.TempDir()
+	if r, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = r
+	}
+	git := func(args ...string) {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=T", "-c", "user.email=t@example.com"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+repo+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
+	SessionWait = 0
+	var gotCmd []string
+	Launch = func(d, title string, command, env []string) error { gotCmd = command; return nil }
+	t.Cleanup(func() { Launch = launch })
+
+	// No commit yet: nothing to branch from.
+	if _, err := Run(t.Context(), Request{Dir: repo, Agent: true, Name: "helper", Brief: "Fix.", Worktree: WorktreeAuto}); err == nil || !strings.Contains(err.Error(), "no commit yet") {
+		t.Fatalf("no commit: err = %v", err)
+	}
+	git("commit", "-q", "--allow-empty", "-m", "first")
+	if _, err := Run(t.Context(), Request{Dir: t.TempDir(), Agent: true, Brief: "Fix.", Worktree: WorktreeAuto}); err == nil || !strings.Contains(err.Error(), "not inside a git repository") {
+		t.Fatalf("not a repository: err = %v", err)
+	}
+
+	// true: a worktree named after the agent, in a subfolder too.
+	sub := filepath.Join(repo, "pkg")
+	os.MkdirAll(sub, 0o755)
+	res, err := Run(t.Context(), Request{Dir: sub, Agent: true, Name: "helper", Brief: "Fix the tests.", Orchestrator: "orc", Worktree: WorktreeAuto})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Worktree != "helper" || res.WorktreeBranch != "worktree-helper" || res.WorktreePath != filepath.Join(repo, ".claude", "worktrees", "helper") {
+		t.Errorf("result = %+v", res)
+	}
+	if strings.Join(gotCmd[:5], " ") != "claude --name helper --worktree helper" || gotCmd[5] != "--" {
+		t.Errorf("command = %v", gotCmd)
+	}
+	prompt := gotCmd[len(gotCmd)-1]
+	for _, s := range []string{"Fix the tests.", "your own git worktree, on branch worktree-helper", "Do not merge"} {
+		if !strings.Contains(prompt, s) {
+			t.Errorf("prompt lacks %q: %q", s, prompt)
+		}
+	}
+	res.Registered, res.Critter = true, "Mossy Lemur"
+	if d := res.Describe(); !strings.Contains(d, "own git worktree") || !strings.Contains(d, "worktree-helper") {
+		t.Errorf("describe = %q", d)
+	}
+
+	// An old worktree of that name exists: an automatic name takes the next free one.
+	os.MkdirAll(filepath.Join(repo, ".claude", "worktrees", "helper"), 0o755)
+	res, err = Run(t.Context(), Request{Dir: repo, Agent: true, Name: "helper", Brief: "Again.", Worktree: WorktreeAuto})
+	if err != nil || res.Worktree != "helper-2" {
+		t.Errorf("second: %+v %v", res, err)
+	}
+	// A name asked for is used as given, cleaned.
+	res, err = Run(t.Context(), Request{Dir: repo, Agent: true, Name: "helper", Brief: "Again.", Worktree: "Feature X"})
+	if err != nil || res.Worktree != "feature-x" || gotCmd[3] != "--worktree" || gotCmd[4] != "feature-x" {
+		t.Errorf("named: %+v %v %v", res, err, gotCmd)
+	}
+	// Without it nothing changes.
+	if _, err := Run(t.Context(), Request{Dir: repo, Agent: true, Name: "plain", Brief: "x"}); err != nil || strings.Contains(strings.Join(gotCmd, " "), "--worktree") {
+		t.Errorf("plain: %v %v", err, gotCmd)
 	}
 }

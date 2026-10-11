@@ -47,6 +47,7 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go`,
 | `internal/cost` | the price table, estimates, tree roll-ups and budget parsing |
 | `internal/templates` | mission templates: the built-ins (`builtin.json`, embedded) and the user's `templates.json` |
 | `internal/roster` | the snapshot of live agents behind the restore question and `/reopen`, persisted as `roster.json` |
+| `internal/worktree` | git worktrees: the main repository of a worktree, and the planned, re-checked merge and removal behind Review's `/merge` and `/cleanup` |
 | `internal/review` | diff against a base, per-line attribution to sessions, review comments |
 | `internal/mods` | list, install and uninstall the embedded mods |
 | `internal/config` | `config.toml` and the environment overrides |

@@ -86,6 +86,8 @@ on GitHub Actions. Only Linux binaries are built.
   `hyprctl` the Fleet, Inbox, Review, orchestrator and hooks still work; focus
   reports that no window was found. herdr panes are
   focused too when the agent runs inside one.
+- **git 2.38 or newer** for the merge check in Review (`git merge-tree
+  --write-tree`); the rest of Den does not need it.
 - **A terminal launcher for spawning:** `uwsm-app` with `xdg-terminal-exec`,
   or `xdg-terminal-exec` alone, or `$TERMINAL`. Without one `spawn_agent` and
   `open_terminal` report an error (`internal/spawn/spawn.go`).
@@ -309,6 +311,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/template`, `/template <name> <target or goal>`, `/template save <name>` | list the mission templates, start a proposal from one, save the open mission as one |
 | `/delete` `/del` | remove the review comment under the cursor |
 | `/send`, `/send <Name>`, `/send orchestrator` | send review drafts to their agents, to one agent, or those no live session can take to the orchestrator |
+| `/merge [<Name>]`, `/cleanup [<Name>]` | in Review, ask to merge the selected agent's worktree branch, and to remove its worktree |
 | `/help` `/?`, `/quit` `/q` `/exit` | |
 
 ## Keys
@@ -436,6 +439,22 @@ fixing, `opus` for work that needs judgment (design, architecture, review,
 leading others). The orchestrator picks by the task. Its spawn note says which
 (`▶ starting an agent in ~/code/site on opus · …`), and once the session
 registers the note becomes that agent's dispatch card.
+
+**A worktree per agent.** `spawn_agent` takes `worktree`: `true`, or a name.
+The agent is then started with `claude --worktree <name>`, so Claude Code gives
+it a git worktree of its own under `<repo>/.claude/worktrees/<name>` on a new
+branch `worktree-<name>`, and parallel agents in one repository do not edit
+the same files. With `true` the name is the agent's peer name (with a number
+added if that folder already exists). The folder must be in a git repository
+that has a commit; otherwise `spawn_agent` says so and starts nothing. The
+agent's brief is extended with its branch and the instruction to commit there
+and leave merging to you. A lead can give each of its people a tree the same
+way. By default Claude Code branches from the repository's default branch on
+the remote; its `worktree.baseRef` setting changes that. To carry gitignored
+files such as `.env` into every new worktree, use Claude Code's own
+`.worktreeinclude` file. Den has no per-repository setup command. Claude Code
+asks what to do with a worktree when its session exits; Den never removes one
+by itself (see Review).
 
 **Leads staff their own work.** Every agent the orchestrator starts gets Den's
 MCP server too, so it has `spawn_agent` itself, pre-approved. A lead's brief
@@ -751,6 +770,42 @@ Left column: **Recent work**, one entry per agent, and **Files** for the
 selected work. Centre: the diff. On wide terminals a right column lists the
 comments by recipient, with whether that agent is live: drafts first, then
 open (→) and addressed (✓). Narrower than 72 columns the diff is shown alone.
+
+### Worktrees in Review
+
+An agent that works in a git worktree (one Den started with `worktree`, one
+you started with `claude --worktree`, or one you made with `git worktree add`)
+is shown under the repository the worktree belongs to, not as a project of its
+own, and its row names its branch and how many commits it is ahead of the main
+checkout's branch. Its diff is still read inside the worktree, on its branch,
+from the commit Claude Code made the worktree from when the session recorded
+it (else the usual base). Review offers two things for it, next to `/send`
+(which sends your comments back to the agent):
+
+- **`/merge`** (or `/merge <Name>`) puts one question in the inbox and moves you
+  to it: the branch, the branch it goes into, the commits, the files with their
+  line counts, and whether it fast-forwards or needs a merge commit. Nothing is
+  merged by asking. Den checks first, with `git merge-tree`, which changes
+  nothing: the merge goes into the branch checked out in the repository's main
+  checkout, and only if that checkout is on a branch (not a detached HEAD), has
+  no staged, unstaged or untracked changes (Claude Code's own
+  `.claude/worktrees/` folders do not count) and no merge, rebase or
+  cherry-pick in progress, and the two branches combine without conflicts.
+  Otherwise it says exactly why and asks nothing; a conflict is listed in the
+  question and `Ctrl+Y` refuses it. `Ctrl+Y` checks again (same branch, same
+  commits on both sides, still clean) and then merges, as a fast-forward or with
+  a merge commit as the question said. If git fails anyway the merge is aborted,
+  so the checkout is never left half-merged. If either branch moved since the
+  question, it is dropped and `/merge` asks again. `Ctrl+N` drops it. Uncommitted
+  changes in the worktree are not carried by a merge, and the question says so.
+- **`/cleanup`**: removing the worktree is a second, separate question, asked
+  right after a successful merge and any time by `/cleanup`. It is refused while
+  an agent is still running in the worktree, and while the worktree has any
+  uncommitted or untracked file: Den never removes work that is not committed,
+  and never forces a removal. If git still holds the lock Claude Code took, Den
+  releases it only when the process named in the lock has ended. `Ctrl+Y` removes
+  the worktree and, only if its branch is merged into the main checkout's branch,
+  deletes the branch; an unmerged branch stays with its commits.
 
 ## The agent badge
 

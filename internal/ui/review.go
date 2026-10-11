@@ -39,6 +39,22 @@ type work struct {
 	Added     int // lines this agent added, across Files
 	Removed   int
 	Last      time.Time // newest change the agent made
+
+	// Main is the repository's primary checkout, which is what the project
+	// pick is made of; Root is where the diff is read, a linked worktree for
+	// an agent that works in one.
+	Main     string
+	Worktree bool   // Root is a linked worktree
+	Branch   string // the worktree's branch
+	Ahead    int    // commits on Branch that the main checkout's branch lacks
+}
+
+// project is the repository the work belongs to for the project pick.
+func (w work) project() string {
+	if w.Main != "" {
+		return w.Main
+	}
+	return w.Root
 }
 
 type reviewState struct {
@@ -195,7 +211,14 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 				since = a.Started
 			}
 		}
-		base, err := review.Base(ctx, root, since)
+		var paths []string
+		for _, a := range agents {
+			paths = append(paths, a.Path)
+		}
+		base, err := worktreeBase(ctx, root, paths)
+		if err != nil {
+			base, err = review.Base(ctx, root, since)
+		}
 		if err == nil {
 			var files []review.File
 			files, err = review.Diff(ctx, root, base)
@@ -206,7 +229,9 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 					sources = append(sources, review.Source{SessionID: a.SessionID, Changes: a.changes})
 				}
 				review.Attribute(root, files, sources)
-				works = append(works, splitWorks(root, files, sources)...)
+				ws := splitWorks(root, files, sources)
+				annotateWorktree(ctx, root, ws)
+				works = append(works, ws...)
 			}
 		}
 		if err != nil {
@@ -316,7 +341,7 @@ func (m *Model) applyReview(msg reviewLoadedMsg) {
 	m.rev.all, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
 	m.rev.works = nil
 	for _, w := range msg.works {
-		if m.proj.cur == "" || w.Root == m.proj.cur {
+		if m.proj.cur == "" || w.project() == m.proj.cur {
 			m.rev.works = append(m.rev.works, w)
 		}
 	}

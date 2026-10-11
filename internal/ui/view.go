@@ -540,6 +540,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
 	case it.Answerable() && it.Kind == inbox.Restore:
 		out = append(out, key("^Y", "reopen")+"  "+key("^N", "leave closed"))
+	case it.Answerable() && it.Kind == inbox.Merge:
+		out = append(out, key("^Y", "merge it")+"  "+key("^N", "not now"))
+	case it.Answerable() && it.Kind == inbox.Cleanup:
+		out = append(out, key("^Y", "remove the worktree")+"  "+key("^N", "keep it"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	default:
@@ -700,6 +704,12 @@ func (m Model) inboxPane(w, h int) string {
 			}
 			if it.Kind == inbox.Restore {
 				acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
+			}
+			if it.Kind == inbox.Merge {
+				acts = key("^Y", "merge it") + sp + sp + key("^N", "not now")
+			}
+			if it.Kind == inbox.Cleanup {
+				acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:
@@ -994,6 +1004,9 @@ func (m Model) hints(w int) string {
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:
 		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"/send [name|orchestrator]", "send drafts"}, {"Tab", "view"}, {"^C", "quit"}}
+		if w := m.curWork(); w != nil && w.Worktree {
+			items = append(items[:7:7], [2]string{"/merge", "ask to merge " + w.Branch}, [2]string{"/cleanup", "remove its worktree"}, items[7], items[8])
+		}
 	case m.tab == tabOrch:
 		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tree.mapView:

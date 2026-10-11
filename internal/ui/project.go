@@ -12,9 +12,9 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
-	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/transcript"
+	"github.com/GlacierHubAB/den/internal/worktree"
 )
 
 // A project is a repository agents work in: found through the files their
@@ -43,7 +43,9 @@ var (
 )
 
 // gitRootOf is the repository root above dir, remembered per directory so
-// a refresh costs one git call per new folder, not per file.
+// a refresh costs one git call per new folder, not per file. A linked
+// worktree maps to the main checkout it belongs to, so an agent working in
+// one shows under its project.
 func gitRootOf(dir string) string {
 	rootMu.Lock()
 	r, ok := rootCache[dir]
@@ -53,10 +55,7 @@ func gitRootOf(dir string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	r, err := review.Root(ctx, dir)
-	if err != nil {
-		r = ""
-	}
+	r = worktree.MainRoot(ctx, dir)
 	rootMu.Lock()
 	rootCache[dir] = r
 	rootMu.Unlock()

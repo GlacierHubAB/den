@@ -107,6 +107,33 @@ func Base(ctx context.Context, dir string, since time.Time) (string, error) {
 	return emptyTree(ctx, dir)
 }
 
+// Ahead counts the commits on branch that target does not have.
+func Ahead(ctx context.Context, dir, target, branch string) int {
+	out, err := git(ctx, dir, "rev-list", "--count", target+".."+branch)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// BaseAt is commit as the base of the work in dir when it is still part of
+// dir's history (an ancestor of HEAD), as the commit a worktree was made
+// from is; false when it is not, and Base should be used.
+func BaseAt(ctx context.Context, dir, commit string) (string, bool) {
+	if strings.TrimSpace(commit) == "" {
+		return "", false
+	}
+	full, err := git(ctx, dir, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return "", false
+	}
+	if _, err := git(ctx, dir, "merge-base", "--is-ancestor", strings.TrimSpace(full), "HEAD"); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(full), true
+}
+
 func emptyTree(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "hash-object", "-t", "tree", "--stdin")
 	cmd.Stdin = strings.NewReader("")

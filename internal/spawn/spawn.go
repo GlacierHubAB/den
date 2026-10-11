@@ -28,6 +28,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/worktree"
 )
 
 // Request says what to open.
@@ -46,6 +47,10 @@ type Request struct {
 	// AddDirs are given to claude with --add-dir: the agent's private
 	// skills folder, when the human approved skills for it.
 	AddDirs []string
+	// Worktree starts the agent in a git worktree of its own, made by
+	// Claude Code (claude --worktree) under <repo>/.claude/worktrees: "" for
+	// none, WorktreeAuto for one named after the agent, else the name.
+	Worktree Worktree
 	// Spawner is the Den binary; when set, the agent gets Den's MCP server
 	// and so the spawn_agent tool, to start teammates of its own.
 	Spawner string
@@ -54,6 +59,38 @@ type Request struct {
 	// conversation a new session id (--fork-session).
 	Resume string
 	Fork   bool
+}
+
+// Worktree is spawn_agent's worktree input: true (a worktree named after
+// the agent), false, or the name to give it.
+type Worktree string
+
+// WorktreeAuto asks for a worktree named after the agent.
+const WorktreeAuto Worktree = "\x00auto"
+
+// UnmarshalJSON reads true, false, null or a string.
+func (w *Worktree) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch x := v.(type) {
+	case bool:
+		*w = ""
+		if x {
+			*w = WorktreeAuto
+		}
+	case string:
+		*w = Worktree(strings.TrimSpace(x))
+		if strings.EqualFold(string(*w), "true") {
+			*w = WorktreeAuto
+		} else if strings.EqualFold(string(*w), "false") {
+			*w = ""
+		}
+	default:
+		*w = ""
+	}
+	return nil
 }
 
 // Models the spawn tool offers, cheapest first, with when to pick each.
@@ -90,9 +127,15 @@ type Result struct {
 	SessionID  string
 	Registered bool   // the session file appeared within the wait
 	Model      string // the model it was started on, "" for the default
-	Window     string // Hyprland address of the new terminal, "" when unknown
-	Workspace  string // where the window is, "" when unknown
-	Moved      bool   // it landed elsewhere and was moved to the active workspace
+	// Worktree is the name of the git worktree the agent works in ("" when
+	// it shares the folder), WorktreePath where Claude Code puts it and
+	// WorktreeBranch the branch it is on.
+	Worktree       string
+	WorktreePath   string
+	WorktreeBranch string
+	Window         string // Hyprland address of the new terminal, "" when unknown
+	Workspace      string // where the window is, "" when unknown
+	Moved          bool   // it landed elsewhere and was moved to the active workspace
 	// Untrusted means Claude Code has never been told to trust this folder,
 	// so it is asking the human in the new terminal before starting.
 	Untrusted bool
@@ -131,6 +174,14 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		sessions, _ := discover.Scan()
 		res.Name = PeerName(req.Name, dir, sessions)
 		res.Model = req.Model
+		if req.Worktree != "" {
+			name, path, err := planWorktree(dir, req.Worktree, res.Name)
+			if err != nil {
+				return res, err
+			}
+			req.Worktree = Worktree(name)
+			res.Worktree, res.WorktreePath, res.WorktreeBranch = name, path, WorktreeBranch(name)
+		}
 		command = Command(req, res.Name)
 	}
 	// The agent's own spawns name it as their lead through this variable;
@@ -205,6 +256,46 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
+// WorktreeBranch is the branch Claude Code gives a worktree called name.
+func WorktreeBranch(name string) string { return "worktree-" + name }
+
+// worktreeNote is added to the brief of an agent that has a worktree.
+func worktreeNote(name string) string {
+	return "You work in your own git worktree, on branch " + WorktreeBranch(name) + ". Commit your work there as you go. Do not merge, rebase onto or push to the main branch and do not switch branches in the main checkout: the human reviews your branch in Den and merges it."
+}
+
+// planWorktree decides the worktree's name and where Claude Code will put
+// it, and checks the folder is a repository with a commit to branch from.
+// A name asked for may reopen a worktree that exists (Claude Code does
+// that); a name made from the agent's never does.
+func planWorktree(dir string, want Worktree, agent string) (name, path string, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	root := worktree.MainRoot(ctx, dir)
+	if root == "" {
+		return "", "", fmt.Errorf("worktree: %s is not inside a git repository", dir)
+	}
+	if err := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}").Run(); err != nil {
+		return "", "", fmt.Errorf("worktree: %s has no commit yet to branch from", root)
+	}
+	base := agent
+	if want != WorktreeAuto {
+		base = string(want)
+	}
+	base = strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(base), "-"), "-")
+	if base == "" {
+		base = "agent"
+	}
+	name = base
+	for i := 2; want == WorktreeAuto; i++ {
+		if _, err := os.Stat(filepath.Join(root, ".claude", "worktrees", name)); err != nil {
+			break
+		}
+		name = base + "-" + strconv.Itoa(i)
+	}
+	return name, filepath.Join(root, ".claude", "worktrees", name), nil
+}
+
 // Describe is the tool result the orchestrator reads.
 func (r Result) Describe() string {
 	where := shortDir(r.Dir)
@@ -225,7 +316,11 @@ func (r Result) Describe() string {
 	if r.Model != "" {
 		model = " on " + r.Model
 	}
-	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and SendMessage to %q reaches it.", r.Critter, r.Name, where, ws, model, r.Critter, r.Name)
+	tree := ""
+	if r.Worktree != "" {
+		tree = fmt.Sprintf(" It works in its own git worktree %s on branch %s; the human merges that branch in Den's Review.", shortDir(r.WorktreePath), r.WorktreeBranch)
+	}
+	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and SendMessage to %q reaches it.%s", r.Critter, r.Name, where, ws, model, r.Critter, r.Name, tree)
 }
 
 // Command is the claude command line for an agent named name.
@@ -237,6 +332,8 @@ func Command(req Request, name string) []string {
 			command = append(command, "--fork-session")
 		}
 		command = append(command, "--name", name)
+	} else if req.Worktree != "" && req.Worktree != WorktreeAuto {
+		command = append(command, "--worktree", string(req.Worktree))
 	}
 	for _, d := range req.AddDirs {
 		command = append(command, "--add-dir", d)
@@ -255,7 +352,11 @@ func Command(req Request, name string) []string {
 	}
 	// --allowedTools takes a list, so the prompt after it would be read as
 	// one more tool; "--" ends the options.
-	return append(command, "--", Prompt(req.Brief, req.Orchestrator, req.Lead, req.Spawner != ""))
+	prompt := Prompt(req.Brief, req.Orchestrator, req.Lead, req.Spawner != "")
+	if req.Worktree != "" && req.Worktree != WorktreeAuto {
+		prompt += "\n\n" + worktreeNote(string(req.Worktree))
+	}
+	return append(command, "--", prompt)
 }
 
 // The MCP server Den offers and the tools on it, as Claude Code names them.

@@ -35,12 +35,13 @@ func runMCP() {
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"dir":    dirSchema,
-					"brief":  map[string]any{"type": "string", "description": "What the agent should do, as its first prompt."},
-					"name":   map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
-					"model":  map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
-					"role":   map[string]any{"type": "string", "description": "The agent's role in a few words: coding agent, ui designer, frontend developer, qa automation, security auditor. Den offers the human the skills from its vetted catalogue that fit the role, for this agent only, and waits for their answer before starting it; the agent starts either way, with the skills they approved."},
-					"skills": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these of the role's catalogue skills."},
+					"dir":      dirSchema,
+					"brief":    map[string]any{"type": "string", "description": "What the agent should do, as its first prompt."},
+					"name":     map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
+					"model":    map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
+					"role":     map[string]any{"type": "string", "description": "The agent's role in a few words: coding agent, ui designer, frontend developer, qa automation, security auditor. Den offers the human the skills from its vetted catalogue that fit the role, for this agent only, and waits for their answer before starting it; the agent starts either way, with the skills they approved."},
+					"skills":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these of the role's catalogue skills."},
+					"worktree": map[string]any{"oneOf": []any{map[string]any{"type": "boolean"}, map[string]any{"type": "string"}}, "description": "Optional: start the agent in a git worktree of its own (true, or a name for it), made by Claude Code under <repo>/.claude/worktrees on branch worktree-<name>, so agents editing one repository do not collide. dir must be in a git repository that has a commit. The human reviews and merges the branch in Den's Review; the agent is told to commit there and not to merge."},
 				},
 				"required": []string{"dir", "brief"},
 			},
@@ -49,7 +50,7 @@ func runMCP() {
 				if !ok {
 					return "", errDir
 				}
-				req := spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Spawner: exe}
+				req := spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Worktree: in.Worktree, Spawner: exe}
 				note := ""
 				if strings.TrimSpace(in.Role) != "" {
 					var err error
