@@ -146,6 +146,7 @@ func New(cfg config.Config) Model {
 	m.chatLog = ChatLogPath()
 	m.orch.chat, m.orch.resume = loadChatLog(m.chatLog, maxChatLog)
 	m.orch.reconcile = len(m.liveCards()) > 0
+	m.backfillEdges()
 	m.srv, m.srvErr = bridge.Listen(bridge.SocketPath())
 	m.hooksReady = hooks.Installed("")
 	m.rev.commentsPath = review.CommentsPath()

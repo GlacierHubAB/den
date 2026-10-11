@@ -65,6 +65,24 @@ func (m *Model) learnEdge(e tree.Edge) {
 	_ = tree.Append(m.tree.path, e) // best effort: the tree works without the file
 }
 
+// backfillEdges seeds the tree from the restored chat when the record on
+// disk has nothing yet: every dispatch card from the last day is an edge
+// from the orchestrator, so a Den upgraded mid-flight still shows who is
+// working for it. Pruning drops the ones whose sessions are gone.
+func (m *Model) backfillEdges() {
+	m.ensureTree()
+	if m.tree.edges.Len() > 0 {
+		return
+	}
+	cutoff := time.Now().Add(-24 * time.Hour)
+	for _, e := range m.orch.chat {
+		if e.card == nil || e.card.SessionID == "" || e.card.SentAt.Before(cutoff) {
+			continue
+		}
+		m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: e.card.SessionID, Brief: firstLineOf(e.card.Brief), At: e.card.SentAt, Source: "dispatch"})
+	}
+}
+
 // learnPeer reads a peer message's sender out of a UserPromptSubmit hook:
 // the sender directs the receiver from now on, unless the receiver already
 // sits above the sender, in which case this is a report back.
