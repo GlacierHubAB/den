@@ -24,5 +24,6 @@ jobs:
           files: |
             dist/den_linux_amd64
             dist/den_linux_arm64
+            dist/THIRD_PARTY_LICENSES
             dist/SHA256SUMS
           generate_release_notes: true

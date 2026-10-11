@@ -21,7 +21,8 @@ release: clean
 	for arch in amd64 arm64; do \
 	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o dist/den_linux_$$arch ./cmd/den || exit 1; \
 	done
-	cd dist && sha256sum den_* > SHA256SUMS
+	cp THIRD_PARTY_LICENSES dist/THIRD_PARTY_LICENSES
+	cd dist && sha256sum den_* THIRD_PARTY_LICENSES > SHA256SUMS
 	@ls -l dist
 
 clean:
