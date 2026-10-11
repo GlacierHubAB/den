@@ -729,6 +729,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `colors.json` | the colour of each session |
 | `attachments/` | images pasted from the clipboard |
 
+Templates you save go to `~/.config/den/templates.json`, beside `config.toml`.
 Den also edits `~/.claude/settings.json` (hooks, with a backup beside it) and
 `~/.claude/skills` (the badge mod), writes `<project>/.claude/skills` only
 for skills you approved for that project, and listens on a Unix socket in
@@ -781,6 +782,9 @@ What Den does that is its own:
 - **Cost:** tokens rolled up per team and per mission run, an estimate in
   dollars at list price, and an optional budget on a mission. (OpenRig also
   counts tokens per seat.)
+- **Mission templates:** four built in (code review, bugfix, research, docs
+  pass), and your own saved from a mission; the orchestrator proposes and you
+  confirm. (OpenRig also ships built-in teams and shareable bundles.)
 - **The agent badge:** a name, critter, role and task for each session.
 
 Where the others go further: Herdr keeps agents alive when you close the
