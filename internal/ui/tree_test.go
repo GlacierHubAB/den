@@ -7,6 +7,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -159,4 +161,66 @@ func (m Model) requestJoined(sid string, w int) string {
 	}
 	a, _ := m.agentFor(sid)
 	return strings.Join(m.requestLines(it, a, w), "\n")
+}
+
+func TestSpawnsMakeEdgesUnderWhoeverStartedThem(t *testing.T) {
+	m := treeModel()
+	m.base[2].Session.Name = "designer" // Fuzzy
+	m.base[3].Session.Name = "copy"     // Maple
+	m.refresh()
+
+	// A lead's own spawn, seen through its PostToolUse hook.
+	m.learnSpawn(`Started Fuzzy Sprite (peer "designer") in ~/site on opus. It has the brief as its first prompt.`, "mossy-lemur", "", "Design the site.\nUse the design file.")
+	if e := m.edgeFor("fuzzy-sprite"); e.Parent != "mossy-lemur" || e.Brief != "Design the site. …" || e.Source != "spawn" {
+		t.Errorf("lead's spawn edge = %+v", e)
+	}
+
+	// The orchestrator's spawn: its note becomes the agent's card.
+	now := time.Now()
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "▶ starting an agent in ~/site", toolUseID: "t9", at: now})
+	m.noteSpawn("t9", "Lead the website build.", "", now)
+	m.learnSpawn(`Started Maple Owl (peer "copy") in ~/site on workspace 2 on opus.`, tree.Orchestrator, "t9", "")
+	if e := m.edgeFor("maple-owl"); e.Parent != tree.Orchestrator || e.Brief != "Lead the website build." {
+		t.Errorf("orchestrator's spawn edge = %+v", e)
+	}
+	last := m.orch.chat[len(m.orch.chat)-1]
+	if last.role != "card" || last.card == nil || last.card.SessionID != "maple-owl" || last.card.State != cardWorking || last.card.Brief != "Lead the website build." {
+		t.Fatalf("spawn note did not become a card: %+v", last)
+	}
+
+	// A session not in the fleet yet waits.
+	m.learnSpawn(`Started Someone (peer "nobody") in ~/site.`, "mossy-lemur", "", "x")
+	if len(m.tree.pending) != 1 || m.tree.pending[0].peer != "nobody" {
+		t.Errorf("pending = %+v", m.tree.pending)
+	}
+}
+
+func TestLeadCardWaitsForItsTeam(t *testing.T) {
+	m := treeModel() // Snug leads Mossy (needs you) and Fuzzy (idle)
+	now := time.Now()
+	d := &dispatch{ID: "c1", SessionID: "snug-capybara", Agent: "Snug Capybara", Brief: "lead the release", SentAt: now, StartedAt: now, State: cardWorking}
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, at: now})
+	stop := &bridge.Request{Envelope: bridge.Envelope{Event: "Stop", SessionID: "snug-capybara"}, Input: bridge.HookInput{LastAssistant: "Team started; waiting for their reports."}}
+	m.trackHook(stop, nil)
+	if d.State != cardWorking || d.Ticker != "waiting on 1 agent" || d.Stopped.IsZero() || d.Result == "" {
+		t.Fatalf("lead's card after its turn: %+v", d)
+	}
+	m.settleCards()
+	if d.State != cardWorking {
+		t.Fatalf("settled while a teammate needs the human: %+v", d)
+	}
+	m.base[0].Status = fleet.Idle // Mossy done
+	m.base[1].Status = fleet.Idle // Snug between turns
+	m.refresh()
+	m.settleCards()
+	if d.State != cardDone || d.EndedAt.IsZero() || d.Result != "Team started; waiting for their reports." {
+		t.Errorf("lead's card once the team is done: %+v", d)
+	}
+	// A plain agent's Stop still ends its card at once.
+	e := &dispatch{ID: "c2", SessionID: "fuzzy-sprite", Agent: "Fuzzy Sprite", Brief: "x", SentAt: now, StartedAt: now, State: cardWorking}
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: e, at: now})
+	m.trackHook(&bridge.Request{Envelope: bridge.Envelope{Event: "Stop", SessionID: "fuzzy-sprite"}, Input: bridge.HookInput{LastAssistant: "done"}}, nil)
+	if e.State != cardDone {
+		t.Errorf("plain card = %+v", e)
+	}
 }

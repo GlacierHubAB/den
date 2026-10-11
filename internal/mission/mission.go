@@ -85,11 +85,37 @@ type Mission struct {
 	Cadence     string    `json:"cadence,omitempty"` // for Schedule
 	Reason      string    `json:"reason,omitempty"`  // why that shape, one line
 	Agents      []string  `json:"agents,omitempty"`  // critter names the orchestrator means to use
+	Team        []Member  `json:"team,omitempty"`    // roles to start, leads before their people
 	State       State     `json:"state"`
 	Created     time.Time `json:"created"`
 	Updated     time.Time `json:"updated"`
 	NextRun     time.Time `json:"next_run,omitempty"`
 	Runs        []Run     `json:"runs,omitempty"`
+}
+
+// Member is a role the orchestrator means to start for the mission.
+type Member struct {
+	Role  string `json:"role"`
+	Model string `json:"model,omitempty"`
+	Under string `json:"under,omitempty"` // the role it reports to, "" for the orchestrator
+}
+
+// Leads lists the members who report to the orchestrator, in order.
+func Leads(team []Member) []Member { return Under(team, "") }
+
+// Under lists the members who report to the given role, in order.
+func Under(team []Member, role string) []Member {
+	var out []Member
+	for _, m := range team {
+		u := strings.ToLower(strings.TrimSpace(m.Under))
+		if u == "orchestrator" || u == "den" {
+			u = ""
+		}
+		if strings.EqualFold(u, role) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // Live reports whether the mission still has work ahead of it.
@@ -267,6 +293,7 @@ type Proposal struct {
 	Cadence     string   `json:"cadence"`
 	Reason      string   `json:"reason"`
 	Agents      []string `json:"agents"`
+	Team        []Member `json:"team"`
 }
 
 // Update is the orchestrator's word on a running mission.
@@ -321,7 +348,7 @@ func (m *Mission) Apply(p Proposal) {
 		m.Name = p.Name
 	}
 	m.Mission, m.DoneWhen, m.Constraints = p.Mission, p.DoneWhen, p.Constraints
-	m.Shape, m.Cadence, m.Reason, m.Agents = p.Shape, p.Cadence, p.Reason, p.Agents
+	m.Shape, m.Cadence, m.Reason, m.Agents, m.Team = p.Shape, p.Cadence, p.Reason, p.Agents, p.Team
 	if m.Name == "" {
 		m.Name = shortName(m.Mission)
 	}
@@ -353,6 +380,23 @@ func (m *Mission) Describe() string {
 	b.WriteString("\n")
 	if len(m.Agents) > 0 {
 		fmt.Fprintf(&b, "- agents: %s\n", strings.Join(m.Agents, ", "))
+	}
+	for _, t := range m.Team {
+		line := "- team: " + t.Role
+		if t.Model != "" {
+			line += " on " + t.Model
+		}
+		if u := Under(m.Team, t.Role); len(u) > 0 {
+			var roles []string
+			for _, x := range u {
+				roles = append(roles, x.Role)
+			}
+			line += ", leading " + strings.Join(roles, ", ")
+		}
+		if t.Under != "" && !strings.EqualFold(t.Under, "orchestrator") {
+			line += ", under " + t.Under
+		}
+		b.WriteString(line + "\n")
 	}
 	return b.String()
 }

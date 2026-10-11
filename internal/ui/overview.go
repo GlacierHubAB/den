@@ -199,6 +199,11 @@ func (m Model) missionBrief(ms *mission.Mission) string {
 	if len(ms.Agents) > 0 {
 		parts = append(parts, strings.Join(ms.Agents, ", "))
 	}
+	if n := len(ms.Team); n == 1 {
+		parts = append(parts, ms.Team[0].Role)
+	} else if n > 1 {
+		parts = append(parts, fmt.Sprintf("team of %d", n))
+	}
 	if ms.DoneWhen != "" {
 		parts = append(parts, "done when "+ms.DoneWhen)
 	}
@@ -302,6 +307,60 @@ func (m Model) fieldLines(ms *mission.Mission, w int) []string {
 			names = append(names, style.Render(n))
 		}
 		out = append(out, s.dim.Render(fmt.Sprintf("  %-12s", "agents"))+strings.Join(names, s.dim.Render(", ")))
+	}
+	if len(ms.Team) > 0 {
+		label := s.dim.Render(fmt.Sprintf("  %-12s", "team"))
+		for i, l := range m.teamLines(ms.Team) {
+			if i > 0 {
+				label = strings.Repeat(" ", 14)
+			}
+			out = append(out, ansi.Truncate(label+l, w, "…"))
+		}
+	}
+	return out
+}
+
+// teamLines draws the roles to start as a tree, leads above their people,
+// each with its model.
+func (m Model) teamLines(team []mission.Member) []string {
+	s := m.st
+	var out []string
+	seen := map[string]bool{}
+	var walk func(members []mission.Member, prefix string)
+	walk = func(members []mission.Member, prefix string) {
+		for i, t := range members {
+			key := strings.ToLower(t.Role)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			guide, cont := "", ""
+			if prefix != "" || len(out) > 0 || len(mission.Leads(team)) > 1 {
+				if i == len(members)-1 {
+					guide, cont = prefix+"└─ ", prefix+"   "
+				} else {
+					guide, cont = prefix+"├─ ", prefix+"│  "
+				}
+			}
+			line := s.dim.Render(guide) + s.fg.Render(t.Role)
+			if t.Model != "" {
+				line += s.dim.Render(" · ") + s.bright.Render(t.Model)
+			}
+			out = append(out, line)
+			walk(mission.Under(team, t.Role), cont)
+		}
+	}
+	walk(mission.Leads(team), "")
+	// Roles whose lead is not in the team still show, flat.
+	for _, t := range team {
+		if !seen[strings.ToLower(t.Role)] {
+			seen[strings.ToLower(t.Role)] = true
+			line := s.fg.Render(t.Role)
+			if t.Model != "" {
+				line += s.dim.Render(" · ") + s.bright.Render(t.Model)
+			}
+			out = append(out, line)
+		}
 	}
 	return out
 }

@@ -63,9 +63,9 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
 	SessionWait = 0
 	var gotDir, gotTitle string
-	var gotCmd []string
-	Launch = func(d, title string, command []string) error {
-		gotDir, gotTitle, gotCmd = d, title, command
+	var gotCmd, gotEnv []string
+	Launch = func(d, title string, command, env []string) error {
+		gotDir, gotTitle, gotCmd, gotEnv = d, title, command, env
 		return nil
 	}
 	t.Cleanup(func() { Launch = launch })
@@ -85,8 +85,11 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if len(gotCmd) != 4 || gotCmd[0] != "claude" || gotCmd[1] != "--name" || gotCmd[2] != "helper" {
 		t.Errorf("command = %v", gotCmd)
 	}
-	if !strings.Contains(gotCmd[3], `peer "orc"`) || !strings.HasSuffix(gotCmd[3], "Fix the tests.") {
+	if !strings.Contains(gotCmd[3], `peer "orc"`) || !strings.HasSuffix(gotCmd[3], "Fix the tests.") || strings.Contains(gotCmd[3], "spawn_agent") {
 		t.Errorf("prompt = %q", gotCmd[3])
+	}
+	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=helper" {
+		t.Errorf("env = %v", gotEnv)
 	}
 	if res.Registered || res.Name != "helper" || gotTitle != "den · helper" {
 		t.Errorf("result = %+v title %q", res, gotTitle)
@@ -96,6 +99,28 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	}
 	if _, err := Run(t.Context(), Request{Dir: dir, Agent: true}); err == nil {
 		t.Error("an agent without a brief should fail")
+	}
+	if _, err := Run(t.Context(), Request{Dir: dir, Agent: true, Brief: "x", Model: "gpt"}); err == nil || !strings.Contains(err.Error(), "haiku, sonnet, opus") {
+		t.Errorf("an unknown model should fail naming the choices, got %v", err)
+	}
+
+	// A lead's teammate: on its model, with Den's tools, reporting to the lead.
+	res, err = Run(t.Context(), Request{Dir: dir, Agent: true, Name: "designer", Brief: "Design it.", Model: "opus", Orchestrator: "orc", Lead: "pm", Spawner: "/opt/den"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"claude", "--name", "designer", "--model", "opus", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
+	if len(gotCmd) != len(want)+1 || strings.Join(gotCmd[:len(want)], " ") != strings.Join(want, " ") {
+		t.Errorf("command = %v", gotCmd)
+	}
+	prompt := gotCmd[len(gotCmd)-1]
+	for _, s := range []string{`your lead (peer "pm")`, `SendMessage to your lead, "pm"`, "spawn_agent", "opus for work that needs judgment", "Design it."} {
+		if !strings.Contains(prompt, s) {
+			t.Errorf("prompt lacks %q: %q", s, prompt)
+		}
+	}
+	if res.Model != "opus" || !strings.Contains(res.Describe(), `"designer"`) {
+		t.Errorf("result = %+v", res)
 	}
 
 	// An untrusted folder: no wait, and the answer says who has to act.

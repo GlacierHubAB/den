@@ -36,7 +36,42 @@ type Request struct {
 	Agent        bool   // start Claude Code in the terminal
 	Brief        string // the agent's first prompt (Agent only)
 	Name         string // the agent's peer name; generated when empty
-	Orchestrator string // peer name the agent is told to report to
+	Orchestrator string // peer name of Den's orchestrator
+	// Lead is the peer name of the agent that is starting this one, when it
+	// is not the orchestrator: the new agent reports to its lead.
+	Lead string
+	// Model is the claude --model value for the agent ("" for the default).
+	// Models says which ones the tool offers and when.
+	Model string
+	// Spawner is the Den binary; when set, the agent gets Den's MCP server
+	// and so the spawn_agent tool, to start teammates of its own.
+	Spawner string
+}
+
+// Models the spawn tool offers, cheapest first, with when to pick each.
+var Models = []struct{ Name, When string }{
+	{"haiku", "small, mechanical, well-specified tasks: a sitemap, a lint pass, a file move"},
+	{"sonnet", "ordinary building, writing and fixing with a clear brief"},
+	{"opus", "work that needs judgment: design, architecture, product decisions, reviewing, leading other agents"},
+}
+
+// ModelNames lists the names in Models.
+func ModelNames() []string {
+	var out []string
+	for _, m := range Models {
+		out = append(out, m.Name)
+	}
+	return out
+}
+
+// ValidModel reports whether the tool offers the model.
+func ValidModel(name string) bool {
+	for _, m := range Models {
+		if m.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Result says what happened.
@@ -46,6 +81,7 @@ type Result struct {
 	Critter    string // the agent's critter name once its session registered
 	SessionID  string
 	Registered bool   // the session file appeared within the wait
+	Model      string // the model it was started on, "" for the default
 	Window     string // Hyprland address of the new terminal, "" when unknown
 	Workspace  string // where the window is, "" when unknown
 	Moved      bool   // it landed elsewhere and was moved to the active workspace
@@ -62,7 +98,8 @@ var (
 )
 
 // Launch starts the terminal process; tests replace it. dir and title are
-// for the terminal, command is what runs inside it ("" for a shell).
+// for the terminal, command is what runs inside it (empty for a shell) and
+// env is added to the process environment.
 var Launch = launch
 
 // Run opens the terminal and, for an agent, waits for its session to
@@ -79,9 +116,19 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		if strings.TrimSpace(req.Brief) == "" {
 			return res, errors.New("an agent needs a brief")
 		}
+		if req.Model != "" && !ValidModel(req.Model) {
+			return res, fmt.Errorf("unknown model %q: pick one of %s", req.Model, strings.Join(ModelNames(), ", "))
+		}
 		sessions, _ := discover.Scan()
 		res.Name = PeerName(req.Name, dir, sessions)
-		command = []string{"claude", "--name", res.Name, Prompt(req.Brief, req.Orchestrator)}
+		res.Model = req.Model
+		command = Command(req, res.Name)
+	}
+	// The agent's own spawns name it as their lead through this variable;
+	// the orchestrator's marker must not leak into agents it starts.
+	var env []string
+	if res.Name != "" {
+		env = append(env, "DEN_PEER="+res.Name)
 	}
 
 	// Where the human is right now is where the window must end up.
@@ -100,7 +147,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		title = "den · " + res.Name
 	}
 	started := time.Now()
-	if err := Launch(dir, title, command); err != nil {
+	if err := Launch(dir, title, command, env); err != nil {
 		return res, err
 	}
 
@@ -165,16 +212,68 @@ func (r Result) Describe() string {
 	if !r.Registered {
 		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. The session has not registered yet; it will appear in the roster shortly, and SendMessage to %q reaches it once it has.", where, ws, r.Name, r.Name)
 	}
-	return fmt.Sprintf("Started %s (peer %q) in %s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and SendMessage to %q reaches it.", r.Critter, r.Name, where, ws, r.Critter, r.Name)
+	model := ""
+	if r.Model != "" {
+		model = " on " + r.Model
+	}
+	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and SendMessage to %q reaches it.", r.Critter, r.Name, where, ws, model, r.Critter, r.Name)
+}
+
+// Command is the claude command line for an agent named name.
+func Command(req Request, name string) []string {
+	command := []string{"claude", "--name", name}
+	if req.Model != "" {
+		command = append(command, "--model", req.Model)
+	}
+	if req.Spawner != "" {
+		// Den's server beside the user's own: the agent keeps its usual
+		// tools and gains spawn_agent, pre-approved so a lead can staff its
+		// work without a permission prompt per teammate.
+		command = append(command, "--mcp-config", MCPConfig(req.Spawner), "--allowedTools", strings.Join(SpawnTools, ","))
+	}
+	return append(command, Prompt(req.Brief, req.Orchestrator, req.Lead, req.Spawner != ""))
+}
+
+// The MCP server Den offers and the tools on it, as Claude Code names them.
+const MCPServer = "den"
+
+var SpawnTools = []string{"mcp__den__spawn_agent", "mcp__den__open_terminal"}
+
+// MCPConfig is the --mcp-config JSON that registers `<exe> mcp` as the
+// server named MCPServer.
+func MCPConfig(exe string) string {
+	b, _ := json.Marshal(map[string]any{
+		"mcpServers": map[string]any{
+			MCPServer: map[string]any{"command": exe, "args": []string{"mcp"}},
+		},
+	})
+	return string(b)
 }
 
 // Prompt is the agent's first prompt: the brief, introduced so the agent
-// knows who sent it and where to report.
-func Prompt(brief, orchestrator string) string {
+// knows who sent it, where to report, and whether it may start teammates.
+func Prompt(brief, orchestrator, lead string, canSpawn bool) string {
 	if orchestrator == "" {
 		orchestrator = "den-orchestrator"
 	}
-	return fmt.Sprintf("Brief from the Den orchestrator (peer %q), dispatched for your human, who follows your work from Den. Permission prompts and questions reach them there. When you are done, or blocked, report back in a few lines with SendMessage to that peer.\n\n%s", orchestrator, strings.TrimSpace(brief))
+	var b strings.Builder
+	if lead != "" {
+		fmt.Fprintf(&b, "Brief from your lead (peer %q), who works for the Den orchestrator (peer %q) and for your human, who follows your work from Den. Permission prompts and questions reach them there. When you are done, or blocked, report back in a few lines with SendMessage to your lead, %q.", lead, orchestrator, lead)
+	} else {
+		fmt.Fprintf(&b, "Brief from the Den orchestrator (peer %q), dispatched for your human, who follows your work from Den. Permission prompts and questions reach them there. When you are done, or blocked, report back in a few lines with SendMessage to that peer.", orchestrator)
+	}
+	if canSpawn {
+		b.WriteString(" You have Den's spawn_agent tool: when a piece of the work deserves an agent of its own, start one in its own terminal with a complete brief, and pick its model by how hard its task is (")
+		var when []string
+		for _, m := range Models {
+			when = append(when, m.Name+" for "+m.When)
+		}
+		b.WriteString(strings.Join(when, "; "))
+		b.WriteString("). Agents you start report to you; wait for all of them before you report back yourself.")
+	}
+	b.WriteString("\n\n")
+	b.WriteString(strings.TrimSpace(brief))
+	return b.String()
 }
 
 // Trusted reports whether Claude Code has recorded the human's answer to
@@ -271,7 +370,7 @@ func PeerName(want, dir string, sessions []discover.Session) string {
 // launch runs the terminal detached, the way Omarchy's terminal keybinding
 // does: through uwsm-app when present, as its own session, with the default
 // terminal chosen by xdg-terminal-exec.
-func launch(dir, title string, command []string) error {
+func launch(dir, title string, command, extra []string) error {
 	var argv []string
 	if p, err := exec.LookPath("uwsm-app"); err == nil {
 		argv = append(argv, p, "--")
@@ -296,11 +395,11 @@ func launch(dir, title string, command []string) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	var env []string
 	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "DEN_ORCHESTRATOR=") {
+		if !strings.HasPrefix(kv, "DEN_ORCHESTRATOR=") && !strings.HasPrefix(kv, "DEN_PEER=") {
 			env = append(env, kv)
 		}
 	}
-	cmd.Env = env
+	cmd.Env = append(env, extra...)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("launch terminal: %w", err)
 	}

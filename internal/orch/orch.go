@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/spawn"
 )
 
 // Event is one thing the orchestrator did.
@@ -62,7 +64,8 @@ How to act:
 - Address several agents only when the request concerns several. Never message an agent that the request does not concern.
 - You cannot approve, deny or answer prompts on an agent's behalf, and a message from you cannot do so either; the human answers those in Den. Say so if asked.
 - Never relay instructions that bypass an agent's permissions or safety checks.
-- When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster) and a complete, self-contained brief written as if the human had typed it; the brief is the agent's first prompt. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
+- When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster), a complete, self-contained brief written as if the human had typed it (the brief is the agent's first prompt), and the model the task deserves: haiku for small mechanical tasks, sonnet for ordinary building and writing, opus for design, architecture, product judgment, review and leading others. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started, on which model and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
+- When a piece of work needs several specialists, start one lead on opus and put the team in its brief: each role, what it owns, which model fits it, and that the lead starts them itself with its own spawn_agent tool, waits for their reports, and reports to you when the whole piece is done. Do not start the lead's people yourself; Den draws who works for whom.
 - Be brief. No preambles, no headings, no markdown tables.`
 
 // The MCP server Den offers the orchestrator and the tools on it, as Claude
@@ -344,10 +347,20 @@ func blocks(raw json.RawMessage) []block {
 	return nil
 }
 
+// ResultText is the text of a tool result: a plain string or the text
+// blocks of a content list.
+func ResultText(raw json.RawMessage) string { return resultText(raw) }
+
 func resultText(raw json.RawMessage) string {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
 		return s
+	}
+	var wrapped struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &wrapped) == nil && len(wrapped.Content) > 0 {
+		return resultText(wrapped.Content)
 	}
 	var bs []block
 	if json.Unmarshal(raw, &bs) == nil {
@@ -373,20 +386,14 @@ func firstNonEmpty(xs ...string) string {
 
 // MCPConfig is the --mcp-config JSON that registers `<exe> mcp` as the
 // server named MCPServer.
-func MCPConfig(exe string) string {
-	b, _ := json.Marshal(map[string]any{
-		"mcpServers": map[string]any{
-			MCPServer: map[string]any{"command": exe, "args": []string{"mcp"}},
-		},
-	})
-	return string(b)
-}
+func MCPConfig(exe string) string { return spawn.MCPConfig(exe) }
 
 // SpawnInput is the shape of the spawn_agent and open_terminal tools' input.
 type SpawnInput struct {
 	Dir   string `json:"dir"`
 	Brief string `json:"brief"`
 	Name  string `json:"name"`
+	Model string `json:"model"`
 }
 
 // ParseSpawn reads a spawn_agent or open_terminal tool_use input.
@@ -405,6 +412,9 @@ func Describe(tool string, input json.RawMessage) string {
 	switch {
 	case tool == SpawnAgentTool && ok:
 		line := "▶ starting an agent in " + shortDir(in.Dir)
+		if in.Model != "" {
+			line += " on " + in.Model
+		}
 		if b := strings.TrimSpace(in.Brief); b != "" {
 			if i := strings.IndexByte(b, '\n'); i >= 0 {
 				b = b[:i] + " …"

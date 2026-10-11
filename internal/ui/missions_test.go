@@ -121,3 +121,25 @@ func TestMissionOnceEndsWithItsCardAndScheduleWaitsForItsTick(t *testing.T) {
 		t.Errorf("rows:\n%s", rows)
 	}
 }
+
+func TestTeamLinesDrawLeadsAboveTheirPeople(t *testing.T) {
+	m := missionModel()
+	team := []mission.Member{
+		{Role: "product manager", Model: "opus"},
+		{Role: "UI designer", Model: "opus", Under: "product manager"},
+		{Role: "frontend developer", Model: "sonnet", Under: "product manager"},
+		{Role: "SEO", Model: "haiku", Under: "Product Manager"},
+	}
+	var got []string
+	for _, l := range m.teamLines(team) {
+		got = append(got, ansi.Strip(l))
+	}
+	want := []string{"product manager · opus", "├─ UI designer · opus", "├─ frontend developer · sonnet", "└─ SEO · haiku"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("team lines = %q", got)
+	}
+	ms := &mission.Mission{Name: "Site", Mission: "Build it", Shape: mission.FanOut, Team: team}
+	if b := m.missionBrief(ms); !strings.Contains(b, "team of 4") {
+		t.Errorf("brief = %q", b)
+	}
+}

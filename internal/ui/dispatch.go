@@ -47,7 +47,10 @@ type dispatch struct {
 	Result    string // the agent's last message, verbatim
 	Files     int
 	MissionID string // the mission this dispatch is a run of, "" for a plain one
-	Expanded  bool
+	// Stopped is when the agent's turn ended while people under it were
+	// still at work; the card finishes once they are done.
+	Stopped  time.Time
+	Expanded bool
 
 	turn       []transcript.Entry
 	turnLoaded bool
@@ -162,8 +165,10 @@ func (m *Model) trackHook(r *bridge.Request, it *inbox.Item) {
 	switch r.Event {
 	case "UserPromptSubmit":
 		start()
+		card.Stopped = time.Time{}
 	case "PostToolUse":
 		start()
+		card.Stopped = time.Time{}
 		if card.State == cardNeedsYou {
 			card.State = cardWorking
 		}
@@ -179,11 +184,16 @@ func (m *Model) trackHook(r *bridge.Request, it *inbox.Item) {
 		if card.StartedAt.IsZero() {
 			return // a turn that began before the brief arrived
 		}
-		card.State = cardDone
-		card.EndedAt = now
 		card.Result = strings.TrimSpace(r.Input.LastAssistant)
-		card.Ticker = ""
-		m.loadTurn(card)
+		if n := m.subtreeBusy(card.SessionID); n > 0 {
+			// A lead between turns: its people report to it, and it
+			// reports up once they are done.
+			card.State = cardWorking
+			card.Stopped = now
+			card.Ticker = waitingOn(n)
+			break
+		}
+		m.finishCard(card, now)
 	case "SessionEnd":
 		card.State = cardFailed
 		card.EndedAt = now
@@ -192,14 +202,41 @@ func (m *Model) trackHook(r *bridge.Request, it *inbox.Item) {
 	m.logCard(card)
 }
 
+// finishCard ends a card on the agent's last turn.
+func (m *Model) finishCard(card *dispatch, now time.Time) {
+	card.State = cardDone
+	card.EndedAt = now
+	card.Stopped = time.Time{}
+	card.Ticker = ""
+	m.loadTurn(card)
+}
+
+func waitingOn(n int) string {
+	if n == 1 {
+		return "waiting on 1 agent"
+	}
+	return fmt.Sprintf("waiting on %d agents", n)
+}
+
 // settleCards moves "needs you" cards back to working once nothing is open
-// for their session, and marks cards whose agent vanished.
+// for their session, finishes a lead's card once its people are done, and
+// marks cards whose agent vanished.
 func (m *Model) settleCards() {
 	for _, d := range m.liveCards() {
 		if d.State == cardNeedsYou && !m.store.SessionNeedsYou(d.SessionID) {
 			d.State = cardWorking
 			d.Ticker = ""
 			m.logCard(d)
+		}
+		if d.State == cardWorking && !d.Stopped.IsZero() {
+			if n := m.subtreeBusy(d.SessionID); n == 0 {
+				if a, ok := m.agentFor(d.SessionID); !ok || a.Status != fleet.Working {
+					m.finishCard(d, time.Now())
+					m.logCard(d)
+				}
+			} else if t := waitingOn(n); t != d.Ticker {
+				d.Ticker = t
+			}
 		}
 		if a, ok := m.agentFor(d.SessionID); ok && a.Status == fleet.Gone && d.State != cardFailed {
 			d.State, d.Reason, d.EndedAt = cardFailed, "gone · session ended", time.Now()

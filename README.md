@@ -81,7 +81,24 @@ The brief arrives introduced as coming from the orchestrator on your behalf,
 and asks the agent to report back to it when done or blocked. The new agent
 shows up in the Fleet and the roster like any other, and the orchestrator
 tells you its critter name. "Open a terminal in ~/code/site" gives you a
-plain shell the same way. The terminal is launched as Omarchy's own keybinding
+plain shell the same way.
+
+The orchestrator picks each agent's model by the task: `haiku` for small
+mechanical work, `sonnet` for ordinary building and writing, `opus` for
+design, architecture, product judgment, review and leading others. Its
+spawn note says which (`▶ starting an agent in ~/code/site on opus · …`),
+and once the session registers the note becomes that agent's dispatch card.
+
+Every agent the orchestrator starts gets Den's MCP server too, so it has
+spawn_agent itself, pre-approved. A lead can staff its own work: its brief
+names the roles under it with their models and parts, it starts them in
+their own terminals, they report to the lead, and the lead reports up when
+the whole piece is done. Ask for "a team" or a job that needs several
+specialists and the orchestrator starts one lead on `opus` and leaves the
+rest to it. Den learns each of those spawns from the lead's own hook stream
+(PostToolUse on spawn_agent), so the Fleet draws the tree as it grows, and
+the lead's card stays `working · waiting on 3 agents` between its turns
+until nobody under it is at work. The terminal is launched as Omarchy's own keybinding
 does it (`uwsm-app -- xdg-terminal-exec --dir=…`), so it is detached from Den;
 Den records your active workspace first and moves the window there if it
 landed anywhere else. Set `spawn = false` under `[orchestrator]`, or
@@ -125,16 +142,21 @@ transcripts say they edited plus session folders that are checkouts; the
 strip under the tabs lists them with a count of agents on each. `← →` or
 `/project <name>` switch, the pick is remembered, and the Review tab follows
 it: its work list is that checkout's. Left, the project's agents in their
-tree; right, its missions.
+tree; right, its missions. A folder nobody works in yet is listed with
+`/project add <dir>` (its repository root when it is inside one) and stays
+listed, empty, until `/project drop`; a mission on it starts from nothing.
 
 A mission is a standing goal, in Aimless's terms: a purpose in one sentence,
 constraints that ride on every dispatch, and what done looks like, or
 "standing" for one that never ends. Type the goal on the Overview command
 line (or `/mission <goal>`) and the orchestrator answers with a proposal:
 the mission rewritten, done-when, constraints it inferred, the agents it
-means to use, and the shape it picked with one line of reasoning. `^Y`
-starts it, `^N` drops it, typing refines it, `Esc` keeps it for later.
-Nothing runs before `^Y`.
+means to reuse, the team it means to start (roles as a tree, leads above
+their people, each with the model it picked for that role), and the shape
+it picked with one line of reasoning. `^Y` starts it, `^N` drops it, typing
+refines it, `Esc` keeps it for later. Nothing runs before `^Y`. When the run
+starts, the orchestrator spawns only the roles that report to it; each lead
+starts its own people.
 
 | Shape | Runs as |
 | --- | --- |

@@ -2,6 +2,7 @@ package mission
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -66,5 +67,27 @@ func TestNextCadence(t *testing.T) {
 	}
 	if _, err := Next("whenever", from); err == nil {
 		t.Error("accepted a cadence it cannot run")
+	}
+}
+
+func TestProposalCarriesATeam(t *testing.T) {
+	text := "A team.\n```json\n{\"mission\": {\"name\": \"Site\", \"mission\": \"Build the site.\", \"shape\": \"fanout\", \"team\": [{\"role\": \"product manager\", \"model\": \"opus\", \"under\": \"orchestrator\"}, {\"role\": \"UI designer\", \"model\": \"opus\", \"under\": \"product manager\"}, {\"role\": \"SEO\", \"model\": \"haiku\", \"under\": \"product manager\"}]}}\n```"
+	p, ok := ParseProposal(text)
+	if !ok || len(p.Team) != 3 {
+		t.Fatalf("proposal = %+v %v", p, ok)
+	}
+	var m Mission
+	m.Apply(p)
+	if leads := Leads(m.Team); len(leads) != 1 || leads[0].Role != "product manager" {
+		t.Errorf("leads = %+v", leads)
+	}
+	if under := Under(m.Team, "Product Manager"); len(under) != 2 || under[1].Role != "SEO" {
+		t.Errorf("under = %+v", under)
+	}
+	d := m.Describe()
+	for _, want := range []string{"- team: product manager on opus, leading UI designer, SEO", "- team: SEO on haiku, under product manager"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("describe lacks %q:\n%s", want, d)
+		}
 	}
 }

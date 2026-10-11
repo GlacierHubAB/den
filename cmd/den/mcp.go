@@ -17,17 +17,26 @@ import (
 // open the user's default terminal on the workspace they are looking at.
 func runMCP() {
 	orcName := config.Load().Orchestrator.Name
+	// An agent Den started carries its peer name; agents it starts in turn
+	// report to it rather than to the orchestrator.
+	lead := os.Getenv("DEN_PEER")
+	exe, _ := os.Executable()
 	dirSchema := map[string]any{"type": "string", "description": "Working directory, absolute or ~-relative. It must exist."}
+	var when []string
+	for _, m := range spawn.Models {
+		when = append(when, m.Name+": "+m.When)
+	}
 	s := &mcp.Server{Name: orch.MCPServer, Version: version, Tools: []mcp.Tool{
 		{
 			Name:        strings.TrimPrefix(orch.SpawnAgentTool, "mcp__"+orch.MCPServer+"__"),
-			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. Returns the agent's critter name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
+			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. The agent reports to you when done and has this same tool, so a lead can staff its own work. Returns the agent's critter name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"dir":   dirSchema,
 					"brief": map[string]any{"type": "string", "description": "What the agent should do, as its first prompt."},
 					"name":  map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
+					"model": map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
 				},
 				"required": []string{"dir", "brief"},
 			},
@@ -36,7 +45,7 @@ func runMCP() {
 				if !ok {
 					return "", errDir
 				}
-				res, err := spawn.Run(ctx, spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Orchestrator: orcName})
+				res, err := spawn.Run(ctx, spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Spawner: exe})
 				if err != nil {
 					return "", err
 				}

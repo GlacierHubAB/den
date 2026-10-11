@@ -31,8 +31,9 @@ type missionTurn struct {
 // the first mission message of a session.
 const missionsDir = `Missions are standing goals on a project that Den runs through you. A mission has: name (a few words), mission (the purpose in one sentence), done_when (an observable end state, or "standing" for one that never ends), constraints (short phrases that ride on every dispatch), shape, cadence, reason, agents.
 Shapes: "once" (one dispatch to one agent, done when it reports back), "loop" (one agent iterates until the goal is met; you re-dispatch to it after each pass until done), "fanout" (a lead with children in parallel, repeated until the lead says done), "schedule" (Den fires a run on the cadence; each run is a once or a fanout). Cadence forms: "every 30m", "every 2h", "daily 08:30", "weekly mon 09:00", or a five-field cron line.
-When asked to propose, answer in two or three plain sentences and then one fenced json block: {"mission": {"name": "...", "mission": "...", "done_when": "...", "constraints": ["..."], "shape": "once|loop|fanout|schedule", "cadence": "...", "reason": "one line on why this shape", "agents": ["critter names"]}}. Do not dispatch anything while proposing.
-When asked to run a mission, dispatch per its shape to agents on that project (spawn one when nobody fits), then say in one line what you sent. When a run's agents have reported and you are asked whether the goal is met, answer in one or two sentences and end with one fenced json block: {"mission_update": {"id": "...", "state": "done|continue|waiting|failed", "summary": "one line"}}; with "continue", dispatch the next pass in the same reply.`
+A mission names who does the work: "agents" are running agents from the roster to reuse; "team" are roles to start, each {"role": "...", "model": "haiku|sonnet|opus", "under": "the role it reports to, or orchestrator"}. Pick each model by how hard its task is: haiku for small mechanical tasks, sonnet for ordinary building and writing, opus for design, architecture, product judgment, review and leading others. Work that needs several specialists gets one lead on opus with the specialists under it.
+When asked to propose, answer in two or three plain sentences and then one fenced json block: {"mission": {"name": "...", "mission": "...", "done_when": "...", "constraints": ["..."], "shape": "once|loop|fanout|schedule", "cadence": "...", "reason": "one line on why this shape", "agents": ["critter names"], "team": [{"role": "...", "model": "...", "under": "..."}]}}. Do not dispatch anything while proposing.
+When asked to run a mission, dispatch per its shape: SendMessage to the agents it reuses, and spawn_agent in the project directory for each team role under the orchestrator, on its model, with a complete brief that carries the mission, its constraints and that role's part. A lead's brief lists the roles under it with their models and parts, and says to start them itself with its spawn_agent tool, wait for their reports, and report to you when the whole piece is done; never start a lead's people yourself. Then say in one line what you sent. When a run's agents have reported and you are asked whether the goal is met, answer in one or two sentences and end with one fenced json block: {"mission_update": {"id": "...", "state": "done|continue|waiting|failed", "summary": "one line"}}; with "continue", dispatch the next pass in the same reply.`
 
 // proposeMission starts a proposal for the picked project from the
 // human's words.
@@ -217,11 +218,14 @@ func (m *Model) judgeMission(ms *mission.Mission, r *mission.Run) tea.Cmd {
 
 // attachCard gives a new dispatch card to the mission the orchestrator's
 // turn is working for.
-func (m *Model) attachCard(d *dispatch) {
-	if m.turn.id == "" {
+func (m *Model) attachCard(d *dispatch) { m.attachCardTo(d, m.turn.id) }
+
+// attachCardTo gives a card to a mission's current run.
+func (m *Model) attachCardTo(d *dispatch, missionID string) {
+	if missionID == "" {
 		return
 	}
-	ms := m.missions.Get(m.turn.id)
+	ms := m.missions.Get(missionID)
 	if ms == nil || !ms.Live() {
 		return
 	}

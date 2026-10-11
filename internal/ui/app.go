@@ -23,6 +23,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -488,6 +489,10 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == "UserPromptSubmit" {
 		m.learnPeer(r.SessionID, r.Input.Prompt)
 	}
+	if r.Event == "PostToolUse" && r.Input.ToolName == orch.SpawnAgentTool {
+		in, _ := orch.ParseSpawn(r.Input.ToolInput)
+		m.learnSpawn(orch.ResultText(r.Input.ToolResponse), r.SessionID, "", in.Brief)
+	}
 	it := m.store.Apply(r)
 	m.trackHook(r, it)
 	if it != nil {
@@ -937,7 +942,25 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/project":
 		if len(fields) < 2 {
-			return m.say("Which project? /project <name>", true)
+			return m.say("Which project? /project <name>, /project add <dir>, /project drop", true)
+		}
+		switch fields[1] {
+		case "add", "pin":
+			if len(fields) < 3 {
+				return m.say("Which folder? /project add <dir>", true)
+			}
+			p, err := m.pinProject(strings.Join(fields[2:], " "))
+			if err != nil {
+				return m.say(err.Error(), true)
+			}
+			m.tab = tabOverview
+			return m.say("Listed "+p.Name+" as a project.", false)
+		case "drop", "unpin":
+			p, _ := m.curProject()
+			if !m.unpinProject() {
+				return m.say("That project is not pinned; it is listed because someone works there.", true)
+			}
+			return m.say("Dropped "+p.Name+" from the pinned projects.", false)
 		}
 		if !m.pickProject(strings.Join(fields[1:], " ")) {
 			return m.say("No project called "+strings.Join(fields[1:], " "), true)

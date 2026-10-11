@@ -22,6 +22,15 @@ func TestMCPConfigAndDescribe(t *testing.T) {
 	if got := Describe(OpenTerminalTool, in); got != "▶ opening a terminal in ~/code/site" {
 		t.Errorf("terminal = %q", got)
 	}
+	withModel, _ := json.Marshal(map[string]string{"dir": "/srv/site", "brief": "Lead the build.", "model": "opus"})
+	if got := Describe(SpawnAgentTool, withModel); got != "▶ starting an agent in /srv/site on opus · Lead the build." {
+		t.Errorf("spawn with model = %q", got)
+	}
+	for _, raw := range []string{`"plain"`, `[{"type":"text","text":"plain"}]`, `{"content":[{"type":"text","text":"plain"}]}`} {
+		if got := ResultText(json.RawMessage(raw)); got != "plain" {
+			t.Errorf("ResultText(%s) = %q", raw, got)
+		}
+	}
 	if got := Describe("ListAgents", nil); got != "· ListAgents" {
 		t.Errorf("other = %q", got)
 	}

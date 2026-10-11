@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
 	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -28,9 +30,10 @@ type project struct {
 // projectState is the pick and what it is chosen from.
 type projectState struct {
 	list   []project
-	cur    string // root of the picked project
-	loose  int    // agents in no repository
-	path   string // where the pick is remembered
+	cur    string   // root of the picked project
+	pinned []string // roots listed whether or not anyone works there
+	loose  int      // agents in no repository
+	path   string   // where the pick is remembered
 	loaded bool
 }
 
@@ -74,16 +77,20 @@ func projectPath() string {
 }
 
 func (m *Model) loadProjectPick() {
-	m.proj.path = projectPath()
+	if m.proj.path == "" {
+		m.proj.path = projectPath()
+	}
 	raw, err := os.ReadFile(m.proj.path)
 	if err != nil {
 		return
 	}
 	var v struct {
-		Project string `json:"project"`
+		Project string   `json:"project"`
+		Pinned  []string `json:"pinned"`
 	}
 	if json.Unmarshal(raw, &v) == nil {
 		m.proj.cur = v.Project
+		m.proj.pinned = v.Pinned
 	}
 }
 
@@ -91,10 +98,64 @@ func (m *Model) saveProjectPick() {
 	if m.proj.path == "" {
 		return
 	}
-	raw, _ := json.Marshal(map[string]string{"project": m.proj.cur})
+	raw, _ := json.Marshal(map[string]any{"project": m.proj.cur, "pinned": m.proj.pinned})
 	if os.MkdirAll(filepath.Dir(m.proj.path), 0o755) == nil {
 		_ = os.WriteFile(m.proj.path, raw, 0o644)
 	}
+}
+
+// pinProject lists a folder as a project whether or not anyone works there
+// (its repository root when it is inside one), picks it, and remembers it.
+func (m *Model) pinProject(dir string) (project, error) {
+	dir, err := spawn.ExpandDir(dir)
+	if err != nil {
+		return project{}, err
+	}
+	root := gitRootOf(dir)
+	if root == "" {
+		root = dir
+	}
+	if !slices.Contains(m.proj.pinned, root) {
+		m.proj.pinned = append(m.proj.pinned, root)
+	}
+	m.proj.cur = root
+	m.ov.cur, m.ov.open, m.ov.scroll = 0, "", 0
+	m.buildProjects()
+	m.saveProjectPick()
+	m.filterReview()
+	p, _ := m.projectByRoot(root)
+	return p, nil
+}
+
+// unpinProject forgets the picked project's pin; it stays listed while
+// anyone works there. It reports whether it was pinned.
+func (m *Model) unpinProject() bool {
+	i := slices.Index(m.proj.pinned, m.proj.cur)
+	if i < 0 {
+		return false
+	}
+	m.proj.pinned = slices.Delete(m.proj.pinned, i, i+1)
+	m.buildProjects()
+	m.saveProjectPick()
+	m.filterReview()
+	return true
+}
+
+// addProject lists a project found by root when it is not listed yet.
+func addProject(byRoot map[string]*project, root string) *project {
+	p := byRoot[root]
+	if p != nil {
+		return p
+	}
+	p = &project{Root: root, Name: filepath.Base(root)}
+	if info, ok := gitinfo.Lookup(root); ok {
+		if info.Repo != "" {
+			p.Name = info.Repo
+		}
+		p.Branch = info.Branch
+	}
+	byRoot[root] = p
+	return p
 }
 
 // rootsOf lists the repositories an agent works in.
@@ -141,31 +202,22 @@ func (m *Model) buildProjects() {
 			m.proj.loose++
 		}
 		for _, r := range roots {
-			p := byRoot[r]
-			if p == nil {
-				p = &project{Root: r, Name: filepath.Base(r)}
-				if info, ok := gitinfo.Lookup(r); ok {
-					if info.Repo != "" {
-						p.Name = info.Repo
-					}
-					p.Branch = info.Branch
-				}
-				byRoot[r] = p
-			}
+			p := addProject(byRoot, r)
 			p.Agents = append(p.Agents, a.Session.SessionID)
 		}
 	}
-	// Projects with missions stay listed while the missions live, even
-	// with nobody on them right now.
+	// Projects with missions stay listed while the missions live, and
+	// pinned ones always, even with nobody on them right now.
 	if m.missions != nil {
 		for _, ms := range m.missions.All() {
-			if ms.Live() && byRoot[ms.Project] == nil {
-				p := &project{Root: ms.Project, Name: filepath.Base(ms.Project)}
-				if info, ok := gitinfo.Lookup(ms.Project); ok && info.Repo != "" {
-					p.Name, p.Branch = info.Repo, info.Branch
-				}
-				byRoot[ms.Project] = p
+			if ms.Live() {
+				addProject(byRoot, ms.Project)
 			}
+		}
+	}
+	for _, root := range m.proj.pinned {
+		if st, err := os.Stat(root); err == nil && st.IsDir() {
+			addProject(byRoot, root)
 		}
 	}
 	var list []project
@@ -194,8 +246,11 @@ func (m *Model) buildProjects() {
 		return list[i].Name < list[j].Name
 	})
 	m.proj.list = list
-	if _, ok := m.projectByRoot(m.proj.cur); !ok && len(list) > 0 {
-		m.proj.cur = list[0].Root
+	if _, ok := m.projectByRoot(m.proj.cur); !ok {
+		m.proj.cur = ""
+		if len(list) > 0 {
+			m.proj.cur = list[0].Root
+		}
 	}
 }
 

@@ -33,14 +33,31 @@ type treeState struct {
 	path    string          // the record on disk, "" to keep it in memory
 	folded  map[string]bool // parent id → folded
 	rows    map[string]rowMeta
-	roots   []string // tree roots in display order; tree.Orchestrator first when it has children
-	pending []string // peer names of spawned agents whose session is not in the fleet yet
+	roots   []string            // tree roots in display order; tree.Orchestrator first when it has children
+	pending []pendingSpawn      // spawned agents whose session is not in the fleet yet
+	spawns  map[string]spawnReq // the orchestrator's spawn calls by tool use id, until they resolve
 	mapView bool
 	mapTop  int // first canvas row shown in the map
 }
 
+// spawnReq is what a spawn_agent call asked for.
+type spawnReq struct {
+	brief, mission string
+	at             time.Time
+}
+
+// pendingSpawn is a spawn whose session Den has not seen in the fleet yet.
+type pendingSpawn struct {
+	peer      string
+	parent    string // session id, or tree.Orchestrator
+	toolUseID string // the orchestrator's call, "" for a lead's own spawn
+	brief     string
+	mission   string
+	at        time.Time
+}
+
 func newTreeState() treeState {
-	return treeState{edges: tree.New(), folded: map[string]bool{}, rows: map[string]rowMeta{}}
+	return treeState{edges: tree.New(), folded: map[string]bool{}, rows: map[string]rowMeta{}, spawns: map[string]spawnReq{}}
 }
 
 // ensureTree gives a zero Model (tests build one) a working, in-memory tree.
@@ -114,28 +131,93 @@ func (m *Model) learnPeer(sessionID, prompt string) {
 
 var spawnedPeer = regexp.MustCompile(`\(peer "([^"]+)"\)`)
 
-// learnSpawn reads the peer name out of a spawn tool's answer. The session
-// may not be in the fleet yet, so the name waits in pending until it is.
-func (m *Model) learnSpawn(result string) {
+// noteSpawn remembers what one of the orchestrator's spawn calls asked for,
+// so the agent's card can carry the brief once the session shows up.
+func (m *Model) noteSpawn(toolUseID, brief, mission string, at time.Time) {
+	m.ensureTree()
+	if m.tree.spawns == nil {
+		m.tree.spawns = map[string]spawnReq{}
+	}
+	m.tree.spawns[toolUseID] = spawnReq{brief: brief, mission: mission, at: at}
+}
+
+// learnSpawn reads the peer name out of a spawn tool's answer: parent
+// started it. The orchestrator's own calls are known by tool use id; a
+// lead's calls come through its PostToolUse hook with the brief. The
+// session may not be in the fleet yet, so the spawn waits in pending.
+func (m *Model) learnSpawn(result, parent, toolUseID, brief string) {
+	m.ensureTree()
 	sm := spawnedPeer.FindStringSubmatch(result)
-	if sm == nil {
+	if sm == nil || parent == "" {
 		return
 	}
-	m.tree.pending = append(m.tree.pending, sm[1])
+	p := pendingSpawn{peer: sm[1], parent: parent, toolUseID: toolUseID, brief: brief, at: time.Now()}
+	if req, ok := m.tree.spawns[toolUseID]; ok && toolUseID != "" {
+		p.brief, p.mission, p.at = req.brief, req.mission, req.at
+		delete(m.tree.spawns, toolUseID)
+	}
+	m.tree.pending = append(m.tree.pending, p)
 	m.resolvePending()
 }
 
 func (m *Model) resolvePending() {
-	var keep []string
-	for _, peer := range m.tree.pending {
-		_, sid := m.agentForPeer(peer)
+	var keep []pendingSpawn
+	for _, p := range m.tree.pending {
+		name, sid := m.agentForPeer(p.peer)
 		if sid == "" {
-			keep = append(keep, peer)
+			if time.Since(p.at) < time.Hour {
+				keep = append(keep, p)
+			}
 			continue
 		}
-		m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: sid, Brief: "spawned", Source: "spawn"})
+		brief := firstLineOf(p.brief)
+		if brief == "" {
+			brief = "spawned"
+		}
+		m.learnEdge(tree.Edge{Parent: p.parent, Child: sid, Brief: brief, Source: "spawn"})
+		if p.parent == tree.Orchestrator && p.toolUseID != "" {
+			m.cardForSpawn(p, name, sid)
+		}
 	}
 	m.tree.pending = keep
+}
+
+// cardForSpawn turns the orchestrator's spawn note into a dispatch card:
+// the brief was the agent's first prompt, so it is working on it already.
+func (m *Model) cardForSpawn(p pendingSpawn, name, sid string) {
+	for i := range m.orch.chat {
+		e := &m.orch.chat[i]
+		if e.toolUseID != p.toolUseID || e.card != nil {
+			continue
+		}
+		now := time.Now()
+		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started"}
+		if d.SentAt.IsZero() {
+			d.SentAt = now
+		}
+		e.role, e.card, e.text, e.status = "card", d, "", ""
+		m.attachCardTo(d, p.mission)
+		m.logCard(d)
+		return
+	}
+}
+
+// subtreeBusy reports whether anyone under the session is still at work:
+// a lead's card is not done while its people are.
+func (m Model) subtreeBusy(sid string) (busy int) {
+	for _, id := range m.descendants(sid) {
+		if a, ok := m.agentFor(id); ok && (a.Status == fleet.Working || a.Status == fleet.NeedsYou) {
+			busy++
+			continue
+		}
+		for _, d := range m.cards() {
+			if d.SessionID == id && d.live() {
+				busy++
+				break
+			}
+		}
+	}
+	return busy
 }
 
 // buildTree lays the fleet out as trees: agents under whoever directs them,

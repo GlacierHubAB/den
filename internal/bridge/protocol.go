@@ -38,6 +38,7 @@ type HookInput struct {
 	AgentID          string          `json:"agent_id"`
 	ToolName         string          `json:"tool_name"`
 	ToolInput        json.RawMessage `json:"tool_input"`
+	ToolResponse     json.RawMessage `json:"tool_response"`
 	ToolUseID        string          `json:"tool_use_id"`
 	PermissionReason string          `json:"permission_reason"`
 	NotificationType string          `json:"notification_type"`

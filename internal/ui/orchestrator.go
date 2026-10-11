@@ -289,6 +289,9 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 				m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: sid, Brief: firstLineOf(in.Message), At: now, Source: "dispatch"})
 			}
 		} else {
+			if in, ok := orch.ParseSpawn(ev.Input); ok && ev.Tool == orch.SpawnAgentTool {
+				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, now)
+			}
 			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
 		}
 	case orch.ToolResult:
@@ -313,7 +316,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 					e.status = "failed: " + firstLineOf(ev.Text)
 				case strings.HasPrefix(e.text, "▶"):
 					e.status = firstLineOf(ev.Text)
-					m.learnSpawn(ev.Text)
+					m.learnSpawn(ev.Text, tree.Orchestrator, ev.ToolUseID, "")
 				}
 			case failed:
 				e.status = "failed: " + firstLineOf(ev.Text)
