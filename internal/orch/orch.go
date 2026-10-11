@@ -178,7 +178,11 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
 	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid}
-	go orc.readStdout(stdout)
+	read := make(chan struct{})
+	go func() {
+		orc.readStdout(stdout)
+		close(read)
+	}()
 	go func() {
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
@@ -189,8 +193,11 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 				tail = tail[1:]
 			}
 		}
-		// The only Wait on this process: a second concurrent Wait can block
-		// forever once the first has reaped the child.
+		// Wait closes the pipes, so it waits for the stdout reader to finish
+		// first; otherwise the reader could emit after events is closed. It
+		// is the only Wait on this process: a second concurrent Wait can
+		// block forever once the first has reaped the child.
+		<-read
 		err := cmd.Wait()
 		msg := "orchestrator exited"
 		if err != nil {
