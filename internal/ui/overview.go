@@ -493,6 +493,6 @@ func (m Model) missionLines(w int) []string {
 	}
 	out = append(out, "")
 	out = append(out, m.threadLines(ms, w)...)
-	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
+	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop /budget")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
 	return out
 }

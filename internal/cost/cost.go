@@ -26,14 +26,16 @@ type Price struct {
 // 1.25 times the input rate (the five-minute cache). Edit the table with
 // [prices] in config.toml when it goes stale.
 var builtin = map[string]Price{
-	"claude-fable-5":  {10, 50, 12.5, 0.25},
-	"claude-mythos-5": {10, 50, 12.5, 0.25},
-	"claude-opus-5-5": {4, 20, 5, 0.20},
-	"claude-opus-5":   {5, 25, 6.25, 0.50},
-	"claude-opus-4":   {5, 25, 6.25, 0.50},
-	"claude-sonnet-5": {2, 10, 2.5, 0.20},
-	"claude-sonnet-4": {3, 15, 3.75, 0.30},
-	"claude-haiku-4":  {1, 5, 1.25, 0.10},
+	"claude-fable-5":    {10, 50, 12.5, 1.0},
+	"claude-fable-5-1":  {10, 50, 12.5, 0.25},
+	"claude-mythos-5":   {10, 50, 12.5, 1.0},
+	"claude-mythos-5-1": {10, 50, 12.5, 0.25},
+	"claude-opus-5-5":   {4, 20, 5, 0.20},
+	"claude-opus-5":     {5, 25, 6.25, 0.50},
+	"claude-opus-4":     {5, 25, 6.25, 0.50},
+	"claude-sonnet-5":   {2, 10, 2.5, 0.20},
+	"claude-sonnet-4":   {3, 15, 3.75, 0.30},
+	"claude-haiku-4":    {1, 5, 1.25, 0.10},
 }
 
 // Table prices models: the built-in rates with the user's overrides on top.

@@ -141,3 +141,17 @@ func TestFormatting(t *testing.T) {
 		}
 	}
 }
+
+func TestFableAndMythosFiveAndFiveOneReadAtDifferentRates(t *testing.T) {
+	tb := NewTable(nil)
+	for family, want := range map[string][2]float64{
+		"claude-fable-5":  {1.0, 0.25},
+		"claude-mythos-5": {1.0, 0.25},
+	} {
+		five, _ := tb.For(family)
+		fiveOne, _ := tb.For(family + "-1")
+		if five.CacheRead != want[0] || fiveOne.CacheRead != want[1] {
+			t.Errorf("%s: cache read %v / 5.1 %v, want %v", family, five.CacheRead, fiveOne.CacheRead, want)
+		}
+	}
+}
