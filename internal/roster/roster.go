@@ -162,6 +162,9 @@ func (r *Roster) Observe(live []Agent, now, watchingSince time.Time) bool {
 			changed = true
 			continue
 		}
+		// A sighting that lacks a fact keeps the one Den knew: badge labels
+		// and the transcript's model can be missing for a moment, and a
+		// restored agent's edge no longer says it was spawned.
 		old := r.Agents[i]
 		if a.SkillsDir == "" {
 			a.SkillsDir = old.SkillsDir
@@ -169,6 +172,13 @@ func (r *Roster) Observe(live []Agent, now, watchingSince time.Time) bool {
 		if a.Mission == "" {
 			a.Mission = old.Mission
 		}
+		if a.Role == "" {
+			a.Role = old.Role
+		}
+		if a.Model == "" {
+			a.Model = old.Model
+		}
+		a.Spawned = a.Spawned || old.Spawned
 		probe := old
 		probe.LastSeen = a.LastSeen
 		if probe != a {

@@ -122,12 +122,12 @@ func TestObserveChangeOnlyOnSubstance(t *testing.T) {
 	}
 	moved := lemur()
 	moved.Parent = "s7"
-	moved.Mission = ""
+	moved.Mission, moved.Role, moved.Model, moved.Spawned = "", "", "", false
 	if !r.Observe([]Agent{moved}, t0.Add(10*time.Second), t0) {
 		t.Fatal("a new parent is a change")
 	}
-	if a, _ := r.Get("s1"); a.Mission != "m1" {
-		t.Fatal("a known mission is kept when the sighting has none")
+	if a, _ := r.Get("s1"); a.Mission != "m1" || a.Role != "backend developer" || a.Model != "claude-opus-5-5" || !a.Spawned {
+		t.Fatalf("known facts are kept when the sighting lacks them: %+v", a)
 	}
 }
 

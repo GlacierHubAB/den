@@ -447,7 +447,11 @@ func (m *Model) finishRestore(msg restoreDoneMsg) tea.Cmd {
 	}
 	var parts []string
 	if len(done) > 0 {
-		parts = append(parts, "reopened "+strings.Join(done, ", "))
+		verb := "reopened "
+		if msg.plan.fork {
+			verb = "forked "
+		}
+		parts = append(parts, verb+strings.Join(done, ", "))
 	}
 	if len(failed) > 0 {
 		parts = append(parts, "could not reopen "+strings.Join(failed, ", "))
