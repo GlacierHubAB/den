@@ -282,6 +282,11 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 	case cardFailed:
 		state = s.err.Render("✕ " + d.Reason)
 	}
+	if d.State == cardWorking {
+		if roll, via := m.rollupOf(d.SessionID); roll.needsYou > 0 {
+			state = s.attn.Render("◐ needs you · via " + via + " · " + humanAge(d.elapsed(now)))
+		}
+	}
 	head := agentStyle.Bold(true).Render(d.Agent) + role
 	headW := textW - ansi.StringWidth(state) - 2
 	line1 := justify(ansi.Truncate(head, max(8, headW), "…"), state, textW)
@@ -313,10 +318,16 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 	} else {
 		foot += s.key.Render("Enter") + s.keyLabel.Render(" expand")
 	}
-	rows := []string{line1, line2, line3, foot}
+	rows := []string{line1, line2, line3}
+	rows = append(rows, m.childLines(d.SessionID, textW, true)...)
+	rows = append(rows, foot)
 	var out []string
-	for i := 0; i < 4; i++ {
-		out = append(out, bar+" "+avatar[i]+"  "+rows[i])
+	for i, r := range rows {
+		av := strings.Repeat(" ", avatarW)
+		if i < len(avatar) {
+			av = avatar[i]
+		}
+		out = append(out, bar+" "+av+"  "+r)
 	}
 	if d.Expanded {
 		indent := bar + strings.Repeat(" ", avatarW+3)

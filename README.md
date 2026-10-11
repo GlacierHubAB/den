@@ -117,6 +117,34 @@ remembers the conversation; if that fails, Den starts a fresh one and replays
 the last exchanges. `/orch new` starts a fresh session on purpose and marks
 the chat; the history stays.
 
+## Who directs whom
+
+Agents hand work to each other over Claude Code's session messaging, so the
+fleet is a tree, not a list. Den learns the edges from the traffic it already
+sees: a dispatch card is an edge from the orchestrator; a peer message
+arriving at an agent (the UserPromptSubmit hook carries the sender) puts the
+receiver under the sender, unless the receiver sits above the sender, in
+which case it is a report back; an agent the orchestrator spawned is its
+child from the start. Edges are appended to `~/.local/state/den/edges.jsonl`
+and come back on restart; a child keeps its newest parent and drops out of
+the tree when its session is gone.
+
+In the Fleet view every tree sits in its own section, the orchestrator's
+first, with guides between parent and child, `directs n` on a parent, and
+what the branch needs rolled up (`1 needs you`). Agents nobody directs keep
+their status sections. `←` folds the selected branch and `→` unfolds it;
+`↑ ↓` skip folded rows. The details pane shows the chain of command (`you ›
+orchestrator › Mossy Lemur`) and a `directs` list with each child's brief and
+state. `^T` or `/map` swaps the pane for a map: one column per level from
+you to the leaves, `↑ ↓` walk it, `←` goes to the parent and `→` to the first
+child, and the map scrolls to keep the selection in view.
+
+In the orchestrator chat a card whose agent handed work on grows a line per
+child with its brief and state, and the card's own state says `needs you ·
+via <child>` when something deeper down is waiting on you. Inbox items from
+an agent inside a tree carry a `via orchestrator › …` line so a permission
+from a sub-agent is not a stranger asking.
+
 ## The command line
 
 The line at the bottom is always open. It grows with what you type, one row

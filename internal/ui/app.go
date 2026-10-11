@@ -24,6 +24,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/tree"
 )
 
 // pane is which half of the Fleet view has the arrow keys.
@@ -120,8 +121,9 @@ type Model struct {
 	orch     orchState
 	anim     int
 
-	focus        pane // Fleet view: agents or detail
-	detailScroll int  // lines scrolled in the detail pane
+	focus        pane      // Fleet view: agents or detail
+	detailScroll int       // lines scrolled in the detail pane
+	tree         treeState // who directs whom, and the map
 
 	rev reviewState // the Review view
 }
@@ -134,7 +136,10 @@ func New(cfg config.Config) Model {
 		st:    newStyles(theme.Load()),
 		watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile()),
 		store: inbox.New(),
+		tree:  newTreeState(),
 	}
+	m.tree.path = tree.Path()
+	m.tree.edges = tree.Load(m.tree.path)
 	fleet.Recent = cfg.Detail.Recent
 	m.store.HistoryLimit(cfg.Inbox.History)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
@@ -333,6 +338,7 @@ func (m *Model) refresh() {
 		}
 		return m.agents[i].Session.StartedAt < m.agents[j].Session.StartedAt
 	})
+	m.buildTree()
 	m.cursor = 0
 	for i, a := range m.agents {
 		if a.Session.SessionID == keep {
@@ -467,6 +473,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return nil
 	}
+	if r.Event == "UserPromptSubmit" {
+		m.learnPeer(r.SessionID, r.Input.Prompt)
+	}
 	it := m.store.Apply(r)
 	m.trackHook(r, it)
 	if it != nil {
@@ -600,11 +609,19 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleOrchestrator()
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
 		return m, cmd
+	case "ctrl+t":
+		m.tab = tabFleet
+		m.focus = paneAgents
+		m.tree.mapView = !m.tree.mapView
+		return m, nil
 	case "left":
 		switch {
 		case m.tab == tabFleet && m.orch.backToCard:
 			m.orch.backToCard = false
 			m.tab = tabOrch
+		case m.tab == tabFleet && m.tree.mapView:
+			m.mapMove(true)
+		case m.tab == tabFleet && m.focus == paneAgents && m.toggleFold(true):
 		case m.tab == tabFleet:
 			m.focus = paneAgents
 		case m.tab == tabReview:
@@ -613,6 +630,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "right":
 		switch {
+		case m.tab == tabFleet && m.tree.mapView:
+			m.mapMove(false)
+		case m.tab == tabFleet && m.focus == paneAgents && m.toggleFold(false):
 		case m.tab == tabFleet:
 			m.focus = paneDetail
 		case m.tab == tabReview:
@@ -723,7 +743,7 @@ func (m *Model) move(delta int) {
 			m.detailScroll = max(0, m.detailScroll+delta)
 			return
 		}
-		if next := clamp(m.cursor+delta, 0, max(0, len(m.agents)-1)); next != m.cursor {
+		if next := m.stepVisible(delta); next != m.cursor {
 			m.cursor = next
 			m.detailScroll = 0
 			m.orch.backToCard = false
@@ -839,6 +859,11 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(snapshot, cmd)
 		}
 		return m, snapshot
+	case "/map":
+		m.tab = tabFleet
+		m.focus = paneAgents
+		m.tree.mapView = !m.tree.mapView
+		return m, nil
 	case "/fleet":
 		m.tab = tabFleet
 	case "/inbox":

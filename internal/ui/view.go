@@ -15,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
+	"github.com/GlacierHubAB/den/internal/tree"
 )
 
 func (m Model) View() tea.View {
@@ -236,6 +237,9 @@ func (m Model) panes(w, h int) string {
 	if m.tab == tabReview {
 		return m.reviewPanes(w, h)
 	}
+	if m.tree.mapView {
+		return m.box("Map", m.mapPane(w-2, h-2), w, h, true)
+	}
 	// Fleet: agents on the left, the selected agent on the right.
 	if w < 72 {
 		return m.box("Agents", m.agentsPane(w-2, h-2), w, h, true)
@@ -343,22 +347,32 @@ func (m Model) agentsPane(w, h int) string {
 	}
 	var b strings.Builder
 	b.WriteString("\n")
-	var last fleet.Status = -1
-	counts := map[fleet.Status]int{}
+	// Sections: each tree under its root, then the rest by status. Rows
+	// inside a folded branch are skipped.
+	last := ""
+	counts := map[string]int{}
 	for _, a := range m.agents {
-		counts[a.Status]++
+		counts[m.sectionOf(a)]++
 	}
 	for i, a := range m.agents {
-		if a.Status != last {
-			if last != -1 {
+		meta := m.rowFor(a.Session.SessionID)
+		if meta.hidden {
+			continue
+		}
+		if sec := m.sectionOf(a); sec != last {
+			if last != "" {
 				b.WriteString("\n")
 			}
-			title := strings.ToUpper(a.Status.String())
-			b.WriteString("  " + s.section.Render(fmt.Sprintf("%s · %d", title, counts[a.Status])) + "\n")
-			last = a.Status
+			b.WriteString("  " + s.section.Render(fmt.Sprintf("%s · %d", strings.ToUpper(sec), counts[sec])) + "\n")
+			last = sec
+			if sec == "orchestrator" {
+				b.WriteString(fill(m.orchestratorRow(w), w, s.fg) + "\n")
+			}
 		}
 		selected := i == m.cursor
 		fg, dim, muted, bright, _, attn, err, marker := m.rowStyles(selected)
+		guide, cont := muted.Render(meta.guide), muted.Render(meta.cont)
+		indentW := ansi.StringWidth(meta.cont)
 		var glyph string
 		switch a.Status {
 		case fleet.Working:
@@ -380,7 +394,11 @@ func (m Model) agentsPane(w, h int) string {
 		if a.Labels.Role != "" {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
 		}
-		l1 := marker + fg.Render(" ") + glyph + fg.Render(" ") + name + role
+		l1 := marker + fg.Render(" ") + guide + glyph + fg.Render(" ") + name + role
+		if d := m.directsLabel(a.Session.SessionID, dim, attn); d != "" {
+			l1 += fg.Render("   ") + d
+		}
+		l1 = ansi.Truncate(l1, w, "…")
 
 		taskMark := "▸ "
 		if a.Status == fleet.Idle || a.Status == fleet.Gone {
@@ -390,7 +408,7 @@ func (m Model) agentsPane(w, h int) string {
 		if selected {
 			taskStyle = fg
 		}
-		l2 := marker + fg.Render("   ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-5, "…"))
+		l2 := marker + fg.Render(" ") + cont + fg.Render("  ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-5-indentW, "…"))
 
 		// Third line: age · harness · model · ctx, all inline. Where it runs
 		// lives in the details pane.
@@ -416,15 +434,15 @@ func (m Model) agentsPane(w, h int) string {
 			{age, prettyModel(a.Model)},
 			{age},
 		} {
-			var meta []string
+			var bits []string
 			for _, p := range parts {
 				if p != "" {
-					meta = append(meta, p)
+					bits = append(bits, p)
 				}
 			}
-			l3 = marker + fg.Render("   ") + dim.Render(strings.Join(meta, " · "))
+			l3 = marker + fg.Render(" ") + cont + fg.Render("  ") + dim.Render(strings.Join(bits, " · "))
 			if ctx != "" {
-				if len(meta) > 0 {
+				if len(bits) > 0 {
 					l3 += dim.Render(" · ")
 				}
 				l3 += cs.Render(ctx)
@@ -439,6 +457,21 @@ func (m Model) agentsPane(w, h int) string {
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// orchestratorRow heads the orchestrator's section of the agents pane: it
+// is not a fleet row, so it is one line and cannot be selected.
+func (m Model) orchestratorRow(w int) string {
+	s := m.st
+	status := m.orch.status
+	if status == "" {
+		status = "off"
+	}
+	line := "  " + m.orchStyle().Render("● orchestrator") + s.dim.Render("  "+status)
+	if d := m.directsLabel(tree.Orchestrator, s.dim, s.attn); d != "" {
+		line += s.dim.Render("   ") + d
+	}
+	return ansi.Truncate(line, w, "…")
 }
 
 func (m Model) inboxPane(w, h int) string {
@@ -497,6 +530,9 @@ func (m Model) inboxPane(w, h int) string {
 		textW := w - 4 - avatarW - 1
 		var text []string
 		text = append(text, head)
+		if via := m.viaLine(it.SessionID); via != "" {
+			text = append(text, ansi.Truncate(via, textW, "…"))
+		}
 		body := fg
 		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
 			body = dim
@@ -611,6 +647,9 @@ func (m Model) detailPane(w, h int) string {
 	// Identity on top, then the critter with its task beside it.
 	b.WriteString("\n")
 	line(s.bright.Bold(true).Render(a.Name) + role)
+	if ch := m.chainLine(a.Session.SessionID, true); ch != "" {
+		line(ch)
+	}
 	b.WriteString("\n")
 	const spriteW = 16
 	var head []string
@@ -671,6 +710,14 @@ func (m Model) detailPane(w, h int) string {
 		line(s.dim.Render(fmt.Sprintf("%-9s", k)) + s.fg.Render(v))
 	}
 	kv("status", a.Status.String()+" · "+humanAge(a.Since()))
+	if kids := m.childrenOf(a.Session.SessionID); len(kids) > 0 {
+		b.WriteString("\n")
+		line(s.muted.Render("directs"))
+		for _, l := range m.childLines(a.Session.SessionID, w-4, false) {
+			line(l)
+		}
+		b.WriteString("\n")
+	}
 	var gauges [][]string
 	if a.HasUsage {
 		left := (a.Usage.Window - a.Usage.Tokens) / 1000
@@ -801,7 +848,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch /review", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabInbox:
@@ -810,10 +857,12 @@ func (m Model) hints(w int) string {
 		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
 		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
+	case m.tree.mapView:
+		items = [][2]string{{"↑ ↓", "walk"}, {"← →", "parent · child"}, {"Enter", "send · empty: focus terminal"}, {"^T", "list"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.focus == paneDetail:
 		items = [][2]string{{"↑ ↓", "scroll"}, {"←", "agents"}, {"Enter", "send · empty: focus terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	default:
-		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"^T", "map"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	}
 	var parts []string
 	for _, it := range items {

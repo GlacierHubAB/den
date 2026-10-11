@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/tree"
 )
 
 // OrchestratorName is the session name Den gives its orchestrator.
@@ -283,6 +284,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(in.Message), SentAt: now}
 				m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, toolUseID: ev.ToolUseID, at: now})
 				m.logCard(d)
+				m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: sid, Brief: firstLineOf(in.Message), At: now, Source: "dispatch"})
 			}
 		} else {
 			m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
@@ -309,6 +311,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 					e.status = "failed: " + firstLineOf(ev.Text)
 				case strings.HasPrefix(e.text, "▶"):
 					e.status = firstLineOf(ev.Text)
+					m.learnSpawn(ev.Text)
 				}
 			case failed:
 				e.status = "failed: " + firstLineOf(ev.Text)
