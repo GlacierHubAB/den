@@ -189,8 +189,8 @@ the tab row.
 
 With the hooks installed, each item is a permission, a plan review, a question
 or a finished turn; Den adds its own questions, to close agents, to install
-skills or to reopen agents after a restart. Waiting permissions and plans can be answered from Den:
-`Ctrl+Y` allows and `Ctrl+N` denies the waiting one, `/always` allows it and
+skills or to reopen agents after a restart. Waiting permissions and plans can
+be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one, `/always` allows it and
 the same tool again this session, `/open` focuses the terminal, `/dismiss`
 clears an item. Finished turns are appended to
 `~/.local/state/den/history.jsonl` (the newest `inbox.history`, 100 by default,
@@ -823,14 +823,20 @@ What Den does that is its own:
 - **Cost:** tokens rolled up per team and per mission run, an estimate in
   dollars at list price, and an optional budget on a mission. (OpenRig also
   counts tokens per seat.)
+- **Bringing agents back:** after a reboot or a closed Den, one inbox question
+  reopens the agents that were live with `claude --resume`, and puts them back
+  in their tree and mission; `/reopen <name>` does it for one agent. (Herdr
+  and OpenRig also restore agents after a restart.)
 - **Mission templates:** four built in (code review, bugfix, research, docs
   pass), and your own saved from a mission; the orchestrator proposes and you
   confirm. (OpenRig also ships built-in teams and shareable bundles.)
 - **The agent badge:** a name, critter, role and task for each session.
 
-Where the others go further: Herdr keeps agents alive when you close the
-client or lose SSH, works across several machines, supports many agent CLIs and
-runs on macOS and Windows. OpenRig gives agent teams persistent roles,
+Where the others go further: Herdr keeps agents running when you close the
+client or lose SSH. Den restores conversations, the tree and missions after a
+restart with one question, but it does not keep processes alive. Herdr also
+works across several machines, supports many agent CLIs and runs on macOS and
+Windows. OpenRig gives agent teams persistent roles,
 addresses and a work queue, and runs Claude Code and Codex side by side.
 
 Den works with Herdr: it notices a Claude Code session running inside a Herdr
