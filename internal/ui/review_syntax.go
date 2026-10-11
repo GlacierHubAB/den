@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
@@ -75,6 +76,10 @@ func synLexer(path string) chroma.Lexer {
 	return chroma.Coalesce(l)
 }
 
+// synLexed counts lexDiff runs that reached the lexer. Tests read it to show
+// a file is lexed once and then served from synCache, whatever the clock says.
+var synLexed atomic.Int64
+
 // lexDiff splits a file's diff lines into coloured spans. A line the lexer
 // gave nothing for (no lexer, an error, or an empty line) gets no spans.
 func lexDiff(path string, lines []diffLine) [][]synSpan {
@@ -89,6 +94,7 @@ func lexDiff(path string, lines []diffLine) [][]synSpan {
 	if size > synMaxBytes {
 		return nil
 	}
+	synLexed.Add(1)
 	out := make([][]synSpan, len(lines))
 	for start := 0; start < len(lines); {
 		end := start

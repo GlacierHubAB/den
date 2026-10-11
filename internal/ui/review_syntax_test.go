@@ -166,25 +166,57 @@ func bigReview(n int) Model {
 	return m
 }
 
+// TestSyntaxLargeDiffStaysFast checks the property that keeps a big diff
+// responsive: a diff under synMaxBytes is lexed once, on the first view, and
+// every later key is served from the cache; a diff over it is never lexed at
+// all. A wall-clock bound would only measure the machine (the race detector
+// alone slows this several times over), so the test counts lexer runs
+// instead. The benchmarks keep the timing.
 func TestSyntaxLargeDiffStaysFast(t *testing.T) {
-	m := bigReview(5000)
-	start := time.Now()
-	m.View() // first view lexes the file
-	first := time.Since(start)
-	start = time.Now()
-	for i := 0; i < 20; i++ {
-		m.moveReview(1)
-		m.View()
-	}
-	per := time.Since(start) / 20
-	t.Logf("first view %v, then %v per key", first, per)
-	if per > 50*time.Millisecond || first > time.Second {
-		t.Errorf("5000-line diff: first view %v, %v per key", first, per)
+	for _, tc := range []struct {
+		name  string
+		lines int
+		lexed int64 // lexer runs for the whole session
+	}{
+		{"under the cap", 2000, 1},
+		{"over the cap", 5000, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synCache.Lock()
+			synCache.m = map[string]*synEntry{}
+			synCache.Unlock()
+			m := bigReview(tc.lines)
+			before := synLexed.Load()
+			start := time.Now()
+			m.View()
+			first := time.Since(start)
+			if got := synLexed.Load() - before; got != tc.lexed {
+				t.Fatalf("first view ran the lexer %d times, want %d", got, tc.lexed)
+			}
+			start = time.Now()
+			for i := 0; i < 20; i++ {
+				m.moveReview(1)
+				m.View()
+			}
+			t.Logf("%d lines: first view %v, then %v per key", tc.lines, first, time.Since(start)/20)
+			if got := synLexed.Load() - before; got != tc.lexed {
+				t.Errorf("20 more keys ran the lexer %d more times; the diff is being re-lexed per key", got-tc.lexed)
+			}
+		})
 	}
 }
 
 func BenchmarkReviewKeyLargeDiff(b *testing.B) {
-	m := bigReview(5000)
+	benchReviewKey(b, 2000)
+}
+
+// BenchmarkReviewKeyHugeDiff is a diff over synMaxBytes, drawn plain.
+func BenchmarkReviewKeyHugeDiff(b *testing.B) {
+	benchReviewKey(b, 5000)
+}
+
+func benchReviewKey(b *testing.B, lines int) {
+	m := bigReview(lines)
 	m.View()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
