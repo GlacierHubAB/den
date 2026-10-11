@@ -35,7 +35,7 @@ that Den embeds in its binary). Clone with it, or the build has nothing to
 embed:
 
 ```
-git clone --recurse-submodules https://github.com/OWNER/den
+git clone --recurse-submodules https://github.com/GlacierHubAB/den
 cd den
 # already cloned without it?  git submodule update --init
 make build        # ./den, stamped with the version from git describe

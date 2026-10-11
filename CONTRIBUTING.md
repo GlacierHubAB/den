@@ -6,7 +6,7 @@ Code agents; this file is the short version of how to change it.
 ## Build and test
 
 ```
-git clone --recurse-submodules https://github.com/OWNER/den   # the badge mod is a submodule
+git clone --recurse-submodules https://github.com/GlacierHubAB/den   # the badge mod is a submodule
 cd den
 make build        # ./den
 make test         # go vet ./... and go test ./..., against a scratch XDG_STATE_HOME
