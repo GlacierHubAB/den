@@ -56,8 +56,9 @@ submodule, which a Go module download does not include.
 ### From a release
 
 Tagged releases carry static Linux binaries, `den_linux_amd64` and
-`den_linux_arm64`, and a `SHA256SUMS` file. Download the binary for your
-machine and the checksum file into one folder, then:
+`den_linux_arm64`, the `THIRD_PARTY_LICENSES` notices and a `SHA256SUMS` file
+covering all three. Download the binary for your machine and the checksum file
+into one folder, then:
 
 ```
 sha256sum -c --ignore-missing SHA256SUMS
@@ -246,9 +247,9 @@ you":
 
 - **failed**: a turn ended on an API error (`StopFailure`: rate limit,
   overload, login, billing), or `stuck.tool_failures` tool calls (3) failed in
-  a row (`PostToolUseFailure`). The item names the error type or the tool,
-  never the command or its output. A new prompt, or a tool call that works,
-  resolves it.
+  a row (`PostToolUseFailure`; a tool you interrupt with `Esc` does not
+  count). The item names the error type or the tool, never the command or its
+  output. A new prompt, or a tool call that works, resolves it.
 - **stalled**: an agent has been working for `stuck.stalled` minutes (20) with
   no hook event. A long build looks the same, so this is a hint to look, not a
   verdict. Any hook event from that agent resolves it.
@@ -984,7 +985,8 @@ What Den does that is its own:
 
 - **One approval inbox.** Permission requests, plan reviews, questions and
   finished turns from every session land in one list; `^Y` / `^N` answer a
-  waiting permission or plan without switching windows.
+  waiting permission or plan without switching windows, and with
+  `hooks.answer_questions` on, an agent's question is answered there too.
 - **An orchestrator you talk to,** a Claude Code session that can message,
   spawn and staff agents for you. (OpenRig also lets you talk to a lead agent.)
 - **Missions:** standing goals run once, in a loop, fanned out or on a schedule.
@@ -1035,3 +1037,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMEN
 MIT, see [LICENSE](LICENSE). The bundled agent-badge mod
 (`mods/agent-badge`) is MIT licensed under its own `LICENSE`, and Den's name
 generator in `internal/badge` is ported from it.
+
+[THIRD_PARTY_LICENSES](THIRD_PARTY_LICENSES) holds the license of every Go
+module built into the binary, and says where the catalogue's skills come from
+and under which license: Den embeds only its own catalogue and downloads a
+skill, at its pinned commit, when you approve it. Releases ship the file next
+to the binaries. `go run ./internal/tools/thirdparty` regenerates its Go
+module section, and a test fails when that section no longer matches the
+build.
