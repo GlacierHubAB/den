@@ -319,6 +319,21 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 		foot += s.key.Render("Enter") + s.keyLabel.Render(" expand")
 	}
 	rows := []string{line1, line2, line3}
+	if d.State == cardNeedsYou {
+		if it := m.openItem(d.SessionID); it != nil {
+			a, _ := m.agentFor(d.SessionID)
+			a.Session.SessionID = d.SessionID
+			if it.Intent != "" {
+				for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
+					rows = append(rows, s.fg.Render(l))
+				}
+			}
+			code := m.inAgentColor(a).st.code
+			for _, l := range it.Body {
+				rows = append(rows, m.wrapCode(l, textW, code)...)
+			}
+		}
+	}
 	rows = append(rows, m.childLines(d.SessionID, textW, true)...)
 	rows = append(rows, foot)
 	var out []string

@@ -60,7 +60,8 @@ type Item struct {
 	At        time.Time
 	Tool      string
 	Title     string   // one line, what is being asked
-	Body      []string // detail lines (a command, a path, a plan excerpt)
+	Intent    string   // the agent's own words for why, when the tool call carries them
+	Body      []string // the thing being decided, in full: the command, the diff, the arguments
 	Options   []string // AskUserQuestion choices, display only
 	Resolved  string   // how it was resolved, for the dim trailer
 	Role      string   // the agent's role when this happened
@@ -139,7 +140,7 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 			it.Body = planExcerpt(in.ToolInput)
 		} else {
 			it.Kind = Permission
-			it.Title, it.Body = describeTool(in.ToolName, in.ToolInput)
+			it.Title, it.Intent, it.Body = describeTool(in.ToolName, in.ToolInput)
 		}
 		// Drop the soft "permission_prompt" notice for the same session.
 		for _, o := range s.items {
@@ -394,7 +395,15 @@ func allowKey(tool string, input json.RawMessage) string {
 	return tool
 }
 
-func describeTool(tool string, input json.RawMessage) (string, []string) {
+// bodyLimit caps how much of a diff, a file or a payload an item carries.
+// Enough to decide on; the terminal has the rest.
+const bodyLimit = 40
+
+// describeTool says what a permission request is for: a short title, the
+// agent's stated intent when the call carries one, and the thing being
+// decided in full, line by line, so the human can approve or reject
+// knowing exactly what runs.
+func describeTool(tool string, input json.RawMessage) (title, intent string, body []string) {
 	var in map[string]any
 	json.Unmarshal(input, &in)
 	str := func(k string) string {
@@ -405,20 +414,81 @@ func describeTool(tool string, input json.RawMessage) (string, []string) {
 	}
 	switch tool {
 	case "Bash":
-		return "Wants to run", []string{"$ " + strings.TrimSpace(str("command"))}
+		return "Wants to run", str("description"), commandLines(str("command"))
 	case "Edit", "MultiEdit":
-		return "Wants to edit " + str("file_path"), diffLines(str("old_string"), str("new_string"))
+		return "Wants to edit " + str("file_path"), "", diffLines(str("old_string"), str("new_string"))
 	case "Write":
-		return "Wants to write " + str("file_path"), moreLines(str("content"), 3)
+		return "Wants to write " + str("file_path"), "", limitLines(str("content"), bodyLimit)
 	case "NotebookEdit":
-		return "Wants to edit notebook " + str("notebook_path"), nil
+		return "Wants to edit notebook " + str("notebook_path"), "", limitLines(str("new_source"), bodyLimit)
+	case "Read":
+		return "Wants to read " + str("file_path"), "", nil
 	case "WebFetch":
-		return "Wants to fetch " + str("url"), nil
+		return "Wants to fetch " + str("url"), str("prompt"), nil
+	case "WebSearch":
+		return "Wants to search the web", "", []string{str("query")}
+	case "Agent", "Task":
+		return "Wants to start an agent", str("description"), limitLines(str("prompt"), 12)
 	case "SendMessage":
-		return "Wants to message " + str("to"), moreLines(str("message"), 2)
+		return "Wants to message " + str("to"), "", limitLines(str("message"), 12)
 	}
-	b, _ := json.MarshalIndent(in, "", "  ")
-	return "Wants to use " + tool, moreLines(string(b), 6)
+	if server, name, ok := mcpTool(tool); ok {
+		return "Wants to call " + name + " on " + server, "", jsonLines(in)
+	}
+	return "Wants to use " + tool, "", jsonLines(in)
+}
+
+// mcpTool splits an MCP tool name, mcp__server__tool, into its parts.
+func mcpTool(tool string) (server, name string, ok bool) {
+	rest, ok := strings.CutPrefix(tool, "mcp__")
+	if !ok {
+		return "", "", false
+	}
+	server, name, ok = strings.Cut(rest, "__")
+	if !ok || server == "" || name == "" {
+		return "", "", false
+	}
+	return server, name, true
+}
+
+// commandLines is a shell command as the terminal would show it: the
+// first line after a prompt, the rest indented under it.
+func commandLines(cmd string) []string {
+	lines := strings.Split(strings.TrimSpace(cmd), "\n")
+	out := make([]string, 0, len(lines))
+	for i, l := range lines {
+		if i == 0 {
+			out = append(out, "$ "+l)
+		} else {
+			out = append(out, "  "+l)
+		}
+	}
+	return out
+}
+
+// jsonLines is a tool's arguments as indented JSON, within the body limit.
+func jsonLines(in map[string]any) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	b, err := json.MarshalIndent(in, "", "  ")
+	if err != nil {
+		return nil
+	}
+	return limitLines(string(b), bodyLimit)
+}
+
+// limitLines keeps the first n lines of a text and says how many follow.
+func limitLines(s string, n int) []string {
+	s = strings.TrimRight(s, "\n")
+	if s == "" {
+		return nil
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= n {
+		return lines
+	}
+	return append(lines[:n], fmt.Sprintf("… %d more lines", len(lines)-n))
 }
 
 func describeQuestion(input json.RawMessage) (string, []string) {
@@ -451,28 +521,19 @@ func planExcerpt(input json.RawMessage) []string {
 		Plan string `json:"plan"`
 	}
 	json.Unmarshal(input, &in)
-	return moreLines(in.Plan, 6)
+	return limitLines(in.Plan, bodyLimit)
 }
 
+// diffLines shows an edit as removed lines then added lines, the whole
+// change up to the body limit split between the two halves.
 func diffLines(oldS, newS string) []string {
+	half := bodyLimit / 2
 	var out []string
-	for i, l := range strings.Split(strings.TrimRight(oldS, "\n"), "\n") {
-		if i >= 3 {
-			out = append(out, "- …")
-			break
-		}
-		if l != "" {
-			out = append(out, "- "+l)
-		}
+	for _, l := range limitLines(oldS, half) {
+		out = append(out, "- "+l)
 	}
-	for i, l := range strings.Split(strings.TrimRight(newS, "\n"), "\n") {
-		if i >= 3 {
-			out = append(out, "+ …")
-			break
-		}
-		if l != "" {
-			out = append(out, "+ "+l)
-		}
+	for _, l := range limitLines(newS, half) {
+		out = append(out, "+ "+l)
 	}
 	return out
 }
@@ -528,28 +589,6 @@ func firstLine(s string) string {
 		return strings.TrimSpace(s[:i])
 	}
 	return s
-}
-
-func moreLines(s string, n int) []string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	if len(lines) <= 1 {
-		return nil
-	}
-	lines = lines[1:]
-	var out []string
-	for _, l := range lines {
-		if strings.TrimSpace(l) == "" {
-			continue
-		}
-		out = append(out, l)
-		if len(out) == n {
-			if len(lines) > n {
-				out = append(out, "…")
-			}
-			break
-		}
-	}
-	return out
 }
 
 func firstNonEmpty(xs ...string) string {

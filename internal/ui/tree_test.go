@@ -132,3 +132,31 @@ done</cross-session-message>`)
 		t.Errorf("reply inverted the tree: %+v", e)
 	}
 }
+
+func TestOpenRequestIsShownInFullWithIntent(t *testing.T) {
+	m := treeModel()
+	long := `S=/tmp/claude-1000/-home-grvlle/33503402-df6e-4023-8df1-fcd6e8e482ed/scratchpad/ser.py; python3 $S "exit\r" 2 >/dev/null; python3 $S "3\r" 4 | tail -6`
+	m.store.Apply(req("PermissionRequest", "snug-capybara", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": long, "description": "Open the password reset option on the router menu"}}))
+	m.refresh()
+	for name, out := range map[string]string{
+		"inbox":   ansi.Strip(m.inboxPane(70, 40)),
+		"details": ansi.Strip(m.requestJoined("snug-capybara", 60)),
+	} {
+		if !strings.Contains(out, "password reset option") {
+			t.Errorf("%s lacks the intent:\n%s", name, out)
+		}
+		if strings.Contains(out, "…") || !strings.Contains(out, "tail -6") {
+			t.Errorf("%s truncated the command:\n%s", name, out)
+		}
+	}
+}
+
+// requestJoined renders the request block the details pane shows.
+func (m Model) requestJoined(sid string, w int) string {
+	it := m.openItem(sid)
+	if it == nil {
+		return ""
+	}
+	a, _ := m.agentFor(sid)
+	return strings.Join(m.requestLines(it, a, w), "\n")
+}

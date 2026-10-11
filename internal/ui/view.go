@@ -459,6 +459,74 @@ func (m Model) agentsPane(w, h int) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// openItem is the request waiting on the human for a session, if any.
+func (m Model) openItem(sessionID string) *inbox.Item {
+	for _, it := range m.store.Items() {
+		if it.SessionID == sessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
+			return it
+		}
+	}
+	return nil
+}
+
+// agentOrStub is the agent for a session, or a stub carrying its colour
+// when the session is no longer in the fleet.
+func (m Model) agentOrStub(sessionID string) fleet.Agent {
+	if a, ok := m.agentFor(sessionID); ok {
+		return a
+	}
+	a := fleet.Agent{}
+	a.Session.SessionID = sessionID
+	return a
+}
+
+// wrapCode wraps one line of a command or diff to the width, continuation
+// lines indented, in the code style.
+func (m Model) wrapCode(l string, w int, code lipgloss.Style) []string {
+	var out []string
+	for i, part := range strings.Split(ansi.Wrap(l, max(8, w), ""), "\n") {
+		if i > 0 {
+			part = "    " + part
+		}
+		out = append(out, code.Render(part))
+	}
+	return out
+}
+
+// requestLines spells out an open request: the kind and tool, the agent's
+// intent, the full command, diff or arguments wrapped, then the keys.
+func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
+	s := m.st
+	head := s.attn.Render(strings.ToUpper(it.Kind.String()))
+	if it.Tool != "" {
+		head += s.dim.Render(" · ") + s.fg.Render(it.Tool)
+	}
+	head += s.dim.Render(" · ") + s.dim.Render(it.Title)
+	out := []string{head}
+	if it.Intent != "" {
+		for _, l := range strings.Split(ansi.Wrap(it.Intent, w, ""), "\n") {
+			out = append(out, s.fg.Render(l))
+		}
+	}
+	code := m.inAgentColor(a).st.code
+	for _, l := range it.Body {
+		out = append(out, m.wrapCode(l, w, code)...)
+	}
+	for j, o := range it.Options {
+		out = append(out, s.bright.Render(fmt.Sprint(j+1))+" "+s.fg.Render(ansi.Truncate(o, w-2, "…")))
+	}
+	key := func(k, label string) string { return s.key.Render(k) + s.keyLabel.Render(" "+label) }
+	switch {
+	case it.Answerable() && it.Kind == inbox.Plan:
+		out = append(out, key("^Y", "approve")+"  "+key("^N", "ask for changes")+"  "+key("/open", "read it in the terminal"))
+	case it.Answerable():
+		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
+	default:
+		out = append(out, s.dim.Render("answer in the terminal")+"  "+key("/open", ""))
+	}
+	return out
+}
+
 // orchestratorRow heads the orchestrator's section of the agents pane: it
 // is not a fleet row, so it is one line and cannot be selected.
 func (m Model) orchestratorRow(w int) string {
@@ -553,11 +621,23 @@ func (m Model) inboxPane(w, h int) string {
 				text = append(text, body.Render(l))
 			}
 		}
+		// An open request shows the whole thing being decided, wrapped;
+		// history keeps one line of it.
+		open := it.State != inbox.Resolved && it.Kind <= inbox.Question
+		if open && it.Intent != "" {
+			for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
+				text = append(text, fg.Render(l))
+			}
+		}
 		bodyLines := it.Body
-		if (it.Kind >= inbox.Done || it.State == inbox.Resolved) && len(bodyLines) > 1 {
+		if !open && len(bodyLines) > 1 {
 			bodyLines = bodyLines[:1]
 		}
 		for _, l := range bodyLines {
+			if open {
+				text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(it.SessionID)).st.code)...)
+				continue
+			}
 			text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
 		}
 		for j, o := range it.Options {
@@ -710,6 +790,12 @@ func (m Model) detailPane(w, h int) string {
 		line(s.dim.Render(fmt.Sprintf("%-9s", k)) + s.fg.Render(v))
 	}
 	kv("status", a.Status.String()+" · "+humanAge(a.Since()))
+	if it := m.openItem(a.Session.SessionID); it != nil {
+		b.WriteString("\n")
+		for _, l := range m.requestLines(it, a, w-4) {
+			line(l)
+		}
+	}
 	if kids := m.childrenOf(a.Session.SessionID); len(kids) > 0 {
 		b.WriteString("\n")
 		line(s.muted.Render("directs"))
