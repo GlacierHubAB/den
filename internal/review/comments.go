@@ -15,15 +15,25 @@ type Comment struct {
 	Side      string    `json:"side"` // "new" for added and unchanged lines, "old" for removed ones
 	Start     int       `json:"start"`
 	End       int       `json:"end"`   // inclusive; equal to Start for one line
-	Quote     []string  `json:"quote"` // the lines as they were when commented, without +/-
+	Quote     []string  `json:"quote"` // the lines as they were when commented, each after its +, - or space marker
 	Body      string    `json:"body"`
 	SessionID string    `json:"sessionId"` // the agent the comment goes to
 	Created   time.Time `json:"created"`
 	Sent      time.Time `json:"sent,omitzero"` // zero while it is a draft
+	// Via is "orchestrator" when the comment went to the orchestrator
+	// because its agent's session had ended; "" when it went to the agent.
+	Via string `json:"via,omitempty"`
+	// Addressed is when Den saw the quoted lines change after sending;
+	// zero while the comment is open.
+	Addressed time.Time `json:"addressed,omitzero"`
 }
 
 // Draft reports whether the comment has not been sent yet.
 func (c Comment) Draft() bool { return c.Sent.IsZero() }
+
+// Open reports whether the comment was sent and its lines have not changed
+// since.
+func (c Comment) Open() bool { return !c.Sent.IsZero() && c.Addressed.IsZero() }
 
 // CommentsPath is where review comments are kept between runs:
 // $XDG_STATE_HOME/den/reviews.json, "" when there is no home directory.

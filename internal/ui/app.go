@@ -975,6 +975,11 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m.say("No comment on this line.", true)
 		}
 		return m, nil
+	case "/send":
+		if m.tab != tabReview {
+			return m.say("/send delivers review comments; open Review first.", true)
+		}
+		return m.sendReview(fields[1:])
 	case "/review":
 		m.tab = tabReview
 		cmd := m.enteredTab()

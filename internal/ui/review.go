@@ -15,8 +15,8 @@ import (
 )
 
 // The Review view: what each agent changed, as git sees it on disk, with
-// every changed line coloured by the session that wrote it. Read-only for
-// now; comments and sending come next (docs/CODE-REVIEW.md).
+// every changed line coloured by the session that wrote it, with comments
+// on lines that /send delivers to the agents (review_send.go).
 
 // reviewPane is which of the three Review panes has the arrow keys.
 type reviewPane int
@@ -62,7 +62,8 @@ type reviewState struct {
 
 	comments     []review.Comment
 	commentsPath string
-	editing      string // id of the comment the command line is editing
+	editing      string          // id of the comment the command line is editing
+	sending      map[string]bool // ids of drafts on their way, held or in flight
 }
 
 // reviewInput is what the loader needs from one agent, copied so the
@@ -77,9 +78,10 @@ type reviewInput struct {
 }
 
 type reviewLoadedMsg struct {
-	works []work
-	errs  []string
-	note  string
+	works     []work
+	errs      []string
+	note      string
+	addressed []string // ids of sent comments whose quoted lines changed
 }
 
 // reviewInputs lists the agents whose work can be reviewed: every agent
@@ -111,7 +113,17 @@ func (m *Model) loadReview() tea.Cmd {
 	}
 	m.rev.loading = true
 	in := m.reviewInputs()
-	return func() tea.Msg { return loadWorks(in) }
+	var open []review.Comment
+	for _, c := range m.rev.comments {
+		if c.Open() {
+			open = append(open, c)
+		}
+	}
+	return func() tea.Msg {
+		msg := loadWorks(in)
+		msg.addressed = addressedComments(open)
+		return msg
+	}
 }
 
 // loadWorks reads each agent's file changes from its transcript, finds the
@@ -300,6 +312,7 @@ func (m *Model) applyReview(msg reviewLoadedMsg) {
 	}
 	m.rev.loading = false
 	m.rev.loadedAt = time.Now()
+	m.markAddressed(msg.addressed)
 	m.rev.all, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
 	m.rev.works = nil
 	for _, w := range msg.works {

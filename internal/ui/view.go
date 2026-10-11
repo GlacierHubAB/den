@@ -973,7 +973,7 @@ func (m Model) hints(w int) string {
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:
-		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
+		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"/send [name|orchestrator]", "send drafts"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
 		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tree.mapView:

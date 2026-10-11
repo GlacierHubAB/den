@@ -525,13 +525,11 @@ func (m Model) appendComments(rows []diffRow, comments []review.Comment, d diffL
 }
 
 // commentRows draws a comment under its line: an amber bar while it is a
-// draft, green once sent, then the body wrapped to the pane.
+// draft, green once sent, with "open" until the quoted lines change and
+// "addressed" after, then the body wrapped to the pane.
 func (m Model) commentRows(c review.Comment, w int) []string {
 	s := m.st
-	barS, state := s.attn, "draft"
-	if !c.Draft() {
-		barS, state = s.ok, "sent"
-	}
+	barS, state := m.commentState(c)
 	if c.ID == m.rev.editing {
 		state = "editing"
 	}
@@ -544,6 +542,9 @@ func (m Model) commentRows(c review.Comment, w int) []string {
 	to := ""
 	if c.SessionID != "" {
 		to = "  → " + m.nameFor(c.SessionID)
+	}
+	if c.Via != "" {
+		to += " via " + c.Via
 	}
 	out := []string{bar + s.dim.Render("you · ") + barS.Render(state) + s.dim.Render(" · "+where+to)}
 	bodyW := max(10, w-len(indent)-3)
@@ -576,17 +577,38 @@ func (m Model) draftCount(root, session, path string) int {
 	return n
 }
 
+// commentState is the colour and word for where a comment stands.
+func (m Model) commentState(c review.Comment) (lipgloss.Style, string) {
+	s := m.st
+	switch {
+	case m.rev.sending[c.ID]:
+		return s.attn, "sending"
+	case c.Draft():
+		return s.attn, "draft"
+	case c.Open():
+		return s.ok, "sent · open"
+	}
+	return s.ok, "sent · addressed"
+}
+
 func (m Model) notesTitle() string {
-	n := 0
+	drafts, open := 0, 0
 	for _, c := range m.rev.comments {
-		if c.Draft() {
-			n++
+		switch {
+		case c.Draft():
+			drafts++
+		case c.Open():
+			open++
 		}
 	}
-	if n == 0 {
-		return "Review"
+	t := "Review"
+	if drafts > 0 {
+		t += fmt.Sprintf(" · %d draft%s", drafts, plural(drafts))
 	}
-	return fmt.Sprintf("Review · %d draft%s", n, plural(n))
+	if open > 0 {
+		t += fmt.Sprintf(" · %d open", open)
+	}
+	return t
 }
 
 func plural(n int) string {
@@ -596,15 +618,14 @@ func plural(n int) string {
 	return "s"
 }
 
-// notesPane lists draft comments grouped by the agent that will get them.
+// notesPane lists comments grouped by the agent that gets them: drafts
+// first, then what was sent, open before addressed. Recipients with drafts
+// come first.
 func (m Model) notesPane(w, h int) string {
 	s := m.st
 	bySession := map[string][]review.Comment{}
 	var order []string
 	for _, c := range m.rev.comments {
-		if !c.Draft() {
-			continue
-		}
 		if _, ok := bySession[c.SessionID]; !ok {
 			order = append(order, c.SessionID)
 		}
@@ -617,7 +638,34 @@ func (m Model) notesPane(w, h int) string {
 			s.muted.Render(ansi.Wrap(" Select lines in the diff and type to leave one.", w-1, "")),
 		}, "\n")
 	}
-	sort.SliceStable(order, func(i, j int) bool { return m.nameFor(order[i]) < m.nameFor(order[j]) })
+	rank := func(c review.Comment) int {
+		switch {
+		case c.Draft():
+			return 0
+		case c.Open():
+			return 1
+		}
+		return 2
+	}
+	drafts := func(sid string) int {
+		n := 0
+		for _, c := range bySession[sid] {
+			if c.Draft() {
+				n++
+			}
+		}
+		return n
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		di, dj := drafts(order[i]) > 0, drafts(order[j]) > 0
+		if di != dj {
+			return di
+		}
+		if (order[i] == "") != (order[j] == "") {
+			return order[j] == "" // lines no agent wrote last
+		}
+		return m.nameFor(order[i]) < m.nameFor(order[j])
+	})
 	var lines []string
 	for gi, sid := range order {
 		if gi > 0 {
@@ -627,29 +675,53 @@ func (m Model) notesPane(w, h int) string {
 		if color == "" {
 			color = s.pal.Muted
 		}
-		name := m.nameFor(sid)
-		if sid == "" {
-			name = "no agent"
-		}
 		cs := bySession[sid]
-		head := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(" " + name)
-		count := s.attn.Render(strconv.Itoa(len(cs)))
+		sort.SliceStable(cs, func(i, j int) bool { return rank(cs[i]) < rank(cs[j]) })
+		nd := drafts(sid)
+		head := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true).Render(" " + m.recipientName(sid))
+		count := ""
+		if nd > 0 {
+			count = s.attn.Render(strconv.Itoa(nd))
+		}
 		lines = append(lines, head+strings.Repeat(" ", max(1, w-ansi.StringWidth(head)-ansi.StringWidth(count)-1))+count)
-		if a, ok := m.agentFor(sid); ok {
-			state := "live"
-			switch a.Status {
-			case fleet.Gone:
-				state = "session ended"
-			case fleet.Working:
-				state = "live · working"
-			case fleet.Idle:
-				state = "live · idle"
-			}
-			lines = append(lines, s.dim.Render(" "+state))
+		_, live := m.reviewRecipient(sid)
+		state := ""
+		a, found := m.agentFor(sid)
+		switch {
+		case sid == "":
+		case !found || a.Status == fleet.Gone:
+			state = "session ended"
+		case !live:
+			state = "live · no inbox socket"
+		case a.Status == fleet.Working:
+			state = "live · working"
+		case a.Status == fleet.Idle:
+			state = "live · idle"
+		default:
+			state = "live"
+		}
+		if !live && nd > 0 {
+			state = strings.TrimPrefix(state+" · /send orchestrator hands these on", " · ")
+		}
+		if state != "" {
+			lines = append(lines, ansi.Truncate(s.dim.Render(" "+state), w, "…"))
 		}
 		for _, c := range cs {
+			mark := s.attn.Render("•")
+			if m.rev.sending[c.ID] {
+				mark = s.attn.Render("→")
+			} else if !c.Draft() {
+				mark = s.ok.Render("→")
+				if !c.Open() {
+					mark = s.ok.Render("✓")
+				}
+			}
 			where := filepath.Base(c.Path) + ":" + strconv.Itoa(c.Start)
-			lines = append(lines, ansi.Truncate(" "+s.muted.Render(where)+" "+s.fg.Render(strings.ReplaceAll(c.Body, "\n", " ")), w, "…"))
+			body := s.fg.Render(strings.ReplaceAll(c.Body, "\n", " "))
+			if !c.Draft() {
+				body = s.dim.Render(strings.ReplaceAll(c.Body, "\n", " "))
+			}
+			lines = append(lines, ansi.Truncate(" "+mark+" "+s.muted.Render(where)+" "+body, w, "…"))
 		}
 	}
 	return strings.Join(lines[:min(len(lines), h)], "\n")

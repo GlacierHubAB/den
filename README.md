@@ -241,6 +241,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/project <name>`, `/project add <dir>`, `/project drop` | pick, list or unlist a project |
 | `/mission <goal>`, `/pause`, `/resume`, `/stop` | missions |
 | `/delete` `/del` | remove the review comment under the cursor |
+| `/send`, `/send <Name>`, `/send orchestrator` | send review drafts to their agents, to one agent, or those no live session can take to the orchestrator |
 | `/help` `/?`, `/quit` `/q` `/exit` | |
 
 ## Keys
@@ -550,15 +551,29 @@ project picked on Overview.
 - **Comments.** Select a line (`Shift+↑ ↓` or the mouse for a range), type, and
   `Enter` saves a draft comment addressed to the agent that wrote most of those
   lines. `Enter` on an empty line edits the comment under the cursor and
-  `/delete` removes it. Drafts are kept in `~/.local/state/den/reviews.json`
-  (readable only by you) and survive restarts. **Sending comments back to the
-  agent is not implemented yet**; they are drafts you can read in Den.
+  `/delete` removes it. Comments are kept in `~/.local/state/den/reviews.json`
+  (readable only by you) and survive restarts.
+- **Sending.** `/send` delivers each agent's drafts as one message into its
+  own session, the way `@Name` messages go, held while you are at that
+  terminal. Each comment cites its file and lines and quotes them, so the
+  agent finds the place even after the lines have moved. `/send <Name>` sends
+  one agent's drafts. There is no confirmation step: the message is plain
+  text and cannot approve anything. Drafts for an agent whose session has
+  ended, and for lines no agent wrote, stay drafts and the right column says
+  so; `/send orchestrator` hands them to the orchestrator to pass on. If
+  delivery fails the comments stay drafts.
+- **Addressed.** A sent comment stays under its line, marked "sent · open",
+  until the lines it quotes change on disk. Den looks for them anywhere in
+  the file whenever the diffs reload, so edits that only move them do not
+  count. Then it reads "sent · addressed". A comment on removed lines counts
+  as addressed once those lines are back.
 - **Refresh.** The diffs reload when you enter the tab if they are older than
   2 s, every 15 s while it is open, and on `/rescan`.
 
 Left column: **Recent work**, one entry per agent, and **Files** for the
 selected work. Centre: the diff. On wide terminals a right column lists the
-drafts by recipient. Narrower than 72 columns the diff is shown alone.
+comments by recipient, with whether that agent is live: drafts first, then
+open (→) and addressed (✓). Narrower than 72 columns the diff is shown alone.
 
 ## The agent badge
 

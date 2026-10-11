@@ -21,13 +21,19 @@ type outgoing struct {
 	text  string
 	item  *inbox.Item
 	since time.Time
+	// review holds the ids of the review comments the message carries.
+	review []string
 }
 
 type sentMsg struct {
-	item *inbox.Item
-	name string
-	err  error
+	item   *inbox.Item
+	name   string
+	err    error
+	review []string // review comments delivered, or not, with it
 }
+
+// sendPeer posts a message to a session's socket; tests replace it.
+var sendPeer = peer.Send
 
 // guardMax is how long a message waits for you to leave that terminal
 // before Den delivers it anyway.
@@ -173,7 +179,7 @@ func (m Model) say(text string, isErr bool) (tea.Model, tea.Cmd) {
 
 func deliver(a fleet.Agent, text string, it *inbox.Item) tea.Cmd {
 	return func() tea.Msg {
-		err := peer.Send(a.Session.Socket, text)
+		err := sendPeer(a.Session.Socket, text)
 		return sentMsg{item: it, name: a.Name, err: err}
 	}
 }
@@ -190,6 +196,10 @@ func (m *Model) flushQueue() ([]tea.Cmd, bool) {
 			continue
 		}
 		m.store.SetStatus(o.item, "sending…", false)
+		if o.review != nil {
+			cmds = append(cmds, deliverReview(o.agent, o.text, o.item, o.review))
+			continue
+		}
 		cmds = append(cmds, deliver(o.agent, o.text, o.item))
 	}
 	m.queue = keep
@@ -197,11 +207,18 @@ func (m *Model) flushQueue() ([]tea.Cmd, bool) {
 }
 
 func (m *Model) applySent(msg sentMsg) {
+	m.applyReviewSent(msg)
 	if msg.err != nil {
 		m.store.SetStatus(msg.item, "failed: "+msg.err.Error(), true)
 		m.flash, m.flashErr = "Not delivered to "+msg.name+": "+msg.err.Error(), true
+		if msg.review != nil {
+			m.flash += "; the comments stay drafts"
+		}
 		return
 	}
 	m.store.SetStatus(msg.item, "delivered", true)
 	m.flash, m.flashErr = "Delivered to "+msg.name, false
+	if msg.review != nil {
+		m.flash = fmt.Sprintf("Delivered %s to %s", commentCount(len(msg.review)), msg.name)
+	}
 }
