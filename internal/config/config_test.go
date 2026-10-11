@@ -73,3 +73,32 @@ func TestRestoreAsk(t *testing.T) {
 		t.Error("DEN_RESTORE=off turns it off")
 	}
 }
+
+func TestNotifyAndStuck(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte(`
+[notify]
+needs_you = false
+remind = 0
+done = true
+
+[stuck]
+stalled = 0
+tool_failures = 5
+`), 0o644)
+	t.Setenv("DEN_CONFIG", p)
+	t.Setenv("DEN_NOTIFY", "")
+	c := Load()
+	if c.Notify.NeedsYou || c.Notify.Remind != 0 || !c.Notify.Done || c.Notify.Failed || c.Stuck.Stalled != 0 || c.Stuck.ToolFailures != 5 {
+		t.Errorf("got %+v %+v", c.Notify, c.Stuck)
+	}
+	t.Setenv("DEN_NOTIFY", "off")
+	if c := Load(); c.Notify.Done || c.Notify.Remind != 0 {
+		t.Errorf("DEN_NOTIFY=off should silence everything: %+v", c.Notify)
+	}
+	t.Setenv("DEN_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
+	t.Setenv("DEN_NOTIFY", "")
+	if d := Load(); !d.Notify.NeedsYou || d.Notify.Done || d.Notify.Failed || d.Notify.Stalled || d.Notify.WithoutDen || d.Notify.Remind != 10 {
+		t.Errorf("defaults: only needs-you notifications are on: %+v", d.Notify)
+	}
+}

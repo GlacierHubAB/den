@@ -146,6 +146,8 @@ type Model struct {
 	rev reviewState // the Review view
 
 	restore restoreState // the roster of agents seen live, and the questions to reopen them
+
+	att attention // desktop notifications, reminders and stalls
 }
 
 // New returns the root model and starts listening for hook events.
@@ -157,6 +159,7 @@ func New(cfg config.Config) Model {
 		watch: watchDirs(discover.Dir(), badge.StoreDir(), theme.ColorsFile()),
 		store: inbox.New(),
 		tree:  newTreeState(),
+		att:   newAttention(),
 	}
 	m.tree.path = tree.Path()
 	m.tree.edges = tree.Load(m.tree.path)
@@ -166,6 +169,7 @@ func New(cfg config.Config) Model {
 	fleet.Recent = cfg.Detail.Recent
 	fleet.Prices = cost.NewTable(config.Prices())
 	m.store.HistoryLimit(cfg.Inbox.History)
+	m.store.ToolFailureLimit(cfg.Stuck.ToolFailures)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
 	m.chatLog = ChatLogPath()
 	m.orch.chat, m.orch.resume = loadChatLog(m.chatLog, maxChatLog)
@@ -423,7 +427,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions()}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -533,7 +537,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			_ = inbox.AppendHistory(inbox.HistoryPath(), it) // best effort
 		}
 	}
-	var cmds []tea.Cmd
+	cmds := []tea.Cmd{m.attend(r, it)}
 	switch r.Event {
 	case "SessionStart", "SessionEnd":
 		cmds = append(cmds, snapshot)
@@ -874,6 +878,7 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 	switch m.tab {
 	case tabInbox:
 		if it := m.inboxSelected(); it != nil {
+			m.store.MarkRead(it)
 			target, ok = m.agentFor(it.SessionID)
 		}
 	case tabFleet:
@@ -967,6 +972,14 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			m.store.Dismiss(it)
 			m.refresh()
 			return m, nil
+		}
+		return m.say("Select an inbox item first.", true)
+	case "/unread", "/u":
+		if it := m.inboxSelected(); it != nil && m.tab == tabInbox {
+			if m.store.KeepUnread(it) {
+				return m.say("Kept unread: it counts as new until you open or dismiss it.", false)
+			}
+			return m.say("Marked read.", false)
 		}
 		return m.say("Select an inbox item first.", true)
 	case "/rescan", "/r":

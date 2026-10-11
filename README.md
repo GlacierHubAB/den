@@ -134,8 +134,9 @@ turns once restarted.
 
 `den install-hooks` adds one entry per event for `SessionStart`, `SessionEnd`,
 `UserPromptSubmit`, `Notification`, `Stop`, `PostToolUse`, `PreToolUse`
-(matcher `AskUserQuestion`) and `PermissionRequest`, each running `den hook`.
-Installing twice replaces Den's old entries; `den uninstall-hooks` removes
+(matcher `AskUserQuestion`), `PermissionRequest`, `StopFailure` and
+`PostToolUseFailure`, each running `den hook`. Installing twice replaces Den's
+old entries, so run it again after upgrading Den; `den uninstall-hooks` removes
 them. `CLAUDE_CONFIG_DIR` moves the settings file Den edits.
 
 ### Commands
@@ -192,7 +193,9 @@ or a finished turn; Den adds its own questions, to close agents, to install
 skills or to reopen agents after a restart. Waiting permissions and plans can
 be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one,
 `/always` allows it and the same tool again this session, `/open` focuses the
-terminal, `/dismiss` clears an item. Finished turns are appended to
+terminal, `/dismiss` clears an item, and `/unread` keeps the selected item
+counted as new until you open or dismiss it (`/unread` again marks it read).
+Finished turns are appended to
 `~/.local/state/den/history.jsonl` (the newest `inbox.history`, 100 by
 default, come back on restart). The request shows the whole command or edit
 the permission is about.
@@ -201,6 +204,46 @@ Den holds a permission request only while you are not at that terminal. If the
 agent's window is focused, or you switch to it, the normal Claude Code dialog
 appears instead, and so it does when `hooks.permission_wait` (580 s) runs out
 or Den is not running.
+
+Two kinds of item say an agent may be stuck. Neither ever counts as "needs
+you":
+
+- **failed**: a turn ended on an API error (`StopFailure`: rate limit,
+  overload, login, billing), or `stuck.tool_failures` tool calls (3) failed in
+  a row (`PostToolUseFailure`). The item names the error type or the tool,
+  never the command or its output. A new prompt, or a tool call that works,
+  resolves it.
+- **stalled**: an agent has been working for `stuck.stalled` minutes (20) with
+  no hook event. A long build looks the same, so this is a hint to look, not a
+  verdict. Any hook event from that agent resolves it.
+
+### Notifications
+
+Den sends a desktop notification (through `notify-send`) when a permission,
+plan or question starts waiting on you, and one reminder if it is still
+waiting after `notify.remind` minutes (10). A notification reads like "Mossy
+Lemur needs your permission": the agent's name and the kind of request, never
+the command, a path, a prompt or file text. Clicking it brings that agent's
+terminal to the front, as `den focus` does. That uses the notification's
+default action: omarchy-shell (Omarchy 4), mako and swaync run it on a click,
+dunst on a middle click; on a server without actions the click does nothing.
+
+There is no notification for an agent whose terminal is the focused window, or
+while Den's own window is focused (when Den can tell: Ghostty runs all its
+windows in one process, so there it cannot), and none for the orchestrator's
+own traffic.
+
+Off by default, each with its own switch under `[notify]`:
+
+- `done`: an agent finished. Only the top of a branch notifies, an agent
+  nobody in the fleet directs, or one the orchestrator does, and only once
+  nobody under it is still working. Workers finishing for a lead stay quiet.
+- `failed` and `stalled`: the stuck items above.
+- `without_den`: Den only notifies while it runs. With this on, `den hook`
+  turns Claude Code's own permission and input notices into a desktop
+  notification when no Den is listening. There is nothing to click then.
+
+`DEN_NOTIFY=off` turns every notification off.
 
 Messages you send to an agent arrive in its session the way messages from other
 Claude Code sessions do, with a first line saying they come from you via Den.
@@ -232,6 +275,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/allow` `/y`, `/deny` `/n`, `/always` `/a` | answer the waiting prompt |
 | `/open` `/o` `/focus` | focus the selected agent's terminal |
 | `/dismiss` `/x` | clear the selected inbox item |
+| `/unread` `/u` | keep the selected inbox item counted as new until opened or dismissed; again to mark it read |
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
@@ -740,6 +784,18 @@ log = true                  # append every hook run to ~/.local/state/den/hooks.
 [restore]
 ask = true                  # after a restart, ask once whether to reopen the agents that were live
 
+[notify]
+needs_you = true            # desktop notification when a permission, plan or question waits on you
+remind = 10                 # minutes before one more for something still waiting; 0 never
+done = false                # when the top agent of a branch finishes; its workers stay quiet
+failed = false              # when a turn ends on an API error or tool calls keep failing
+stalled = false             # when an agent has gone quiet while working
+without_den = false         # let den hook notify needs-you itself while Den is not running
+
+[stuck]
+stalled = 20                # minutes working with no hook event before the inbox says stalled; 0 off
+tool_failures = 3           # tool calls failing in a row before the inbox says so; 0 off
+
 # [prices]                  # override the cost estimate's price table, see Cost
 # claude-opus-5-5 = "4, 20, 5, 0.2"
 ```
@@ -747,8 +803,9 @@ ask = true                  # after a restart, ask once whether to reopen the ag
 Mission templates are in `templates.json` beside it (see Templates).
 
 `DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`,
-`DEN_HOOK_LOG=off` and `DEN_RESTORE=off` win over the file. `DEN_SOCKET` moves
-the socket the hooks talk to (default `$XDG_RUNTIME_DIR/den.sock`).
+`DEN_HOOK_LOG=off`, `DEN_RESTORE=off` and `DEN_NOTIFY=off` win over the file.
+`DEN_SOCKET` moves the socket the hooks talk to (default
+`$XDG_RUNTIME_DIR/den.sock`).
 
 ## Files Den writes
 

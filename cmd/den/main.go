@@ -208,7 +208,9 @@ func configCmd(args []string) {
 	fmt.Printf("[orchestrator]\nmodel = %q\nname = %q\nspawn = %v\n\n", c.Orchestrator.Model, c.Orchestrator.Name, c.Orchestrator.Spawn)
 	fmt.Printf("[inbox]\nhistory = %d\n\n", c.Inbox.History)
 	fmt.Printf("[detail]\nrecent = %d\n\n", c.Detail.Recent)
-	fmt.Printf("[hooks]\npermission_wait = %d\nlog = %v\n", c.Hooks.PermissionWait, c.Hooks.Log)
+	fmt.Printf("[hooks]\npermission_wait = %d\nlog = %v\n\n", c.Hooks.PermissionWait, c.Hooks.Log)
+	fmt.Printf("[notify]\nneeds_you = %v\nremind = %d\ndone = %v\nfailed = %v\nstalled = %v\nwithout_den = %v\n\n", c.Notify.NeedsYou, c.Notify.Remind, c.Notify.Done, c.Notify.Failed, c.Notify.Stalled, c.Notify.WithoutDen)
+	fmt.Printf("[stuck]\nstalled = %d\ntool_failures = %d\n", c.Stuck.Stalled, c.Stuck.ToolFailures)
 	if prices := config.Prices(); len(prices) > 0 {
 		fmt.Printf("\n[prices]\n")
 		for k, v := range prices {

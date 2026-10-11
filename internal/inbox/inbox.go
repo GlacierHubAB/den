@@ -26,6 +26,8 @@ const (
 	Skills                 // Den asks: install these catalogue skills? y/n answer it
 	Budget                 // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
 	Restore                // Den asks: reopen these agents with claude --resume? y/n answer it
+	Stalled                // working, but no hook event for a while; never "needs you"
+	Failed                 // a turn ended on an API error, or tool calls keep failing
 )
 
 func (k Kind) String() string {
@@ -50,6 +52,10 @@ func (k Kind) String() string {
 		return "budget"
 	case Restore:
 		return "restore"
+	case Stalled:
+		return "stalled"
+	case Failed:
+		return "failed"
 	}
 	return "?"
 }
@@ -79,6 +85,7 @@ type Item struct {
 	Role      string   // the agent's role when this happened
 	Task      string   // what the agent was working on when this happened
 	Seen      bool     // shown on the Inbox view at least once
+	Unread    bool     // kept unread by the human: counts as new until opened or dismissed
 	req       *bridge.Request
 }
 
@@ -106,14 +113,26 @@ func (it *Item) Request() *bridge.Request { return it.req }
 
 // Store holds items and the per-session "always allow" rules.
 type Store struct {
-	history int // see HistoryLimit
+	history int            // see HistoryLimit
+	failing int            // see ToolFailureLimit
+	streak  map[string]int // sessionID -> tool calls failed in a row
 	items   []*Item
 	always  map[string]map[string]bool // sessionID -> allow key
 	seq     int
 }
 
 // New returns an empty store.
-func New() *Store { return &Store{always: map[string]map[string]bool{}} }
+func New() *Store {
+	return &Store{always: map[string]map[string]bool{}, streak: map[string]int{}, failing: DefaultToolFailures}
+}
+
+// DefaultToolFailures is how many tool calls must fail in a row before the
+// store adds a Failed item, unless ToolFailureLimit says otherwise.
+const DefaultToolFailures = 3
+
+// ToolFailureLimit sets how many tool calls must fail in a row before a
+// Failed item appears; 0 turns that off.
+func (s *Store) ToolFailureLimit(n int) { s.failing = n }
 
 // Items returns items newest-last, waiting ones first.
 func (s *Store) Items() []*Item {
@@ -156,6 +175,8 @@ func (s *Store) SessionNeedsYou(sessionID string) bool {
 // if any. Permission requests matching an "always" rule are answered here.
 func (s *Store) Apply(r *bridge.Request) *Item {
 	in := r.Input
+	// Any sign of life ends a stall.
+	s.resolveSession(in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
 	switch r.Event {
 	case "PermissionRequest":
 		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] {
@@ -189,7 +210,28 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		s.resolveSession(in.SessionID, "answered in terminal", func(it *Item) bool {
 			return it.Kind == Question || (it.Kind <= Plan && it.State == InTerminal)
 		})
+		delete(s.streak, in.SessionID)
+		s.resolveSession(in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
 		return nil
+	case "PostToolUseFailure":
+		// Failing commands are part of normal work; only a run of them is
+		// worth a look. The item names the tool, never its input or output.
+		s.streak[in.SessionID]++
+		n := s.streak[in.SessionID]
+		if s.failing <= 0 || n < s.failing {
+			return nil
+		}
+		title := fmt.Sprintf("%d tool calls failed in a row", n)
+		for _, it := range s.items {
+			if it.SessionID == in.SessionID && it.Kind == Failed && it.Tool != "" && it.State != Resolved {
+				it.Title, it.Tool = title, in.ToolName
+				return nil
+			}
+		}
+		return s.add(&Item{SessionID: in.SessionID, Kind: Failed, Tool: in.ToolName, Title: title})
+	case "StopFailure":
+		s.resolveSession(in.SessionID, "turn failed", func(it *Item) bool { return it.Kind != Done && it.Kind != Failed })
+		return s.add(&Item{SessionID: in.SessionID, Kind: Failed, Title: FailureTitle(in.FailureType())})
 	case "Notification":
 		switch in.NotificationType {
 		case "permission_prompt":
@@ -218,6 +260,39 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		s.resolveSession(in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
+}
+
+// AddStalled adds a Stalled notice for a session that has been working
+// with no hook event for quiet. Any hook event from it resolves the notice.
+func (s *Store) AddStalled(sessionID string, quiet time.Duration) *Item {
+	if s.hasOpen(sessionID, Stalled) {
+		return nil
+	}
+	mins := int(quiet.Minutes())
+	unit := "minutes"
+	if mins == 1 {
+		unit = "minute"
+	}
+	return s.add(&Item{SessionID: sessionID, Kind: Stalled, Title: fmt.Sprintf("Working with no sign of progress for %d %s", mins, unit)})
+}
+
+// FailureTitle says why a turn ended, from a StopFailure error type.
+func FailureTitle(errType string) string {
+	switch errType {
+	case "rate_limit":
+		return "Turn ended: rate limited"
+	case "overloaded":
+		return "Turn ended: the API is overloaded"
+	case "authentication_failed", "oauth_org_not_allowed", "cloud_credential_error":
+		return "Turn ended: not logged in or credentials failed"
+	case "billing_error", "account_on_hold":
+		return "Turn ended: a billing or account problem"
+	case "max_output_tokens":
+		return "Turn ended: the reply hit the output limit"
+	case "", "unknown":
+		return "Turn ended on an API error"
+	}
+	return "Turn ended on an API error: " + strings.ReplaceAll(errType, "_", " ")
 }
 
 // Sent records an outgoing message. status is shown as the trailer and can
@@ -317,6 +392,21 @@ func (s *Store) Release(it *Item, why string) {
 	}
 }
 
+// KeepUnread flags an item so it counts as new again, until it is opened,
+// dismissed or marked read. It reports the new state.
+func (s *Store) KeepUnread(it *Item) bool {
+	it.Unread = !it.Unread
+	it.Seen = !it.Unread
+	return it.Unread
+}
+
+// MarkRead clears a kept-unread flag, as opening the item does.
+func (s *Store) MarkRead(it *Item) {
+	if it.Unread {
+		it.Unread, it.Seen = false, true
+	}
+}
+
 // Dismiss removes an item that needs no answer, or a resolved one.
 func (s *Store) Dismiss(it *Item) {
 	if it.Answerable() {
@@ -359,7 +449,7 @@ func (s *Store) Prune(keep time.Duration, maxNotices int) {
 			out = append(out, it)
 			continue
 		}
-		if it.State == Resolved && time.Since(it.At) > keep {
+		if it.State == Resolved && time.Since(it.At) > keep && !it.Unread {
 			continue
 		}
 		if it.Kind > Done {
@@ -391,7 +481,9 @@ func (s *Store) Unseen() int {
 // MarkSeen records that the Inbox view showed everything it holds.
 func (s *Store) MarkSeen() {
 	for _, it := range s.items {
-		it.Seen = true
+		if !it.Unread {
+			it.Seen = true
+		}
 	}
 }
 

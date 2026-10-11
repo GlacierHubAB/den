@@ -16,6 +16,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 // Client is one Hyprland window.
@@ -116,15 +118,21 @@ func firstLine(s string) string {
 
 // ActiveAddress returns the focused window's address.
 func ActiveAddress() string {
+	c, _ := Active()
+	return c.Address
+}
+
+// Active returns the focused window.
+func Active() (Client, bool) {
 	out, err := exec.Command("hyprctl", "activewindow", "-j").Output()
 	if err != nil {
-		return ""
+		return Client{}, false
 	}
 	var c Client
-	if json.Unmarshal(out, &c) != nil {
-		return ""
+	if json.Unmarshal(out, &c) != nil || c.Address == "" {
+		return Client{}, false
 	}
-	return c.Address
+	return c, true
 }
 
 // StripStatusGlyph removes Claude Code's leading status symbol from a title,
@@ -255,4 +263,37 @@ func NewTerminal(before, after []Client) (Client, bool) {
 		return found[0], true
 	}
 	return Client{}, false
+}
+
+// ActiveHolds reports whether the focused window belongs to one of pid's
+// ancestors: the terminal a process runs in is in front. When that terminal
+// process owns several windows (Ghostty runs them all in one) or a
+// multiplexer breaks the chain, Den cannot tell, and the answer is false.
+func ActiveHolds(pid int) bool {
+	if !Available() {
+		return false
+	}
+	c, ok := Active()
+	if !ok || c.PID <= 1 {
+		return false
+	}
+	all, err := Clients()
+	if err != nil {
+		return false
+	}
+	n := 0
+	for _, o := range all {
+		if o.PID == c.PID {
+			n++
+		}
+	}
+	if n != 1 {
+		return false
+	}
+	for _, p := range procs.Ancestors(pid) {
+		if p.PID == c.PID {
+			return true
+		}
+	}
+	return false
 }

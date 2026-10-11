@@ -33,8 +33,10 @@ func TestInstallKeepsOtherHooksAndUninstallRestores(t *testing.T) {
 	if len(hooks["Stop"].([]any)) != 2 {
 		t.Errorf("Stop should keep the other hook and add den: %v", hooks["Stop"])
 	}
-	if _, ok := hooks["PermissionRequest"]; !ok {
-		t.Error("PermissionRequest hook missing")
+	for _, ev := range []string{"PermissionRequest", "StopFailure", "PostToolUseFailure"} {
+		if _, ok := hooks[ev]; !ok {
+			t.Errorf("%s hook missing", ev)
+		}
 	}
 	// Installing again must not duplicate.
 	Install("/usr/local/bin/den")

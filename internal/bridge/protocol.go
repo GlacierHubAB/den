@@ -78,6 +78,24 @@ type HookInput struct {
 	Prompt           string          `json:"prompt"`
 	Source           string          `json:"source"`
 	EndReason        string          `json:"end_reason"`
+	// StopFailure: the documented error_type, and the error field Claude
+	// Code 2.1.289 actually sends (a string such as "rate_limit"). Raw so
+	// another event's error of a different shape cannot spoil the decode.
+	ErrorType string          `json:"error_type"`
+	Error     json.RawMessage `json:"error"`
+}
+
+// FailureType is a StopFailure's error type: "rate_limit", "server_error",
+// "authentication_failed" and so on, "unknown" when none came.
+func (in HookInput) FailureType() string {
+	if in.ErrorType != "" {
+		return in.ErrorType
+	}
+	var s string
+	if json.Unmarshal(in.Error, &s) == nil && s != "" {
+		return s
+	}
+	return "unknown"
 }
 
 // SocketPath is where Den listens: $DEN_SOCKET, else $XDG_RUNTIME_DIR/den.sock,

@@ -43,6 +43,9 @@ var specs = []spec{
 	// Held open while Den waits for your answer; the hook releases itself
 	// earlier when you are at that terminal. See docs/PLAN.md.
 	{"PermissionRequest", "", 600},
+	// Stuck and failure items: a turn ended on an API error, a tool call failed.
+	{"StopFailure", "", 5},
+	{"PostToolUseFailure", "", 5},
 }
 
 // Install adds Den's hooks for the given den executable. It returns the

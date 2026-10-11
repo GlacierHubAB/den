@@ -30,6 +30,18 @@ type Config struct {
 	Restore struct {
 		Ask bool // after a restart, ask once whether to reopen the agents that were live
 	}
+	Notify struct {
+		NeedsYou   bool // a permission, plan or question waits on you
+		Remind     int  // minutes before one more notification for something still waiting; 0 never
+		Done       bool // the top agent of a branch finished or reported back
+		Failed     bool // a turn ended on an API error, or tool calls keep failing
+		Stalled    bool // an agent working with no hook event for a while
+		WithoutDen bool // den hook notifies needs-you itself when Den is not running
+	}
+	Stuck struct {
+		Stalled      int // minutes working with no hook event before an agent counts as stalled; 0 off
+		ToolFailures int // tool calls failing in a row before the inbox says so; 0 off
+	}
 }
 
 // Defaults are what you get with no file and no environment.
@@ -43,6 +55,10 @@ func Defaults() Config {
 	c.Hooks.PermissionWait = 580
 	c.Hooks.Log = true
 	c.Restore.Ask = true
+	c.Notify.NeedsYou = true
+	c.Notify.Remind = 10
+	c.Stuck.Stalled = 20
+	c.Stuck.ToolFailures = 3
 	return c
 }
 
@@ -97,6 +113,14 @@ func (c *Config) apply(kv map[string]string) {
 			}
 		}
 	}
+	// count is num where 0 is a value: it turns the setting off.
+	count := func(dst *int, key string) {
+		if v, ok := kv[key]; ok {
+			if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+				*dst = n
+			}
+		}
+	}
 	boolean := func(dst *bool, key string) {
 		if v, ok := kv[key]; ok {
 			if b, err := strconv.ParseBool(v); err == nil {
@@ -112,6 +136,14 @@ func (c *Config) apply(kv map[string]string) {
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
 	boolean(&c.Hooks.Log, "hooks.log")
 	boolean(&c.Restore.Ask, "restore.ask")
+	boolean(&c.Notify.NeedsYou, "notify.needs_you")
+	count(&c.Notify.Remind, "notify.remind")
+	boolean(&c.Notify.Done, "notify.done")
+	boolean(&c.Notify.Failed, "notify.failed")
+	boolean(&c.Notify.Stalled, "notify.stalled")
+	boolean(&c.Notify.WithoutDen, "notify.without_den")
+	count(&c.Stuck.Stalled, "stuck.stalled")
+	count(&c.Stuck.ToolFailures, "stuck.tool_failures")
 }
 
 // env applies the overrides that predate the file, so scripts keep working.
@@ -132,6 +164,10 @@ func (c *Config) env() {
 	}
 	if os.Getenv("DEN_RESTORE") == "off" {
 		c.Restore.Ask = false
+	}
+	if os.Getenv("DEN_NOTIFY") == "off" {
+		c.Notify.NeedsYou, c.Notify.Done, c.Notify.Failed, c.Notify.Stalled, c.Notify.WithoutDen = false, false, false, false, false
+		c.Notify.Remind = 0
 	}
 }
 
@@ -191,6 +227,18 @@ log = true                  # append every hook run to ~/.local/state/den/hooks.
 
 [restore]
 ask = true                  # after a restart, ask once whether to reopen the agents that were live
+
+[notify]
+needs_you = true            # desktop notification when a permission, plan or question waits on you
+remind = 10                 # minutes before one more for something still waiting; 0 never
+done = false                # when the top agent of a branch finishes; its workers stay quiet
+failed = false              # when a turn ends on an API error or tool calls keep failing
+stalled = false             # when an agent has gone quiet while working
+without_den = false         # let den hook notify needs-you itself while Den is not running
+
+[stuck]
+stalled = 20                # minutes working with no hook event before the inbox says stalled; 0 off
+tool_failures = 3           # tool calls failing in a row before the inbox says so; 0 off
 
 # The cost estimate prices tokens from a built-in table (taken 2026-09-25).
 # Override a model, by id prefix, in dollars per million tokens:

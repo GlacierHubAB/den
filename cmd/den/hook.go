@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/hooks"
+	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/notify"
 )
 
 // runHook is `den hook`: Claude Code runs it for each subscribed event with
@@ -31,7 +34,11 @@ func runHook() {
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: in.HookEventName, SessionID: in.SessionID, Payload: raw}
 	path := bridge.SocketPath()
 	if in.HookEventName != "PermissionRequest" {
-		logHook(in, bridge.Send(path, env))
+		delivered := bridge.Send(path, env)
+		logHook(in, delivered)
+		if !delivered {
+			notifyWithoutDen(in)
+		}
 		return
 	}
 	wait := time.Duration(config.Load().Hooks.PermissionWait) * time.Second
@@ -47,6 +54,29 @@ func runHook() {
 		},
 	}
 	json.NewEncoder(os.Stdout).Encode(out)
+}
+
+// notifyWithoutDen is the fallback for when no Den is listening: with
+// notify.without_den on, Claude Code's own "waiting on you" notifications
+// become a desktop notification naming the agent and the kind of request.
+// Nothing to click: focusing needs Den.
+func notifyWithoutDen(in bridge.HookInput) {
+	if in.HookEventName != "Notification" {
+		return
+	}
+	what := ""
+	switch in.NotificationType {
+	case "permission_prompt":
+		what = "needs your permission"
+	case "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog":
+		what = "has a question for you"
+	default:
+		return
+	}
+	if !config.Load().Notify.WithoutDen || hypr.ActiveHolds(os.Getpid()) {
+		return
+	}
+	notify.Post(notify.Note{Summary: badge.Name(in.SessionID) + " " + what})
 }
 
 // logHook appends one line per hook run to the state directory so "did the

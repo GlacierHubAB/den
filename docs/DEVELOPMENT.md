@@ -35,7 +35,8 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
 | `internal/transcript` | the few facts Den reads from a session's JSONL transcript, the file changes Review needs, and the incremental token ledger (`ledger.go`) |
 | `internal/hooks` | installs and removes Den's entries in Claude Code's `settings.json` |
 | `internal/bridge` | Unix-socket protocol between `den hook` and the running TUI; carries permission decisions back |
-| `internal/inbox` | turns hook events into inbox items (permission, plan, question, done) and keeps history |
+| `internal/inbox` | turns hook events into inbox items (permission, plan, question, done, stalled, failed) and keeps history |
+| `internal/notify` | desktop notifications through `notify-send`, and whether one was clicked |
 | `internal/peer` | delivers a message into a session through its inbox socket |
 | `internal/orch` | runs the orchestrator, a headless `claude -p` stream-json session, and its roster |
 | `internal/mcp` | minimal stdio MCP server |
@@ -68,14 +69,19 @@ derived.
 
 `den install-hooks` adds entries to `~/.claude/settings.json` (backed up first)
 that run `den hook` for `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
-`Notification`, `Stop`, `PostToolUse`, `PreToolUse` (`AskUserQuestion`) and
-`PermissionRequest` (`internal/hooks/install.go`).
+`Notification`, `Stop`, `PostToolUse`, `PreToolUse` (`AskUserQuestion`),
+`PermissionRequest`, `StopFailure` and `PostToolUseFailure`
+(`internal/hooks/install.go`). Claude Code 2.1.289 sends `StopFailure`'s error
+type as `error` (for example `"authentication_failed"`), not the documented
+`error_type`; Den reads both.
 
 `den hook` reads the event from stdin and sends it as one JSON line to the
 socket (`$DEN_SOCKET`, else `$XDG_RUNTIME_DIR/den.sock`). For
 `PermissionRequest` it waits, up to `hooks.permission_wait` seconds, for the
 TUI's decision and prints it for Claude Code; with no answer it prints nothing
 and Claude Code shows its own dialog. Events from subagents are ignored.
+`internal/ui/attention.go` decides which inbox items become desktop
+notifications, and adds reminders and stalled items on the periodic tick.
 `den events` listens without the TUI and prints what arrives
 (`DEN_EVENTS_DECISION=allow|deny` answers permissions).
 
