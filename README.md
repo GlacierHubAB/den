@@ -16,7 +16,7 @@ Hyprland.
 
 ## Contents
 
-- [Install](#install) · [Requirements](#requirements) · [Quick start](#quick-start)
+- [Install](#install) · [Requirements](#requirements) · [On Omarchy](#on-omarchy) · [Quick start](#quick-start)
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
@@ -24,7 +24,7 @@ Hyprland.
 - [Overview, projects and missions](#overview-projects-and-missions)
 - [Review](#review) · [The agent badge](#the-agent-badge)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
-- [Troubleshooting](#troubleshooting) · [Contributing](#contributing) · [License](#license)
+- [Troubleshooting](#troubleshooting) · [Den, Herdr and OpenRig](#den-herdr-and-openrig) · [Contributing](#contributing) · [License](#license)
 
 ## Install
 
@@ -88,6 +88,33 @@ on GitHub Actions. Only Linux binaries are built.
   and the hierarchy. Without them Den still lists and messages agents.
 - **The agent-badge mod** (`den install-mods`) for roles, tasks and the 5-hour
   and weekly gauges. Optional: names and critters match with or without it.
+
+## On Omarchy
+
+Den is built on and for [Omarchy](https://omarchy.org), and that is where every
+part of it works. On Omarchy:
+
+- **Spawned agents open the way Omarchy opens a terminal.** Den runs
+  `setsid uwsm-app -- xdg-terminal-exec --dir=<dir> -- claude …`, the same
+  launch as Omarchy's terminal keybinding, so the window is your default
+  terminal and is detached from Den (`internal/spawn/spawn.go`).
+- **They land on the workspace you are on.** Den records the active Hyprland
+  workspace before it launches and moves the new window there if it opened
+  elsewhere (`internal/hypr`).
+- **Enter focuses the agent's window** through `hyprctl`, matching Ghostty's
+  one-process-many-windows by title and directory.
+- **Colours follow the current Omarchy theme**, read from
+  `~/.local/state/omarchy/current/theme/colors.toml` (`internal/theme`).
+
+Install it the usual way: download a release binary into `~/.local/bin`
+(already on Omarchy's `PATH`), or build it with `make install` (Go 1.26 or
+later), then run `den install-hooks` once. Den ships no keybinding of its own;
+to give it a key, bind `omarchy-launch-or-focus-tui den` in your Hyprland
+bindings.
+
+Other Linux desktops work too, without the window placement (see
+[Requirements](#requirements)). Den does not run on macOS or Windows: it reads
+`/proc`.
 
 ## Quick start
 
@@ -481,6 +508,44 @@ under `~/.claude/projects/`; it does not write to those two.
   must be on `PATH`.
 - **Orchestrator costs.** It is a real Claude Code session; lower the cost with
   `model = "haiku"` or turn spawning off.
+
+## Den, Herdr and OpenRig
+
+[Herdr](https://github.com/herdrdev/herdr) and
+[OpenRig](https://github.com/mvschwarz/openrig) are open-source tools for running
+many coding agents too. They solve different parts of the problem, and Den can
+sit next to Herdr rather than replace it.
+
+| | Den | Herdr | OpenRig |
+| --- | --- | --- | --- |
+| What it is | A dashboard and control room for the Claude Code sessions already running on your machine | A terminal multiplexer for agents: it owns their terminals in a background server | A daemon that runs agent teams defined in YAML, on tmux |
+| Agents | Claude Code | Claude Code, Codex, Cursor, OpenCode and others | Claude Code, Codex and Pi |
+| Where agents run | In your own terminal windows; Den reads `~/.claude/sessions` | In Herdr's panes; detach and reattach, also over SSH | In tmux sessions OpenRig starts, or Herdr when installed |
+| Platforms | Linux (Omarchy/Hyprland for window placement) | Linux, macOS, Windows | macOS, Linux, WSL2 |
+| License | MIT | Apache-2.0 | Apache-2.0 |
+
+What Den does that is its own:
+
+- **One approval inbox.** Permission requests, plan reviews, questions and
+  finished turns from every session land in one list; `^Y` / `^N` answer a
+  waiting permission or plan without switching windows.
+- **An orchestrator you talk to,** a Claude Code session that can message,
+  spawn and staff agents for you. (OpenRig also lets you talk to a lead agent.)
+- **Missions:** standing goals run once, in a loop, fanned out or on a schedule.
+- **Who directs whom,** drawn as a tree from the messages agents send each other.
+- **Review:** every agent's changes as a highlighted diff, each line in the
+  colour of the agent that wrote it, with comments kept as drafts.
+- **The agent badge:** a name, critter, role and task for each session.
+
+Where the others go further: Herdr keeps agents alive when you close the
+client or lose SSH, works across several machines, supports many agent CLIs and
+runs on macOS and Windows. OpenRig gives agent teams persistent roles,
+addresses and a work queue, and runs Claude Code and Codex side by side.
+
+Den works with Herdr: it notices a Claude Code session running inside a Herdr
+pane and, on focus, asks Herdr to bring that pane forward
+(`internal/fleet/fleet.go`). Herdr and OpenRig are their authors' projects;
+the descriptions above come from their READMEs as of October 2026.
 
 ## Contributing
 
