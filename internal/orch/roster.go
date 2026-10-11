@@ -22,8 +22,20 @@ type RosterAgent struct {
 	Terminal bool     // has a terminal window
 }
 
+// TemplateInfo is what Den tells the orchestrator about one mission template.
+type TemplateInfo struct {
+	Name  string
+	About string
+}
+
 // Compose builds the user turn: roster block, then the human's text.
 func Compose(agents []RosterAgent, text string) string {
+	return ComposeWith(agents, nil, text)
+}
+
+// ComposeWith is Compose with the names of the mission templates, so a
+// request like "start a code review of ~/code/x" can use one.
+func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) string {
 	var b strings.Builder
 	b.WriteString("<den_fleet>\n")
 	n := 0
@@ -63,7 +75,19 @@ func Compose(agents []RosterAgent, text string) string {
 	if n == 0 {
 		b.WriteString("(no other agents running)\n")
 	}
-	b.WriteString("</den_fleet>\n\n")
+	b.WriteString("</den_fleet>\n")
+	if len(templates) > 0 {
+		b.WriteString("<den_templates>\n")
+		for _, t := range templates {
+			b.WriteString("- " + t.Name)
+			if t.About != "" {
+				b.WriteString(": " + t.About)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("</den_templates>\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(strings.TrimSpace(text))
 	return b.String()
 }

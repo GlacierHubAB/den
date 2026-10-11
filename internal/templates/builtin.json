@@ -1,0 +1,52 @@
+[
+  {
+    "name": "code-review",
+    "about": "A lead on opus with a correctness and a security reviewer; reads, reports, changes nothing",
+    "mission": "Review {target} for correctness bugs, security problems and missing tests, and report findings ranked by severity.",
+    "done_when": "one written report lists every finding with file, line, severity and a suggested fix, and no file was changed",
+    "constraints": ["read-only: no edits, no commits", "report file and line for every finding", "say what was not checked"],
+    "shape": "fanout",
+    "team": [
+      {"role": "review lead", "model": "opus"},
+      {"role": "code reviewer", "model": "sonnet", "under": "review lead"},
+      {"role": "security auditor", "model": "sonnet", "under": "review lead"}
+    ]
+  },
+  {
+    "name": "bugfix",
+    "about": "One coding agent fixes the bug and proves it with a test; a reviewer checks the diff",
+    "mission": "Fix this bug in {target}: find the cause, fix it, and add a test that fails without the fix.",
+    "done_when": "the new test fails before the fix and passes after it, the existing tests still pass, and a reviewer has read the diff",
+    "constraints": ["smallest change that fixes the cause", "no unrelated refactoring", "work on a branch, do not push"],
+    "shape": "loop",
+    "team": [
+      {"role": "coding agent", "model": "sonnet"},
+      {"role": "code reviewer", "model": "opus"}
+    ]
+  },
+  {
+    "name": "research",
+    "about": "A lead on opus with researchers who gather sources in parallel and one written answer",
+    "mission": "Research {target} and write up what is known, what is disputed and what is still open, with sources.",
+    "done_when": "one written summary answers the question, cites a source for every claim and marks what could not be verified",
+    "constraints": ["cite a source for every claim", "mark what could not be verified", "do not change project files"],
+    "shape": "fanout",
+    "team": [
+      {"role": "research lead", "model": "opus"},
+      {"role": "web researcher", "model": "sonnet", "under": "research lead"},
+      {"role": "codebase researcher", "model": "sonnet", "under": "research lead"}
+    ]
+  },
+  {
+    "name": "docs-pass",
+    "about": "A technical writer brings the docs in line with the code; a cheap editor proofreads",
+    "mission": "Bring the documentation for {target} in line with what the code does now, and fix what is missing or wrong.",
+    "done_when": "every command, flag and file the docs mention exists and behaves as described, and an editor has proofread the changes",
+    "constraints": ["state only what ships", "keep the existing style", "change docs only, not code"],
+    "shape": "once",
+    "team": [
+      {"role": "technical writer", "model": "sonnet"},
+      {"role": "editor", "model": "haiku", "under": "technical writer"}
+    ]
+  }
+]

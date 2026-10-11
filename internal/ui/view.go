@@ -969,7 +969,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
@@ -977,7 +977,7 @@ func (m Model) hints(w int) string {
 	case m.tab == tabOverview && m.ov.open != "":
 		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
-		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
+		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:

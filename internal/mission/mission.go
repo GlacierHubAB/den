@@ -93,6 +93,8 @@ type Mission struct {
 	NextRun     time.Time `json:"next_run,omitempty"`
 	Runs        []Run     `json:"runs,omitempty"`
 	Budget      Budget    `json:"budget,omitzero"`
+
+	Template string `json:"template,omitempty"` // the template it was seeded from
 }
 
 // Member is a role the orchestrator means to start for the mission.

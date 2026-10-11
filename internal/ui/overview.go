@@ -19,6 +19,7 @@ type overviewState struct {
 	open     string // mission id shown in full
 	proposal string // mission id of the pending proposal
 	scroll   int    // lines from the bottom of the open mission or proposal
+	listing  bool   // the template list is showing in place of the missions
 }
 
 // projectStrip is the row under the tabs that names the projects and the
@@ -115,6 +116,9 @@ func (m Model) overviewPanes(w, h int) string {
 }
 
 func (m Model) missionsTitle() string {
+	if m.ov.listing {
+		return "Templates"
+	}
 	if ms := m.missions.Get(m.ov.open); ms != nil {
 		return "Mission · " + ms.Name
 	}
@@ -150,6 +154,8 @@ func (m Model) projectAgentsPane(w, h int) string {
 func (m Model) missionsPane(w, h int) string {
 	var lines []string
 	switch {
+	case m.ov.listing:
+		lines = m.templateLines(w)
 	case m.ov.proposal != "":
 		lines = m.proposalLines(w)
 	case m.ov.open != "":
@@ -313,6 +319,7 @@ func (m Model) fieldLines(ms *mission.Mission, w int) []string {
 	}
 	kv("mission", ms.Mission, s.fg)
 	kv("done when", ms.DoneWhen, s.fg)
+	kv("template", ms.Template, s.fg)
 	if len(ms.Constraints) > 0 {
 		var tags []string
 		for _, c := range ms.Constraints {

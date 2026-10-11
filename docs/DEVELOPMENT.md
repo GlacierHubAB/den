@@ -43,6 +43,7 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
 | `internal/tree` | who directs whom, persisted as `edges.jsonl` |
 | `internal/mission` | missions, their shapes, cadences, run log and budgets |
 | `internal/cost` | the price table, estimates, tree roll-ups and budget parsing |
+| `internal/templates` | mission templates: the built-ins (`builtin.json`, embedded) and the user's `templates.json` |
 | `internal/review` | diff against a base, per-line attribution to sessions, review comments |
 | `internal/mods` | list, install and uninstall the embedded mods |
 | `internal/config` | `config.toml` and the environment overrides |

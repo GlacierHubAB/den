@@ -24,7 +24,7 @@ Hyprland.
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
 - [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Skills for roles](#skills-for-roles)
-- [Overview, projects and missions](#overview-projects-and-missions)
+- [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
 - [Review](#review) · [The agent badge](#the-agent-badge)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
@@ -243,6 +243,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/project <name>`, `/project add <dir>`, `/project drop` | pick, list or unlist a project |
 | `/mission <goal>`, `/pause`, `/resume`, `/stop` | missions |
 | `/budget 2M`, `/budget $5`, `/budget off` | set, show (`/budget` alone) or remove the budget on the open or selected mission |
+| `/template`, `/template <name> <target or goal>`, `/template save <name>` | list the mission templates, start a proposal from one, save the open mission as one |
 | `/delete` `/del` | remove the review comment under the cursor |
 | `/send`, `/send <Name>`, `/send orchestrator` | send review drafts to their agents, to one agent, or those no live session can take to the orchestrator |
 | `/help` `/?`, `/quit` `/q` `/exit` | |
@@ -527,6 +528,39 @@ talk about a finished mission shows there too. `/pause` holds the next run,
 persist in `~/.local/state/den/missions.jsonl`; the project pick and pinned
 projects in `overview.json` beside it.
 
+### Templates
+
+A template is a mission's shape and team saved under a name: the purpose with a
+blank (`{target}`) for what it is about, done-when, constraints, the shape, and
+the roles as a tree, each with its model. Four ship in the binary:
+
+| Template | Shape | Team |
+| --- | --- | --- |
+| `code-review` | fan-out | a review lead on opus, a code reviewer and a security auditor on sonnet; read-only |
+| `bugfix` | loop | a coding agent on sonnet, a code reviewer on opus |
+| `research` | fan-out | a research lead on opus, a web researcher and a codebase researcher on sonnet |
+| `docs-pass` | once | a technical writer on sonnet, an editor on haiku |
+
+`/template` lists them. `/template code-review ~/code/demo-app` puts the
+template's proposal on the Overview at once and asks the orchestrator to adapt it
+to the target; it may change the team or the wording, and says what it changed.
+A folder as the first word of the target picks that project. It is the usual
+proposal card: `Ctrl+Y` starts it, `Ctrl+N` drops it, typing refines it, and
+nothing runs before `Ctrl+Y`. The roles keep their words ("security auditor",
+"technical writer"), so the vetted skills that fit a role are offered when the
+agent is started, for you to approve, as for any other agent.
+
+`/template save <name>` keeps the shape and team of the pending proposal or of
+the open or selected mission (a name is lower-case letters, digits and
+hyphens; a built-in's name is refused). Yours live in
+`~/.config/den/templates.json` (beside `config.toml`, so `DEN_CONFIG` moves it):
+a JSON list with the fields above, `name`, `about` and `mission` as the
+minimum, which you can edit by hand. An entry with the name of a built-in
+replaces it; an entry that is not valid is skipped; a file that does not parse
+is reported on the list and never overwritten. Templates are data, with no
+conditions or scripts. The orchestrator is told the template names with every
+message, so "start a code review of ~/code/demo-app" can point you to one.
+
 ## Cost
 
 Den adds up the tokens in each session's transcript, exactly: every assistant
@@ -669,6 +703,8 @@ log = true                  # append every hook run to ~/.local/state/den/hooks.
 # [prices]                  # override the cost estimate's price table, see Cost
 # claude-opus-5-5 = "4, 20, 5, 0.2"
 ```
+
+Mission templates are in `templates.json` beside it (see Templates).
 
 `DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`
 and `DEN_HOOK_LOG=off` win over the file. `DEN_SOCKET` moves the socket the

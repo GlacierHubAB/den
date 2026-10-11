@@ -613,6 +613,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
 			switch {
+			case m.ov.listing:
+				m.ov.listing = false
 			case m.ov.proposal != "":
 				m.ov.proposal = "" // the proposal stays in the list
 			case m.ov.open != "":
@@ -1026,6 +1028,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		}
 		m.tab = tabOverview
 		return m, m.proposeMission(strings.Join(fields[1:], " "))
+	case "/template", "/templates":
+		return m.templateCommand(fields[1:], text)
 	case "/pause", "/resume", "/stop":
 		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
 			return m.say(note, isErr)
