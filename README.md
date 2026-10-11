@@ -21,6 +21,7 @@ Hyprland.
 
 - [Install](#install) · [Requirements](#requirements) · [On Omarchy](#on-omarchy) · [Quick start](#quick-start)
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
+- [Notifications](#notifications) · [Events for scripts](#events-for-scripts)
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
 - [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Skills for roles](#skills-for-roles)
@@ -88,6 +89,10 @@ on GitHub Actions. Only Linux binaries are built.
 - **A terminal launcher for spawning:** `uwsm-app` with `xdg-terminal-exec`,
   or `xdg-terminal-exec` alone, or `$TERMINAL`. Without one `spawn_agent` and
   `open_terminal` report an error (`internal/spawn/spawn.go`).
+- **`notify-send`** (libnotify) for desktop notifications. Clicking one to
+  focus the agent works on omarchy-shell (Omarchy 4), mako and swaync, and
+  through a middle click on dunst. Without `notify-send` nothing is shown and
+  nothing else changes.
 - **Hooks** (`den install-hooks`) for the inbox, permission answers, history
   and the hierarchy. Without them Den still lists and messages agents.
 - **The agent-badge mod** (`den install-mods`) for roles, tasks and the 5-hour
@@ -197,10 +202,9 @@ be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one,
 `/always` allows it and the same tool again this session, `/open` focuses the
 terminal, `/dismiss` clears an item, and `/unread` keeps the selected item
 counted as new until you open or dismiss it (`/unread` again marks it read).
-Finished turns are appended to
-`~/.local/state/den/history.jsonl` (the newest `inbox.history`, 100 by
-default, come back on restart). The request shows the whole command or edit
-the permission is about.
+Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest
+`inbox.history`, 100 by default, come back on restart). The request shows the
+whole command or edit the permission is about.
 
 Den holds a permission request only while you are not at that terminal. If the
 agent's window is focused, or you switch to it, the normal Claude Code dialog
@@ -235,7 +239,7 @@ while Den's own window is focused (when Den can tell: Ghostty runs all its
 windows in one process, so there it cannot), and none for the orchestrator's
 own traffic.
 
-Off by default, each with its own switch under `[notify]`:
+The rest are off by default, each with its own switch under `[notify]`:
 
 - `done`: an agent finished. Only the top of a branch notifies, an agent
   nobody in the fleet directs, or one the orchestrator does, and only once
@@ -255,8 +259,9 @@ name, time; never a command, prompt or file text). `den events -json` follows
 it, `den wait <agent> --until idle|needs-you|done` blocks on it, and the `[on]`
 config section runs a command per event kind, for example to push to your
 phone. The stream and `den wait` work without Den running; the `stalled` and
-`still_waiting` events and `[on]` commands come from a running Den. The schema, exit codes and
-the environment `[on]` commands get are in [docs/EVENTS.md](docs/EVENTS.md).
+`still_waiting` events and `[on]` commands come from a running Den. The
+schema, exit codes and the environment `[on]` commands get are in
+[docs/EVENTS.md](docs/EVENTS.md).
 
 Messages you send to an agent arrive in its session the way messages from other
 Claude Code sessions do, with a first line saying they come from you via Den.
@@ -904,6 +909,13 @@ What Den does that is its own:
 - **Cost:** tokens rolled up per team and per mission run, an estimate in
   dollars at list price, and an optional budget on a mission. (OpenRig also
   counts tokens per seat.)
+- **Attention:** a desktop notification when something waits on you, with a
+  click that focuses the agent's terminal, silence for workers that finish for
+  a lead, and inbox items for failed and stalled agents. (Herdr also sends OS
+  notifications.)
+- **Events for scripts:** `den wait`, `den send --wait`, a versioned
+  `den events -json` and `[on]` commands per event kind, with metadata only.
+  (Herdr has a socket API and `agent prompt --wait`.)
 - **Bringing agents back:** after a reboot or a closed Den, one inbox question
   reopens the agents that were live with `claude --resume`, and puts them back
   in their tree and mission; `/reopen <name>` does it for one agent. (Herdr
