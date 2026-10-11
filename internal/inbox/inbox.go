@@ -22,6 +22,7 @@ const (
 	Done                   // a turn finished while you were elsewhere
 	Idle                   // Claude Code's idle notice
 	Sent                   // a message you sent, with its delivery status
+	Close                  // Den asks: close these agents? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -38,6 +39,8 @@ func (k Kind) String() string {
 		return "idle"
 	case Sent:
 		return "sent"
+	case Close:
+		return "close"
 	}
 	return "?"
 }
@@ -72,8 +75,19 @@ type Item struct {
 
 // Answerable reports whether y/n/a act on this item.
 func (it *Item) Answerable() bool {
+	if it.Kind == Close {
+		return it.State == Waiting
+	}
 	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan) && it.req != nil && it.req.WantsReply()
 }
+
+// needsYou reports whether the item still waits on the human.
+func (it *Item) needsYou() bool {
+	return it.State != Resolved && (it.Kind <= Question || it.Kind == Close)
+}
+
+// Request is the bridge request behind the item, nil for Den's own items.
+func (it *Item) Request() *bridge.Request { return it.req }
 
 // Store holds items and the per-session "always allow" rules.
 type Store struct {
@@ -90,7 +104,7 @@ func New() *Store { return &Store{always: map[string]map[string]bool{}} }
 func (s *Store) Items() []*Item {
 	out := append([]*Item(nil), s.items...)
 	sort.SliceStable(out, func(i, j int) bool {
-		wi, wj := out[i].State != Resolved && out[i].Kind <= Question, out[j].State != Resolved && out[j].Kind <= Question
+		wi, wj := out[i].needsYou(), out[j].needsYou()
 		if wi != wj {
 			return wi
 		}
@@ -106,7 +120,7 @@ func (s *Store) Items() []*Item {
 func (s *Store) Waiting() int {
 	n := 0
 	for _, it := range s.items {
-		if it.State != Resolved && it.Kind <= Question {
+		if it.needsYou() {
 			n++
 		}
 	}
@@ -116,7 +130,7 @@ func (s *Store) Waiting() int {
 // SessionNeedsYou reports whether a session has anything waiting.
 func (s *Store) SessionNeedsYou(sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.State != Resolved && it.Kind <= Question {
+		if it.SessionID == sessionID && it.needsYou() {
 			return true
 		}
 	}
@@ -208,8 +222,8 @@ func (s *Store) SetStatus(it *Item, status string, final bool) {
 
 // Answer resolves an answerable item. verb is "allow", "deny" or "always".
 func (s *Store) Answer(it *Item, verb string) bool {
-	if !it.Answerable() {
-		return false
+	if !it.Answerable() || it.Kind == Close {
+		return false // a Close is carried out by Den, not answered here
 	}
 	switch verb {
 	case "allow":
@@ -231,6 +245,32 @@ func (s *Store) Answer(it *Item, verb string) bool {
 		return false
 	}
 	return true
+}
+
+// AddClose adds Den's own question: close these agents? sessionID is the
+// agent it concerns, or the asker's session for a bulk close. req is the
+// orchestrator's request to answer when it asked, nil when the human did.
+func (s *Store) AddClose(sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Close, Tool: "close_agent", Title: title, Body: body, req: req})
+}
+
+// Settle resolves a Close item with the outcome and sends it to whoever
+// asked. allowed says whether the close ran.
+func (s *Store) Settle(it *Item, allowed bool, outcome string) {
+	it.State, it.Resolved = Resolved, outcome
+	if it.req == nil {
+		return
+	}
+	d := bridge.Decision{Behavior: "deny", Message: outcome}
+	if allowed {
+		d.Behavior = "allow"
+	}
+	it.req.Reply(d)
+}
+
+// SessionClosed resolves everything open for an agent Den closed.
+func (s *Store) SessionClosed(sessionID string) {
+	s.resolveSession(sessionID, "agent closed", func(it *Item) bool { return it.Kind != Close })
 }
 
 // Release hands a waiting permission back to the terminal dialog.

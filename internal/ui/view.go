@@ -470,7 +470,7 @@ func (m Model) agentsPane(w, h int) string {
 // openItem is the request waiting on the human for a session, if any.
 func (m Model) openItem(sessionID string) *inbox.Item {
 	for _, it := range m.store.Items() {
-		if it.SessionID == sessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
+		if it.SessionID == sessionID && it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.Kind == inbox.Close) {
 			return it
 		}
 	}
@@ -527,6 +527,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 	switch {
 	case it.Answerable() && it.Kind == inbox.Plan:
 		out = append(out, key("^Y", "approve")+"  "+key("^N", "ask for changes")+"  "+key("/open", "read it in the terminal"))
+	case it.Answerable() && it.Kind == inbox.Close:
+		out = append(out, key("^Y", "close them")+"  "+key("^N", "keep them"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	default:
@@ -631,7 +633,7 @@ func (m Model) inboxPane(w, h int) string {
 		}
 		// An open request shows the whole thing being decided, wrapped;
 		// history keeps one line of it.
-		open := it.State != inbox.Resolved && it.Kind <= inbox.Question
+		open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.Kind == inbox.Close)
 		if open && it.Intent != "" {
 			for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
 				text = append(text, fg.Render(l))
@@ -664,6 +666,9 @@ func (m Model) inboxPane(w, h int) string {
 			acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
 			if it.Kind == inbox.Plan {
 				acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
+			}
+			if it.Kind == inbox.Close {
+				acts = key("^Y", "close them") + sp + sp + key("^N", "keep them")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:
@@ -942,7 +947,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
@@ -952,7 +957,7 @@ func (m Model) hints(w int) string {
 	case m.tab == tabOverview:
 		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
-		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:
 		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
@@ -962,7 +967,7 @@ func (m Model) hints(w int) string {
 	case m.focus == paneDetail:
 		items = [][2]string{{"↑ ↓", "scroll"}, {"←", "agents"}, {"Enter", "send · empty: focus terminal"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	default:
-		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"^T", "map"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"↑ ↓", "select"}, {"→", "details"}, {"Enter", "send · empty: focus terminal"}, {"^Y ^N", "answer"}, {"^X", "close"}, {"^T", "map"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	}
 	var parts []string
 	for _, it := range items {

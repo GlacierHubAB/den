@@ -50,7 +50,7 @@ func TestStartOffersMCPOnlyWhenSpawning(t *testing.T) {
 		}
 		o.Close()
 		args, _ := os.ReadFile(script + ".args")
-		hasMCP := strings.Contains(string(args), "--mcp-config") && strings.Contains(string(args), "--strict-mcp-config") && strings.Contains(string(args), SpawnAgentTool)
+		hasMCP := strings.Contains(string(args), "--mcp-config") && strings.Contains(string(args), "--strict-mcp-config") && strings.Contains(string(args), CloseAgentTool) && strings.Contains(string(args), SpawnAgentTool)
 		if hasMCP != spawn {
 			t.Errorf("spawn=%v: args = %s", spawn, args)
 		}

@@ -28,6 +28,16 @@ type Decision struct {
 	Message  string `json:"message,omitempty"`
 }
 
+// CloseEvent is not a hook: `den mcp` sends it when the orchestrator asks
+// to close agents, and waits for the human's decision from Den.
+const CloseEvent = "CloseRequest"
+
+// CloseInput is the payload of a CloseEvent.
+type CloseInput struct {
+	Peers  []string `json:"peers"`  // session names
+	Reason string   `json:"reason"` // the orchestrator's words
+}
+
 // HookInput is the subset of Claude Code's hook JSON that Den reads.
 type HookInput struct {
 	SessionID        string          `json:"session_id"`

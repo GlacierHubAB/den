@@ -97,7 +97,7 @@ func (s *Server) serve(conn net.Conn) {
 	}
 	req := &Request{Envelope: env}
 	_ = json.Unmarshal(env.Payload, &req.Input)
-	if env.Event == "PermissionRequest" {
+	if env.Event == "PermissionRequest" || env.Event == CloseEvent {
 		req.reply = make(chan Decision, 1)
 	}
 	s.out <- req
@@ -112,4 +112,23 @@ func (s *Server) serve(conn net.Conn) {
 	b, _ := json.Marshal(d)
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	conn.Write(append(b, '\n'))
+}
+
+// TestRequest builds a request that wants a reply, for tests of whoever
+// answers; Decided reads the reply without blocking.
+func TestRequest(env Envelope) *Request {
+	req := &Request{Envelope: env, reply: make(chan Decision, 1)}
+	_ = json.Unmarshal(env.Payload, &req.Input)
+	return req
+}
+
+// Decided returns the reply if one was sent.
+func (r *Request) Decided() (Decision, bool) {
+	select {
+	case d := <-r.reply:
+		r.reply <- d
+		return d, true
+	default:
+		return Decision{}, false
+	}
 }

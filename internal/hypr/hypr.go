@@ -80,6 +80,33 @@ func Focus(address string) error {
 	return nil
 }
 
+// CloseWindow asks Hyprland to close one window by address, the Lua
+// dispatcher first and the legacy one as the fallback, like Focus. A window
+// that is already gone is reported as not found.
+func CloseWindow(address string) error {
+	if address == "" {
+		return errors.New("no window address")
+	}
+	lua := fmt.Sprintf(`hl.dsp.window.close({ window = "address:%s" })`, address)
+	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
+	msg := strings.TrimSpace(string(out))
+	if err == nil && (msg == "ok" || msg == "") {
+		return nil
+	}
+	if strings.Contains(msg, "window not found") {
+		return errors.New("hyprland: window not found (it may have closed)")
+	}
+	out, err = exec.Command("hyprctl", "dispatch", "closewindow", "address:"+address).CombinedOutput()
+	msg = strings.TrimSpace(string(out))
+	if err != nil || (msg != "ok" && msg != "") {
+		if strings.Contains(msg, "not found") {
+			return errors.New("hyprland: window not found (it may have closed)")
+		}
+		return fmt.Errorf("hyprctl closewindow: %s", firstLine(msg))
+	}
+	return nil
+}
+
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return s[:i]

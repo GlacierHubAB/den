@@ -14,6 +14,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/colors"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/critter"
@@ -105,6 +106,7 @@ type Model struct {
 	lastScan time.Time
 
 	srv        *bridge.Server
+	closing    map[string]closer.Plan // close questions in the inbox, by item id
 	srvErr     error
 	store      *inbox.Store
 	inboxCur   int
@@ -451,6 +453,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applySent(msg)
 		m.refresh()
 		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+	case closeDoneMsg:
+		return m, m.finishClose(msg)
 	case serverClosedMsg:
 		m.srv = nil
 	case focusedMsg:
@@ -479,6 +483,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleRequest folds a hook event into the inbox and decides whether a
 // permission request is held for Den or released to the terminal.
 func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
+	if r.Event == bridge.CloseEvent {
+		m.handleCloseRequest(r)
+		return nil
+	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
 		if r.WantsReply() {
@@ -635,6 +643,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleOrchestrator()
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
 		return m, cmd
+	case "ctrl+x":
+		return m.closeSelected(false)
 	case "ctrl+t":
 		m.tab = tabFleet
 		m.focus = paneAgents
@@ -884,6 +894,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
 	}
+	if it.Kind == inbox.Close {
+		return m.decideClose(it, verb)
+	}
 	m.store.Answer(it, verb)
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
@@ -901,6 +914,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.answer("always")
 	case "/open", "/o", "/focus":
 		return m.openSelected()
+	case "/close", "/kill":
+		return m.closeCommand(fields[1:])
 	case "/dismiss", "/x":
 		if it := m.inboxSelected(); it != nil && m.tab == tabInbox {
 			m.store.Dismiss(it)

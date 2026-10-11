@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/mcp"
 	"github.com/GlacierHubAB/den/internal/orch"
@@ -50,6 +52,36 @@ func runMCP() {
 					return "", err
 				}
 				return res.Describe(), nil
+			},
+		},
+		{
+			Name:        strings.TrimPrefix(orch.CloseAgentTool, "mcp__"+orch.MCPServer+"__"),
+			Description: "Ask the human, in Den, to close agents: end their Claude Code sessions and close their terminal windows. Nothing closes until the human approves in Den, where they see exactly which agents and windows are affected; Den refuses agents that are working or waiting on the human, the orchestrator and itself. Give peer names from the roster. The answer says what was closed, or that the human declined.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"peers":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Peer names of the agents to close, from the roster."},
+					"reason": map[string]any{"type": "string", "description": "One line on why, shown to the human."},
+				},
+				"required": []string{"peers"},
+			},
+			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+				in, ok := orch.ParseClose(args)
+				if !ok {
+					return "", errorString("peers is required: the peer names of the agents to close")
+				}
+				payload, _ := json.Marshal(bridge.CloseInput{Peers: in.Peers, Reason: in.Reason})
+				env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.CloseEvent, Payload: payload}
+				d, ok := bridge.Ask(bridge.SocketPath(), env, 10*time.Minute)
+				if !ok {
+					return "", errorString("Den is not running or did not answer; nothing was closed")
+				}
+				switch d.Behavior {
+				case "allow":
+					return "Closed with the human's approval: " + d.Message, nil
+				default:
+					return "The human declined in Den; nothing was closed. " + d.Message, nil
+				}
 			},
 		},
 		{

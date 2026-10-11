@@ -22,7 +22,7 @@ Hyprland.
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
-- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams)
+- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents)
 - [Overview, projects and missions](#overview-projects-and-missions)
 - [Review](#review) · [The agent badge](#the-agent-badge)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
@@ -222,6 +222,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/allow` `/y`, `/deny` `/n`, `/always` `/a` | answer the waiting prompt |
 | `/open` `/o` `/focus` | focus the selected agent's terminal |
 | `/dismiss` `/x` | clear the selected inbox item |
+| `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
 | `/map` | toggle the Fleet map |
@@ -244,6 +245,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | newline |
 | `Ctrl+Y` / `Ctrl+N` | allow / deny the waiting prompt (Overview: start / drop the proposed mission) |
 | `Ctrl+T` | toggle the Fleet map |
+| `Ctrl+X` | close the selected agent (Fleet, map, Inbox): a question in the inbox lists what would close, `Ctrl+Y` does it |
 | `Ctrl+V` | paste an image from the clipboard |
 | `Esc` | clear the line; closes a proposal or an open mission; drops a review edit or range |
 | `Ctrl+C` | quit |
@@ -255,9 +257,10 @@ only captured on that tab, so other views keep the terminal's own selection.
 ## Orchestrator
 
 The orchestrator is a headless Claude Code session Den starts on your first
-plain-text message. It has four tools: `ListAgents` and `SendMessage`, plus two
-Den gives it through its own MCP server (`den mcp`), `spawn_agent` and
-`open_terminal`. It gets a fresh roster of the fleet with every message, so it
+plain-text message. It has five tools: `ListAgents` and `SendMessage`, plus
+three Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
+`open_terminal` and `close_agent`, which only ever asks you (see Closing
+agents). It gets a fresh roster of the fleet with every message, so it
 can answer "who is blocked on what?" or relay "tell Mossy to rebase first". It
 cannot approve anything; you do that in the inbox.
 
@@ -350,6 +353,32 @@ leaves the rest to it. Den learns each of those spawns from the lead's own hook
 stream (`PostToolUse` on `spawn_agent`), so the Fleet draws the tree as it
 grows, and the lead's card stays `working · waiting on 3 agents` between turns
 until nobody under it is at work.
+
+## Closing agents
+
+`Ctrl+X` on an agent, or `/close`, asks before anything happens: a question
+lands in the inbox listing exactly what would close, one line per agent
+with its process id and the terminal window Den matched to it (or "no
+window found, only the process ends"), and `Ctrl+Y` carries it out, `Ctrl+N`
+keeps everything. `/close idle` clears every idle agent in one question;
+`/close Mossy Lemur, Snug Capybara` names them. The question warns when an
+agent's checkout has uncommitted changes (which files), and when an agent
+directs others, who stay open unless also selected.
+
+The rules, enforced whatever asked: an agent that is working or waiting on
+you is refused unless you add `--force`; the orchestrator, Den itself and
+anything Den runs inside are never closed; an agent not in the fleet is
+refused by name; the window Den runs in is never closed. Each agent gets a
+graceful stop (SIGTERM) and a short wait; only `--force` sends SIGKILL to one
+that does not stop, and nothing is forced from the orchestrator's side. A
+terminal Den opened for the agent closes with its process; a window Den
+matched by title is closed through Hyprland by address, never any other
+window. Closed agents leave Den's state at once: their open inbox items are
+resolved, they drop out of the tree, and the roster rescans.
+
+The orchestrator has the same door, close_agent: "kill the idle agents we are
+not using" becomes the same question in your inbox, marked as its request
+with its reason, and it only hears what you decided. It cannot force.
 
 ## Overview, projects and missions
 
