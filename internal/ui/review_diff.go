@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"math"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -131,7 +132,7 @@ func (m *Model) resetCursor() {
 // followCursor scrolls the diff so the cursor row is in view.
 func (m *Model) followCursor() {
 	lay := m.reviewLayout()
-	rows := m.diffRows(lay.diffW - 2)
+	rows := m.diffRowsDrawn(lay.diffW-2, 0, 0)
 	h := lay.paneH - 2
 	at := -1
 	for i, r := range rows {
@@ -400,8 +401,10 @@ func (m Model) diffPane(w, h int) string {
 		}
 		return s.dim.Render(" Pick some work on the left to see its diff.")
 	}
-	rows := m.diffRows(w)
-	scroll := clamp(m.rev.scroll, 0, max(0, len(rows)-h))
+	// Lay the rows out, then draw only the ones on screen.
+	n := len(m.diffRowsDrawn(w, 0, 0))
+	scroll := clamp(m.rev.scroll, 0, max(0, n-h))
+	rows := m.diffRowsDrawn(w, scroll, scroll+h)
 	var out []string
 	for _, r := range rows[scroll:min(len(rows), scroll+h)] {
 		out = append(out, r.text)
@@ -412,7 +415,12 @@ func (m Model) diffPane(w, h int) string {
 // diffRows renders the current file: a header, then each hunk as numbered
 // lines with a stripe in the colour of the agent that wrote each change,
 // the selection highlighted and comments drawn under the line they end on.
-func (m Model) diffRows(w int) []diffRow {
+func (m Model) diffRows(w int) []diffRow { return m.diffRowsDrawn(w, 0, math.MaxInt) }
+
+// diffRowsDrawn is diffRows with the code drawn only on rows from up to
+// to; the other code rows keep their line but no text. Moving the cursor
+// lays out the whole file but only draws a screenful.
+func (m Model) diffRowsDrawn(w, from, to int) []diffRow {
 	s := m.st
 	f := m.curFile()
 	wk := m.curWork()
@@ -442,6 +450,7 @@ func (m Model) diffRows(w int) []diffRow {
 	focused := m.rev.focus == revDiff
 	comments := m.fileComments(wk.Root, f.Path)
 	bg := lipgloss.Color(s.pal.Sel)
+	var syn *synEntry // lexed on the first row drawn
 
 	hunk := -1
 	for i, d := range lines {
@@ -452,6 +461,16 @@ func (m Model) diffRows(w int) []diffRow {
 			hunk = d.hunk
 			h := f.Hunks[d.hunk]
 			rows = append(rows, hdr(s.muted.Render(fmt.Sprintf(" @@ -%d +%d @@", h.OldStart, h.NewStart))))
+		}
+		if at := len(rows); at < from || at >= to {
+			rows = append(rows, diffRow{line: i})
+			rows = m.appendComments(rows, comments, d, w)
+			continue
+		}
+		if syn == nil {
+			synCache.Lock()
+			defer synCache.Unlock()
+			syn = m.synFor(*f, lines)
 		}
 		inSel := focused && i >= lo && i <= hi
 		st := func(base lipgloss.Style) lipgloss.Style {
@@ -479,27 +498,26 @@ func (m Model) diffRows(w int) []diffRow {
 		if focused && i == m.rev.line {
 			numStyle = s.bright
 		}
-		text := ansi.Truncate(strings.ReplaceAll(d.text, "\t", "    "), textW, "…")
-		var sign, body string
-		switch d.kind {
-		case '+':
-			sign, body = st(s.ok).Render("+"), st(s.fg).Render(text)
-		case '-':
-			sign, body = st(s.err).Render("-"), st(s.dim).Render(text)
-		default:
-			sign, body = st(s.dim).Render(" "), st(s.dim).Render(text)
-		}
 		sp := st(lipgloss.NewStyle()).Render(" ")
-		row := stripe + sp + st(numStyle).Render(fmt.Sprintf("%*s %*s", numW, oldS, numW, newS)) + sp + sign + sp + body
-		if inSel {
+		row := stripe + sp + st(numStyle).Render(fmt.Sprintf("%*s %*s", numW, oldS, numW, newS)) + sp + m.codeCell(syn, lines, i, textW, inSel)
+		switch {
+		case inSel:
 			row = fill(row, w, s.sel)
+		case d.kind != ' ':
+			row = fill(row, w, lipgloss.NewStyle().Background(lipgloss.Color(lineBg(s.pal, d.kind))))
 		}
 		rows = append(rows, diffRow{text: row, line: i})
-		for _, c := range comments {
-			if c.Side == d.side && c.End == d.num {
-				for _, t := range m.commentRows(c, w) {
-					rows = append(rows, hdr(t))
-				}
+		rows = m.appendComments(rows, comments, d, w)
+	}
+	return rows
+}
+
+// appendComments adds the comments that end on line d below it.
+func (m Model) appendComments(rows []diffRow, comments []review.Comment, d diffLine, w int) []diffRow {
+	for _, c := range comments {
+		if c.Side == d.side && c.End == d.num {
+			for _, t := range m.commentRows(c, w) {
+				rows = append(rows, diffRow{text: t, line: -1})
 			}
 		}
 	}
@@ -905,7 +923,7 @@ func (m *Model) reviewMouse(msg tea.Msg) {
 
 // diffLineAt is the diff line shown at a row inside the diff box.
 func (m Model) diffLineAt(row int, lay reviewLayout) (int, bool) {
-	rows := m.diffRows(lay.diffW - 2)
+	rows := m.diffRowsDrawn(lay.diffW-2, 0, 0)
 	i := m.rev.scroll + row
 	if i < 0 || i >= len(rows) || rows[i].line < 0 {
 		return 0, false
