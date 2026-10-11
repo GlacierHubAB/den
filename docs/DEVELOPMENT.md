@@ -124,10 +124,3 @@ opens a real terminal with a real Claude Code session; run it by hand only
 requests; `.github/workflows/release.yml` runs `make test` and `make release`
 when a `v*` tag is pushed and attaches `den_linux_amd64`, `den_linux_arm64` and
 `SHA256SUMS` to a GitHub release. Only the maintainers tag releases.
-
-## Other documents in this folder
-
-`PLAN.md` is the original scope and milestone plan, `CODE-REVIEW.md` the
-design notes for the Review tab, and `DISPATCH-CARDS.md` those for dispatch
-cards (written as design notes before they were built). `mockup/` holds HTML mockups of the target UI; they are designs, not
-the product.

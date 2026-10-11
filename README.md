@@ -485,7 +485,6 @@ under `~/.claude/projects/`; it does not write to those two.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
-[docs/PLAN.md](docs/PLAN.md) holds the original scope and milestones.
 
 ## License
 
