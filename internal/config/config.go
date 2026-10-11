@@ -42,6 +42,41 @@ type Config struct {
 		Stalled      int // minutes working with no hook event before an agent counts as stalled; 0 off
 		ToolFailures int // tool calls failing in a row before the inbox says so; 0 off
 	}
+	Events struct {
+		Log bool // den hook appends metadata-only events to events.jsonl
+	}
+	// On holds a shell command per event kind, run by Den with the event's
+	// metadata. Empty runs nothing.
+	On struct {
+		SessionStart, SessionEnd, TurnStart, Done, NeedsYou, Idle, TurnFailed, ToolFailed, Stalled, StillWaiting string
+	}
+}
+
+// OnCommand is the [on] command for an event kind, "" for none.
+func (c Config) OnCommand(kind string) string {
+	switch kind {
+	case "session_start":
+		return c.On.SessionStart
+	case "session_end":
+		return c.On.SessionEnd
+	case "turn_start":
+		return c.On.TurnStart
+	case "done":
+		return c.On.Done
+	case "needs_you":
+		return c.On.NeedsYou
+	case "idle":
+		return c.On.Idle
+	case "turn_failed":
+		return c.On.TurnFailed
+	case "tool_failed":
+		return c.On.ToolFailed
+	case "stalled":
+		return c.On.Stalled
+	case "still_waiting":
+		return c.On.StillWaiting
+	}
+	return ""
 }
 
 // Defaults are what you get with no file and no environment.
@@ -59,6 +94,7 @@ func Defaults() Config {
 	c.Notify.Remind = 10
 	c.Stuck.Stalled = 20
 	c.Stuck.ToolFailures = 3
+	c.Events.Log = true
 	return c
 }
 
@@ -144,6 +180,14 @@ func (c *Config) apply(kv map[string]string) {
 	boolean(&c.Notify.WithoutDen, "notify.without_den")
 	count(&c.Stuck.Stalled, "stuck.stalled")
 	count(&c.Stuck.ToolFailures, "stuck.tool_failures")
+	boolean(&c.Events.Log, "events.log")
+	for key, dst := range map[string]*string{
+		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
+		"done": &c.On.Done, "needs_you": &c.On.NeedsYou, "idle": &c.On.Idle, "turn_failed": &c.On.TurnFailed,
+		"tool_failed": &c.On.ToolFailed, "stalled": &c.On.Stalled, "still_waiting": &c.On.StillWaiting,
+	} {
+		str(dst, "on."+key)
+	}
 }
 
 // env applies the overrides that predate the file, so scripts keep working.
@@ -197,7 +241,7 @@ func parse(path string) map[string]string {
 		}
 		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
 		if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
-			v = v[1 : len(v)-1]
+			v = strings.NewReplacer(`\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
 		}
 		if section != "" {
 			k = section + "." + k
@@ -240,6 +284,16 @@ without_den = false         # let den hook notify needs-you itself while Den is 
 stalled = 20                # minutes working with no hook event before the inbox says stalled; 0 off
 tool_failures = 3           # tool calls failing in a row before the inbox says so; 0 off
 
+[events]
+log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
+
+# A shell command per event kind, run by Den with the event's metadata as
+# DEN_* variables and as JSON on stdin. Nothing runs unless you add one.
+# Kinds: session_start session_end turn_start done needs_you idle
+# turn_failed tool_failed stalled still_waiting. See docs/EVENTS.md.
+[on]
+# needs_you = "ntfy publish my-den-topic \"$DEN_AGENT needs you\""
+
 # The cost estimate prices tokens from a built-in table (taken 2026-09-25).
 # Override a model, by id prefix, in dollars per million tokens:
 # input, output, cache write, cache read. The last two may be left out.
@@ -249,9 +303,13 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 
 // stripComment drops a trailing # comment that is not inside quotes.
 func stripComment(line string) string {
-	inQuote := false
+	inQuote, escaped := false, false
 	for i, r := range line {
 		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && inQuote:
+			escaped = true
 		case r == '"':
 			inQuote = !inQuote
 		case r == '#' && !inQuote:

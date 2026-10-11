@@ -18,8 +18,8 @@ submodule) with `go:embed`, so the submodule must be checked out to build.
 ## Package map
 
 `cmd/den` is the CLI: `main.go` dispatches the subcommands, `hook.go` is what
-Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
-`send.go` are the scripting commands, `mods.go` installs the badge.
+Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go`,
+`send.go` and `wait.go` are the scripting commands, `mods.go` installs the badge.
 
 | Package | Role |
 | --- | --- |
@@ -36,6 +36,7 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
 | `internal/hooks` | installs and removes Den's entries in Claude Code's `settings.json` |
 | `internal/bridge` | Unix-socket protocol between `den hook` and the running TUI; carries permission decisions back |
 | `internal/inbox` | turns hook events into inbox items (permission, plan, question, done, stalled, failed) and keeps history |
+| `internal/events` | the versioned event stream (`events.jsonl`) for `den events -json`, `den wait` and `[on]` commands |
 | `internal/notify` | desktop notifications through `notify-send`, and whether one was clicked |
 | `internal/peer` | delivers a message into a session through its inbox socket |
 | `internal/orch` | runs the orchestrator, a headless `claude -p` stream-json session, and its roster |
@@ -83,7 +84,9 @@ and Claude Code shows its own dialog. Events from subagents are ignored.
 `internal/ui/attention.go` decides which inbox items become desktop
 notifications, and adds reminders and stalled items on the periodic tick.
 `den events` listens without the TUI and prints what arrives
-(`DEN_EVENTS_DECISION=allow|deny` answers permissions).
+(`DEN_EVENTS_DECISION=allow|deny` answers permissions). Before delivering, `den
+hook` also appends a metadata-only line to `events.jsonl`
+(`internal/events.FromHook` picks the fields; see [EVENTS.md](EVENTS.md)).
 
 State files are listed in the README. Every one is under
 `$XDG_STATE_HOME/den/` (default `~/.local/state/den/`) and appended or written

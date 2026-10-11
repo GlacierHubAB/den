@@ -11,6 +11,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/notify"
@@ -30,6 +31,10 @@ func runHook() {
 	}
 	if in.AgentID != "" {
 		return // subagents are not fleet members
+	}
+	// The stream for scripts. The orchestrator's own turns stay out of it.
+	if ev, ok := events.FromHook(in); ok && os.Getenv("DEN_ORCHESTRATOR") != "1" && config.Load().Events.Log {
+		events.Append(events.Path(), ev) // best effort
 	}
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: in.HookEventName, SessionID: in.SessionID, Payload: raw}
 	path := bridge.SocketPath()
@@ -179,6 +184,16 @@ func runEvents() {
 			r.Reply(d)
 		}
 	}
+}
+
+// followEvents is `den events -json`: the event stream from now on, one
+// JSON object per line, as den hook and Den append it. It does not listen
+// on the socket, so it runs beside Den.
+func followEvents() {
+	stop := make(chan struct{}) // until killed
+	events.Open(events.Path()).Run(stop, func(raw []byte, _ events.Event) {
+		os.Stdout.Write(append(raw, '\n'))
+	})
 }
 
 func short(s string) string {

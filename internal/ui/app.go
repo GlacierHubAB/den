@@ -537,7 +537,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			_ = inbox.AppendHistory(inbox.HistoryPath(), it) // best effort
 		}
 	}
-	cmds := []tea.Cmd{m.attend(r, it)}
+	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it)}
 	switch r.Event {
 	case "SessionStart", "SessionEnd":
 		cmds = append(cmds, snapshot)

@@ -5,12 +5,13 @@
 //	den list [-json]     print the agents Den sees
 //	den focus <who>      bring an agent's terminal to the front
 //	den explain <who>    say how Den arrived at what it shows for an agent
-//	den send <who> <msg> deliver a message to one agent's session
+//	den send <who> <msg> deliver a message to one agent's session; --wait for its turn to end
+//	den wait <who>       block until an agent is idle, needs you, or done
 //	den ask <text>       one orchestrator turn: ask about the fleet or have it relay
 //	den skills [...]     the skills catalogue, what Den installed, and removing it
 //	den mcp              used by the orchestrator to open terminals and start agents; not for humans
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
-//	den events           headless: print hook events as they arrive
+//	den events           headless: print hook events as they arrive; -json follows the event stream
 //	den hook             used by Claude Code's hooks; not for humans
 package main
 
@@ -27,6 +28,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/tree"
 	"github.com/GlacierHubAB/den/internal/ui"
@@ -62,6 +64,8 @@ func main() {
 		explain(os.Args[2])
 	case "send":
 		send(os.Args[2:])
+	case "wait":
+		waitCmd(os.Args[2:])
 	case "ask":
 		ask(os.Args[2:])
 	case "mcp":
@@ -75,6 +79,13 @@ func main() {
 	case "uninstall-hooks":
 		uninstallHooks()
 	case "events":
+		fs := flag.NewFlagSet("events", flag.ExitOnError)
+		asJSON := fs.Bool("json", false, "follow the event stream, one JSON object per line")
+		fs.Parse(os.Args[2:])
+		if *asJSON {
+			followEvents()
+			return
+		}
 		runEvents()
 	case "mods":
 		listMods()
@@ -83,7 +94,7 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text>\n       den install-hooks | den uninstall-hooks | den events | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
@@ -210,7 +221,13 @@ func configCmd(args []string) {
 	fmt.Printf("[detail]\nrecent = %d\n\n", c.Detail.Recent)
 	fmt.Printf("[hooks]\npermission_wait = %d\nlog = %v\n\n", c.Hooks.PermissionWait, c.Hooks.Log)
 	fmt.Printf("[notify]\nneeds_you = %v\nremind = %d\ndone = %v\nfailed = %v\nstalled = %v\nwithout_den = %v\n\n", c.Notify.NeedsYou, c.Notify.Remind, c.Notify.Done, c.Notify.Failed, c.Notify.Stalled, c.Notify.WithoutDen)
-	fmt.Printf("[stuck]\nstalled = %d\ntool_failures = %d\n", c.Stuck.Stalled, c.Stuck.ToolFailures)
+	fmt.Printf("[stuck]\nstalled = %d\ntool_failures = %d\n\n", c.Stuck.Stalled, c.Stuck.ToolFailures)
+	fmt.Printf("[events]\nlog = %v\n\n[on]\n", c.Events.Log)
+	for _, k := range events.Kinds {
+		if cmd := c.OnCommand(k); cmd != "" {
+			fmt.Printf("%s = %q\n", k, cmd)
+		}
+	}
 	if prices := config.Prices(); len(prices) > 0 {
 		fmt.Printf("\n[prices]\n")
 		for k, v := range prices {

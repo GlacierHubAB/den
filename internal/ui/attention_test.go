@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/notify"
@@ -19,6 +22,7 @@ import (
 // (needs you) and Fuzzy Sprite (idle).
 func attentionModel(t *testing.T) (*Model, *[]string) {
 	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := treeModel()
 	m.cfg = config.Defaults()
 	m.att = newAttention()
@@ -193,5 +197,31 @@ func TestUnreadCommand(t *testing.T) {
 	next, _ = mm.command("/unread")
 	if mm := next.(Model); mm.store.Unseen() != 0 {
 		t.Error("/unread again marks it read")
+	}
+}
+
+func TestOnCommandsAndDensOwnEvents(t *testing.T) {
+	m, _ := attentionModel(t)
+	out := filepath.Join(t.TempDir(), "on")
+	m.cfg.On.NeedsYou = `echo "$DEN_EVENT $DEN_AGENT $DEN_REQUEST" >> ` + out
+	m.cfg.On.Stalled = `cat >> ` + out
+	runAll(m.handleRequest(req("PermissionRequest", "fuzzy-sprite", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "rm -rf build"}})))
+	runAll(m.handleRequest(req("Stop", "fuzzy-sprite", map[string]any{"last_assistant_message": "ok"})))
+	m.orch.proc = &orch.Orchestrator{SessionID: "orch-session"}
+	runAll(m.handleRequest(req("PreToolUse", "orch-session", map[string]any{"tool_name": "AskUserQuestion"})))
+	m.hooksReady = true
+	m.att.since = time.Now().Add(-time.Hour)
+	runAll(m.checkStuck(time.Now()))
+	raw, _ := os.ReadFile(out)
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 2 || lines[0] != "needs_you Fuzzy Sprite permission" || !strings.Contains(lines[1], `"kind":"stalled"`) || !strings.Contains(lines[1], `"agent":"Snug Capybara"`) {
+		t.Errorf("on commands ran with %q", lines)
+	}
+	if strings.Contains(string(raw), "rm -rf") {
+		t.Error("the command text leaked")
+	}
+	stream, _ := os.ReadFile(events.Path())
+	if strings.Count(string(stream), "\n") != 1 || !strings.Contains(string(stream), `"kind":"stalled","session":"snug-capybara"`) {
+		t.Errorf("Den writes only what den hook cannot know: %q", stream)
 	}
 }

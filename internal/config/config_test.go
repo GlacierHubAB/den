@@ -102,3 +102,24 @@ tool_failures = 5
 		t.Errorf("defaults: only needs-you notifications are on: %+v", d.Notify)
 	}
 }
+
+func TestOnCommands(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte(`
+[on]
+needs_you = "ntfy publish den-topic \"$DEN_AGENT needs you\" # not a comment"   # a comment
+done = "echo done >> /tmp/x"
+nonsense = "ignored"
+`), 0o644)
+	t.Setenv("DEN_CONFIG", p)
+	c := Load()
+	if got := c.OnCommand("needs_you"); got != `ntfy publish den-topic "$DEN_AGENT needs you" # not a comment` {
+		t.Errorf("needs_you = %q", got)
+	}
+	if c.OnCommand("done") != "echo done >> /tmp/x" || c.OnCommand("stalled") != "" || c.OnCommand("nonsense") != "" {
+		t.Errorf("on = %+v", c.On)
+	}
+	if d := Defaults(); d.OnCommand("needs_you") != "" || !d.Events.Log {
+		t.Error("no [on] command by default; the event log is on")
+	}
+}

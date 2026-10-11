@@ -146,8 +146,10 @@ den                     the TUI
 den list [-json]        what Den sees, for scripts and debugging
 den focus mossy         focus an agent's terminal by name, session id or pid
 den explain mossy       how Den arrived at that agent's name, status, window…
-den send mossy "rebase on main first"   message an agent from a script
+den send mossy "rebase on main first"   message an agent from a script; --wait for its turn to end
+den wait mossy --until done             block until an agent is idle, needs you, or done
 den ask "who is blocked on what?"       one orchestrator turn from a script
+den events -json        follow the event stream, one JSON object per line
 den events              headless: print hook events as they arrive
 den install-hooks       wire Den into Claude Code's hooks
 den uninstall-hooks     undo
@@ -244,6 +246,17 @@ Off by default, each with its own switch under `[notify]`:
   notification when no Den is listening. There is nothing to click then.
 
 `DEN_NOTIFY=off` turns every notification off.
+
+### Events for scripts
+
+`den hook` appends every event to `~/.local/state/den/events.jsonl`, one JSON
+object per line with a version field and metadata only (kind, session, agent
+name, time; never a command, prompt or file text). `den events -json` follows
+it, `den wait <agent> --until idle|needs-you|done` blocks on it, and the `[on]`
+config section runs a command per event kind, for example to push to your
+phone. The stream and `den wait` work without Den running; the `stalled` and
+`still_waiting` events and `[on]` commands come from a running Den. The schema, exit codes and
+the environment `[on]` commands get are in [docs/EVENTS.md](docs/EVENTS.md).
 
 Messages you send to an agent arrive in its session the way messages from other
 Claude Code sessions do, with a first line saying they come from you via Den.
@@ -796,6 +809,16 @@ without_den = false         # let den hook notify needs-you itself while Den is 
 stalled = 20                # minutes working with no hook event before the inbox says stalled; 0 off
 tool_failures = 3           # tool calls failing in a row before the inbox says so; 0 off
 
+[events]
+log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
+
+# A shell command per event kind, run by Den with the event's metadata as
+# DEN_* variables and as JSON on stdin. Nothing runs unless you add one.
+# Kinds: session_start session_end turn_start done needs_you idle
+# turn_failed tool_failed stalled still_waiting. See docs/EVENTS.md.
+[on]
+# needs_you = "ntfy publish my-den-topic \"$DEN_AGENT needs you\""
+
 # [prices]                  # override the cost estimate's price table, see Cost
 # claude-opus-5-5 = "4, 20, 5, 0.2"
 ```
@@ -813,7 +836,8 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 
 | File | Holds |
 | --- | --- |
-| `hooks.log` | one line per hook run: event, session, delivered or not |
+| `hooks.log` | one line per hook run: event, session, delivered or not; failed `[on]` commands |
+| `events.jsonl` | the event stream for scripts, metadata only ([docs/EVENTS.md](docs/EVENTS.md)); moves to `events.jsonl.1` past 4 MB |
 | `history.jsonl` | finished turns |
 | `orchestrator.jsonl` | the orchestrator chat and card states |
 | `edges.jsonl` | who directs whom |

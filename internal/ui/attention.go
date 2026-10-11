@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -130,6 +131,9 @@ func (m *Model) checkStuck(now time.Time) tea.Cmd {
 			continue
 		}
 		m.att.reminded[it.ID] = true
+		ev := events.New(events.StillWaiting, it.SessionID)
+		ev.Request, ev.Minutes = request(it.Kind), int(now.Sub(it.At).Minutes())
+		cmds = append(cmds, m.emit(ev))
 		if m.cfg.Notify.NeedsYou && !m.lookingAt(it.SessionID) {
 			cmds = append(cmds, m.notifyCmd(it.SessionID, "still "+needsWhat(it.Kind)))
 		}
@@ -157,12 +161,77 @@ func (m *Model) checkStuck(now time.Time) tea.Cmd {
 				continue
 			}
 			it := m.store.AddStalled(sid, now.Sub(last))
-			if it != nil && m.cfg.Notify.Stalled && !m.lookingAt(sid) {
+			if it == nil {
+				continue
+			}
+			ev := events.New(events.Stalled, sid)
+			ev.Minutes = int(now.Sub(last).Minutes())
+			cmds = append(cmds, m.emit(ev))
+			if m.cfg.Notify.Stalled && !m.lookingAt(sid) {
 				cmds = append(cmds, m.notifyCmd(sid, "has gone quiet"))
 			}
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+// onHook runs the [on] command for a hook event, if one is set. A request
+// Den answered itself (an always-allow) never waited on the human, so it
+// is no needs_you here.
+func (m Model) onHook(r *bridge.Request, it *inbox.Item) tea.Cmd {
+	in := r.Input
+	in.HookEventName = r.Event
+	if in.SessionID == "" {
+		in.SessionID = r.SessionID
+	}
+	ev, ok := events.FromHook(in)
+	if !ok || (ev.Kind == events.NeedsYou && it == nil) {
+		return nil
+	}
+	return m.runOn(ev)
+}
+
+// emit records an event only Den can tell (stalled, still waiting) in the
+// stream den hook writes, and runs its [on] command.
+func (m Model) emit(ev events.Event) tea.Cmd {
+	if m.cfg.Events.Log {
+		ev = m.named(ev)
+		events.Append(events.Path(), ev) // best effort
+	}
+	return m.runOn(ev)
+}
+
+// runOn runs the [on] command for the event off the UI's goroutine.
+func (m Model) runOn(ev events.Event) tea.Cmd {
+	ev = m.named(ev)
+	command := m.cfg.OnCommand(ev.Kind)
+	if command == "" {
+		return nil
+	}
+	return func() tea.Msg {
+		events.RunOn(command, ev)
+		return nil
+	}
+}
+
+// named gives the event the name Den shows for the agent; den hook's
+// name from the session id is the same unless the fleet says otherwise.
+func (m Model) named(ev events.Event) events.Event {
+	if a, ok := m.agentFor(ev.Session); ok {
+		ev.Agent = a.Name
+	}
+	return ev
+}
+
+// request names an inbox kind the way the event stream does.
+func request(k inbox.Kind) string {
+	switch k {
+	case inbox.Plan:
+		return "plan"
+	case inbox.Question:
+		return "question"
+	}
+	return "permission"
 }
 
 // itemOpen reports whether the item with this id is still unresolved.
