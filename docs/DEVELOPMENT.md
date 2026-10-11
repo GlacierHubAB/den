@@ -1,0 +1,133 @@
+# Developing Den
+
+A short guide for people changing the code. For the user-facing description
+see the [README](../README.md); for how to submit changes see
+[CONTRIBUTING.md](../CONTRIBUTING.md).
+
+## Setup
+
+```
+git clone --recurse-submodules <repo-url>
+cd den
+make build && make test
+```
+
+Go 1.26+. The root package (`den.go`) embeds `mods/agent-badge` (a git
+submodule) with `go:embed`, so the submodule must be checked out to build.
+
+## Package map
+
+`cmd/den` is the CLI: `main.go` dispatches the subcommands, `hook.go` is what
+Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go` and
+`send.go` are the scripting commands, `mods.go` installs the badge.
+
+| Package | Role |
+| --- | --- |
+| `internal/discover` | finds live sessions from `~/.claude/sessions/<pid>.json` and checks the pid is alive |
+| `internal/fleet` | joins a session with its badge labels, git checkout, transcript facts and terminal window into an `Agent`; `Focus`, `Explain` |
+| `internal/badge` | agent-badge identity: the name generator (ported from the mod) and the roles/tasks the mod saved |
+| `internal/critter` | the pixel-art creature, drawn with half-block and octant characters |
+| `internal/colors` | one colour per live session, recorded in `colors.json` for the mod to read |
+| `internal/theme` | colours from the current Omarchy theme, with a built-in fallback |
+| `internal/gitinfo` | repo and branch for a directory without shelling out |
+| `internal/procs` | process tree from `/proc` |
+| `internal/hypr` | `hyprctl` wrapper: windows, focus, workspaces |
+| `internal/transcript` | the few facts Den reads from a session's JSONL transcript, and the file changes Review needs |
+| `internal/hooks` | installs and removes Den's entries in Claude Code's `settings.json` |
+| `internal/bridge` | Unix-socket protocol between `den hook` and the running TUI; carries permission decisions back |
+| `internal/inbox` | turns hook events into inbox items (permission, plan, question, done) and keeps history |
+| `internal/peer` | delivers a message into a session through its inbox socket |
+| `internal/orch` | runs the orchestrator, a headless `claude -p` stream-json session, and its roster |
+| `internal/mcp` | minimal stdio MCP server |
+| `internal/spawn` | opens a terminal and starts an agent on a brief; the work behind `spawn_agent` and `open_terminal` |
+| `internal/tree` | who directs whom, persisted as `edges.jsonl` |
+| `internal/mission` | missions, their shapes, cadences and run log |
+| `internal/review` | diff against a base, per-line attribution to sessions, review comments |
+| `internal/mods` | list, install and uninstall the embedded mods |
+| `internal/config` | `config.toml` and the environment overrides |
+| `internal/ui` | the bubbletea application: model and keys (`app.go`), rendering (`view.go`), and one file or group per view (Fleet and tree, `orchestrator.go`, `dispatch.go`, `overview.go`, `missions.go`, `review*.go`) |
+
+## How Den finds sessions
+
+Claude Code 2.1.289+ writes `~/.claude/sessions/<pid>.json` per live session
+(session id, cwd, busy/idle, the session's messaging socket). `discover.Scan`
+reads them all and marks each alive or gone by probing the pid.
+`fleet.Snapshot` then adds the rest: the critter name from the session id, role
+and task from the badge's records in Claude Code's plugin store, the git
+checkout, the transcript title and model, and the Hyprland window (matched by
+title or working directory, or through herdr). `CLAUDE_CONFIG_DIR` moves the
+Claude Code directory for discovery, transcripts and the settings file.
+
+`den list` prints the snapshot; `den explain <name>` prints how each field was
+derived.
+
+## Hooks and state
+
+`den install-hooks` adds entries to `~/.claude/settings.json` (backed up first)
+that run `den hook` for `SessionStart`, `SessionEnd`, `UserPromptSubmit`,
+`Notification`, `Stop`, `PostToolUse`, `PreToolUse` (`AskUserQuestion`) and
+`PermissionRequest` (`internal/hooks/install.go`).
+
+`den hook` reads the event from stdin and sends it as one JSON line to the
+socket (`$DEN_SOCKET`, else `$XDG_RUNTIME_DIR/den.sock`). For
+`PermissionRequest` it waits, up to `hooks.permission_wait` seconds, for the
+TUI's decision and prints it for Claude Code; with no answer it prints nothing
+and Claude Code shows its own dialog. Events from subagents are ignored.
+`den events` listens without the TUI and prints what arrives
+(`DEN_EVENTS_DECISION=allow|deny` answers permissions).
+
+State files are listed in the README. Every one is under
+`$XDG_STATE_HOME/den/` (default `~/.local/state/den/`) and appended or written
+atomically, so Den restarts cleanly.
+
+## Running against scratch state
+
+Give Den an empty state and config directory so your own files are untouched:
+
+```
+export XDG_STATE_HOME=$(mktemp -d)
+export XDG_CONFIG_HOME=$(mktemp -d)
+export DEN_SOCKET=$XDG_STATE_HOME/den.sock
+go run ./cmd/den
+```
+
+A second Den started with a different `DEN_SOCKET` does not take the first
+one's hook events. Hooks installed by `den install-hooks` point at the binary
+that installed them and use the socket from the environment of the Claude Code
+session, so for end-to-end work start the test sessions from a shell with the
+same `DEN_SOCKET` exported. To keep your real `~/.claude/settings.json` out of
+it, set `CLAUDE_CONFIG_DIR` to a scratch directory too; Claude Code then needs
+its own login there.
+
+`den list`, `den explain`, `den config` and `den events` are handy without the
+TUI.
+
+## Tests
+
+```
+make test                                              # vet + everything
+XDG_STATE_HOME=$(mktemp -d) go test ./internal/ui     # one package
+XDG_STATE_HOME=$(mktemp -d) go test ./internal/review -run TestAttributeTwoAgentsOneFile -v
+```
+
+Always set `XDG_STATE_HOME` to a scratch directory, as `make test` does. UI
+tests build a `Model` directly and render it, so most behaviour is testable
+without a terminal. `internal/spawn/live_test.go` is behind the `live` build tag and
+opens a real terminal with a real Claude Code session; run it by hand only
+(`go test -tags live -run TestLiveSpawn -v ./internal/spawn`).
+
+## Releases
+
+`make release` builds static `linux/amd64` and `linux/arm64` binaries and
+`SHA256SUMS` into `dist/`, with the version from `git describe --tags`.
+`.github/workflows/ci.yml` runs `make test` on pushes to `main` and on pull
+requests; `.github/workflows/release.yml` runs `make test` and `make release`
+when a `v*` tag is pushed and attaches `den_linux_amd64`, `den_linux_arm64` and
+`SHA256SUMS` to a GitHub release. Only the maintainers tag releases.
+
+## Other documents in this folder
+
+`PLAN.md` is the original scope and milestone plan, `CODE-REVIEW.md` the
+design notes for the Review tab, and `DISPATCH-CARDS.md` those for dispatch
+cards (written as design notes before they were built). `mockup/` holds HTML mockups of the target UI; they are designs, not
+the product.
