@@ -742,8 +742,9 @@ What Den does that is its own:
 - **Review:** every agent's changes as a highlighted diff, each line in the
   colour of the agent that wrote it, with comments you send back to the agent
   and see marked addressed once the lines change.
-- **Cost:** tokens per agent, per team and per mission run, an estimate in
-  dollars at list price, and an optional budget on a mission.
+- **Cost:** tokens rolled up per team and per mission run, an estimate in
+  dollars at list price, and an optional budget on a mission. (OpenRig also
+  counts tokens per seat.)
 - **The agent badge:** a name, critter, role and task for each session.
 
 Where the others go further: Herdr keeps agents alive when you close the
