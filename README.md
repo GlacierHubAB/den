@@ -213,6 +213,34 @@ agent's window is focused, or you switch to it, the normal Claude Code dialog
 appears instead, and so it does when `hooks.permission_wait` (580 s) runs out
 or Den is not running.
 
+#### Answering an agent's questions
+
+Off by default. With `answer_questions = true` under `[hooks]` in the config
+(restart Den after changing it), a question an agent asks with Claude Code's
+`AskUserQuestion` tool waits in the inbox as well as in its terminal: the
+question, its header, its numbered options with their descriptions, and
+"Question 2 of 3" when it asks several. On the Inbox view, select it and type
+an option's number then `Enter`; for a question that takes several answers,
+type several numbers (`1 3`). Anything else you type is your own answer, as
+the dialog's "Type something" row takes it; put a number meant as text in
+quotes (`"3"`). `/answer <text>` does the same from any view. A call with
+several questions takes them one at a time, the answers so far listed above
+the next one, and the agent hears back only once all are answered. `Ctrl+Y`
+does not answer a question; `Ctrl+N` leaves it to the terminal.
+
+The terminal dialog stays usable the whole time, and whichever you answer
+first counts: answered or dismissed (`Esc`) in the terminal, the inbox item
+clears. Den lets go after `hooks.permission_wait` (580 s, inside the hook's
+600 s timeout), when you are at that terminal, or at once when Den is not
+running; the question is then the terminal's alone. Den never answers on its
+own.
+
+This relies on undocumented Claude Code behaviour (a `PermissionRequest`
+hook that allows the call with the answers added to its input), checked
+against Claude Code 2.1.289. A later version may ignore such an answer; the
+terminal dialog then stays and works as usual. No new hook is needed: it uses
+the `PermissionRequest` hook `den install-hooks` already sets up.
+
 Two kinds of item say an agent may be stuck. Neither ever counts as "needs
 you":
 
@@ -294,6 +322,7 @@ each chip. Delete a chip from the text and its image is left out.
 | --- | --- |
 | `/allow` `/y`, `/deny` `/n`, `/always` `/a` | answer the waiting prompt |
 | `/open` `/o` `/focus` | focus the selected agent's terminal |
+| `/answer <text>` | answer the agent's question waiting in Den: an option's number, several for a multi-select, or your own words (with `hooks.answer_questions`) |
 | `/dismiss` `/x` | clear the selected inbox item |
 | `/unread` `/u` | keep the selected inbox item counted as new until opened or dismissed; again to mark it read |
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
@@ -854,6 +883,7 @@ recent = 20                 # activity entries shown in the details pane
 [hooks]
 permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
+answer_questions = false    # answer an agent's questions (AskUserQuestion) from the inbox, see Inbox
 
 [restore]
 ask = true                  # after a restart, ask once whether to reopen the agents that were live
