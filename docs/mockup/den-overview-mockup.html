@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Den Overview Missions</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap">
+<style>
+/* Same frame language as the dispatch-cards mockup: terminal frames over a
+   short reference. Palette: Deepharness. Hue is reserved for status and for
+   the agents themselves; structure is drawn in the white opacity ladder. */
+:root{
+  color-scheme:dark;
+  --bg:#000000; --surface:#0d0d0d; --surface-2:#141414; --sel:#2e2e2e;
+  --fg:#dfdfdf; --fg-2:#adadad; --fg-3:#7c7c7c; --muted:#575757; --bright:#f8f8f8;
+  --ok:#66cb8e; --attn:#e8b84a; --err:#ea9e9e;
+  --mossy:#66cb8e; --fuzzy:#86c6e8; --plucky:#f0b07a; --orch:#b9a3f0; --snug:#f4c4c4; --wombat:#a0f3d8; --pebble:#e8d27a;
+  --border:rgba(248,248,248,.10); --border-dim:rgba(248,248,248,.05); --guide:rgba(248,248,248,.22);
+  --mono:"Geist Mono","GeistMono Nerd Font",ui-monospace,"JetBrains Mono",monospace;
+  --fs:13px;
+}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:var(--fs)/1.5 var(--mono);
+  padding-block:28px;padding-inline:16px;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:40px}
+h1,h2,h3,p{margin:0}
+.eyebrow{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg-3)}
+.intro{display:grid;gap:10px;max-width:72ch}
+.intro h1{font-size:22px;font-weight:600;color:var(--bright);text-wrap:balance}
+.intro p{color:var(--fg-2)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--fg-2);font-size:12px}
+.legend span b{font-weight:500;color:var(--fg)}
+.frame-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline;margin-bottom:10px}
+.frame-head h2{font-size:14px;font-weight:600;color:var(--bright)}
+.frame-head span{color:var(--fg-3);font-size:12px;max-width:70ch}
+
+/* terminal frame */
+.term{background:var(--bg);border:1px solid var(--border);padding:14px;display:grid;gap:8px;min-width:0}
+.head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:0 18px;align-items:start;padding:4px 0 2px}
+.mark{white-space:pre;line-height:1.15;font-weight:600;letter-spacing:0;font-size:13px}
+.mark .r1{color:var(--bright)} .mark .r2{color:var(--fg)} .mark .r3{color:var(--fg-3)}
+.info{display:grid;gap:0;color:var(--fg-3);line-height:1.15;font-size:13px;padding-top:1px}
+.info .l1{color:var(--fg-2)}
+.clock{color:var(--fg-3)}
+.tabs{display:flex;gap:2px;align-items:center}
+.tab{padding:0 10px;color:var(--fg-3);border-bottom:1px solid transparent}
+.tab.on{color:var(--bright);border-bottom-color:var(--bright)}
+.tab .n{display:inline-block;min-width:16px;text-align:center;background:var(--attn);color:var(--bg);margin-left:6px;padding:0 4px;font-weight:600}
+.tabs .key{margin-left:auto;background:var(--sel);color:var(--fg);padding:0 6px}
+.tabs .key+.key{margin-left:8px}
+.tabs .key.on{background:var(--bright);color:var(--bg)}
+
+.panes{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,4fr);gap:10px;min-width:0}
+.pane{position:relative;border:1px solid var(--border);padding:16px 12px 12px;min-width:0;display:grid;align-content:start;gap:0}
+.pane>.title{position:absolute;top:-9px;left:10px;background:var(--bg);padding:0 6px;color:var(--fg);font-size:12px}
+.pane>.corner{position:absolute;top:-9px;right:10px;background:var(--bg);padding:0 6px;color:var(--fg-3);font-size:12px}
+.dim{color:var(--fg-3)} .faint{color:var(--muted)} .hi{color:var(--bright)}
+.ok{color:var(--ok)} .attn{color:var(--attn)} .err{color:var(--err)}
+.kbd{color:var(--fg-2)} .kbd b{font-weight:500;color:var(--bright)}
+.chip{display:inline-block;padding:0 6px;color:var(--bg);font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;line-height:1.6}
+.rolechip{font-size:11px;letter-spacing:.06em;text-transform:uppercase;font-weight:500}
+
+/* fleet tree: the agents pane with guides */
+.tree{display:grid;gap:0;white-space:pre;overflow-x:auto;min-width:0}
+.tree .sec{color:var(--fg-3);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding:0 0 4px 2px}
+.tree .sec+.row{margin-top:0}
+.tree .row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0;padding:0 4px;margin-top:8px}
+.tree .row.sel{background:var(--sel)}
+.tree .g{color:var(--guide);white-space:pre}
+.tree .l{white-space:pre;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.tree .l.task{color:var(--fg-2)}
+.tree .l.meta{color:var(--fg-3)}
+.tree .name{color:var(--fg)} .tree .sel .name{color:var(--bright)}
+.tree .marker{color:var(--bright)}
+
+/* details pane */
+.det{display:grid;gap:10px}
+.det .who{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 12px;align-items:start}
+.det .who .name{font-weight:600;font-size:14px}
+.det .chain{color:var(--fg-3)}
+.det .chain b{font-weight:500;color:var(--fg)}
+.det .chain i{font-style:normal;color:var(--muted);margin:0 6px}
+.det h3{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-3);font-weight:500;margin-top:4px}
+.det .kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 14px}
+.det .kv dt{color:var(--fg-3);margin:0}
+.det .kv dd{margin:0;color:var(--fg)}
+.deleg{display:grid;gap:4px}
+.deleg .d{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:0 10px;align-items:baseline;white-space:nowrap;min-width:0}
+.deleg .d>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.deleg .d .b{color:var(--fg-2)}
+.deleg .d .b::before{content:"▸ ";color:var(--fg-3)}
+.recent{display:grid;gap:2px;color:var(--fg-2)}
+.recent .t{color:var(--fg-3)}
+.recent .code{color:var(--mossy)}
+
+/* map: a horizontal tree. a node row is [card][children]; the children
+   column carries a vertical guide, each child a stub to it */
+.map{display:grid;gap:6px;overflow-x:auto;padding:4px 0 6px}
+.lanes{display:flex;gap:0;color:var(--muted);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-left:2px}
+.lanes span{width:238px;flex:none}
+.node{display:flex;align-items:center;gap:0}
+.kids{display:flex;flex-direction:column;gap:8px;position:relative;padding-left:22px;align-self:stretch;justify-content:center}
+.kids::before{content:"";position:absolute;left:10px;top:50%;bottom:50%;border-left:1px solid var(--guide)}
+.kids.many::before{top:calc(var(--first) * 1px);bottom:calc(var(--last) * 1px)}
+.kids>.node{position:relative}
+.kids>.node::before{content:"";position:absolute;left:-12px;top:50%;width:12px;border-top:1px solid var(--guide)}
+.kids>.node::after{content:"";position:absolute;left:-12px;top:50%;height:1px}
+.card{border:1px solid var(--border-dim);background:var(--surface);padding:6px 10px 6px 8px;width:216px;flex:none;display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 8px;align-items:center;position:relative}
+.card.focus{border-color:var(--border);background:var(--surface-2)}
+.card.focus::before{content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;width:2px;background:var(--bright)}
+.card .t{display:grid;gap:0;min-width:0;white-space:nowrap}
+.card .t>span{overflow:hidden;text-overflow:ellipsis}
+.card .nm{font-weight:600}
+.card .st{color:var(--fg-3);font-size:12px}
+.card.you{width:120px;grid-template-columns:1fr;background:transparent;border-style:dashed}
+.card.you .nm{color:var(--fg-2)}
+.stub{width:22px;flex:none;border-top:1px solid var(--guide);align-self:center}
+.edge{color:var(--muted);font-size:11px;position:absolute;left:-10px;top:-8px}
+
+/* chat with nested cards */
+.chat{display:grid;gap:10px;min-width:0}
+.msg{display:grid;grid-template-columns:120px minmax(0,1fr);gap:0 8px;min-width:0}
+.msg .from{text-align:right;color:var(--fg-3);white-space:nowrap}
+.msg .from.orch{color:var(--orch)}
+.msg .body{min-width:0;color:var(--fg)}
+.msg .body p{margin:0}
+.msg .body code{color:var(--orch)}
+.dcard{margin-left:128px;border:1px solid var(--border-dim);padding:8px 10px 6px;display:grid;gap:3px;min-width:0;position:relative}
+.dcard.focus{border-color:var(--border);background:var(--surface)}
+.dcard.focus::before{content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;width:2px;background:var(--bright)}
+.dcard .top{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:0 10px;align-items:center;min-width:0}
+.dcard .who{display:flex;gap:10px;align-items:center;min-width:0;white-space:nowrap;overflow:hidden}
+.dcard .name{font-weight:600}
+.state{white-space:nowrap}
+.dcard .brief{color:var(--fg);padding-left:54px}
+.dcard .brief::before{content:"▸ ";color:var(--fg-3)}
+.dcard .line{padding-left:54px;color:var(--fg-3);display:flex;gap:14px;justify-content:space-between;white-space:nowrap;overflow:hidden;min-width:0}
+.dcard .line>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.dcard .foot{display:flex;justify-content:flex-end;gap:14px;color:var(--fg-3);font-size:12px;padding-top:2px}
+.dcard .foot b{color:var(--fg);font-weight:500}
+.sub{margin-left:54px;display:grid;gap:4px;padding:4px 0 2px;position:relative}
+.sub::before{content:"";position:absolute;left:-14px;top:0;bottom:8px;border-left:1px solid var(--guide)}
+.sub .s{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:0 10px;align-items:center;white-space:nowrap;min-width:0;position:relative;padding:2px 0}
+.sub .s::before{content:"";position:absolute;left:-14px;top:50%;width:10px;border-top:1px solid var(--guide)}
+.sub .s>span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sub .s .nm{font-weight:600}
+.sub .s .b{color:var(--fg-2)}
+.sub .s .b::before{content:"▸ ";color:var(--fg-3)}
+.sub .s .l2{grid-column:3;color:var(--fg-3);font-size:12px}
+.rollup{color:var(--fg-3)}
+.spin{display:inline-block;width:1ch}
+.cursor{display:inline-block;width:.55em;height:1.1em;background:var(--bright);vertical-align:text-bottom;margin-left:1px;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.cursor{animation:none}}
+
+/* inbox item */
+.item{display:grid;grid-template-columns:auto auto minmax(0,1fr);gap:0 10px;align-items:start;padding:4px 6px}
+.item.sel{background:var(--sel)}
+.item .stripe{width:2px;align-self:stretch;background:var(--attn)}
+.item .lines{display:grid;gap:0;min-width:0}
+.item .lines>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item .h{color:var(--fg)}
+.item .via{color:var(--fg-3)}
+.item .via b{color:var(--fg-2);font-weight:500}
+.item .via i{font-style:normal;color:var(--muted);margin:0 5px}
+
+/* pixel critters: 16x16 bitmap as 2px pixels (8x4 cells) or 4px (fleet size) */
+.av{display:grid;grid-template-columns:repeat(16,2px);grid-auto-rows:2px;gap:0;flex:none}
+.av i{display:block}
+.av.big{grid-template-columns:repeat(16,4px);grid-auto-rows:4px}
+
+/* command line */
+.rule{border-top:1px solid var(--border);margin:0}
+.cmd{display:grid;gap:4px;padding:0 2px}
+.cmd .text{color:var(--fg)}
+.cmd .text b{color:var(--bright);font-weight:600;margin-right:6px}
+.hints{display:flex;flex-wrap:wrap;gap:4px 18px;color:var(--fg-3);font-size:12px}
+.hints b{color:var(--fg);font-weight:500}
+
+/* reference tables */
+.ref{display:grid;gap:14px;max-width:100%}
+.ref h2{font-size:14px;font-weight:600;color:var(--bright)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;vertical-align:top;padding:6px 10px 6px 0;border-bottom:1px solid var(--border-dim)}
+th{color:var(--fg-3);font-weight:500;font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+td b{font-weight:500;color:var(--bright)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px}
+.tablewrap{overflow-x:auto}
+@media (max-width:860px){
+  .panes{grid-template-columns:1fr}
+  .msg{grid-template-columns:1fr}
+  .msg .from{text-align:left}
+  .dcard{margin-left:0}
+  .head{grid-template-columns:1fr auto}
+  .head .mark{display:none}
+}
+/* project strip */
+.projects{display:flex;gap:6px;align-items:baseline;flex-wrap:wrap;padding:2px 0 4px}
+.projects .lbl{color:var(--muted);font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-right:6px}
+.proj{padding:0 8px;color:var(--fg-2);border:1px solid var(--border-dim)}
+.proj i{font-style:normal;color:var(--fg-3);margin-left:6px}
+.proj.on{color:var(--bright);border-color:var(--border);background:var(--surface)}
+.proj.dim{color:var(--fg-3)}
+.projects .meta{margin-left:auto;color:var(--fg-3);font-size:12px}
+/* missions */
+.missions{display:grid;gap:10px}
+.mission{display:grid;gap:1px;padding:4px 6px;border-left:2px solid var(--border-dim)}
+.mission.done{opacity:.7}
+.mrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:0 10px;align-items:baseline}
+.shape{color:var(--fg-2);width:1.2em;display:inline-block}
+.mname{font-weight:600;color:var(--bright);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mline{color:var(--fg);padding-left:calc(1.2em + 10px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px}
+.tag{display:inline-block;border:1px solid var(--border);padding:0 6px;margin:0 6px 2px 0;color:var(--fg-2);font-size:12px}
+/* proposal card and mission fields */
+.proposal{margin-left:128px;border:1px solid var(--border);background:var(--surface);padding:8px 10px;display:grid;gap:6px}
+.ptop{display:flex;gap:10px;align-items:center}
+.fields{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 14px;margin:0}
+.fields dt{color:var(--fg-3);white-space:nowrap}
+.fields dd{margin:0;color:var(--fg)}
+.fields dd b{color:var(--bright);font-weight:600}
+.fields code{color:var(--orch)}
+.pfoot{display:flex;gap:16px;color:var(--fg-2);font-size:12px;padding-top:2px}
+.runs{display:grid;gap:8px;margin-top:12px}
+.runhead{display:flex;justify-content:space-between;color:var(--fg-2);border-top:1px dashed var(--border-dim);padding-top:6px}
+/* review frame */
+.review{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,3fr);gap:10px}
+.work{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:0 12px;padding:2px 6px;white-space:nowrap}
+.work.sel{background:var(--sel)}
+.diff{display:grid;font-variant-numeric:tabular-nums;white-space:pre;overflow-x:auto}
+.diff .h{color:var(--fg-3)}
+.diff .l{color:var(--fg-3)}
+.diff .l.del{color:var(--err);background:rgba(234,158,158,.14)}
+.diff .l.add{color:var(--ok);background:rgba(102,203,142,.14)}
+@media (max-width:860px){.review{grid-template-columns:1fr}.proposal{margin-left:0}.projects .meta{margin-left:0}}
+</style>
+<div class="wrap">
+
+<section class="intro">
+  <div class="eyebrow">Den · design mockup · Overview tab and missions</div>
+  <h1>Overview: one project at a time, its agents, its code, its missions</h1>
+  <p>Den knows every agent on the machine. Overview narrows that to one project: pick it, and the view shows the agents working in it, the state of its checkout, and the missions standing on it. Review follows the same pick. A mission is a standing goal, in Aimless's words a purpose in one sentence with constraints and a definition of done; you write the goal, the orchestrator decides how to run it: once, as a loop, as a fan-out across agents, or on a schedule.</p>
+  <div class="legend">
+    <span><b>← →</b> switch project</span><span><b>Enter</b> on the line: new mission</span><span><b>^Y</b> start the proposal</span><span><b>▶ ↻ ⇶ ⏲</b> once · loop · fan-out · schedule</span><span><b>●</b> running</span><span><b class="attn">◐</b> waiting on you</span><span><b class="ok">✓</b> done</span><span><b class="dim">‖</b> paused</span>
+  </div>
+</section>
+
+<!-- ───────────────────────── Frame 1: the Overview tab ───────────────────────── -->
+<section>
+  <div class="frame-head"><h2>1 · The Overview tab</h2><span>Projects are the repositories agents touch (from their transcripts) plus their session folders. The strip under the tabs lists them with a count of agents on each; ← → or /project switch. Left: the agents in this project, in their tree. Right: the project's missions, newest first, with shape, state and what is happening now. The command line on this tab writes missions.</span></div>
+  <div class="term">
+    <div class="head">
+      <div class="mark"><span class="r1">█▀▀▄ █▀▀▀ █▄  █</span>
+<span class="r2">█  █ █▀▀  █ ▀▄█</span>
+<span class="r3">█▄▄▀ █▄▄▄ █   █</span></div>
+      <div class="info"><div class="l1">7 agents · 4 working · 3 idle · 3 projects</div><div>inbox <span class="attn">1 waiting</span> · orchestrator <span class="ok">2 missions running</span></div><div>hooks on</div></div>
+      <div class="clock">15:04</div>
+    </div>
+    <div class="tabs"><span class="tab on">Overview</span><span class="tab">Fleet</span><span class="tab">Inbox<span class="n">1</span></span><span class="tab">Review</span><span class="key">^O orchestrator</span><span class="key">Tab ⇥</span></div>
+
+    <div class="projects">
+      <span class="lbl">project</span>
+      <span class="proj on">den <i>4</i></span>
+      <span class="proj">agent-badge <i>1</i></span>
+      <span class="proj">xml-converter <i>1</i></span>
+      <span class="proj dim">no project <i>1</i></span>
+      <span class="meta">~/code/den · main · 3 files changed by agents · last commit 12m ago</span>
+    </div>
+
+    <div class="panes">
+      <div class="pane"><span class="title">Agents on den</span><span class="corner">4 · 2 directed</span>
+        <div class="tree">
+          <div class="sec">orchestrator · 3</div>
+          <div class="row"><span class="g">  </span><span class="l"><span style="color:var(--orch)">●</span> <span class="name">orchestrator</span>  <span class="dim">2 missions running</span></span></div>
+          <div class="row sel"><span class="g">  ├─ </span><span class="l"><span class="marker">▌</span><span class="hi">●</span> <span class="name">Mossy Lemur</span>  <span class="rolechip" style="color:var(--mossy)">lead</span>        <span class="dim">directs 1 · ⇶ release 0.2</span></span></div>
+          <div class="row sel"><span class="g">  │  </span><span class="l task">  review the 0.2 notes, check the installer</span></div>
+          <div class="row sel"><span class="g">  │  </span><span class="l meta">  1h · Claude Code · Fable 5.1 · ctx 41%</span></div>
+          <div class="row"><span class="g">  │  └─ </span><span class="l"><span class="attn">◐</span> <span class="name">Plucky Capybara</span>  <span class="rolechip" style="color:var(--plucky)">sysadmin</span>   <span class="attn">permission</span></span></div>
+          <div class="row"><span class="g">  │     </span><span class="l task">  verify den install-hooks</span></div>
+          <div class="row"><span class="g">  │     </span><span class="l meta">  9m · Claude Code · Sonnet 5.5 · ctx 9%</span></div>
+          <div class="row"><span class="g">  └─ </span><span class="l"><span class="hi">●</span> <span class="name">Fuzzy Sprite</span>  <span class="rolechip" style="color:var(--fuzzy)">coding agent</span>   <span class="dim">↻ tests green</span></span></div>
+          <div class="row"><span class="g">     </span><span class="l task">  fix the flaky review_test on CI</span></div>
+          <div class="row"><span class="g">     </span><span class="l meta">  22m · Claude Code · Sonnet 5.5 · ctx 31%</span></div>
+          <div class="sec" style="margin-top:14px">on their own · 1</div>
+          <div class="row"><span class="g">  </span><span class="l"><span class="hi">●</span> <span class="name">Snug Capybara</span>  <span class="rolechip" style="color:var(--snug)">coding agent</span></span></div>
+          <div class="row"><span class="g">  </span><span class="l task">   overview tab mockup</span></div>
+          <div class="row"><span class="g">  </span><span class="l meta">   3h · Claude Code · Fable 5.1 · ctx 34%</span></div>
+        </div>
+      </div>
+
+      <div class="pane"><span class="title">Missions</span><span class="corner">2 running · 1 done</span>
+        <div class="missions">
+          <div class="mission">
+            <div class="mrow"><span class="shape" title="fan-out">⇶</span><span class="mname">Ship the 0.2 release</span><span class="state" style="color:var(--mossy)">● running · 1h</span></div>
+            <div class="mline"><span class="dim">lead</span> <span style="color:var(--mossy)">Mossy Lemur</span> <span class="dim">+1</span> · <span class="dim">done when</span> notes reviewed, installer verified, tag pushed</div>
+            <div class="mline"><span class="attn">◐ Plucky needs you</span> <span class="dim">· 1 of 2 checks done</span></div>
+          </div>
+          <div class="mission">
+            <div class="mrow"><span class="shape" title="loop">↻</span><span class="mname">Keep the test suite green</span><span class="state" style="color:var(--fuzzy)">● running · iteration 3</span></div>
+            <div class="mline"><span class="dim">loop</span> <span style="color:var(--fuzzy)">Fuzzy Sprite</span> · <span class="dim">constraints</span> no skipped tests · no force pushes</div>
+            <div class="mline"><span class="dim">last</span> review_test flake pinned to a time zone · <span class="dim">checks again when CI reports</span></div>
+          </div>
+          <div class="mission">
+            <div class="mrow"><span class="shape" title="schedule">⏲</span><span class="mname">Triage new issues every morning</span><span class="state dim">‖ paused</span></div>
+            <div class="mline"><span class="dim">schedule</span> daily 08:30 · <span class="dim">next</span> tomorrow · <span class="dim">last run</span> 3 issues labelled, 1 answered</div>
+          </div>
+          <div class="mission done">
+            <div class="mrow"><span class="shape" title="once">▶</span><span class="mname">Fix the inbox avatars</span><span class="state ok">✓ done · 2h ago</span></div>
+            <div class="mline"><span class="dim">once</span> <span style="color:var(--snug)">Snug Capybara</span> · 2 commits · <span class="kbd"><b>Enter</b> show runs</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="rule">
+    <div class="cmd"><div class="text"><b>›</b><span class="dim">Describe a mission for den, or @Name to message one agent · /help</span></div></div>
+    <hr class="rule">
+    <div class="hints"><span><b>← →</b> project</span><span><b>↑ ↓</b> select</span><span><b>Enter</b> mission · empty: open</span><span><b>^Y ^N</b> answer</span><span><b>/pause /stop /edit</b></span><span><b>Tab</b> view</span></div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Frame 2: writing a mission ───────────────────────── -->
+<section>
+  <div class="frame-head"><h2>2 · Writing a mission</h2><span>You type the goal on the Overview command line. The orchestrator reads the project and the fleet and answers with a proposal card: the mission in one sentence, what done looks like, constraints it inferred, and the shape it picked with one line of reasoning. ^Y starts it; typing replies to refine it; ^N drops it. Nothing runs before ^Y.</span></div>
+  <div class="term">
+    <div class="tabs"><span class="tab on">Overview</span><span class="tab">Fleet</span><span class="tab">Inbox<span class="n">1</span></span><span class="tab">Review</span><span class="key">^O orchestrator</span><span class="key">Tab ⇥</span></div>
+    <div class="projects"><span class="lbl">project</span><span class="proj on">den <i>4</i></span><span class="proj">agent-badge <i>1</i></span><span class="proj">xml-converter <i>1</i></span><span class="meta">~/code/den · main</span></div>
+    <div class="pane"><span class="title">Missions</span>
+      <div class="chat">
+        <div class="msg"><span class="from">you ›</span><div class="body">keep the test suite green; when CI goes red, find the cause and fix it within the hour, never skip a test to get there</div></div>
+        <div class="proposal">
+          <div class="ptop"><span class="shape">↻</span><span class="mname">Keep the test suite green</span><span class="chip" style="background:var(--orch)">proposal</span></div>
+          <dl class="fields">
+            <dt>mission</dt><dd>Keep den's test suite green on main, fixing the cause of any failure within an hour of it appearing.</dd>
+            <dt>done when</dt><dd>Never; a standing mission. Each run is done when <code>go test ./...</code> passes on main.</dd>
+            <dt>constraints</dt><dd><span class="tag">no skipped tests</span><span class="tag">no force pushes</span><span class="tag">fix the cause, not the assertion</span><span class="tag">ask before touching CI config</span></dd>
+            <dt>shape</dt><dd><b>loop</b> on one agent, paced by CI. <span class="dim">One agent can hold the context of a failing run; a fan-out would split one failure across people. A schedule would miss failures between ticks, so the loop waits for the CI hook instead.</span></dd>
+            <dt>agent</dt><dd><span style="color:var(--fuzzy)">Fuzzy Sprite</span> <span class="dim">(idle, has worked in den, Sonnet 5.5)</span></dd>
+          </dl>
+          <div class="pfoot"><span><b class="kbd"><b>^Y</b></b> start</span><span><b class="kbd"><b>^N</b></b> drop</span><span class="dim">or type to refine: "make it a schedule", "use Mossy", "also run vet"</span></div>
+        </div>
+        <div class="msg"><span class="from">you ›</span><div class="body">also run go vet, and don't touch the release workflow</div></div>
+        <div class="msg"><span class="from orch">orchestrator ›</span><div class="body"><p>Added <code>go vet ./...</code> to the pass condition and <code>release.yml</code> to the constraints. Shape unchanged.<span class="cursor"></span></p></div></div>
+      </div>
+    </div>
+    <hr class="rule">
+    <div class="cmd"><div class="text"><b>›</b><span class="dim">Refine the proposal, ^Y to start it</span></div></div>
+    <hr class="rule">
+    <div class="hints"><span><b>^Y</b> start</span><span><b>^N</b> drop</span><span><b>Enter</b> refine</span><span><b>Esc</b> back to missions</span></div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Frame 3: a mission running ───────────────────────── -->
+<section>
+  <div class="frame-head"><h2>3 · A mission, opened</h2><span>Enter on a mission opens it: the fields, then its runs. A run is the orchestrator's dispatch for one pass, shown with the same cards the orchestrator chat uses, so nothing is retold. A loop shows its iterations, a schedule its ticks with the next one, a fan-out the lead and its children. Pause holds the next run; stop ends the mission and keeps its history.</span></div>
+  <div class="term">
+    <div class="tabs"><span class="tab on">Overview</span><span class="tab">Fleet</span><span class="tab">Inbox<span class="n">1</span></span><span class="tab">Review</span><span class="key">^O orchestrator</span><span class="key">Tab ⇥</span></div>
+    <div class="projects"><span class="lbl">project</span><span class="proj on">den <i>4</i></span><span class="proj">agent-badge <i>1</i></span><span class="proj">xml-converter <i>1</i></span><span class="meta">~/code/den · main</span></div>
+    <div class="pane"><span class="title">Mission · Ship the 0.2 release</span><span class="corner">⇶ fan-out · running 1h 04m</span>
+      <dl class="fields">
+        <dt>mission</dt><dd>Ship Den 0.2: release notes reviewed, installer verified against them, tag pushed.</dd>
+        <dt>done when</dt><dd>v0.2.0 is tagged and the release workflow is green.</dd>
+        <dt>constraints</dt><dd><span class="tag">ask before the tag</span><span class="tag">no changes to the installer itself</span></dd>
+        <dt>shape</dt><dd><b>fan-out</b>: a lead with two parallel checks, repeated until both pass. <span class="dim">The checks are independent and each fits one agent.</span></dd>
+      </dl>
+      <div class="runs">
+        <div class="runhead"><span>run 2 · started 14:58</span><span class="dim">1 of 2 checks done</span></div>
+        <div class="dcard focus">
+          <div class="top">
+            <div class="who"><div class="av" data-color="var(--mossy)" data-seed="1"></div><span class="name" style="color:var(--mossy)">Mossy Lemur</span><span class="chip" style="background:var(--mossy)">lead</span></div>
+            <span></span>
+            <span class="state attn">◐ needs you · via Plucky Capybara · 1h 02s</span>
+          </div>
+          <div class="brief">Lead run 2: re-review docs/RELEASE.md after Fuzzy's fix, have the installer checked, report back with both results.</div>
+          <div class="line"><span><span class="spin">⠸</span> waiting on 1 agent</span><span>6 calls · ctx 41%</span></div>
+          <div class="sub">
+            <div class="s"><span class="av" data-color="var(--fuzzy)" data-seed="2"></span><span class="nm" style="color:var(--fuzzy)">Fuzzy Sprite</span><span class="b">check the install section against the binary</span><span class="state ok">✓ done · 4m 10s</span></div>
+            <div class="s"><span class="av" data-color="var(--plucky)" data-seed="3"></span><span class="nm" style="color:var(--plucky)">Plucky Capybara</span><span class="b">verify den install-hooks does what the notes say</span><span class="state attn">◐ needs you · 48s</span><span class="l2 attn">Wants to run  <span class="hi">$ den install-hooks --dry-run</span>  ·  <b class="kbd"><b>^Y</b></b> allow  <b class="kbd"><b>^N</b></b> deny</span></div>
+          </div>
+          <div class="foot"><span><b>→</b> open agent</span><span><b>Enter</b> expand</span></div>
+        </div>
+        <div class="runhead"><span>run 1 · 13:51 → 14:40</span><span class="ok">✓ notes fixed · installer mismatch found</span></div>
+        <div class="dim" style="padding-left:128px">Mossy Lemur: the install path in the notes was wrong; fixed. Plucky: install-hooks writes settings.json.bak.den.*, the notes say .bak. <span class="kbd"><b>Enter</b> expand</span></div>
+      </div>
+    </div>
+    <hr class="rule">
+    <div class="cmd"><div class="text"><b>›</b><span class="dim">Message the mission's lead, or /pause /stop /edit</span></div></div>
+    <hr class="rule">
+    <div class="hints"><span><b>↑ ↓</b> runs and cards</span><span><b>^Y ^N</b> answer</span><span><b>/pause</b> hold next run</span><span><b>/stop</b> end, keep history</span><span><b>/edit</b> change the mission</span><span><b>Esc</b> back</span></div>
+  </div>
+</section>
+
+<!-- ───────────────────────── Frame 4: Review follows the project ───────────────────────── -->
+<section>
+  <div class="frame-head"><h2>4 · Review follows the project</h2><span>The Review tab takes the Overview's pick: the same project strip sits under its tabs, Recent work lists only agents whose changes are in this repository, and the Files pane is this checkout. Switching project here switches it everywhere.</span></div>
+  <div class="term">
+    <div class="tabs"><span class="tab">Overview</span><span class="tab">Fleet</span><span class="tab">Inbox<span class="n">1</span></span><span class="tab on">Review</span><span class="key">^O orchestrator</span><span class="key">Tab ⇥</span></div>
+    <div class="projects"><span class="lbl">project</span><span class="proj on">den <i>4</i></span><span class="proj">agent-badge <i>1</i></span><span class="proj">xml-converter <i>1</i></span><span class="meta">~/code/den · main · base 342a144</span></div>
+    <div class="review">
+      <div class="pane"><span class="title">Recent work · den</span>
+        <div class="work sel"><span style="color:var(--fuzzy)">● Fuzzy Sprite</span><span class="dim">↻ tests green</span><span><span class="ok">+41</span> <span class="err">−12</span> · 2 files · 6m</span></div>
+        <div class="work"><span style="color:var(--mossy)">● Mossy Lemur</span><span class="dim">⇶ release 0.2</span><span><span class="ok">+9</span> <span class="err">−3</span> · 1 file · 22m</span></div>
+        <div class="work"><span style="color:var(--snug)">● Snug Capybara</span><span class="dim">no mission</span><span><span class="ok">+388</span> <span class="err">−0</span> · 3 files · 1h</span></div>
+      </div>
+      <div class="pane"><span class="title">Diff · internal/ui/review_test.go</span>
+        <div class="diff"><span class="h">Fuzzy Sprite · 14:58</span><span class="l">  40   func TestReviewKeys(t *testing.T) {</span><span class="l del">  41 - 	now := time.Now()</span><span class="l add">  41 + 	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)</span><span class="l">  42   	m := reviewModel(now)</span></div>
+      </div>
+    </div>
+    <hr class="rule">
+    <div class="cmd"><div class="text"><b>›</b><span class="dim">Type a comment on the selected lines, Enter sends it to the agent</span></div></div>
+    <hr class="rule">
+    <div class="hints"><span><b>← →</b> project · panes</span><span><b>↑ ↓</b> line</span><span><b>type Enter</b> comment</span><span><b>Tab</b> view</span></div>
+  </div>
+</section>
+
+<!-- ───────────────────────── reference ───────────────────────── -->
+<section class="ref">
+  <div class="cols">
+    <div>
+      <h2>Mission shapes, chosen by the orchestrator</h2>
+      <div class="tablewrap"><table>
+        <tr><th>Shape</th><th>Runs as</th><th>Picked when</th></tr>
+        <tr><td><b>▶ once</b></td><td>one dispatch to one agent; done when it reports back</td><td>a bounded task one agent can finish</td></tr>
+        <tr><td><b>↻ loop</b></td><td>one agent iterates until done; paced by a signal (CI hook, a file, a timer) or by the agent's own judgement, like Claude Code's /loop</td><td>a goal reached by repeated passes that need the same context</td></tr>
+        <tr><td><b>⇶ fan-out</b></td><td>a lead agent with children in parallel, repeated until the lead says done; uses the hierarchy</td><td>independent parts that each fit one agent</td></tr>
+        <tr><td><b>⏲ schedule</b></td><td>Den fires a run on a cadence (every n minutes, daily at a time, or a cron line); each tick is a once or a fan-out</td><td>a recurring chore with nothing to react to in between</td></tr>
+      </table></div>
+    </div>
+    <div>
+      <h2>Mission fields</h2>
+      <div class="tablewrap"><table>
+        <tr><th>Field</th><th>From</th></tr>
+        <tr><td><b>mission</b></td><td>one sentence, the orchestrator's rewrite of what you typed; you can edit it</td></tr>
+        <tr><td><b>done when</b></td><td>an observable end state, or "standing" for a mission that never ends</td></tr>
+        <tr><td><b>constraints</b></td><td>tags the orchestrator infers plus yours; they ride on every dispatch of the mission</td></tr>
+        <tr><td><b>shape · cadence</b></td><td>decided by the orchestrator with one line of reasoning; "make it a schedule" overrides</td></tr>
+        <tr><td><b>agents</b></td><td>chosen per run from the fleet on this project; a spawn when nobody is free</td></tr>
+        <tr><td><b>state</b></td><td>proposed · running · waiting on you · paused · done · failed</td></tr>
+      </table></div>
+    </div>
+  </div>
+  <div class="cols">
+    <div>
+      <h2>Where it lives</h2>
+      <div class="tablewrap"><table>
+        <tr><th>Thing</th><th>How</th></tr>
+        <tr><td><b>projects</b></td><td>the repositories agents' edited files live in (the Review loader already finds them) plus session folders that are checkouts; named by repo, keyed by root; the pick is remembered in config</td></tr>
+        <tr><td><b>missions</b></td><td>~/.local/state/den/missions.jsonl: id, project root, text, mission, done when, constraints, shape, cadence, state, created, and a run log; restored on launch</td></tr>
+        <tr><td><b>runs</b></td><td>dispatch cards tagged with the mission id, so the orchestrator chat, the mission view and the Fleet tree all show the same cards</td></tr>
+        <tr><td><b>schedules</b></td><td>Den's own ticker; at a tick it asks the orchestrator to run the mission, so nothing depends on an agent being open</td></tr>
+        <tr><td><b>loops</b></td><td>the agent's own /loop where it pays off; otherwise the orchestrator re-dispatches when the agent reports back and the goal is not met</td></tr>
+        <tr><td><b>the proposal</b></td><td>a structured reply from the orchestrator (JSON in its stream, rendered as the card); the system prompt gets the mission vocabulary and the shapes</td></tr>
+      </table></div>
+    </div>
+    <div>
+      <h2>Keys</h2>
+      <div class="tablewrap"><table>
+        <tr><th>Where</th><th>Key</th><th>Does</th></tr>
+        <tr><td>Overview, Review</td><td><b>← →</b></td><td>switch project (in Review: when the work pane has focus, panes otherwise)</td></tr>
+        <tr><td>Overview</td><td><b>Enter</b> with text</td><td>propose a mission from the line</td></tr>
+        <tr><td>proposal</td><td><b>^Y</b> · <b>^N</b> · text</td><td>start · drop · refine</td></tr>
+        <tr><td>mission</td><td><b>Enter</b></td><td>open it; runs and cards inside work as in the orchestrator chat</td></tr>
+        <tr><td>mission</td><td><b>/pause /stop /edit</b></td><td>hold the next run · end and keep history · change the fields</td></tr>
+        <tr><td>anywhere</td><td><b>/project name</b></td><td>switch project by name</td></tr>
+      </table></div>
+    </div>
+  </div>
+</section>
+
+</div>
+<script>
+// Pixel critters: a 16x16 silhouette per seed, body in the agent's colour,
+// ink for eyes and mouth, drawn at 2 px so 16 px reads as 8x4 cells.
+(function(){
+  var shapes = {
+    1: ["..#..........#..","..##........##..","..####....####..",".##############.",".##############.","################","################","####..####..####","####..####..####","################","################","#####..##..#####","#######..#######",".##############.","..############..","...##......##..."],
+    2: [".....######.....","....########....","...##########...","..############..","..############..",".##############.",".##############.",".###..####..###.",".###..####..###.",".##############.",".##############.","..####....####..","..############..","...##########...","....##....##....","................"],
+    3: ["..##........##..",".####......####.",".######..######.",".##############.","################","################","################","###..######..###","###..######..###","################","################","#####......#####","######....######",".##############.","..############..","...###....###..."],
+    4: ["................","....##....##....","...####..####...","..############..",".##############.",".##############.","################","###..######..###","###..######..###","################","################","####..####..####","#####......#####",".##############.","..############..","...##......##..."],
+    5: ["................","..#..........#..","..##........##..",".####......####.",".##############.","################","################","###..######..###","###..######..###","################","################","#####......#####","######....######",".##############.","..############..","....##....##...."],
+    6: [".......##.......","......####......",".....######.....","....########....","...##########...","..############..",".##############.",".###..####..###.",".###..####..###.",".##############.",".##############.","..####....####..","..############..","...##########...","....##....##....","................"],
+    7: ["....##....##....","....##....##....","...####..####...","..############..","..############..",".##############.",".##############.",".###..####..###.",".###..####..###.",".##############.",".##############.","..####....####..","..############..","...##########...","....##....##....","................"],
+    8: ["................","................","..############..",".##############.","################","################","################","###..######..###","###..######..###","################","################","#####......#####","######....######",".##############.","..############..","...##......##..."]
+  };
+  document.querySelectorAll('.av').forEach(function(el){
+    var rows = shapes[el.dataset.seed] || shapes[1], color = el.dataset.color;
+    var frag = document.createDocumentFragment();
+    rows.forEach(function(row){
+      for (var x = 0; x < 16; x++) {
+        var i = document.createElement('i');
+        if (row[x] === '#') {
+          i.style.background = color;
+        } else if (row.indexOf('#') >= 0 && row.indexOf('#') < x && row.lastIndexOf('#') > x) {
+          i.style.background = '#101010';
+        }
+        frag.appendChild(i);
+      }
+    });
+    el.appendChild(frag);
+  });
+})();
+</script>
+</html>
