@@ -108,6 +108,8 @@ type Model struct {
 	srv        *bridge.Server
 	closing    map[string]closer.Plan // close questions in the inbox, by item id
 	sel        selState               // Den's own text selection on the Orchestrator and Overview views
+	guard      *closer.Guard          // agents a close must leave alone or only propose when named
+	guardPath  string
 	srvErr     error
 	store      *inbox.Store
 	inboxCur   int
@@ -153,6 +155,7 @@ func New(cfg config.Config) Model {
 	m.tree.path = tree.Path()
 	m.tree.edges = tree.Load(m.tree.path)
 	m.missions = mission.Load(mission.Path())
+	m.guard, m.guardPath = closer.LoadGuard(closer.GuardPath()), closer.GuardPath()
 	m.loadProjectPick()
 	fleet.Recent = cfg.Detail.Recent
 	m.store.HistoryLimit(cfg.Inbox.History)
@@ -927,6 +930,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.say("No command block in view to copy.", true)
 	case "/close", "/kill":
 		return m.closeCommand(fields[1:])
+	case "/protect", "/unprotect", "/flag", "/unflag":
+		return m.guardCommand(strings.ToLower(fields[0]), fields[1:])
 	case "/dismiss", "/x":
 		if it := m.inboxSelected(); it != nil && m.tab == tabInbox {
 			m.store.Dismiss(it)

@@ -34,8 +34,9 @@ const CloseEvent = "CloseRequest"
 
 // CloseInput is the payload of a CloseEvent.
 type CloseInput struct {
-	Peers  []string `json:"peers"`  // session names
-	Reason string   `json:"reason"` // the orchestrator's words
+	Peers   []string `json:"peers"`    // session names; with IdleFor, a filter
+	Reason  string   `json:"reason"`   // the orchestrator's words
+	IdleFor string   `json:"idle_for"` // "1h": every idle agent idle that long, protected ones aside
 }
 
 // HookInput is the subset of Claude Code's hook JSON that Den reads.

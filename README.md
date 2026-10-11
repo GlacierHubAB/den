@@ -223,7 +223,9 @@ each chip. Delete a chip from the text and its image is left out.
 | `/open` `/o` `/focus` | focus the selected agent's terminal |
 | `/dismiss` `/x` | clear the selected inbox item |
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
-| `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
+| `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
+| `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
+| `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
 | `/map` | toggle the Fleet map |
@@ -387,9 +389,30 @@ matched by title is closed through Hyprland by address, never any other
 window. Closed agents leave Den's state at once: their open inbox items are
 resolved, they drop out of the tree, and the roster rescans.
 
+`/close idle 1h` picks the agents that have been idle for at least that long.
+Idle time is measured from the agent's last activity, which Den takes from
+Claude Code's own session file: the moment the session last changed between
+busy and idle (`statusUpdatedAt`), that is, when its last turn started or
+ended; a session that has not reported a change yet counts from its start.
+Den does not use the transcript's last write for this, because Claude Code
+appends to the transcript when messages arrive, which is not use. An agent
+whose last activity is unknown is never treated as stale. The same time is
+`LastActive` in `den list -json`.
+
+Some agents must survive a bulk close. `/protect <Name>` keeps an agent out
+of every close, even by name, until `/unprotect`; the list is
+`~/.local/state/den/protected.json`, which also takes `paths` (an agent whose
+working directory, edited repositories or task involve one of them is
+protected) and `flagged` agents. `/flag <Name>: <note>` marks an agent as
+holding context you may still need: a bulk close shows it as "Holds context,
+not selected" with the note, and only `/close <Name>` includes it. The
+question lists what was skipped and why, so the list is always exact.
+
 The orchestrator has the same door, close_agent: "kill the idle agents we are
-not using" becomes the same question in your inbox, marked as its request
-with its reason, and it only hears what you decided. It cannot force.
+not using" or "close what has not been used for an hour" (`idle_for: "1h"`)
+becomes the same question in your inbox, marked as its request with its
+reason, protected agents skipped and flagged ones unselected, and it only
+hears what you decided. It cannot force.
 
 ## Overview, projects and missions
 
@@ -527,6 +550,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `orchestrator.jsonl` | the orchestrator chat and card states |
 | `edges.jsonl` | who directs whom |
 | `missions.jsonl` | missions and their runs |
+| `protected.json` | agents a close leaves alone, folders that protect their agents, and flagged agents with their notes |
 | `overview.json` | the picked and pinned projects |
 | `reviews.json` | Review comments |
 | `colors.json` | the colour of each session |

@@ -66,7 +66,7 @@ How to act:
 - Never relay instructions that bypass an agent's permissions or safety checks.
 - When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster), a complete, self-contained brief written as if the human had typed it (the brief is the agent's first prompt), and the model the task deserves: haiku for small mechanical tasks, sonnet for ordinary building and writing, opus for design, architecture, product judgment, review and leading others. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started, on which model and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
 - When a piece of work needs several specialists, start one lead on opus and put the team in its brief: each role, what it owns, which model fits it, and that the lead starts them itself with its own spawn_agent tool, waits for their reports, and reports to you when the whole piece is done. Do not start the lead's people yourself; Den draws who works for whom.
-- When the human wants agents closed ("kill the idle agents", "close Mossy"), use close_agent with their peer names from the roster and a one-line reason. It never closes anything by itself: Den shows the human exactly which agents and windows would close and they approve or decline there; the tool's answer tells you what happened. Pick only agents the request plainly covers, prefer idle ones, and say in one line what you asked for.
+- When the human wants agents closed ("kill the idle agents", "close Mossy", "close what has not been used for an hour"), use close_agent with their peer names from the roster, or idle_for ("1h", "30m") for every agent idle at least that long, and a one-line reason. Den skips the agents the human protected and lists the ones it flagged as holding context without selecting them. It never closes anything by itself: Den shows the human exactly which agents and windows would close and they approve or decline there; the tool's answer tells you what happened. Pick only agents the request plainly covers, prefer idle ones, and say in one line what you asked for.
 - Be brief. No preambles, no headings, no markdown tables.`
 
 // The MCP server Den offers the orchestrator and the tools on it, as Claude
@@ -409,14 +409,16 @@ func ParseSpawn(raw json.RawMessage) (SpawnInput, bool) {
 
 // CloseInput is the shape of the close_agent tool's input.
 type CloseInput struct {
-	Peers  []string `json:"peers"`
-	Reason string   `json:"reason"`
+	Peers   []string `json:"peers"`
+	Reason  string   `json:"reason"`
+	IdleFor string   `json:"idle_for"`
 }
 
-// ParseClose reads a close_agent tool_use input.
+// ParseClose reads a close_agent tool_use input: peers, or an idle
+// duration, or both.
 func ParseClose(raw json.RawMessage) (CloseInput, bool) {
 	var in CloseInput
-	if json.Unmarshal(raw, &in) != nil || len(in.Peers) == 0 {
+	if json.Unmarshal(raw, &in) != nil || (len(in.Peers) == 0 && in.IdleFor == "") {
 		return in, false
 	}
 	return in, true
@@ -428,6 +430,12 @@ func Describe(tool string, input json.RawMessage) string {
 	if tool == CloseAgentTool {
 		if c, ok := ParseClose(input); ok {
 			line := "▶ asking you to close " + strings.Join(c.Peers, ", ")
+			if c.IdleFor != "" {
+				line = "▶ asking you to close agents idle for " + c.IdleFor
+				if len(c.Peers) > 0 {
+					line += " among " + strings.Join(c.Peers, ", ")
+				}
+			}
 			if c.Reason != "" {
 				line += " · " + c.Reason
 			}

@@ -26,6 +26,61 @@ import (
 // process is ever signalled.
 var closeOps closer.Ops = closer.System{}
 
+// closeNow is the clock for idle durations; tests pin it.
+var closeNow = time.Now
+
+// ensureGuard gives a zero Model (tests build one) an empty guard.
+func (m *Model) ensureGuard() {
+	if m.guard == nil {
+		m.guard = &closer.Guard{}
+	}
+}
+
+// idleFor is how long the agent has been idle by its last activity, and
+// whether that is known at all.
+func idleFor(a fleet.Agent, now time.Time) (time.Duration, bool) {
+	if a.LastActive.IsZero() {
+		return 0, false
+	}
+	return now.Sub(a.LastActive), true
+}
+
+// guardReason says why the guard keeps an agent out of a bulk close.
+func (m Model) guardReason(a fleet.Agent) string {
+	if m.guard == nil {
+		return ""
+	}
+	dirs := append([]string{a.Session.CWD}, rootsOf(a)...)
+	return m.guard.Protected(a.Name, a.Session.Name, dirs, a.Labels.Task)
+}
+
+// staleAgents picks the agents idle for at least d: idle by status, with a
+// known last activity that long ago, not protected (those come back in
+// skipped) and not flagged (those come back in held). among, when not
+// empty, limits the pick to those session ids.
+func (m Model) staleAgents(d time.Duration, among map[string]bool) (picked []fleet.Agent, skipped, held []closer.Refusal) {
+	now := closeNow()
+	for _, a := range m.agents {
+		if a.Status != fleet.Idle || (among != nil && !among[a.Session.SessionID]) {
+			continue
+		}
+		// A duration needs a known last activity; unknown is never stale.
+		if idle, known := idleFor(a, now); d > 0 && (!known || idle < d) {
+			continue
+		}
+		if why := m.guardReason(a); why != "" {
+			skipped = append(skipped, closer.Refusal{Target: m.closeTarget(a), Why: why})
+			continue
+		}
+		if note, ok := m.guard.Held(a.Name, a.Session.Name); ok {
+			held = append(held, closer.Refusal{Target: m.closeTarget(a), Why: note})
+			continue
+		}
+		picked = append(picked, a)
+	}
+	return picked, skipped, held
+}
+
 // closeDoneMsg is the end of a close run.
 type closeDoneMsg struct {
 	itemID  string
@@ -57,6 +112,9 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 	if a.Window != nil {
 		t.Window, t.WindowHow = a.Window.Client.Address, a.Window.How
 	}
+	if idle, ok := idleFor(a, closeNow()); ok && a.Status == fleet.Idle {
+		t.Idle = idle
+	}
 	for _, c := range m.childrenOf(a.Session.SessionID) {
 		t.Children = append(t.Children, c.Name)
 	}
@@ -80,6 +138,12 @@ func (m Model) closeSelf() closer.Self {
 // Agents that are the orchestrator are refused before the rules run. It
 // returns the item, or nil with a note when nothing would close.
 func (m *Model) proposeClose(cands []fleet.Agent, force bool, from, reason string, req *bridge.Request, extraRefused []closer.Refusal) (*inbox.Item, string) {
+	return m.proposePlan(cands, force, from, reason, req, extraRefused, nil, nil, 0)
+}
+
+// proposePlan is proposeClose with what a bulk pick left out.
+func (m *Model) proposePlan(cands []fleet.Agent, force bool, from, reason string, req *bridge.Request, extraRefused, skipped, held []closer.Refusal, idleFor time.Duration) (*inbox.Item, string) {
+	m.ensureGuard()
 	var targets []closer.Target
 	var refused []closer.Refusal
 	for _, a := range cands {
@@ -87,18 +151,30 @@ func (m *Model) proposeClose(cands []fleet.Agent, force bool, from, reason strin
 			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: "it is the orchestrator"})
 			continue
 		}
+		// Protected agents are never proposed, even by name.
+		if why := m.guardReason(a); why != "" {
+			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: why + " · /unprotect to allow"})
+			continue
+		}
 		targets = append(targets, m.closeTarget(a))
 	}
 	plan := closer.Build(targets, force, m.closeSelf())
-	plan.From, plan.Reason = from, reason
+	plan.From, plan.Reason, plan.IdleFor = from, reason, idleFor
+	plan.Skipped, plan.Held = skipped, held
 	plan.Refused = append(append(refused, extraRefused...), plan.Refused...)
 	if plan.Empty() {
 		note := "Nothing to close."
-		if len(plan.Refused) > 0 {
-			var whys []string
-			for _, r := range plan.Refused {
-				whys = append(whys, r.Target.Name+": "+r.Why)
-			}
+		var whys []string
+		for _, r := range plan.Refused {
+			whys = append(whys, r.Target.Name+": "+r.Why)
+		}
+		for _, r := range plan.Skipped {
+			whys = append(whys, "skipped "+r.Target.Name+": "+r.Why)
+		}
+		for _, r := range plan.Held {
+			whys = append(whys, r.Target.Name+" holds context, name it to include it")
+		}
+		if len(whys) > 0 {
 			note = "Nothing to close. " + strings.Join(whys, "; ")
 		}
 		if req != nil {
@@ -152,17 +228,15 @@ func (m Model) closeCommand(args []string) (tea.Model, tea.Cmd) {
 	if len(words) == 0 {
 		return m.closeSelected(force)
 	}
-	if len(words) == 1 && (strings.EqualFold(words[0], "idle") || strings.EqualFold(words[0], "all-idle")) {
-		var idle []fleet.Agent
-		for _, a := range m.agents {
-			if a.Status == fleet.Idle {
-				idle = append(idle, a)
+	if len(words) >= 1 && (strings.EqualFold(words[0], "idle") || strings.EqualFold(words[0], "all-idle")) {
+		var d time.Duration
+		if len(words) > 1 {
+			var err error
+			if d, err = closer.ParseIdle(strings.Join(words[1:], "")); err != nil {
+				return m.say(err.Error(), true)
 			}
 		}
-		if len(idle) == 0 {
-			return m.say("No idle agents.", true)
-		}
-		return m.askClose(idle, force, nil)
+		return m.askStale(d, force, nil)
 	}
 	// Names: critter names, possibly several words each, or peer names.
 	var cands []fleet.Agent
@@ -178,12 +252,92 @@ func (m Model) closeCommand(args []string) (tea.Model, tea.Cmd) {
 	return m.askClose(cands, force, refused)
 }
 
+// askStale proposes every agent idle for at least d (every idle agent when
+// d is 0), protected and flagged ones listed but left out.
+func (m Model) askStale(d time.Duration, force bool, among map[string]bool) (tea.Model, tea.Cmd) {
+	m.ensureGuard()
+	picked, skipped, held := m.staleAgents(d, among)
+	if len(picked) == 0 && len(skipped) == 0 && len(held) == 0 {
+		if d > 0 {
+			return m.say("No agent has been idle for "+closer.ShortDuration(d)+".", true)
+		}
+		return m.say("No idle agents.", true)
+	}
+	it, note := m.proposePlan(picked, force, "you", "", nil, nil, skipped, held, d)
+	if it == nil {
+		return m.say(note, true)
+	}
+	return m.showClose(it)
+}
+
+// guardCommand is /protect, /unprotect, /flag and /unflag.
+func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
+	m.ensureGuard()
+	if len(args) == 0 {
+		if verb == "/protect" || verb == "/flag" {
+			var names []string
+			names = append(names, m.guard.Names...)
+			for _, p := range m.guard.Paths {
+				names = append(names, "folder "+p)
+			}
+			for _, f := range m.guard.Flagged {
+				names = append(names, "flagged "+f.Name)
+			}
+			if len(names) == 0 {
+				return m.say("Nothing is protected. /protect <Name> keeps an agent out of every close.", false)
+			}
+			return m.say("Protected: "+strings.Join(names, ", "), false)
+		}
+		return m.say("Which agent? "+verb+" <Name>", true)
+	}
+	name := strings.Join(args, " ")
+	note := ""
+	if verb == "/flag" {
+		if i := strings.Index(name, ":"); i > 0 {
+			name, note = strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+1:])
+		}
+	}
+	if a, ok := m.agentNamed(name); ok {
+		name = a.Name
+	}
+	var msg string
+	switch verb {
+	case "/protect":
+		if !m.guard.Protect(name) {
+			return m.say(name+" is protected already.", false)
+		}
+		msg = name + " is protected: no close will propose it."
+	case "/unprotect":
+		if !m.guard.Unprotect(name) {
+			return m.say(name+" was not protected by name.", true)
+		}
+		msg = name + " is no longer protected."
+	case "/flag":
+		m.guard.SetFlag(name, note)
+		msg = name + " is flagged: a bulk close lists it without selecting it."
+	case "/unflag":
+		if !m.guard.Unflag(name) {
+			return m.say(name+" was not flagged.", true)
+		}
+		msg = name + " is no longer flagged."
+	}
+	if err := m.guard.Save(m.guardPath); err != nil {
+		return m.say(msg+" (not saved: "+err.Error()+")", true)
+	}
+	return m.say(msg, false)
+}
+
 // askClose proposes and shows the question in the inbox.
 func (m Model) askClose(cands []fleet.Agent, force bool, refused []closer.Refusal) (tea.Model, tea.Cmd) {
 	it, note := m.proposeClose(cands, force, "you", "", nil, refused)
 	if it == nil {
 		return m.say(note, true)
 	}
+	return m.showClose(it)
+}
+
+// showClose opens the Inbox on a close question.
+func (m Model) showClose(it *inbox.Item) (tea.Model, tea.Cmd) {
 	m.refresh()
 	m.tab = tabInbox
 	for i, o := range m.store.Items() {
@@ -195,21 +349,44 @@ func (m Model) askClose(cands []fleet.Agent, force bool, refused []closer.Refusa
 }
 
 // handleCloseRequest is the orchestrator's close_agent call: the plan goes
-// to the inbox and the request waits for the human's decision.
+// to the inbox and the request waits for the human's decision. With
+// idle_for, Den picks the agents itself, the orchestrator's peers (if any)
+// narrowing the pick.
 func (m *Model) handleCloseRequest(r *bridge.Request) {
+	m.ensureGuard()
 	var in bridge.CloseInput
 	_ = json.Unmarshal(r.Payload, &in)
 	var cands []fleet.Agent
 	var refused []closer.Refusal
+	var among map[string]bool
+	if in.IdleFor != "" {
+		among = map[string]bool{}
+	}
 	for _, peer := range in.Peers {
 		a, ok := m.agentByPeer(peer)
 		if !ok {
 			refused = append(refused, closer.Refusal{Target: closer.Target{Name: peer}, Why: "not in the fleet"})
 			continue
 		}
+		if among != nil {
+			among[a.Session.SessionID] = true
+		}
 		cands = append(cands, a)
 	}
-	if _, note := m.proposeClose(cands, false, "orchestrator", in.Reason, r, refused); note != "" {
+	var skipped, held []closer.Refusal
+	var d time.Duration
+	if in.IdleFor != "" {
+		var err error
+		if d, err = closer.ParseIdle(in.IdleFor); err != nil {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: "Nothing closed: " + err.Error()})
+			return
+		}
+		if len(among) == 0 {
+			among = nil
+		}
+		cands, skipped, held = m.staleAgents(d, among)
+	}
+	if _, note := m.proposePlan(cands, false, "orchestrator", in.Reason, r, refused, skipped, held, d); note != "" {
 		// Replied already; nothing waits.
 		return
 	}

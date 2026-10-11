@@ -56,21 +56,21 @@ func runMCP() {
 		},
 		{
 			Name:        strings.TrimPrefix(orch.CloseAgentTool, "mcp__"+orch.MCPServer+"__"),
-			Description: "Ask the human, in Den, to close agents: end their Claude Code sessions and close their terminal windows. Nothing closes until the human approves in Den, where they see exactly which agents and windows are affected; Den refuses agents that are working or waiting on the human, the orchestrator and itself. Give peer names from the roster. The answer says what was closed, or that the human declined.",
+			Description: "Ask the human, in Den, to close agents: end their Claude Code sessions and close their terminal windows. Nothing closes until the human approves in Den, where they see exactly which agents and windows are affected; Den refuses agents that are working or waiting on the human, the orchestrator and itself, skips the agents the human protected, and lists flagged ones without selecting them. Give peer names from the roster, or idle_for to select every idle agent idle at least that long. The answer says what was closed, or that the human declined.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"peers":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Peer names of the agents to close, from the roster."},
-					"reason": map[string]any{"type": "string", "description": "One line on why, shown to the human."},
+					"peers":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Peer names of the agents to close, from the roster. With idle_for, only these are considered."},
+					"idle_for": map[string]any{"type": "string", "description": "Select every idle agent whose last activity is at least this long ago: 30m, 1h, 2h. Protected agents are skipped; flagged ones are listed but not selected."},
+					"reason":   map[string]any{"type": "string", "description": "One line on why, shown to the human."},
 				},
-				"required": []string{"peers"},
 			},
 			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
 				in, ok := orch.ParseClose(args)
 				if !ok {
-					return "", errorString("peers is required: the peer names of the agents to close")
+					return "", errorString("give peers (the peer names to close) or idle_for (a duration like 1h), or both")
 				}
-				payload, _ := json.Marshal(bridge.CloseInput{Peers: in.Peers, Reason: in.Reason})
+				payload, _ := json.Marshal(bridge.CloseInput{Peers: in.Peers, Reason: in.Reason, IdleFor: in.IdleFor})
 				env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.CloseEvent, Payload: payload}
 				d, ok := bridge.Ask(bridge.SocketPath(), env, 10*time.Minute)
 				if !ok {

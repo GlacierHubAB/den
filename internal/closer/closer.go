@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +29,9 @@ type Target struct {
 	Dir       string   // working directory, for the uncommitted-changes check
 	Children  []string // names of the agents it directs
 	Dirty     []string // uncommitted paths in Dir, filled by Inspect
+	// Idle is how long since the agent's last activity (its last change
+	// of busy/idle status as Claude Code recorded it), 0 when unknown.
+	Idle time.Duration
 }
 
 // Refusal is a target the plan will not close.
@@ -49,9 +53,15 @@ type Self struct {
 type Plan struct {
 	Targets []Target
 	Refused []Refusal
+	// Skipped are protected agents a bulk close left alone, and Held are
+	// flagged ones left unselected; both are shown so the list is exact.
+	Skipped []Refusal
+	Held    []Refusal
 	Force   bool   // close working agents too, and kill what does not stop
 	From    string // who asked: "you" or "orchestrator"
 	Reason  string // the orchestrator's stated reason, "" for the human's own
+	// IdleFor is the duration an idle close asked for, 0 for none.
+	IdleFor time.Duration
 }
 
 // Build applies the safety rules to the candidates. Targets keep their order.
@@ -112,8 +122,14 @@ func (p Plan) Lines() []string {
 		}
 		out = append(out, line)
 	}
+	if p.IdleFor > 0 {
+		out = append(out, "Agents idle for "+ShortDuration(p.IdleFor)+" or more, by their last change of busy/idle status.")
+	}
 	for _, t := range p.Targets {
 		line := fmt.Sprintf("%s (%s) · %s · pid %d", t.Name, t.Peer, t.Status, t.PID)
+		if t.Idle > 0 {
+			line = fmt.Sprintf("%s (%s) · idle %s · pid %d", t.Name, t.Peer, roundIdle(t.Idle), t.PID)
+		}
 		switch {
 		case t.Window != "":
 			line += " · window " + t.Window + " closes"
@@ -133,10 +149,65 @@ func (p Plan) Lines() []string {
 	} else if len(p.Targets) > 0 {
 		out = append(out, "Each gets a graceful stop first; one that does not stop is left running.")
 	}
+	for _, r := range p.Skipped {
+		out = append(out, "Skipped "+r.Target.Name+": "+r.Why)
+	}
+	for _, r := range p.Held {
+		line := "Holds context, not selected: " + r.Target.Name
+		if r.Why != "" {
+			line += " (" + r.Why + ")"
+		}
+		out = append(out, line+" · /close "+r.Target.Name+" to include it")
+	}
 	for _, r := range p.Refused {
 		out = append(out, "Not "+r.Target.Name+": "+r.Why)
 	}
 	return out
+}
+
+// roundIdle prints a duration the way a human reads it: 1h12m, 45m, 3d2h.
+func roundIdle(d time.Duration) string {
+	d = d.Round(time.Minute)
+	switch {
+	case d >= 24*time.Hour:
+		return fmt.Sprintf("%dd%dh", int(d.Hours())/24, int(d.Hours())%24)
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+}
+
+// ShortDuration prints a duration the way it was typed: 1h, 1h30m, 45m, 2d.
+func ShortDuration(d time.Duration) string {
+	d = d.Round(time.Minute)
+	switch {
+	case d >= 24*time.Hour && d%(24*time.Hour) == 0:
+		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	case d >= time.Hour && d%time.Hour == 0:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d >= time.Hour:
+		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+}
+
+// ParseIdle reads a duration like "30m", "1h", "2h", "1h30m", "1d".
+func ParseIdle(s string) (time.Duration, error) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if strings.HasSuffix(s, "d") {
+		n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("not a duration: %q", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("not a duration: %q (try 30m, 1h, 2h)", s)
+	}
+	return d, nil
 }
 
 // Summary is the one-line outcome after Run.

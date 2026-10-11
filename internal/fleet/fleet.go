@@ -77,6 +77,11 @@ type Agent struct {
 	Status  Status
 	InHerdr bool
 	Window  *hypr.Match
+	// LastActive is when the session last changed between busy and idle
+	// as Claude Code recorded it (statusUpdatedAt in its session file),
+	// which is when its last turn started or ended; the session's start
+	// when it has not reported a change yet. Zero when unknown.
+	LastActive time.Time `json:",omitzero"`
 
 	Usage          transcript.Usage // context consumed by the last turn
 	HasUsage       bool
@@ -199,6 +204,12 @@ func Snapshot() ([]Agent, error) {
 			a.Tail = transcript.Tail(a.Path, Recent)
 		}
 		a.Usage, a.HasUsage, a.UsageFromBadge = mergeUsage(a.Usage, a.HasUsage, a.Limits, a.HasLimit)
+		switch {
+		case s.StatusAt > 0:
+			a.LastActive = s.StatusChanged()
+		case s.StartedAt > 0:
+			a.LastActive = s.Started()
+		}
 		switch {
 		case !s.Alive:
 			a.Status = Gone
