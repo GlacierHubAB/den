@@ -113,6 +113,11 @@ func (m Model) header(w int) []string {
 	} else {
 		links = append(links, "orchestrator off")
 	}
+	if m.missions != nil {
+		if n := m.missions.Running(); n > 0 {
+			links = append(links, fmt.Sprintf("%d missions running", n))
+		}
+	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
 	var sys []string
@@ -214,7 +219,7 @@ func (m Model) tabs(w int) string {
 		}
 		inboxCount = " " + badge.Render(fmt.Sprint(n))
 	}
-	left := "  " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabReview).Render("Review")
+	left := "  " + style(tabOverview).Render("Overview") + "   " + style(tabFleet).Render("Fleet") + "   " + style(tabInbox).Render("Inbox") + inboxCount + "   " + style(tabReview).Render("Review")
 	// The Orchestrator view has no tab: Ctrl+O opens it. Its keycap lights
 	// up while it is open, with the orchestrator's state beside it.
 	orchKey := s.keycap.Render("^O orchestrator")
@@ -235,7 +240,10 @@ func (m Model) panes(w, h int) string {
 		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
 	}
 	if m.tab == tabReview {
-		return m.reviewPanes(w, h)
+		return m.projectStrip(w) + "\n" + m.reviewPanes(w, h-1)
+	}
+	if m.tab == tabOverview {
+		return m.overviewPanes(w, h)
 	}
 	if m.tree.mapView {
 		return m.box("Map", m.mapPane(w-2, h-2), w, h, true)
@@ -937,6 +945,12 @@ func (m Model) hints(w int) string {
 		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
+	case m.tab == tabOverview && m.ov.proposal != "":
+		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
+	case m.tab == tabOverview && m.ov.open != "":
+		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"/pause /resume /stop", ""}, {"Esc", "back"}, {"Tab", "view"}}
+	case m.tab == tabOverview:
+		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:

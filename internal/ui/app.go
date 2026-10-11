@@ -22,6 +22,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -38,7 +39,8 @@ const (
 type tab int
 
 const (
-	tabFleet tab = iota
+	tabOverview tab = iota
+	tabFleet
 	tabInbox
 	tabOrch
 	tabReview
@@ -125,6 +127,12 @@ type Model struct {
 	detailScroll int       // lines scrolled in the detail pane
 	tree         treeState // who directs whom, and the map
 
+	proj           projectState   // the projects and the pick
+	ov             overviewState  // the Overview tab
+	missions       *mission.Store // standing goals, by project
+	turn           missionTurn    // which mission the orchestrator's turn serves
+	missionDirSent bool           // the orchestrator has had the mission vocabulary
+
 	rev reviewState // the Review view
 }
 
@@ -140,6 +148,8 @@ func New(cfg config.Config) Model {
 	}
 	m.tree.path = tree.Path()
 	m.tree.edges = tree.Load(m.tree.path)
+	m.missions = mission.Load(mission.Path())
+	m.loadProjectPick()
 	fleet.Recent = cfg.Detail.Recent
 	m.store.HistoryLimit(cfg.Inbox.History)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
@@ -340,6 +350,7 @@ func (m *Model) refresh() {
 		return m.agents[i].Session.StartedAt < m.agents[j].Session.StartedAt
 	})
 	m.buildTree()
+	m.buildProjects()
 	m.cursor = 0
 	for i, a := range m.agents {
 		if a.Session.SessionID == keep {
@@ -397,7 +408,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator()}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -567,6 +578,15 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
+		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
+			switch {
+			case m.ov.proposal != "":
+				m.ov.proposal, m.ov.reply = "", "" // the proposal stays in the list
+			case m.ov.open != "":
+				m.ov.open, m.ov.reply, m.ov.scroll = "", "", 0
+			}
+			return m, nil
+		}
 		if m.tab == tabReview {
 			switch {
 			case m.rev.editing != "":
@@ -617,6 +637,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "left":
 		switch {
+		case m.tab == tabOverview:
+			m.switchProject(-1)
 		case m.tab == tabFleet && m.orch.backToCard:
 			m.orch.backToCard = false
 			m.tab = tabOrch
@@ -631,6 +653,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "right":
 		switch {
+		case m.tab == tabOverview:
+			m.switchProject(1)
 		case m.tab == tabFleet && m.tree.mapView:
 			m.mapMove(false)
 		case m.tab == tabFleet && m.focus == paneAgents && m.toggleFold(false):
@@ -687,8 +711,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(-5)
 		return m, nil
 	case "ctrl+y":
+		if m.tab == tabOverview && m.ov.proposal != "" {
+			if cmd := m.startMission(); cmd != nil {
+				return m, cmd
+			}
+			return m.say("Nothing to start yet: the orchestrator has not proposed.", true)
+		}
 		return m.answer("allow")
 	case "ctrl+n":
+		if m.tab == tabOverview && m.ov.proposal != "" {
+			m.dropMission()
+			return m, nil
+		}
 		return m.answer("deny")
 	case "enter":
 		// An open edit always goes back to its comment, even if focus moved
@@ -713,6 +747,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
+			if m.tab == tabOverview {
+				m.toggleMission()
+				return m, nil
+			}
 			if d := m.focusedCard(); d != nil && m.tab == tabOrch {
 				d.Expanded = !d.Expanded
 				if d.Expanded && !d.turnLoaded {
@@ -751,6 +789,12 @@ func (m *Model) move(delta int) {
 		}
 	case tabInbox:
 		m.inboxCur = clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1))
+	case tabOverview:
+		if m.ov.open != "" || m.ov.proposal != "" {
+			m.ov.scroll = max(0, m.ov.scroll+delta)
+		} else {
+			m.ov.cur = clamp(m.ov.cur+delta, 0, max(0, len(m.missions.ForProject(m.proj.cur))-1))
+		}
 	case tabOrch:
 		m.moveCard(delta)
 	case tabReview:
@@ -888,6 +932,28 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		m.tab = tabReview
 		cmd := m.enteredTab()
 		return m, cmd
+	case "/overview", "/missions":
+		m.tab = tabOverview
+		return m, nil
+	case "/project":
+		if len(fields) < 2 {
+			return m.say("Which project? /project <name>", true)
+		}
+		if !m.pickProject(strings.Join(fields[1:], " ")) {
+			return m.say("No project called "+strings.Join(fields[1:], " "), true)
+		}
+		m.tab = tabOverview
+		return m, nil
+	case "/mission":
+		if len(fields) < 2 {
+			return m.say("Describe the mission: /mission <goal>", true)
+		}
+		m.tab = tabOverview
+		return m, m.proposeMission(strings.Join(fields[1:], " "))
+	case "/pause", "/resume", "/stop":
+		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
+			return m.say(note, isErr)
+		}
 	case "/orchestrator", "/orch":
 		m.tab = tabOrch
 		if len(fields) > 1 && fields[1] == "new" {

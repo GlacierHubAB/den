@@ -40,6 +40,7 @@ type cardRecord struct {
 	Ticker    string    `json:"ticker,omitempty"`
 	Result    string    `json:"result,omitempty"`
 	Files     int       `json:"files,omitempty"`
+	MissionID string    `json:"mission,omitempty"`
 }
 
 // maxChatLog is how many records come back on launch.
@@ -95,7 +96,7 @@ func (m *Model) logCard(d *dispatch) {
 	appendChatRecord(m.chatLog, chatRecord{Kind: "card", At: d.SentAt, Card: &cardRecord{
 		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: d.Brief,
 		SentAt: d.SentAt, StartedAt: d.StartedAt, EndedAt: d.EndedAt,
-		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files,
+		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID,
 	}})
 }
 
@@ -134,10 +135,10 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 		if r.Kind == "card" && r.Card != nil {
 			c := r.Card
 			if d, ok := cards[c.ID]; ok {
-				*d = dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files}
+				*d = dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID}
 				continue
 			}
-			d := &dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files}
+			d := &dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID}
 			cards[c.ID] = d
 			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At})
 			continue

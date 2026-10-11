@@ -46,6 +46,7 @@ type dispatch struct {
 	Ticker    string // the latest tool call, or what is waiting on you
 	Result    string // the agent's last message, verbatim
 	Files     int
+	MissionID string // the mission this dispatch is a run of, "" for a plain one
 	Expanded  bool
 
 	turn       []transcript.Entry

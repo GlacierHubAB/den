@@ -13,7 +13,7 @@ import (
 
 func TestComposeShowsCompletionsAndFits(t *testing.T) {
 	st := newStyles(theme.Deepharness)
-	m := Model{st: st, agents: sample(), store: inbox.New(), width: 120, height: 36}
+	m := Model{st: st, agents: sample(), store: inbox.New(), width: 120, height: 36, tab: tabFleet}
 	m.input = newInput(st)
 	m.input.Focus()
 	mm, _ := m.Update(tea.KeyPressMsg{Code: '@', Text: "@"})

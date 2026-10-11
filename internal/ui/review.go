@@ -42,7 +42,8 @@ type work struct {
 }
 
 type reviewState struct {
-	works    []work
+	works    []work // the picked project's, or all when nothing is picked
+	all      []work
 	cur      int
 	fileCur  int
 	scroll   int // diff rows scrolled off the top
@@ -299,7 +300,18 @@ func (m *Model) applyReview(msg reviewLoadedMsg) {
 	}
 	m.rev.loading = false
 	m.rev.loadedAt = time.Now()
-	m.rev.works, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
+	m.rev.all, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
+	m.rev.works = nil
+	for _, w := range msg.works {
+		if m.proj.cur == "" || w.Root == m.proj.cur {
+			m.rev.works = append(m.rev.works, w)
+		}
+	}
+	if len(m.rev.works) == 0 && len(msg.works) > 0 {
+		if p, ok := m.curProject(); ok {
+			m.rev.note = "No agent has changed anything in " + p.Name + " since it started. ← → or /project picks another project."
+		}
+	}
 	m.rev.cur, m.rev.fileCur = 0, 0
 	for i, w := range m.rev.works {
 		if w.SessionID+"\x00"+w.Root != keepWork {

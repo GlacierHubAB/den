@@ -126,6 +126,9 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m.say(fmt.Sprintf("Which one: %s?", strings.Join(mt.ambiguous, ", ")), true)
 	case mt.target == nil && (mt.missing != "" || strings.HasPrefix(text, "@")):
 		return m.say(fmt.Sprintf("No agent called %q", mt.missing), true)
+	case mt.target == nil && m.tab == tabOverview:
+		cleared := m.clear()
+		return m, tea.Batch(cleared, m.missionText(mt.body))
 	case mt.target == nil:
 		cleared := m.clear()
 		return m, tea.Batch(cleared, m.askOrchestrator(mt.body))

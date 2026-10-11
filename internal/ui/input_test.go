@@ -17,7 +17,7 @@ import (
 )
 
 func testModel(w, h int) Model {
-	m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New(), width: w, height: h}
+	m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New(), width: w, height: h, tab: tabFleet}
 	m.input = newInput(m.st)
 	m.input.Focus()
 	m.fitInput()

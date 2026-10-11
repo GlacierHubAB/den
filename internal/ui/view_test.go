@@ -36,7 +36,7 @@ func sample() []fleet.Agent {
 
 func TestViewFitsWidthAtSeveralSizes(t *testing.T) {
 	for _, size := range [][2]int{{160, 45}, {120, 40}, {100, 30}, {80, 24}, {60, 20}} {
-		m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New(), cursor: 1, width: size[0], height: size[1]}
+		m := Model{st: newStyles(theme.Deepharness), agents: sample(), store: inbox.New(), cursor: 1, width: size[0], height: size[1], tab: tabFleet}
 		m.input = newInput(m.st)
 		out := m.View().Content
 		lines := strings.Split(out, "\n")

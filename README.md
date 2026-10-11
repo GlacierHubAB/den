@@ -117,6 +117,41 @@ remembers the conversation; if that fails, Den starts a fresh one and replays
 the last exchanges. `/orch new` starts a fresh session on purpose and marks
 the chat; the history stays.
 
+## Overview and missions
+
+The Overview tab, first in the row, shows one project at a time. Projects
+are the repositories agents work in, found through the files their
+transcripts say they edited plus session folders that are checkouts; the
+strip under the tabs lists them with a count of agents on each. `← →` or
+`/project <name>` switch, the pick is remembered, and the Review tab follows
+it: its work list is that checkout's. Left, the project's agents in their
+tree; right, its missions.
+
+A mission is a standing goal, in Aimless's terms: a purpose in one sentence,
+constraints that ride on every dispatch, and what done looks like, or
+"standing" for one that never ends. Type the goal on the Overview command
+line (or `/mission <goal>`) and the orchestrator answers with a proposal:
+the mission rewritten, done-when, constraints it inferred, the agents it
+means to use, and the shape it picked with one line of reasoning. `^Y`
+starts it, `^N` drops it, typing refines it, `Esc` keeps it for later.
+Nothing runs before `^Y`.
+
+| Shape | Runs as |
+| --- | --- |
+| `▶ once` | one dispatch to one agent; done when it reports back |
+| `↻ loop` | one agent iterates; after each pass Den asks the orchestrator whether the goal is met, and it re-dispatches until it is |
+| `⇶ fan-out` | a lead with children in parallel, using the hierarchy, repeated until the lead says done |
+| `⏲ schedule` | Den fires a run on the cadence (`every 30m`, `daily 08:30`, `weekly mon 09:00`, or a five-field cron line); each run is a once or a fan-out |
+
+Den drives the runs: it asks the orchestrator to dispatch, tags the cards
+that come out of that turn with the mission, notices when they settle, and
+asks again when the shape calls for another pass. `Enter` on a mission opens
+it: the fields, then its runs with the same dispatch cards the orchestrator
+chat shows; `^Y ^N` answer a card's permission from there. `/pause` holds
+the next run, `/resume` lets it go, `/stop` ends the mission and keeps its
+history. Missions persist in `~/.local/state/den/missions.jsonl` and the
+project pick in `overview.json` beside it.
+
 ## Who directs whom
 
 Agents hand work to each other over Claude Code's session messaging, so the

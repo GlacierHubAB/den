@@ -263,12 +263,13 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			m.orch.chat = append(m.orch.chat, chatEntry{role: "orchestrator", text: ev.Text, streaming: true, at: now})
 		}
 	case orch.Text:
+		text := m.missionReply(strings.TrimSpace(ev.Text))
 		if n := len(m.orch.chat); n > 0 && m.orch.chat[n-1].streaming {
-			m.orch.chat[n-1].text = strings.TrimSpace(ev.Text)
+			m.orch.chat[n-1].text = text
 			m.orch.chat[n-1].streaming = false
 			m.logEntry(m.orch.chat[n-1])
 		} else {
-			e := chatEntry{role: "orchestrator", text: strings.TrimSpace(ev.Text), at: now}
+			e := chatEntry{role: "orchestrator", text: text, at: now}
 			m.orch.chat = append(m.orch.chat, e)
 			m.logEntry(e)
 		}
@@ -282,6 +283,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 					break
 				}
 				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(in.Message), SentAt: now}
+				m.attachCard(d)
 				m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, toolUseID: ev.ToolUseID, at: now})
 				m.logCard(d)
 				m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: sid, Brief: firstLineOf(in.Message), At: now, Source: "dispatch"})
@@ -321,6 +323,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 		}
 	case orch.Result:
 		m.orch.thinking = false
+		m.turn = missionTurn{}
 		m.orch.unanswered = nil
 		m.orch.restarts = 0
 		m.orch.cost = ev.CostUSD
@@ -334,6 +337,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 		}
 	case orch.Error:
 		m.orch.thinking = false
+		m.turn.pending = false
 		m.orch.status = "error"
 		m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: ev.Text, at: now})
 	case orch.Exited:
