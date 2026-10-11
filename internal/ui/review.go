@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"time"
@@ -49,6 +50,7 @@ type reviewState struct {
 	loading  bool
 	loadedAt time.Time
 	errs     []string // repositories that could not be read
+	note     string   // why there is nothing to review, when there is nothing
 
 	// The line cursor in the diff, as an index into diffLine order, and the
 	// other end of a selected range when ranged is set.
@@ -66,7 +68,9 @@ type reviewState struct {
 // goroutine never touches the model.
 type reviewInput struct {
 	SessionID string
+	Name      string
 	CWD       string
+	HasGit    bool   // the session's folder is a checkout
 	Path      string // transcript
 	Started   time.Time
 }
@@ -74,19 +78,24 @@ type reviewInput struct {
 type reviewLoadedMsg struct {
 	works []work
 	errs  []string
+	note  string
 }
 
-// reviewInputs lists the agents whose work can be reviewed: a transcript to
-// attribute from and a git checkout to diff.
+// reviewInputs lists the agents whose work can be reviewed: every agent
+// with a transcript. Where the work is comes from the transcript, not the
+// session's folder: an agent started in ~ edits files in whatever
+// repositories it is asked to.
 func (m Model) reviewInputs() []reviewInput {
 	var in []reviewInput
 	for _, a := range m.agents {
-		if a.Path == "" || !a.HasGit || a.Session.CWD == "" {
+		if a.Path == "" {
 			continue
 		}
 		in = append(in, reviewInput{
 			SessionID: a.Session.SessionID,
+			Name:      a.Name,
 			CWD:       a.Session.CWD,
+			HasGit:    a.HasGit,
 			Path:      a.Path,
 			Started:   time.UnixMilli(a.Session.StartedAt),
 		})
@@ -104,27 +113,67 @@ func (m *Model) loadReview() tea.Cmd {
 	return func() tea.Msg { return loadWorks(in) }
 }
 
-// loadWorks diffs each repository once, attributes its lines to every
-// session working in it, and splits the result into one work per agent.
+// loadWorks reads each agent's file changes from its transcript, finds the
+// repositories those files live in, diffs each repository once, attributes
+// its lines to every session that touched it, and splits the result into
+// one work per agent. When nothing comes out it says why.
 func loadWorks(in []reviewInput) reviewLoadedMsg {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	byRoot := map[string][]reviewInput{}
+	type member struct {
+		reviewInput
+		changes []transcript.TimedChange
+	}
+	byRoot := map[string][]member{}
 	var roots []string
 	var errs []string
-	for _, a := range in {
-		root, err := review.Root(ctx, a.CWD)
+	rootOf := map[string]string{} // directory → repository root, "" when none
+	lookup := func(dir string) string {
+		if r, ok := rootOf[dir]; ok {
+			return r
+		}
+		r, err := review.Root(ctx, dir)
 		if err != nil {
-			continue
+			r = ""
+		}
+		rootOf[dir] = r
+		return r
+	}
+	join := func(root string, mem member) {
+		for i := range byRoot[root] {
+			if byRoot[root][i].SessionID == mem.SessionID {
+				return
+			}
 		}
 		if _, ok := byRoot[root]; !ok {
 			roots = append(roots, root)
 		}
-		byRoot[root] = append(byRoot[root], a)
+		byRoot[root] = append(byRoot[root], mem)
+	}
+	changed, outside := 0, 0
+	for _, a := range in {
+		mem := member{reviewInput: a, changes: transcript.Changes(a.Path, a.Started)}
+		changed += len(mem.changes)
+		for _, c := range mem.changes {
+			if !filepath.IsAbs(c.Path) {
+				continue
+			}
+			if root := lookup(filepath.Dir(c.Path)); root != "" {
+				join(root, mem)
+			} else {
+				outside++
+			}
+		}
+		if a.HasGit && a.CWD != "" {
+			if root := lookup(a.CWD); root != "" {
+				join(root, mem)
+			}
+		}
 	}
 
 	var works []work
+	diffed := 0
 	for _, root := range roots {
 		agents := byRoot[root]
 		since := agents[0].Started
@@ -138,9 +187,10 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 			var files []review.File
 			files, err = review.Diff(ctx, root, base)
 			if err == nil {
+				diffed += len(files)
 				var sources []review.Source
 				for _, a := range agents {
-					sources = append(sources, review.Source{SessionID: a.SessionID, Changes: transcript.Changes(a.Path, since)})
+					sources = append(sources, review.Source{SessionID: a.SessionID, Changes: a.changes})
 				}
 				review.Attribute(root, files, sources)
 				works = append(works, splitWorks(root, files, sources)...)
@@ -151,7 +201,25 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 		}
 	}
 	sort.SliceStable(works, func(i, j int) bool { return works[i].Last.After(works[j].Last) })
-	return reviewLoadedMsg{works: works, errs: errs}
+	return reviewLoadedMsg{works: works, errs: errs, note: emptyNote(len(in), changed, outside, len(roots), diffed, len(works))}
+}
+
+// emptyNote explains an empty Review view from what the load found.
+func emptyNote(agents, changed, outside, repos, diffed, works int) string {
+	switch {
+	case works > 0:
+		return ""
+	case agents == 0:
+		return "No agent has a transcript to read changes from."
+	case changed == 0:
+		return "No agent has changed a file since it started."
+	case repos == 0:
+		return fmt.Sprintf("Agents changed %d files, none inside a git repository, so there is no diff to show.", changed)
+	case diffed == 0:
+		return fmt.Sprintf("Agents changed %d files in %d repositories, but the working trees match the branch they left from: the work is merged or reverted.", changed, repos)
+	default:
+		return fmt.Sprintf("%d files differ in %d repositories, but none of the changed lines match what an agent wrote; they may have been edited by hand since.", diffed, repos)
+	}
 }
 
 // splitWorks gives each session the files in which it owns at least one
@@ -231,7 +299,7 @@ func (m *Model) applyReview(msg reviewLoadedMsg) {
 	}
 	m.rev.loading = false
 	m.rev.loadedAt = time.Now()
-	m.rev.works, m.rev.errs = msg.works, msg.errs
+	m.rev.works, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
 	m.rev.cur, m.rev.fileCur = 0, 0
 	for i, w := range m.rev.works {
 		if w.SessionID+"\x00"+w.Root != keepWork {

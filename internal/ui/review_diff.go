@@ -245,7 +245,13 @@ func (m Model) workPane(w, h int) string {
 		case m.rev.loading || m.rev.loadedAt.IsZero():
 			lines = append(lines, s.dim.Render(" Reading changes…"))
 		default:
-			lines = append(lines, s.dim.Render(" No agent has changed anything yet."))
+			note := m.rev.note
+			if note == "" {
+				note = "No agent has changed anything yet."
+			}
+			for _, l := range strings.Split(ansi.Wrap(note, max(10, w-2), ""), "\n") {
+				lines = append(lines, s.dim.Render(" "+l))
+			}
 		}
 		for _, e := range m.rev.errs {
 			lines = append(lines, s.err.Render(" "+ansi.Truncate(e, w-2, "…")))
