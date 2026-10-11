@@ -23,6 +23,7 @@ const (
 	Idle                   // Claude Code's idle notice
 	Sent                   // a message you sent, with its delivery status
 	Close                  // Den asks: close these agents? y/n answer it
+	Skills                 // Den asks: install these catalogue skills? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -41,6 +42,8 @@ func (k Kind) String() string {
 		return "sent"
 	case Close:
 		return "close"
+	case Skills:
+		return "skills"
 	}
 	return "?"
 }
@@ -75,15 +78,19 @@ type Item struct {
 
 // Answerable reports whether y/n/a act on this item.
 func (it *Item) Answerable() bool {
-	if it.Kind == Close {
+	if it.DenAsks() {
 		return it.State == Waiting
 	}
 	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan) && it.req != nil && it.req.WantsReply()
 }
 
+// DenAsks reports whether the item is Den's own question, carried out by
+// Den on ^Y rather than answered back to a hook.
+func (it *Item) DenAsks() bool { return it.Kind == Close || it.Kind == Skills }
+
 // needsYou reports whether the item still waits on the human.
 func (it *Item) needsYou() bool {
-	return it.State != Resolved && (it.Kind <= Question || it.Kind == Close)
+	return it.State != Resolved && (it.Kind <= Question || it.DenAsks())
 }
 
 // Request is the bridge request behind the item, nil for Den's own items.
@@ -222,8 +229,8 @@ func (s *Store) SetStatus(it *Item, status string, final bool) {
 
 // Answer resolves an answerable item. verb is "allow", "deny" or "always".
 func (s *Store) Answer(it *Item, verb string) bool {
-	if !it.Answerable() || it.Kind == Close {
-		return false // a Close is carried out by Den, not answered here
+	if !it.Answerable() || it.DenAsks() {
+		return false // Den's own questions are carried out by Den, not answered here
 	}
 	switch verb {
 	case "allow":
@@ -254,7 +261,13 @@ func (s *Store) AddClose(sessionID, title string, body []string, req *bridge.Req
 	return s.add(&Item{SessionID: sessionID, Kind: Close, Tool: "close_agent", Title: title, Body: body, req: req})
 }
 
-// Settle resolves a Close item with the outcome and sends it to whoever
+// AddSkills adds Den's question: install these catalogue skills? req is
+// the request of whoever proposed them.
+func (s *Store) AddSkills(sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Skills, Tool: "propose_skills", Title: title, Body: body, req: req})
+}
+
+// Settle resolves a Close or Skills item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 	it.State, it.Resolved = Resolved, outcome
@@ -270,7 +283,7 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 
 // SessionClosed resolves everything open for an agent Den closed.
 func (s *Store) SessionClosed(sessionID string) {
-	s.resolveSession(sessionID, "agent closed", func(it *Item) bool { return it.Kind != Close })
+	s.resolveSession(sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
 }
 
 // Release hands a waiting permission back to the terminal dialog.

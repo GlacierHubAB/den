@@ -39,6 +39,24 @@ type CloseInput struct {
 	IdleFor string   `json:"idle_for"` // "1h": every idle agent idle that long, protected ones aside
 }
 
+// SkillsEvent is not a hook either: `den mcp` sends it when the
+// orchestrator or a lead proposes catalogue skills for a project or for an
+// agent it is starting, and waits for the human's ^Y or ^N in Den.
+const SkillsEvent = "SkillsRequest"
+
+// SkillsInput is the payload of a SkillsEvent. Den looks the skills up in
+// its own catalogue again; the names only select among the role's matches.
+type SkillsInput struct {
+	Role    string   `json:"role"`
+	Skills  []string `json:"skills,omitempty"`
+	Scope   string   `json:"scope"` // "project" or "agent"
+	Dir     string   `json:"dir"`   // the project, or the new agent's working directory
+	Peer    string   `json:"peer,omitempty"`
+	Root    string   `json:"root,omitempty"` // agent scope: the agent's private skills folder
+	AskedBy string   `json:"asked_by"`
+	Reason  string   `json:"reason,omitempty"`
+}
+
 // HookInput is the subset of Claude Code's hook JSON that Den reads.
 type HookInput struct {
 	SessionID        string          `json:"session_id"`

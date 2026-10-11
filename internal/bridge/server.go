@@ -97,7 +97,7 @@ func (s *Server) serve(conn net.Conn) {
 	}
 	req := &Request{Envelope: env}
 	_ = json.Unmarshal(env.Payload, &req.Input)
-	if env.Event == "PermissionRequest" || env.Event == CloseEvent {
+	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent {
 		req.reply = make(chan Decision, 1)
 	}
 	s.out <- req

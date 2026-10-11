@@ -35,10 +35,12 @@ func runMCP() {
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"dir":   dirSchema,
-					"brief": map[string]any{"type": "string", "description": "What the agent should do, as its first prompt."},
-					"name":  map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
-					"model": map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
+					"dir":    dirSchema,
+					"brief":  map[string]any{"type": "string", "description": "What the agent should do, as its first prompt."},
+					"name":   map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
+					"model":  map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
+					"role":   map[string]any{"type": "string", "description": "The agent's role in a few words: coding agent, ui designer, frontend developer, qa automation, security auditor. Den offers the human the skills from its vetted catalogue that fit the role, for this agent only, and waits for their answer before starting it; the agent starts either way, with the skills they approved."},
+					"skills": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these of the role's catalogue skills."},
 				},
 				"required": []string{"dir", "brief"},
 			},
@@ -47,11 +49,19 @@ func runMCP() {
 				if !ok {
 					return "", errDir
 				}
-				res, err := spawn.Run(ctx, spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Spawner: exe})
+				req := spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Spawner: exe}
+				note := ""
+				if strings.TrimSpace(in.Role) != "" {
+					var err error
+					if note, err = offerAgentSkills(&req, in.Role, in.Skills, asker(lead)); err != nil {
+						return "", err
+					}
+				}
+				res, err := spawn.Run(ctx, req)
 				if err != nil {
 					return "", err
 				}
-				return res.Describe(), nil
+				return strings.TrimSpace(res.Describe() + " " + note), nil
 			},
 		},
 		{
@@ -82,6 +92,27 @@ func runMCP() {
 				default:
 					return "The human declined in Den; nothing was closed. " + d.Message, nil
 				}
+			},
+		},
+		{
+			Name:        strings.TrimPrefix(orch.SkillsTool, "mcp__"+orch.MCPServer+"__"),
+			Description: "Offer the human, in Den, the skills from Den's vetted catalogue that fit a role, for one project: they go into <dir>/.claude/skills, where every Claude Code session in that project finds them. Each skill is pinned to a commit of a named repository; Den lists each one with its repository, commit, license and why it fits, and installs nothing unless the human approves. Only catalogue skills can be offered. The answer says what was installed, or that the human declined, or that no catalogue skill fits the role.",
+			Schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"role":   map[string]any{"type": "string", "description": "The role to match, in a few words, e.g. the agent's role from the roster."},
+					"dir":    dirSchema,
+					"skills": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these of the role's catalogue skills."},
+					"reason": map[string]any{"type": "string", "description": "One line on why, shown to the human."},
+				},
+				"required": []string{"role", "dir"},
+			},
+			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+				in, ok := orch.ParseSkills(args)
+				if !ok {
+					return "", errorString("give role (a few words) and dir (the project folder)")
+				}
+				return offerProjectSkills(in, asker(lead))
 			},
 		},
 		{

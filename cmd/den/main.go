@@ -7,6 +7,7 @@
 //	den explain <who>    say how Den arrived at what it shows for an agent
 //	den send <who> <msg> deliver a message to one agent's session
 //	den ask <text>       one orchestrator turn: ask about the fleet or have it relay
+//	den skills [...]     the skills catalogue, what Den installed, and removing it
 //	den mcp              used by the orchestrator to open terminals and start agents; not for humans
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
 //	den events           headless: print hook events as they arrive
@@ -63,6 +64,8 @@ func main() {
 		ask(os.Args[2:])
 	case "mcp":
 		runMCP()
+	case "skills":
+		skillsCmd(os.Args[2:])
 	case "hook":
 		runHook()
 	case "install-hooks":
@@ -78,7 +81,7 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text>\n       den install-hooks | den uninstall-hooks | den events | den mods | den install-mods | den uninstall-mods\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send <who> <msg> | den ask <text>\n       den install-hooks | den uninstall-hooks | den events | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}

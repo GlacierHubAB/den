@@ -43,6 +43,9 @@ type Request struct {
 	// Model is the claude --model value for the agent ("" for the default).
 	// Models says which ones the tool offers and when.
 	Model string
+	// AddDirs are given to claude with --add-dir: the agent's private
+	// skills folder, when the human approved skills for it.
+	AddDirs []string
 	// Spawner is the Den binary; when set, the agent gets Den's MCP server
 	// and so the spawn_agent tool, to start teammates of its own.
 	Spawner string
@@ -222,6 +225,9 @@ func (r Result) Describe() string {
 // Command is the claude command line for an agent named name.
 func Command(req Request, name string) []string {
 	command := []string{"claude", "--name", name}
+	for _, d := range req.AddDirs {
+		command = append(command, "--add-dir", d)
+	}
 	if req.Model != "" {
 		command = append(command, "--model", req.Model)
 	}
@@ -271,7 +277,7 @@ func Prompt(brief, orchestrator, lead string, canSpawn bool) string {
 			when = append(when, m.Name+" for "+m.When)
 		}
 		b.WriteString(strings.Join(when, "; "))
-		b.WriteString("). Agents you start report to you; wait for all of them before you report back yourself.")
+		b.WriteString("). Give it a role in a few words (\"coding agent\", \"ui designer\"): Den then offers the human the vetted skills that fit, for that agent only. Agents you start report to you; wait for all of them before you report back yourself.")
 	}
 	b.WriteString("\n\n")
 	b.WriteString(strings.TrimSpace(brief))

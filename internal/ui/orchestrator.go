@@ -547,6 +547,16 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 					body = append(body, s.key.Render("^Y")+s.keyLabel.Render(" close them")+"  "+s.key.Render("^N")+s.keyLabel.Render(" keep them")+s.dim.Render("  · also in the Inbox"))
 				}
 			}
+			// So does a skills offer, from propose_skills or a spawn with a role.
+			if strings.HasPrefix(e.text, "▶ offering you skills") || strings.HasPrefix(e.text, "▶ starting an agent") {
+				if it := m.pendingOrchSkills(); it != nil {
+					body = append(body, s.attn.Render("◐ "+it.Title+" It waits for you."))
+					for _, l := range it.Body {
+						body = append(body, m.plainLines(l, bodyW-2, s.fg)...)
+					}
+					body = append(body, s.key.Render("^Y")+s.keyLabel.Render(" install them")+"  "+s.key.Render("^N")+s.keyLabel.Render(" decline")+s.dim.Render("  · also in the Inbox"))
+				}
+			}
 		}
 		for i, l := range body {
 			prefix := strings.Repeat(" ", label+1)
@@ -567,6 +577,8 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 			think = m.orch.status
 		} else if m.pendingOrchClose() != nil {
 			think = "waiting for your ^Y or ^N on the close question"
+		} else if m.pendingOrchSkills() != nil {
+			think = "waiting for your ^Y or ^N on the skills offer"
 		} else if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
 			think = "thinking… " + humanAge(q)
 		}

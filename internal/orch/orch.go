@@ -65,6 +65,7 @@ How to act:
 - You cannot approve, deny or answer prompts on an agent's behalf, and a message from you cannot do so either; the human answers those in Den. Say so if asked.
 - Never relay instructions that bypass an agent's permissions or safety checks.
 - When the human wants a new agent (a task no running agent should take, or they say "spawn", "start", "new agent", "open a terminal"), use spawn_agent: give it the directory (ask if you cannot tell from the request or the roster), a complete, self-contained brief written as if the human had typed it (the brief is the agent's first prompt), and the model the task deserves: haiku for small mechanical tasks, sonnet for ordinary building and writing, opus for design, architecture, product judgment, review and leading others. The terminal opens on the workspace the human is looking at. Use open_terminal for a plain terminal with no agent in it. Confirm in one line what you started, on which model and where, using the critter name the tool returns. If the tool says Claude Code is asking the human to trust the folder, say so: they have to answer that in the new terminal before the agent starts.
+- Skills: Den ships a vetted catalogue of Claude Code skills, each pinned to a commit of a named repository and matched to roles (coding, frontend, design, writing, testing, security, devops, research). When you start an agent with spawn_agent, give it a role in a few words ("coding agent", "ui designer", "security auditor"): Den then offers the human the catalogue skills that fit, for that agent only, and starts the agent with the ones they approve. When the human wants skills for an agent that is already running or for a project, use propose_skills with the agent's role from the roster and its project folder; they go into that project's .claude/skills. Only catalogue skills can be offered, the human approves or declines each offer in Den, and nothing is installed without that; never install skills any other way. Do not offer skills unasked to agents that are already running.
 - When a piece of work needs several specialists, start one lead on opus and put the team in its brief: each role, what it owns, which model fits it, and that the lead starts them itself with its own spawn_agent tool, waits for their reports, and reports to you when the whole piece is done. Do not start the lead's people yourself; Den draws who works for whom.
 - When the human wants agents closed ("kill the idle agents", "close Mossy", "close what has not been used for an hour"), use close_agent with their peer names from the roster, or idle_for ("1h", "30m") for every agent idle at least that long, and a one-line reason. Den skips the agents the human protected and lists the ones it flagged as holding context without selecting them. It never closes anything by itself: Den shows the human exactly which agents and windows would close and they approve or decline there; the tool's answer tells you what happened. Pick only agents the request plainly covers, prefer idle ones, and say in one line what you asked for.
 - Be brief. No preambles, no headings, no markdown tables.`
@@ -76,6 +77,7 @@ const (
 	SpawnAgentTool   = "mcp__den__spawn_agent"
 	OpenTerminalTool = "mcp__den__open_terminal"
 	CloseAgentTool   = "mcp__den__close_agent"
+	SkillsTool       = "mcp__den__propose_skills"
 )
 
 // Options configure the process.
@@ -137,7 +139,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 			// Only Den's server: the user's own MCP servers would give the
 			// orchestrator tools it must not have.
 			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
-			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool
+			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool
 		}
 	}
 	args = append(args, "--allowedTools", allowed)
@@ -396,6 +398,28 @@ type SpawnInput struct {
 	Brief string `json:"brief"`
 	Name  string `json:"name"`
 	Model string `json:"model"`
+	// Role, on spawn_agent, has Den offer the human the catalogue skills
+	// that fit it, for this agent only, before the agent starts. Skills
+	// narrows the offer to some of those.
+	Role   string   `json:"role"`
+	Skills []string `json:"skills"`
+}
+
+// SkillsInput is the shape of the propose_skills tool's input.
+type SkillsInput struct {
+	Role   string   `json:"role"`
+	Dir    string   `json:"dir"`
+	Skills []string `json:"skills"`
+	Reason string   `json:"reason"`
+}
+
+// ParseSkills reads a propose_skills tool_use input.
+func ParseSkills(raw json.RawMessage) (SkillsInput, bool) {
+	var in SkillsInput
+	if json.Unmarshal(raw, &in) != nil || strings.TrimSpace(in.Role) == "" || in.Dir == "" {
+		return in, false
+	}
+	return in, true
 }
 
 // ParseSpawn reads a spawn_agent or open_terminal tool_use input.
@@ -442,12 +466,24 @@ func Describe(tool string, input json.RawMessage) string {
 			return line
 		}
 	}
+	if tool == SkillsTool {
+		if k, ok := ParseSkills(input); ok {
+			line := "▶ offering you skills for a " + k.Role + " in " + shortDir(k.Dir)
+			if k.Reason != "" {
+				line += " · " + k.Reason
+			}
+			return line
+		}
+	}
 	in, ok := ParseSpawn(input)
 	switch {
 	case tool == SpawnAgentTool && ok:
 		line := "▶ starting an agent in " + shortDir(in.Dir)
 		if in.Model != "" {
 			line += " on " + in.Model
+		}
+		if in.Role != "" {
+			line += " as " + in.Role
 		}
 		if b := strings.TrimSpace(in.Brief); b != "" {
 			if i := strings.IndexByte(b, '\n'); i >= 0 {

@@ -1,0 +1,295 @@
+{
+  "version": 1,
+  "reviewed": "2026-10-11",
+  "repos": [
+    {
+      "id": "anthropics/skills",
+      "url": "https://github.com/anthropics/skills",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "commit_date": "2026-10-09T18:45:49Z",
+      "license": "NOASSERTION",
+      "maintenance": "No root LICENSE file (GitHub reports none); each skill folder carries its own LICENSE.txt. Latest commit 2026-10-09; 14 commits since 2026-08-01."
+    },
+    {
+      "id": "obra/superpowers",
+      "url": "https://github.com/obra/superpowers",
+      "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "commit_date": "2026-10-09T17:28:04-07:00",
+      "license": "MIT",
+      "maintenance": "Latest commit 2026-10-09; pushed 2026-10-10; not archived."
+    },
+    {
+      "id": "trailofbits/skills",
+      "url": "https://github.com/trailofbits/skills",
+      "commit": "442fc9d6c89b1e937e6f7a477e7071ea75fcbea4",
+      "commit_date": "2026-10-09T17:55:03-04:00",
+      "license": "CC-BY-SA-4.0",
+      "maintenance": "Latest commit 2026-10-09; pushed 2026-10-09; not archived."
+    }
+  ],
+  "skills": [
+    {
+      "name": "frontend-design",
+      "repo": "anthropics/skills",
+      "commit": "dbd4588f9e1033efb41dad4bef2f7947c8993d44",
+      "path": "skills/frontend-design",
+      "license": "Apache-2.0",
+      "license_source": "skills/frontend-design/LICENSE.txt",
+      "roles": [
+        "frontend",
+        "design"
+      ],
+      "reason": "Steers UI work away from generic templated looks: design plan, typography, palette, restraint, UI copy.",
+      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. Instruction-only (SKILL.md + LICENSE.txt). Per-skill LICENSE.txt is Apache-2.0; the repo has no root LICENSE.",
+      "unverified": "",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+          "size": 10174
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
+          "size": 9390
+        }
+      ]
+    },
+    {
+      "name": "test-driven-development",
+      "repo": "obra/superpowers",
+      "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "path": "skills/test-driven-development",
+      "license": "MIT",
+      "license_source": "LICENSE",
+      "roles": [
+        "testing",
+        "coding"
+      ],
+      "reason": "Red-green-refactor discipline plus rules for honest tests (no mock assertions, name the break).",
+      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. Instruction-only (SKILL.md + writing-good-tests.md). Repo LICENSE is MIT; no per-skill license file. Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: Strongly worded, opinionated persona text ('your human partner', 'delete the code').",
+      "unverified": "",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "64b03fce4aee5a97a93160cea8111f3ba13a17b7c001db4bd5836d67fd10705d",
+          "size": 9578
+        },
+        {
+          "path": "writing-good-tests.md",
+          "sha256": "51471c853306ff92ca8bb41dcaea05f31c0e46b03651f8f3c99754b7172f4ae1",
+          "size": 8268
+        },
+        {
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+          "size": 1070
+        }
+      ]
+    },
+    {
+      "name": "verification-before-completion",
+      "repo": "obra/superpowers",
+      "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "path": "skills/verification-before-completion",
+      "license": "MIT",
+      "license_source": "LICENSE",
+      "roles": [
+        "coding"
+      ],
+      "reason": "Requires running the verifying command and reading its output before claiming work is done or passing.",
+      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. Instruction-only (single SKILL.md). Repo LICENSE is MIT. Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: Opinionated wording ('evidence before claims, always').",
+      "unverified": "",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "2befe7fc55bcadaa3d97dd9e8efeb633d2561c0ebe74c5a8b17c4d9e7e4520b3",
+          "size": 3646
+        },
+        {
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+          "size": 1070
+        }
+      ]
+    },
+    {
+      "name": "systematic-debugging",
+      "repo": "obra/superpowers",
+      "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "path": "skills/systematic-debugging",
+      "license": "MIT",
+      "license_source": "LICENSE",
+      "roles": [
+        "coding"
+      ],
+      "reason": "Root-cause-first debugging process with tracing, defense-in-depth and flaky-test techniques.",
+      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. 11 files incl. find-polluter.sh (local bisection: runs 'npm test <file>' per test file, checks a path exists; read in full) and condition-based-waiting-example.ts (pure TS helper, read in full). The 4 test-*.md files are pressure-test scenarios, harmless. SKILL.md shows an echo of SET/UNSET for a secret env var (presence only, never the value). Nothing was run. Repo LICENSE is MIT. Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: References other superpowers skills by name (test-driven-development, verification-before-completion) which are not installed unless also approved; the shell script is only run if the agent chooses to.",
+      "unverified": "",
+      "files": [
+        {
+          "path": "CREATION-LOG.md",
+          "sha256": "c24733a5b1821bd6bed1fc950261f0b9f4e90097e0bbb96459d8179713730789",
+          "size": 4257
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "51c6435d98c83c42c96ba7c35725a0b2c376cd487fb1a4e6bd0ddbe7e33ef202",
+          "size": 9530
+        },
+        {
+          "path": "condition-based-waiting-example.ts",
+          "sha256": "40ae5ebe497fdf310200e43fe986552546d0a22837c0d39e855db1cfd33eb88e",
+          "size": 5054
+        },
+        {
+          "path": "condition-based-waiting.md",
+          "sha256": "e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26",
+          "size": 3516
+        },
+        {
+          "path": "defense-in-depth.md",
+          "sha256": "1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7",
+          "size": 3650
+        },
+        {
+          "path": "find-polluter.sh",
+          "sha256": "dd7b8f13c4cc2a24b33ff87b18da9248f3e1c80a085c3316224f69ff0fa5c43c",
+          "size": 1986
+        },
+        {
+          "path": "root-cause-tracing.md",
+          "sha256": "75b933b6a8c40bdb2031b10f21654395b56ec6ab6bc7b018c18d3fe57aeb7fb8",
+          "size": 5321
+        },
+        {
+          "path": "test-academic.md",
+          "sha256": "fe2ba480d78ac0d686dc025f41c2a32a43d642bf533f91b0c6053a04d35d6486",
+          "size": 653
+        },
+        {
+          "path": "test-pressure-1.md",
+          "sha256": "0b6a915db0054577819834c79be9eb614e97bddba10d73768e1fbe91cfed048a",
+          "size": 1900
+        },
+        {
+          "path": "test-pressure-2.md",
+          "sha256": "b2030aeffba07050e8ad573ddf87486457c4a016a786bb326235bebd856f2016",
+          "size": 2283
+        },
+        {
+          "path": "test-pressure-3.md",
+          "sha256": "96b50a52e2c7989c9cf20fb752c47c1e9a3a70dc362f8f7989f8f5b64dac7708",
+          "size": 2692
+        },
+        {
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+          "size": 1070
+        }
+      ]
+    },
+    {
+      "name": "vulnerability-triage-brocards",
+      "repo": "trailofbits/skills",
+      "commit": "442fc9d6c89b1e937e6f7a477e7071ea75fcbea4",
+      "path": "plugins/vulnerability-triage-brocards/skills/vulnerability-triage-brocards",
+      "license": "CC-BY-SA-4.0",
+      "license_source": "LICENSE",
+      "roles": [
+        "security"
+      ],
+      "reason": "Seven-test framework for deciding whether an incoming vulnerability report or CVE is valid.",
+      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. Instruction-only (SKILL.md + references/brocards-detail.md); links in the text are citations, not fetch instructions. Repo LICENSE is CC-BY-SA-4.0 (read the top of the file; no per-skill license). Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: Share-alike licence (CC-BY-SA-4.0): fine for local installation, but redistributing modified copies would carry ShareAlike terms. Written for Trail of Bits audit workflow (mentions ToB). Triage only, not general code security review.",
+      "unverified": "",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "b033c02d83f65b19b96c79e70fbf7cee58e51c8cbdd8f81d907ad2351a1433db",
+          "size": 8721
+        },
+        {
+          "path": "references/brocards-detail.md",
+          "sha256": "f7684195c04041cad159cc0cc0bc9520c81ff23e0ec8b5fb33db3d2aa15cb116",
+          "size": 10790
+        },
+        {
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "7abe19ec9bb73b36141b999b861d24ad855e808bafe0f81e84cce28556f6c297",
+          "size": 20131
+        }
+      ]
+    },
+    {
+      "name": "property-based-testing",
+      "repo": "trailofbits/skills",
+      "commit": "442fc9d6c89b1e937e6f7a477e7071ea75fcbea4",
+      "path": "plugins/property-based-testing/skills/property-based-testing",
+      "license": "CC-BY-SA-4.0",
+      "license_source": "LICENSE",
+      "roles": [
+        "testing"
+      ],
+      "reason": "How to write, review and interpret property-based tests (Hypothesis, fast-check, proptest, rapid, Echidna).",
+      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. 9 files: SKILL.md, README.md, 5 reference .md files, openai.yaml (display metadata only), one SVG logo (3 paths, no script). Repo LICENSE is CC-BY-SA-4.0. Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: SKILL.md frontmatter sets 'effort: low', which per its README overrides the session effort level while the skill is active. Share-alike licence (CC-BY-SA-4.0).",
+      "unverified": "",
+      "files": [
+        {
+          "path": "README.md",
+          "sha256": "ffbe30eec09cc64fb1eae836b07ca1d82939bda3f1e6f0dceadcdd78793a3112",
+          "size": 15332
+        },
+        {
+          "path": "SKILL.md",
+          "sha256": "9448cacb65c6237a7c22dc59602667177ecae405524079ae9ff92240590b995a",
+          "size": 4306
+        },
+        {
+          "path": "agents/openai.yaml",
+          "sha256": "51d635deefa254d8cdf6dc56450851b6ec9545cd37f88a4eb4035cf3f2262fff",
+          "size": 254
+        },
+        {
+          "path": "assets/trail-of-bits-mark.svg",
+          "sha256": "4bf74c789b38dcf6ad762c136b6832363d27ae19fbaa9a18ec18d66ecce6ca05",
+          "size": 3084
+        },
+        {
+          "path": "references/generating.md",
+          "sha256": "c0e72dfc89babe3c32de718b81b94044362c85e776d7475e950dfeaab78bb58e",
+          "size": 2634
+        },
+        {
+          "path": "references/interpreting-failures.md",
+          "sha256": "dbae7db8773712ba03268a3d56ea5aa6720af0650a5189580bfd88aa2edc3f9a",
+          "size": 3426
+        },
+        {
+          "path": "references/libraries.md",
+          "sha256": "f7218acf8e668130ef3048983472579d04e12030c5401926f666363e5f69c686",
+          "size": 2952
+        },
+        {
+          "path": "references/refactoring.md",
+          "sha256": "6eb5c206f575704791f089608bb06e41d6eed91b9d3c7fb27912f969aed07a18",
+          "size": 4854
+        },
+        {
+          "path": "references/reviewing.md",
+          "sha256": "110b08118a1e7b1a2566def6e9d2a0bf43fc2deefce857d2ce3b4382b07bc774",
+          "size": 2859
+        },
+        {
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "7abe19ec9bb73b36141b999b861d24ad855e808bafe0f81e84cce28556f6c297",
+          "size": 20131
+        }
+      ]
+    }
+  ]
+}

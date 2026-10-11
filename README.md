@@ -22,7 +22,7 @@ Hyprland.
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
-- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents)
+- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Skills for roles](#skills-for-roles)
 - [Overview, projects and missions](#overview-projects-and-missions)
 - [Review](#review) · [The agent badge](#the-agent-badge)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
@@ -148,6 +148,10 @@ den ask "who is blocked on what?"       one orchestrator turn from a script
 den events              headless: print hook events as they arrive
 den install-hooks       wire Den into Claude Code's hooks
 den uninstall-hooks     undo
+den skills              the skills Den installed, for which project or agent, from where
+den skills catalogue    the vetted skills catalogue: repo, pinned commit, license, why
+den skills match "ui designer"          what the catalogue offers a role
+den skills remove frontend-design ~/code/site   remove what Den installed
 den install-mods        put the bundled agent-badge mod into ~/.claude/skills
 den mods                what ships in this binary and where it is loaded from
 den uninstall-mods      undo
@@ -182,7 +186,8 @@ the tab row.
 ![Den's Inbox: a waiting permission request from a backend developer agent to run go test, with Ctrl+Y allow, /always and Ctrl+N deny, above two finished turns from a technical writer and a reviewer.](docs/images/inbox.png)
 
 With the hooks installed, each item is a permission, a plan review, a question
-or a finished turn. Waiting permissions and plans can be answered from Den:
+or a finished turn; Den adds its own questions, to close agents or to install
+skills. Waiting permissions and plans can be answered from Den:
 `Ctrl+Y` allows and `Ctrl+N` denies the waiting one, `/always` allows it and
 the same tool again this session, `/open` focuses the terminal, `/dismiss`
 clears an item. Finished turns are appended to
@@ -270,12 +275,13 @@ mouse.
 ## Orchestrator
 
 The orchestrator is a headless Claude Code session Den starts on your first
-plain-text message. It has five tools: `ListAgents` and `SendMessage`, plus
-three Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
-`open_terminal` and `close_agent`, which only ever asks you (see Closing
-agents). It gets a fresh roster of the fleet with every message, so it
-can answer "who is blocked on what?" or relay "tell Mossy to rebase first". It
-cannot approve anything; you do that in the inbox.
+plain-text message. It has six tools: `ListAgents` and `SendMessage`, plus
+four Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
+`open_terminal`, `close_agent` and `propose_skills`; the last two only ever
+ask you (see Closing agents and Skills for roles). It gets a fresh roster of
+the fleet with every message, so it can answer "who is blocked on what?" or
+relay "tell Mossy to rebase first". It cannot approve anything; you do that in
+the inbox.
 
 Its turns are billed like any other session. It uses `sonnet` unless the config
 file or `DEN_ORCHESTRATOR_MODEL` says otherwise (`"off"` keeps Claude Code's
@@ -414,6 +420,64 @@ becomes the same question in your inbox, marked as its request with its
 reason, protected agents skipped and flagged ones unselected, and it only
 hears what you decided. It cannot force.
 
+## Skills for roles
+
+Den ships a small, vetted catalogue of Claude Code skills (SKILL.md folders)
+and offers the ones that fit an agent's role. Nothing is installed until you
+press `Ctrl+Y` on a question in the inbox that lists each skill with its
+repository, pinned commit, license and why it fits; `Ctrl+N` declines.
+
+The catalogue is `internal/skills/catalogue.json`, built into the binary. Every
+entry names a GitHub repository, a full commit SHA (never a branch), an
+allowed license, its role tags, a one-line reason, what was checked before it
+was admitted, and every file with its SHA-256. `den skills catalogue` prints it.
+It holds six skills from three repositories:
+
+| Skill | Roles | Repository @ commit | License |
+| --- | --- | --- | --- |
+| frontend-design | frontend, design | anthropics/skills @ dbd4588f9e10 | Apache-2.0 |
+| test-driven-development | testing, coding | obra/superpowers @ bb92a7774141 | MIT |
+| verification-before-completion | coding | obra/superpowers @ bb92a7774141 | MIT |
+| systematic-debugging | coding | obra/superpowers @ bb92a7774141 | MIT |
+| vulnerability-triage-brocards | security | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
+| property-based-testing | testing | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
+
+The writing, devops and research tags have no skills yet. Roles are free text
+("coding agent", "ui designer", "sysadmin"), so Den matches them word by word
+to the tags coding, frontend, design, writing, testing, security, devops and
+research, and offers at most three skills; a role with no known word gets
+nothing. `den skills match "<role>"` shows what a role would be offered.
+
+**Two ways in.** `spawn_agent` takes a `role`: Den offers the matching skills
+for that agent only and waits for your answer before starting it. On `Ctrl+Y`
+they go into a folder of Den's own, `~/.local/state/den/skills/agents/<peer>-<time>/.claude/skills`,
+and the agent is started with `claude --add-dir` on it, so no other session
+sees them; on `Ctrl+N` the agent starts without them. `propose_skills` offers
+a role's skills to a project (an agent already running, or a folder you
+name): they go into `<project>/.claude/skills`, where every Claude Code
+session in that project finds them. A session that started before that folder
+existed needs `/reload-skills`. The orchestrator offers skills when it starts
+an agent with a role, or when you ask; a lead can pass a role to the agents it
+starts.
+
+**What Den checks at install.** It looks the skills up again in its own
+catalogue (a request can only narrow the role's matches), downloads each file
+from `raw.githubusercontent.com/<repo>/<commit>/…`, and refuses the skill if
+any file's size or SHA-256 differs from the catalogue, if any markdown file's
+frontmatter sets `hooks` or `allowed-tools`, if it runs a shell command when
+it loads (``!`cmd` `` or a ` ```! ` block), or if SKILL.md names a different
+skill. It never replaces a folder that is already there, writes no file
+executable, and installs nothing into `~/.claude/skills`. Skills whose folder
+carries no license get their repository's license file copied in beside them.
+Den runs nothing a skill ships.
+
+**Provenance and removal.** Every install is recorded in
+`~/.local/state/den/skills.json`: skill, repository, commit, license, scope,
+project or agent, path, date, who approved (your user, in Den) and who asked.
+`den skills` lists them. `den skills remove <skill> [<project | peer | path>]`
+deletes the files Den installed, keeping any file changed since, removes the
+skill's folder once it is empty, and drops the record.
+
 ## Overview, projects and missions
 
 The Overview tab, first in the row, shows one project at a time. Projects are
@@ -551,13 +615,16 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `edges.jsonl` | who directs whom |
 | `missions.jsonl` | missions and their runs |
 | `protected.json` | agents a close leaves alone, folders that protect their agents, and flagged agents with their notes |
+| `skills.json` | every skill Den installed: where from, where to, when, who approved |
+| `skills/agents/` | skills installed for one agent only |
 | `overview.json` | the picked and pinned projects |
 | `reviews.json` | Review comments |
 | `colors.json` | the colour of each session |
 | `attachments/` | images pasted from the clipboard |
 
 Den also edits `~/.claude/settings.json` (hooks, with a backup beside it) and
-`~/.claude/skills` (the badge mod), and listens on a Unix socket in
+`~/.claude/skills` (the badge mod), writes `<project>/.claude/skills` only
+for skills you approved for that project, and listens on a Unix socket in
 `$XDG_RUNTIME_DIR`. It reads `~/.claude/sessions/` and Claude Code's transcripts
 under `~/.claude/projects/`; it does not write to those two.
 

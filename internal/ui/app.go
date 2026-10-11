@@ -26,6 +26,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
@@ -106,9 +107,10 @@ type Model struct {
 	lastScan time.Time
 
 	srv        *bridge.Server
-	closing    map[string]closer.Plan // close questions in the inbox, by item id
-	sel        selState               // Den's own text selection on the Orchestrator and Overview views
-	guard      *closer.Guard          // agents a close must leave alone or only propose when named
+	closing    map[string]closer.Plan     // close questions in the inbox, by item id
+	offers     map[string]skills.Approval // skills offers in the inbox, by item id
+	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
+	guard      *closer.Guard              // agents a close must leave alone or only propose when named
 	guardPath  string
 	srvErr     error
 	store      *inbox.Store
@@ -459,6 +461,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 	case closeDoneMsg:
 		return m, m.finishClose(msg)
+	case skillsDoneMsg:
+		return m, m.finishSkills(msg)
 	case serverClosedMsg:
 		m.srv = nil
 	case focusedMsg:
@@ -490,6 +494,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.CloseEvent {
 		m.handleCloseRequest(r)
+		return nil
+	}
+	if r.Event == bridge.SkillsEvent {
+		m.handleSkillsRequest(r)
 		return nil
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
@@ -905,6 +913,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Close {
 		return m.decideClose(it, verb)
+	}
+	if it.Kind == inbox.Skills {
+		return m.decideSkills(it, verb)
 	}
 	m.store.Answer(it, verb)
 	m.refresh()

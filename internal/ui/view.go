@@ -475,7 +475,7 @@ func (m Model) agentsPane(w, h int) string {
 // openItem is the request waiting on the human for a session, if any.
 func (m Model) openItem(sessionID string) *inbox.Item {
 	for _, it := range m.store.Items() {
-		if it.SessionID == sessionID && it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.Kind == inbox.Close) {
+		if it.SessionID == sessionID && it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks()) {
 			return it
 		}
 	}
@@ -534,6 +534,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "approve")+"  "+key("^N", "ask for changes")+"  "+key("/open", "read it in the terminal"))
 	case it.Answerable() && it.Kind == inbox.Close:
 		out = append(out, key("^Y", "close them")+"  "+key("^N", "keep them"))
+	case it.Answerable() && it.Kind == inbox.Skills:
+		out = append(out, key("^Y", "install them")+"  "+key("^N", "decline"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	default:
@@ -642,7 +644,7 @@ func (m Model) inboxPane(w, h int) string {
 		}
 		// An open request shows the whole thing being decided, wrapped;
 		// history keeps one line of it.
-		open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.Kind == inbox.Close)
+		open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks())
 		if open && it.Intent != "" {
 			for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
 				text = append(text, fg.Render(l))
@@ -678,6 +680,9 @@ func (m Model) inboxPane(w, h int) string {
 			}
 			if it.Kind == inbox.Close {
 				acts = key("^Y", "close them") + sp + sp + key("^N", "keep them")
+			}
+			if it.Kind == inbox.Skills {
+				acts = key("^Y", "install them") + sp + sp + key("^N", "decline")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:

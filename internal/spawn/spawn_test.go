@@ -145,3 +145,16 @@ func TestChildEnvDropsWhatAParentSessionSet(t *testing.T) {
 		t.Errorf("childEnv = %q, want %q", got, want)
 	}
 }
+
+func TestCommandGivesApprovedSkillsFolder(t *testing.T) {
+	got := Command(Request{Brief: "go", Model: "sonnet", AddDirs: []string{"/s/agents/ui-1"}, Spawner: "/bin/den"}, "ui")
+	want := []string{"claude", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "sonnet"}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("command = %q, want it to start %q", got, want)
+		}
+	}
+	if got[len(got)-2] != "--" {
+		t.Errorf("the prompt is not after --: %q", got)
+	}
+}
