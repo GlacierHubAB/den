@@ -973,8 +973,7 @@ What Den does that is its own:
   (Herdr has a socket API and `agent prompt --wait`.)
 - **A worktree per agent:** `spawn_agent` can start an agent in its own git
   worktree, and Review asks before it merges the branch and, separately,
-  before it removes the worktree. (Herdr, agent-deck and claude-squad also make
-  worktrees first-class.)
+  before it removes the worktree. (Herdr also makes worktrees first-class.)
 - **Bringing agents back:** after a reboot or a closed Den, one inbox question
   reopens the agents that were live with `claude --resume`, and puts them back
   in their tree and mission; `/reopen <name>` does it for one agent. (Herdr
