@@ -26,7 +26,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/tree"
 	"github.com/GlacierHubAB/den/internal/ui"
 )
 
@@ -96,11 +98,23 @@ func runTUI() {
 }
 
 func list(asJSON bool) {
+	fleet.Prices = cost.NewTable(config.Prices())
 	agents, err := fleet.Snapshot()
 	if err != nil {
 		fail("den: %v", err)
 	}
 	if asJSON {
+		edges := tree.Load(tree.Path())
+		own := map[string]cost.Summary{}
+		for _, a := range agents {
+			own[a.Session.SessionID] = a.Cost
+		}
+		for i, a := range agents {
+			if len(edges.Children(a.Session.SessionID)) > 0 {
+				t := cost.Tree(edges, a.Session.SessionID, func(id string) cost.Summary { return own[id] })
+				agents[i].TeamCost = &t
+			}
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(agents)
@@ -195,4 +209,10 @@ func configCmd(args []string) {
 	fmt.Printf("[inbox]\nhistory = %d\n\n", c.Inbox.History)
 	fmt.Printf("[detail]\nrecent = %d\n\n", c.Detail.Recent)
 	fmt.Printf("[hooks]\npermission_wait = %d\nlog = %v\n", c.Hooks.PermissionWait, c.Hooks.Log)
+	if prices := config.Prices(); len(prices) > 0 {
+		fmt.Printf("\n[prices]\n")
+		for k, v := range prices {
+			fmt.Printf("%s = %q\n", k, v)
+		}
+	}
 }

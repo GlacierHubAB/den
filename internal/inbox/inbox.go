@@ -24,6 +24,7 @@ const (
 	Sent                   // a message you sent, with its delivery status
 	Close                  // Den asks: close these agents? y/n answer it
 	Skills                 // Den asks: install these catalogue skills? y/n answer it
+	Budget                 // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -44,6 +45,8 @@ func (k Kind) String() string {
 		return "close"
 	case Skills:
 		return "skills"
+	case Budget:
+		return "budget"
 	}
 	return "?"
 }
@@ -86,7 +89,7 @@ func (it *Item) Answerable() bool {
 
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
-func (it *Item) DenAsks() bool { return it.Kind == Close || it.Kind == Skills }
+func (it *Item) DenAsks() bool { return it.Kind == Close || it.Kind == Skills || it.Kind == Budget }
 
 // needsYou reports whether the item still waits on the human.
 func (it *Item) needsYou() bool {
@@ -265,6 +268,12 @@ func (s *Store) AddClose(sessionID, title string, body []string, req *bridge.Req
 // the request of whoever proposed them.
 func (s *Store) AddSkills(sessionID, title string, body []string, req *bridge.Request) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Skills, Tool: "propose_skills", Title: title, Body: body, req: req})
+}
+
+// AddBudget adds Den's question: a mission reached its budget, keep going or
+// stop it? sessionID is "mission:<id>".
+func (s *Store) AddBudget(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: Budget, Tool: "mission_budget", Title: title, Body: body})
 }
 
 // Settle resolves a Close or Skills item with the outcome and sends it to whoever

@@ -70,6 +70,7 @@ type Run struct {
 	EndedAt   time.Time `json:"ended,omitempty"`
 	Summary   string    `json:"summary,omitempty"`
 	Cards     []string  `json:"cards,omitempty"` // dispatch card ids
+	Cost      *RunCost  `json:"cost,omitempty"`  // what the run used, recorded when it ended
 }
 
 // Mission is one standing goal on one project.
@@ -91,6 +92,7 @@ type Mission struct {
 	Updated     time.Time `json:"updated"`
 	NextRun     time.Time `json:"next_run,omitempty"`
 	Runs        []Run     `json:"runs,omitempty"`
+	Budget      Budget    `json:"budget,omitzero"`
 }
 
 // Member is a role the orchestrator means to start for the mission.

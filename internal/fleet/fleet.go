@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/badge"
+	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
 	"github.com/GlacierHubAB/den/internal/hypr"
@@ -88,6 +89,8 @@ type Agent struct {
 	UsageFromBadge bool        // the figures came from agent-badge, which gets them from Claude Code itself
 	Limits         badge.Usage // rate limits and spend as agent-badge recorded them
 	HasLimit       bool
+	Cost           cost.Summary       // tokens used and the estimated dollars, from the transcript
+	TeamCost       *cost.Summary      `json:",omitempty"` // with everyone the agent directs; set by den list -json for agents that direct others
 	Tail           []transcript.Entry // recent prompts, replies and tool calls
 	Path           string             // transcript path, "" when none
 }
@@ -174,6 +177,9 @@ func mergeUsage(u transcript.Usage, has bool, l badge.Usage, hasL bool) (transcr
 // from the config file.
 var Recent = 20
 
+// Prices prices the tokens in Cost; main sets it from the config file.
+var Prices = cost.NewTable(nil)
+
 func Snapshot() ([]Agent, error) {
 	sessions, err := discover.Scan()
 	if err != nil {
@@ -202,6 +208,7 @@ func Snapshot() ([]Agent, error) {
 		if a.Path != "" {
 			a.Usage, a.HasUsage = transcript.ReadUsage(a.Path)
 			a.Tail = transcript.Tail(a.Path, Recent)
+			a.Cost = Prices.Of(transcript.Shared.Account(a.Path))
 		}
 		a.Usage, a.HasUsage, a.UsageFromBadge = mergeUsage(a.Usage, a.HasUsage, a.Limits, a.HasLimit)
 		switch {
@@ -333,6 +340,9 @@ func Explain(a Agent) []string {
 				src = "as agent-badge recorded them from Claude Code"
 			}
 			add("context   %d of %d tokens (%d%%) %s", a.Usage.Tokens, a.Usage.Window, a.Usage.Percent(), src)
+		}
+		if a.Cost.Total() > 0 {
+			add("cost      %s, summed over the transcript's assistant messages (each counted once) and its subagent files; dollars are an estimate from a price table taken %s", a.Cost.Line(), cost.PricesAsOf)
 		}
 	} else {
 		add("transcript none found under %s", transcript.ProjectsDir())

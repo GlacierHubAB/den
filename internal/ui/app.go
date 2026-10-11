@@ -17,6 +17,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/colors"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/critter"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -103,6 +104,7 @@ type Model struct {
 	flash    string
 	flashErr bool
 	help     bool
+	costs    costState // cost figures kept by the tick
 	watch    <-chan struct{}
 	lastScan time.Time
 
@@ -160,6 +162,7 @@ func New(cfg config.Config) Model {
 	m.guard, m.guardPath = closer.LoadGuard(closer.GuardPath()), closer.GuardPath()
 	m.loadProjectPick()
 	fleet.Recent = cfg.Detail.Recent
+	fleet.Prices = cost.NewTable(config.Prices())
 	m.store.HistoryLimit(cfg.Inbox.History)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
 	m.chatLog = ChatLogPath()
@@ -917,6 +920,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Skills {
 		return m.decideSkills(it, verb)
 	}
+	if it.Kind == inbox.Budget {
+		return m.decideBudget(it, verb)
+	}
 	m.store.Answer(it, verb)
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
@@ -1024,6 +1030,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
 			return m.say(note, isErr)
 		}
+	case "/budget":
+		note, isErr := m.budgetCommand(fields[1:])
+		return m.say(note, isErr)
 	case "/orchestrator", "/orch":
 		m.tab = tabOrch
 		if len(fields) > 1 && fields[1] == "new" {

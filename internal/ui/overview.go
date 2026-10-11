@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/mission"
 )
 
@@ -24,8 +25,22 @@ type overviewState struct {
 // pick, shown on the Overview and Review views.
 func (m Model) projectStrip(w int) string {
 	s := m.st
+	fleetTotal := ""
+	if f := m.fleetCost(); f.Total() > 0 {
+		fleetTotal = "fleet " + f.Line()
+	}
+	if m.orch.cost > 0 {
+		if fleetTotal != "" {
+			fleetTotal += " + "
+		}
+		fleetTotal += "orchestrator " + cost.Dollars(m.orch.cost, false)
+	}
 	if len(m.proj.list) == 0 {
-		return ansi.Truncate(" "+s.dim.Render("no project yet: projects appear when an agent edits files in a repository"), w, "…")
+		left := " " + s.dim.Render("no project yet: projects appear when an agent edits files in a repository")
+		if fleetTotal != "" && ansi.StringWidth(left)+ansi.StringWidth(fleetTotal)+3 <= w {
+			return justify(left, s.dim.Render(fleetTotal)+" ", w)
+		}
+		return ansi.Truncate(left, w, "…")
 	}
 	var parts []string
 	parts = append(parts, s.section.Render("PROJECT"))
@@ -41,9 +56,12 @@ func (m Model) projectStrip(w int) string {
 		parts = append(parts, s.muted.Render(fmt.Sprintf("no project %d", m.proj.loose)))
 	}
 	left := " " + strings.Join(parts, "  ")
-	right := ""
+	right := fleetTotal
 	if p, ok := m.curProject(); ok {
-		right = shortPath(p.Root, "")
+		if right != "" {
+			right += " · "
+		}
+		right += shortPath(p.Root, "")
 		if p.Branch != "" {
 			right += " · " + p.Branch
 		}
@@ -52,9 +70,16 @@ func (m Model) projectStrip(w int) string {
 		}
 		right = s.dim.Render(right) + " "
 	}
-	// The path is a nicety: it goes before the chips get cut.
+	// The path is a nicety: it goes before the chips get cut, and the fleet
+	// total outlasts it.
 	if ansi.StringWidth(left)+ansi.StringWidth(right)+2 > w {
 		right = ""
+		if fleetTotal != "" {
+			right = s.dim.Render(fleetTotal) + " "
+		}
+		if ansi.StringWidth(left)+ansi.StringWidth(right)+2 > w {
+			right = ""
+		}
 	}
 	return ansi.Truncate(justify(left, right, w), w, "…")
 }
@@ -445,12 +470,16 @@ func (m Model) missionLines(w int) []string {
 	out = append(out, justify("  "+s.bright.Bold(true).Render(ms.Name), st+" ", w))
 	out = append(out, "")
 	out = append(out, m.fieldLines(ms, w)...)
+	out = append(out, m.costLines(ms, w)...)
 	for i := len(ms.Runs) - 1; i >= 0; i-- {
 		r := ms.Runs[i]
 		out = append(out, "")
 		when := r.StartedAt.Format("15:04")
 		if !r.EndedAt.IsZero() {
 			when += " → " + r.EndedAt.Format("15:04")
+		}
+		if rs := m.runSpent(ms, &r); rs.Tokens > 0 {
+			when += " · " + rs.line()
 		}
 		head := s.dim.Render(fmt.Sprintf("  run %d · %s", r.N, when))
 		trail := r.Summary

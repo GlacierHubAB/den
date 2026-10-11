@@ -242,6 +242,7 @@ func (m *Model) settleMissions() tea.Cmd {
 		return nil
 	}
 	now := time.Now()
+	m.settleCosts()
 	var cmds []tea.Cmd
 	for _, ms := range m.missions.All() {
 		if !ms.Live() {
@@ -326,12 +327,17 @@ func (m *Model) missionCommand(verb string) (note string, isErr, ok bool) {
 			return "That mission is not paused.", true, true
 		}
 		ms.State = mission.Running
+		if ms.Budget.Asked {
+			ms.Budget.Waived = true
+			m.settleBudgetItem(ms.ID, "resumed by hand, past the budget")
+		}
 		if ms.Shape == mission.Schedule {
 			if next, err := mission.Next(ms.Cadence, now); err == nil {
 				ms.NextRun = next
 			}
 		}
 	case "/stop":
+		m.settleBudgetItem(ms.ID, "mission stopped by hand")
 		if r := ms.CurrentRun(); r != nil {
 			r.EndedAt, r.Summary = now, firstNonEmptyS(r.Summary, "stopped by you")
 		}

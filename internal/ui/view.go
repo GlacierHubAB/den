@@ -536,6 +536,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "close them")+"  "+key("^N", "keep them"))
 	case it.Answerable() && it.Kind == inbox.Skills:
 		out = append(out, key("^Y", "install them")+"  "+key("^N", "decline"))
+	case it.Answerable() && it.Kind == inbox.Budget:
+		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	default:
@@ -683,6 +685,9 @@ func (m Model) inboxPane(w, h int) string {
 			}
 			if it.Kind == inbox.Skills {
 				acts = key("^Y", "install them") + sp + sp + key("^N", "decline")
+			}
+			if it.Kind == inbox.Budget {
+				acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:
@@ -863,6 +868,9 @@ func (m Model) detailPane(w, h int) string {
 			}
 			b.WriteString("\n")
 		}
+	}
+	for _, r := range m.agentCostLines(a) {
+		kv(r[0], r[1])
 	}
 	kv("where", a.Where())
 	if a.HasGit {

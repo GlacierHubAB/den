@@ -67,6 +67,19 @@ func Load() Config {
 	return c
 }
 
+// Prices is the [prices] section: a model-id prefix to "input, output,
+// cache write, cache read" in dollars per million tokens, overriding the
+// cost estimate's built-in table.
+func Prices() map[string]string {
+	out := map[string]string{}
+	for k, v := range parse(Path()) {
+		if model, ok := strings.CutPrefix(k, "prices."); ok && v != "" {
+			out[model] = v
+		}
+	}
+	return out
+}
+
 func (c *Config) apply(kv map[string]string) {
 	str := func(dst *string, key string) {
 		if v, ok := kv[key]; ok && v != "" {
@@ -167,6 +180,12 @@ recent = 20                 # activity entries shown in the details pane
 [hooks]
 permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
+
+# The cost estimate prices tokens from a built-in table (taken 2026-09-25).
+# Override a model, by id prefix, in dollars per million tokens:
+# input, output, cache write, cache read. The last two may be left out.
+# [prices]
+# claude-opus-5-5 = "4, 20, 5, 0.2"
 `
 
 // stripComment drops a trailing # comment that is not inside quotes.
