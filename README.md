@@ -431,14 +431,14 @@ The catalogue is `internal/skills/catalogue.json`, built into the binary. Every
 entry names a GitHub repository, a full commit SHA (never a branch), an
 allowed license, its role tags, a one-line reason, what was checked before it
 was admitted, and every file with its SHA-256. `den skills catalogue` prints it.
-It holds six skills from three repositories:
+It holds six skills from four repositories:
 
 | Skill | Roles | Repository @ commit | License |
 | --- | --- | --- | --- |
 | frontend-design | frontend, design | anthropics/skills @ dbd4588f9e10 | Apache-2.0 |
 | test-driven-development | testing, coding | obra/superpowers @ bb92a7774141 | MIT |
 | verification-before-completion | coding | obra/superpowers @ bb92a7774141 | MIT |
-| systematic-debugging | coding | obra/superpowers @ bb92a7774141 | MIT |
+| diagnosing-bugs | coding | mattpocock/skills @ 49dd158d1076 | MIT |
 | vulnerability-triage-brocards | security | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
 | property-based-testing | testing | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
 

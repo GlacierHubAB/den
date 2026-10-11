@@ -25,6 +25,14 @@
       "commit_date": "2026-10-09T17:55:03-04:00",
       "license": "CC-BY-SA-4.0",
       "maintenance": "Latest commit 2026-10-09; pushed 2026-10-09; not archived."
+    },
+    {
+      "id": "mattpocock/skills",
+      "url": "https://github.com/mattpocock/skills",
+      "commit": "49dd158d1076134a641b33efb035946536778336",
+      "commit_date": "2026-10-09T11:56:49+01:00",
+      "license": "MIT",
+      "maintenance": "Latest commit 2026-10-09; 203 commits since 2026-08-01; not archived (gh api). Ships as a Claude Code plugin (.claude-plugin/plugin.json) of SKILL.md folders."
     }
   ],
   "skills": [
@@ -116,79 +124,39 @@
       ]
     },
     {
-      "name": "systematic-debugging",
-      "repo": "obra/superpowers",
-      "commit": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
-      "path": "skills/systematic-debugging",
+      "name": "diagnosing-bugs",
+      "repo": "mattpocock/skills",
+      "commit": "49dd158d1076134a641b33efb035946536778336",
+      "path": "skills/engineering/diagnosing-bugs",
       "license": "MIT",
       "license_source": "LICENSE",
       "roles": [
         "coding"
       ],
-      "reason": "Root-cause-first debugging process with tracing, defense-in-depth and flaky-test techniques.",
-      "checks": "Read every file in full. No hooks/allowed-tools/context/agent/model keys and no !`cmd`/```! injection in any .md. No curl/wget/network instructions, credential access, binaries or prompt injection found. 11 files incl. find-polluter.sh (local bisection: runs 'npm test <file>' per test file, checks a path exists; read in full) and condition-based-waiting-example.ts (pure TS helper, read in full). The 4 test-*.md files are pressure-test scenarios, harmless. SKILL.md shows an echo of SET/UNSET for a secret env var (presence only, never the value). Nothing was run. Repo LICENSE is MIT. Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: References other superpowers skills by name (test-driven-development, verification-before-completion) which are not installed unless also approved; the shell script is only run if the agent chooses to.",
+      "reason": "Feedback-loop-first diagnosis of hard bugs and regressions: a tight red repro, minimise, ranked hypotheses, tagged instrumentation, regression test, cleanup.",
+      "checks": "Read every file in full (SKILL.md, scripts/hitl-loop.template.sh, agents/openai.yaml). No hooks/allowed-tools or other tool/model keys in frontmatter, no !`cmd`/```! blocks, no prompt injection, no credential access: it tells the agent to redact secrets as <REDACTED>. Its curl mention is an HTTP request to a local dev server for a repro, not a download. The one script is a template the agent copies and edits (prompts the human with read/printf only; no network, no files touched). No executables, no binaries. Repo LICENSE is MIT; Den adds it as LICENSE in the installed folder. Notes: self-contained, names no other skill; agents/openai.yaml is display metadata for another harness.",
       "unverified": "",
       "files": [
         {
-          "path": "CREATION-LOG.md",
-          "sha256": "c24733a5b1821bd6bed1fc950261f0b9f4e90097e0bbb96459d8179713730789",
-          "size": 4257
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+          "size": 1068
         },
         {
           "path": "SKILL.md",
-          "sha256": "51c6435d98c83c42c96ba7c35725a0b2c376cd487fb1a4e6bd0ddbe7e33ef202",
-          "size": 9530
+          "sha256": "849198df88cdb65fd0d97236604c1fca7ff2f22d2f705f9724a800d0266b118d",
+          "size": 8664
         },
         {
-          "path": "condition-based-waiting-example.ts",
-          "sha256": "40ae5ebe497fdf310200e43fe986552546d0a22837c0d39e855db1cfd33eb88e",
-          "size": 5054
+          "path": "agents/openai.yaml",
+          "sha256": "3e430dbe4334a87597488c060cb3dc3786bb00c9182877d6f5ec41f62490e90b",
+          "size": 103
         },
         {
-          "path": "condition-based-waiting.md",
-          "sha256": "e89fec8400d6cd50f43407cec9fab50976ba4d55d0ec2eb51c0bd68036b54c26",
-          "size": 3516
-        },
-        {
-          "path": "defense-in-depth.md",
-          "sha256": "1e175fb86fc357e58c6aebf5441e481e1b7868b4380c0456b63a17eefbd18ba7",
-          "size": 3650
-        },
-        {
-          "path": "find-polluter.sh",
-          "sha256": "dd7b8f13c4cc2a24b33ff87b18da9248f3e1c80a085c3316224f69ff0fa5c43c",
-          "size": 1986
-        },
-        {
-          "path": "root-cause-tracing.md",
-          "sha256": "75b933b6a8c40bdb2031b10f21654395b56ec6ab6bc7b018c18d3fe57aeb7fb8",
-          "size": 5321
-        },
-        {
-          "path": "test-academic.md",
-          "sha256": "fe2ba480d78ac0d686dc025f41c2a32a43d642bf533f91b0c6053a04d35d6486",
-          "size": 653
-        },
-        {
-          "path": "test-pressure-1.md",
-          "sha256": "0b6a915db0054577819834c79be9eb614e97bddba10d73768e1fbe91cfed048a",
-          "size": 1900
-        },
-        {
-          "path": "test-pressure-2.md",
-          "sha256": "b2030aeffba07050e8ad573ddf87486457c4a016a786bb326235bebd856f2016",
-          "size": 2283
-        },
-        {
-          "path": "test-pressure-3.md",
-          "sha256": "96b50a52e2c7989c9cf20fb752c47c1e9a3a70dc362f8f7989f8f5b64dac7708",
-          "size": 2692
-        },
-        {
-          "path": "LICENSE",
-          "source": "LICENSE",
-          "sha256": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
-          "size": 1070
+          "path": "scripts/hitl-loop.template.sh",
+          "sha256": "35103539fc36873eea36074769ad454f9379d6fc8b2dc0e26ce987fd3bfe5503",
+          "size": 1316
         }
       ]
     },

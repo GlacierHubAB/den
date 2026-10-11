@@ -247,3 +247,21 @@ func TestLinesNameRepoCommitLicense(t *testing.T) {
 		t.Errorf("lines: %q", ls)
 	}
 }
+
+func TestCodingRoleGetsDiagnosingBugsNotSystematicDebugging(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, m := range c.Match("coding agent") {
+		got = append(got, m.Name)
+	}
+	want := []string{"test-driven-development", "verification-before-completion", "diagnosing-bugs"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("coding agent → %v, want %v", got, want)
+	}
+	if _, ok := c.Skill("systematic-debugging"); ok {
+		t.Error("systematic-debugging yielded to diagnosing-bugs and must not ship")
+	}
+}
