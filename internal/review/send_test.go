@@ -68,6 +68,11 @@ func TestChanged(t *testing.T) {
 		{"removed lines back", removed, []byte(file + "func Old() {}\n"), true},
 		{"context only", Comment{Quote: []string{" package a"}}, []byte(file), false},
 		{"no quote", Comment{}, nil, false},
+		// The quoted line is in the file twice when sent; fixing one copy
+		// is a change, though the other is still there.
+		{"one of two copies fixed", Comment{Quote: []string{"+\treturn a - b"}, Copies: 2}, []byte("func add() {\n\treturn a + b\n}\nfunc sub() {\n\treturn a - b\n}\n"), true},
+		{"both copies still there", Comment{Quote: []string{"+\treturn a - b"}, Copies: 2}, []byte("func add() {\n\treturn a - b\n}\nfunc sub() {\n\treturn a - b\n}\n"), false},
+		{"removed line back once more", Comment{Quote: []string{"-}"}, Copies: 3}, []byte("}\n}\n}\n}\n"), true},
 	}
 	for _, tc := range cases {
 		if got := Changed(tc.c, tc.content); got != tc.want {
@@ -79,8 +84,8 @@ func TestChanged(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "a.go"), []byte(file), 0o644)
 	c := kept
 	c.Root, c.Path = dir, "a.go"
-	if FileChanged(c) {
-		t.Error("unchanged file on disk reported changed")
+	if FileChanged(c) || FileCopies(c) != 1 {
+		t.Errorf("unchanged file on disk reported changed (copies %d)", FileCopies(c))
 	}
 	os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n"), 0o644)
 	if !FileChanged(c) {

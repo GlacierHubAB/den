@@ -108,6 +108,7 @@ func (m Model) sendReview(args []string) (tea.Model, tea.Cmd) {
 			ids = append(ids, c.ID)
 			m.rev.sending[c.ID] = true
 		}
+		m.noteCopies(ids)
 		if m.atTerminal(a.Session.SessionID) {
 			it := m.store.Sent(a.Session.SessionID, text, "waiting: you are at that terminal")
 			m.queue = append(m.queue, outgoing{agent: a, text: text, item: it, since: time.Now(), review: ids})
@@ -159,6 +160,7 @@ func (m Model) sendReviewToOrchestrator() (tea.Model, tea.Cmd) {
 		return m.say("No drafts are waiting for an ended session; /send delivers to live agents.", true)
 	}
 	text := strings.Join(parts, "\n\n")
+	m.noteCopies(ids)
 	now := time.Now()
 	for i := range m.rev.comments {
 		for _, id := range ids {
@@ -199,6 +201,18 @@ func (m *Model) applyReviewSent(msg sentMsg) {
 		}
 	}
 	m.saveComments()
+}
+
+// noteCopies records, as the comments go out, how often their quoted lines
+// are in the file, the baseline for telling later that they changed.
+func (m *Model) noteCopies(ids []string) {
+	for i := range m.rev.comments {
+		for _, id := range ids {
+			if m.rev.comments[i].ID == id {
+				m.rev.comments[i].Copies = review.FileCopies(m.rev.comments[i])
+			}
+		}
+	}
 }
 
 // markAddressed records comments whose quoted lines changed on disk.

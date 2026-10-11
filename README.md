@@ -563,10 +563,11 @@ project picked on Overview.
   so; `/send orchestrator` hands them to the orchestrator to pass on. If
   delivery fails the comments stay drafts.
 - **Addressed.** A sent comment stays under its line, marked "sent · open",
-  until the lines it quotes change on disk. Den looks for them anywhere in
-  the file whenever the diffs reload, so edits that only move them do not
-  count. Then it reads "sent · addressed". A comment on removed lines counts
-  as addressed once those lines are back.
+  until the lines it quotes change on disk. When it is sent Den counts how
+  often those lines appear in the file, and whenever the diffs reload it
+  counts again: fewer means the agent changed them, and the comment reads
+  "sent · addressed". Edits that only move the lines do not count. A comment
+  on removed lines counts as addressed once those lines are back.
 - **Refresh.** The diffs reload when you enter the tab if they are older than
   2 s, every 15 s while it is open, and on `/rescan`.
 

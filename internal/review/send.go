@@ -106,30 +106,20 @@ func splitQuote(q string) (byte, string) {
 
 // Changed reports whether the lines a comment quotes have changed in the
 // file's current content (nil when the file is gone). The lines still in
-// the file are looked for as one block anywhere in it, so edits elsewhere
-// that move them do not count; when the comment quotes only removed lines,
-// it counts as changed once those lines are back.
+// the file are counted as one block anywhere in it, so edits that only move
+// them do not count: the comment changed when there are fewer copies than
+// when it was sent (Copies). When it quotes only removed lines, it changed
+// once there are more copies of them: they are back.
 func Changed(c Comment, content []byte) bool {
-	var kept, removed []string
-	for _, q := range c.Quote {
-		kind, text := splitQuote(q)
-		if kind == '-' {
-			removed = append(removed, text)
-		} else {
-			kept = append(kept, text)
-		}
-	}
-	if len(kept) == 0 && len(removed) == 0 {
+	block, removed := anchor(c)
+	if len(block) == 0 {
 		return false // nothing to compare with
 	}
-	if content == nil {
-		return true
+	n := occurrences(content, block)
+	if removed {
+		return n > c.Copies
 	}
-	lines := strings.Split(string(bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))), "\n")
-	if len(kept) > 0 {
-		return !containsBlock(lines, kept)
-	}
-	return containsBlock(lines, removed)
+	return n < max(c.Copies, 1)
 }
 
 // FileChanged is Changed against the file on disk.
@@ -144,18 +134,54 @@ func FileChanged(c Comment) bool {
 	return Changed(c, raw)
 }
 
-func containsBlock(lines, block []string) bool {
-	for i := 0; i+len(block) <= len(lines); i++ {
-		match := true
-		for j, l := range block {
-			if lines[i+j] != l {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
+// FileCopies counts the copies of a comment's quoted lines in the file on
+// disk now, for Copies when it is sent.
+func FileCopies(c Comment) int {
+	block, _ := anchor(c)
+	raw, err := os.ReadFile(filepath.Join(c.Root, c.Path))
+	if err != nil || len(block) == 0 {
+		return 0
+	}
+	return occurrences(raw, block)
+}
+
+// anchor is what Changed looks for: the quoted lines that are in the new
+// file, or the removed ones when there are no others.
+func anchor(c Comment) (block []string, removedOnly bool) {
+	var kept, removed []string
+	for _, q := range c.Quote {
+		kind, text := splitQuote(q)
+		if kind == '-' {
+			removed = append(removed, text)
+		} else {
+			kept = append(kept, text)
 		}
 	}
-	return false
+	if len(kept) > 0 {
+		return kept, false
+	}
+	return removed, len(removed) > 0
+}
+
+func occurrences(content []byte, block []string) int {
+	if content == nil {
+		return 0
+	}
+	lines := strings.Split(string(bytes.ReplaceAll(content, []byte("\r\n"), []byte("\n"))), "\n")
+	n := 0
+	for i := 0; i+len(block) <= len(lines); i++ {
+		if blockAt(lines, i, block) {
+			n++
+		}
+	}
+	return n
+}
+
+func blockAt(lines []string, i int, block []string) bool {
+	for j, l := range block {
+		if lines[i+j] != l {
+			return false
+		}
+	}
+	return true
 }

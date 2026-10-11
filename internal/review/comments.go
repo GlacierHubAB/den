@@ -23,6 +23,9 @@ type Comment struct {
 	// Via is "orchestrator" when the comment went to the orchestrator
 	// because its agent's session had ended; "" when it went to the agent.
 	Via string `json:"via,omitempty"`
+	// Copies is how many times the quoted lines were in the file when the
+	// comment was sent; fewer later means they changed (see Changed).
+	Copies int `json:"copies,omitempty"`
 	// Addressed is when Den saw the quoted lines change after sending;
 	// zero while the comment is open.
 	Addressed time.Time `json:"addressed,omitzero"`

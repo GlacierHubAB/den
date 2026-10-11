@@ -80,6 +80,7 @@ func sendModel(t *testing.T) Model {
 		mk("s-maple", "Maple Owl", fleet.Working, "/tmp/maple.sock"),
 		mk("s-comet", "Comet Newt", fleet.Gone, "/tmp/comet.sock"),
 	}
+	m.base = m.agents // refresh rebuilds agents from base
 	m.input = newInput(m.st)
 	m.rev.commentsPath = filepath.Join(t.TempDir(), "reviews.json")
 	at := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
@@ -258,12 +259,24 @@ func TestSendReviewToOrchestrator(t *testing.T) {
 // stay open while they do not.
 func TestReviewMarksAddressed(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc add(a, b int) int {\n\treturn a - b\n}\n"), 0o644)
+	// "return a - b" is there twice: in add, which m1 is about, and in sub.
+	os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc add(a, b int) int {\n\treturn a - b\n}\n\nfunc sub(a, b int) int {\n\treturn a - b\n}\n"), 0o644)
+	useFakePeer(t)
 	m := sendModel(t)
 	for i := range m.rev.comments {
 		m.rev.comments[i].Root = root
 	}
-	m.rev.comments[0].Sent = time.Now() // m1: main.go:4 "return a - b"
+	mm, cmd := m.command("/send mossy")
+	m = mm.(Model)
+	for _, msg := range runQuick(cmd) {
+		if s, ok := msg.(sentMsg); ok {
+			mm, _ := m.Update(s)
+			m = mm.(Model)
+		}
+	}
+	if c := byID(m, "m1"); c.Copies != 2 || !c.Open() {
+		t.Fatalf("m1 sent = %+v", c)
+	}
 	open := func() []review.Comment {
 		var out []review.Comment
 		for _, c := range m.rev.comments {
@@ -278,13 +291,14 @@ func TestReviewMarksAddressed(t *testing.T) {
 	if !byID(m, "m1").Open() || !byID(m, "old").Open() {
 		t.Fatalf("addressed too early: %+v", m.rev.comments)
 	}
-	os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\nfunc add(a, b int) int {\n\treturn a + b\n}\n"), 0o644)
+	os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n\n// add adds.\nfunc add(a, b int) int {\n\treturn a + b\n}\n\nfunc sub(a, b int) int {\n\treturn a - b\n}\n"), 0o644)
 	m.applyReview(reviewLoadedMsg{addressed: addressedComments(open())})
 	if c := byID(m, "m1"); c.Open() || c.Addressed.IsZero() {
 		t.Errorf("m1 not addressed: %+v", c)
 	}
-	if !byID(m, "old").Open() || !byID(m, "p1").Draft() {
-		t.Error("an untouched comment changed state")
+	// m2 (util.go) was sent too, and its file is gone: addressed as well.
+	if !byID(m, "old").Open() || !byID(m, "p1").Draft() || byID(m, "m2").Open() {
+		t.Error("a comment has the wrong state")
 	}
 	if c := review.LoadComments(m.rev.commentsPath); len(c) == 0 || c[0].Addressed.IsZero() {
 		t.Error("addressed not saved")
@@ -292,7 +306,7 @@ func TestReviewMarksAddressed(t *testing.T) {
 	// Drawn as such in the drafts column and under the line.
 	m.agents[0].Status = fleet.Idle
 	out := ansi.Strip(m.notesPane(50, 40))
-	if !strings.Contains(out, "✓ main.go:4") || !strings.Contains(out, "→ main.go:1") || !strings.Contains(out, "• util.go:9") {
+	if !strings.Contains(out, "✓ main.go:4") || !strings.Contains(out, "→ main.go:1") || !strings.Contains(out, "✓ util.go:9") {
 		t.Errorf("notes pane:\n%s", out)
 	}
 	if !strings.Contains(out, "session ended · /send orchestrator hands these on") {
@@ -301,7 +315,7 @@ func TestReviewMarksAddressed(t *testing.T) {
 	if got := ansi.Strip(strings.Join(m.commentRows(byID(m, "m1"), 80), "\n")); !strings.Contains(got, "sent · addressed") {
 		t.Errorf("comment rows = %q", got)
 	}
-	if got := m.notesTitle(); got != "Review · 4 drafts · 1 open" {
+	if got := m.notesTitle(); got != "Review · 3 drafts · 1 open" {
 		t.Errorf("title = %q", got)
 	}
 }
