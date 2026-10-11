@@ -54,6 +54,10 @@ func (m Model) projectStrip(w int) string {
 		}
 		right = s.dim.Render(right) + " "
 	}
+	// The path is a nicety: it goes before the chips get cut.
+	if ansi.StringWidth(left)+ansi.StringWidth(right)+2 > w {
+		right = ""
+	}
 	return ansi.Truncate(justify(left, right, w), w, "…")
 }
 
