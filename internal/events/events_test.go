@@ -34,7 +34,7 @@ func TestFromHookCarriesMetadataOnly(t *testing.T) {
 		{hook("UserPromptSubmit", map[string]any{"prompt": secret}), "turn_start////"},
 		{hook("Stop", map[string]any{"last_assistant_message": secret}), "done////"},
 		{hook("StopFailure", map[string]any{"error": "rate_limit", "last_assistant_message": secret}), "turn_failed///rate_limit/"},
-		{hook("PostToolUseFailure", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": secret}, "tool_error": secret}), "tool_failed//Bash//"},
+		{hook("PostToolUseFailure", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": secret}, "error": secret, "is_interrupt": false}), "tool_failed//Bash//"},
 		{hook("PermissionRequest", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": secret}}), "needs_you/permission/Bash//"},
 		{hook("PermissionRequest", map[string]any{"tool_name": "ExitPlanMode", "tool_input": map[string]any{"plan": secret}}), "needs_you/plan///"},
 		{hook("PreToolUse", map[string]any{"tool_name": "AskUserQuestion", "tool_input": map[string]any{"questions": secret}}), "needs_you/question///"},

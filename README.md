@@ -452,9 +452,10 @@ and leave merging to you. A lead can give each of its people a tree the same
 way. By default Claude Code branches from the repository's default branch on
 the remote; its `worktree.baseRef` setting changes that. To carry gitignored
 files such as `.env` into every new worktree, use Claude Code's own
-`.worktreeinclude` file. Den has no per-repository setup command. Claude Code
-asks what to do with a worktree when its session exits; Den never removes one
-by itself (see Review).
+`.worktreeinclude` file. Den has no per-repository setup command. When a
+session exits with changes or commits in its worktree, Claude Code asks whether
+to keep or remove it; an untouched worktree is removed without asking, and a
+crashed session's stays. Den never removes one by itself (see Review).
 
 **Leads staff their own work.** Every agent the orchestrator starts gets Den's
 MCP server too, so it has `spawn_agent` itself, pre-approved. A lead's brief

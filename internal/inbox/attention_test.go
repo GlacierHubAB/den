@@ -43,7 +43,7 @@ func TestStopFailureIsFailedNotNeedsYou(t *testing.T) {
 func TestToolFailureStreak(t *testing.T) {
 	store := New()
 	fail := func() *Item {
-		return store.Apply(hook("s1", "PostToolUseFailure", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "cat secrets.txt"}, "tool_error": "exit 1"}))
+		return store.Apply(hook("s1", "PostToolUseFailure", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "cat secrets.txt"}, "error": "exit 1", "is_interrupt": false}))
 	}
 	if fail() != nil || fail() != nil {
 		t.Fatal("two failures are normal work")
@@ -64,6 +64,14 @@ func TestToolFailureStreak(t *testing.T) {
 	}
 	if fail() != nil {
 		t.Error("the streak starts over")
+	}
+	for i := 0; i < 5; i++ {
+		if store.Apply(hook("s1", "PostToolUseFailure", map[string]any{"tool_name": "Bash", "error": "interrupted", "is_interrupt": true})) != nil {
+			t.Fatal("an interrupt is not a failing tool")
+		}
+	}
+	if fail() != nil {
+		t.Error("interrupts left the streak where it was")
 	}
 	store.ToolFailureLimit(0)
 	for i := 0; i < 5; i++ {

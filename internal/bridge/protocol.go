@@ -83,6 +83,9 @@ type HookInput struct {
 	// another event's error of a different shape cannot spoil the decode.
 	ErrorType string          `json:"error_type"`
 	Error     json.RawMessage `json:"error"`
+	// PostToolUseFailure: true when the human interrupted the tool (Esc),
+	// which is not the tool failing.
+	IsInterrupt bool `json:"is_interrupt"`
 }
 
 // FailureType is a StopFailure's error type: "rate_limit", "server_error",

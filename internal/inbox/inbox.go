@@ -222,6 +222,10 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 	case "PostToolUseFailure":
 		// Failing commands are part of normal work; only a run of them is
 		// worth a look. The item names the tool, never its input or output.
+		// An interrupt is the human stopping the tool, so it does not count.
+		if in.IsInterrupt {
+			return nil
+		}
 		s.streak[in.SessionID]++
 		n := s.streak[in.SessionID]
 		if s.failing <= 0 || n < s.failing {
