@@ -3,3 +3,18 @@
 *.log
 /dist
 /.claude/
+
+# editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# local test and build output
+*.test
+*.out
+coverage.*
