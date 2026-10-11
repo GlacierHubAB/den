@@ -8,12 +8,14 @@ build:
 	go build -ldflags '$(LDFLAGS)' -o den ./cmd/den
 
 install:
+	mkdir -p $(PREFIX)/bin
 	go build -ldflags '$(LDFLAGS)' -o $(PREFIX)/bin/den ./cmd/den
 
 test:
 	go vet ./... && XDG_STATE_HOME=$$(mktemp -d) go test ./...
 
-# Static binaries for the platforms Den runs on, plus checksums.
+# Static linux binaries (Den needs Hyprland, so Linux only), plus checksums.
+# Builds into dist/ only; nothing is published from here.
 release: clean
 	mkdir -p dist
 	for arch in amd64 arm64; do \
