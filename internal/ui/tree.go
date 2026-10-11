@@ -266,6 +266,27 @@ func (m Model) edgeFor(id string) tree.Edge {
 	return e
 }
 
+// descendants lists every session under the given one, parents before
+// their children.
+func (m Model) descendants(id string) []string {
+	var out []string
+	seen := map[string]bool{id: true}
+	var walk func(string)
+	walk = func(p string) {
+		for _, a := range m.childrenOf(p) {
+			sid := a.Session.SessionID
+			if seen[sid] {
+				continue
+			}
+			seen[sid] = true
+			out = append(out, sid)
+			walk(sid)
+		}
+	}
+	walk(id)
+	return out
+}
+
 // rollup counts what the descendants of a session are up to.
 type rollup struct{ needsYou, working, done, gone, total int }
 

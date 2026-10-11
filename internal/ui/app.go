@@ -817,10 +817,17 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		it = m.inboxSelected()
 	}
 	if d := m.focusedCard(); d != nil && m.tab == tabOrch {
+		// The card's own session first, then whatever it directs, so the
+		// "needs you · via <child>" state can be answered from here.
 		it = nil
-		for _, o := range m.store.Items() {
-			if o.SessionID == d.SessionID && o.Answerable() {
-				it = o
+		for _, sid := range append([]string{d.SessionID}, m.descendants(d.SessionID)...) {
+			for _, o := range m.store.Items() {
+				if o.SessionID == sid && o.Answerable() {
+					it = o
+					break
+				}
+			}
+			if it != nil {
 				break
 			}
 		}

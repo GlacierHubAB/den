@@ -53,6 +53,9 @@ func TestTreeOrdersChildrenUnderParents(t *testing.T) {
 	if r := m.rowFor("mossy-lemur"); r.guide != "   ├─ " || r.cont != "   │  " {
 		t.Errorf("mossy row = %+v", r)
 	}
+	if d := strings.Join(m.descendants("snug-capybara"), ","); d != "mossy-lemur,fuzzy-sprite" {
+		t.Errorf("descendants = %s", d)
+	}
 	if roll, via := m.rollupOf("snug-capybara"); roll.needsYou != 1 || via != "Mossy Lemur" {
 		t.Errorf("rollup = %+v via %q", roll, via)
 	}

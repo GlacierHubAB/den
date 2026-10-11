@@ -141,7 +141,8 @@ child, and the map scrolls to keep the selection in view.
 
 In the orchestrator chat a card whose agent handed work on grows a line per
 child with its brief and state, and the card's own state says `needs you ·
-via <child>` when something deeper down is waiting on you. Inbox items from
+via <child>` when something deeper down is waiting on you; `^Y ^N` on that
+card answer the child's request when the card's own agent has none. Inbox items from
 an agent inside a tree carry a `via orchestrator › …` line so a permission
 from a sub-agent is not a stranger asking.
 
