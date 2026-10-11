@@ -50,8 +50,13 @@ func TestLoadWorksFollowsTheFilesAnAgentEdited(t *testing.T) {
 	}
 
 	// The same agent with nothing edited inside a repository explains itself.
-	os.WriteFile(transcript, []byte(`{"type":"user","timestamp":"`+at+`","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]},"toolUseResult":{"filePath":"`+filepath.Join(home, "notes.md")+`","structuredPatch":[{"oldStart":1,"newStart":1,"lines":["+hi"]}]}}`+"\n"), 0o644)
-	msg = loadWorks([]reviewInput{{SessionID: "s2", Path: transcript, Started: time.Now().Add(-time.Hour)}})
+	other := filepath.Join(t.TempDir(), "s2.jsonl")
+	notes := filepath.Join(home, "notes.md")
+	os.WriteFile(other, []byte(strings.Join([]string{
+		`{"type":"assistant","timestamp":"` + at + `","message":{"content":[{"type":"tool_use","id":"t2","name":"Edit","input":{"file_path":"` + notes + `"}}]}}`,
+		`{"type":"user","timestamp":"` + at + `","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"ok"}]},"toolUseResult":{"filePath":"` + notes + `","structuredPatch":[{"oldStart":1,"newStart":1,"lines":["+hi"]}]}}`,
+	}, "\n")+"\n"), 0o644)
+	msg = loadWorks([]reviewInput{{SessionID: "s2", Path: other, Started: time.Now().Add(-time.Hour)}})
 	if len(msg.works) != 0 || !strings.Contains(msg.note, "none inside a git repository") {
 		t.Errorf("note = %q works = %d", msg.note, len(msg.works))
 	}
