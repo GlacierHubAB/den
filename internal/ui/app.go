@@ -107,6 +107,7 @@ type Model struct {
 
 	srv        *bridge.Server
 	closing    map[string]closer.Plan // close questions in the inbox, by item id
+	sel        selState               // Den's own text selection on the Orchestrator and Overview views
 	srvErr     error
 	store      *inbox.Store
 	inboxCur   int
@@ -471,8 +472,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
 		if m.tab == tabReview {
 			m.reviewMouse(msg)
+			return m, nil
 		}
-		return m, nil
+		return m, m.copyMouse(msg)
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -591,6 +593,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
+		if m.sel.active {
+			m.sel.active = false
+			return m, nil
+		}
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
 			switch {
 			case m.ov.proposal != "":
@@ -914,6 +920,11 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.answer("always")
 	case "/open", "/o", "/focus":
 		return m.openSelected()
+	case "/copy":
+		if cmd := m.copyLast(); cmd != nil {
+			return m, cmd
+		}
+		return m.say("No command block in view to copy.", true)
 	case "/close", "/kill":
 		return m.closeCommand(fields[1:])
 	case "/dismiss", "/x":

@@ -222,6 +222,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/allow` `/y`, `/deny` `/n`, `/always` `/a` | answer the waiting prompt |
 | `/open` `/o` `/focus` | focus the selected agent's terminal |
 | `/dismiss` `/x` | clear the selected inbox item |
+| `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
@@ -251,8 +252,18 @@ each chip. Delete a chip from the text and its image is left out.
 | `Ctrl+C` | quit |
 
 Review adds `Shift+↑ ↓` to extend a selection and mouse support: click a work,
-file or line, drag or shift-click for a range, wheel to scroll. The mouse is
-only captured on that tab, so other views keep the terminal's own selection.
+file or line, drag or shift-click for a range, wheel to scroll.
+
+On the Orchestrator and Overview views Den owns the mouse too, because the
+terminal's own selection runs across the whole row and would take the agents
+pane and the borders along with the chat. Drag inside the chat or the mission
+pane to select that pane's text only; letting go copies it. Click a command
+block (the lines with a bar down the left) to copy the whole block, or type
+`/copy` for the last one in view. The wheel scrolls. Copies go through OSC 52
+(the terminal's clipboard escape) and through `wl-copy` when it is installed.
+`Esc` drops the highlight. The terminal's own selection is still there: hold
+`Shift` while dragging in Ghostty. The Fleet and Inbox views never capture the
+mouse.
 
 ## Orchestrator
 

@@ -47,11 +47,16 @@ func (m Model) View() tea.View {
 	}
 	out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 
-	v := tea.NewView(out.String())
+	content := out.String()
+	if m.sel.active {
+		content = strings.Join(m.highlightSelection(strings.Split(content, "\n")), "\n")
+	}
+	v := tea.NewView(content)
 	v.AltScreen = true
-	if m.tab == tabReview {
-		// Clicks and drags pick lines in the diff. Only here, so the other
-		// views keep the terminal's own text selection.
+	if m.tab == tabReview || m.tab == tabOrch || m.tab == tabOverview {
+		// Clicks and drags pick lines in the diff, and select text inside
+		// one pane on the chat views. The Fleet and Inbox views keep the
+		// terminal's own text selection.
 		v.MouseMode = tea.MouseModeCellMotion
 	}
 	// Ask for disambiguated keys so Shift+Enter is not plain Enter.
@@ -947,13 +952,13 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
 		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
 	case m.tab == tabOverview && m.ov.open != "":
-		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"/pause /resume /stop", ""}, {"Esc", "back"}, {"Tab", "view"}}
+		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop", ""}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
 		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
@@ -961,7 +966,7 @@ func (m Model) hints(w int) string {
 	case m.tab == tabReview:
 		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabOrch:
-		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tree.mapView:
 		items = [][2]string{{"↑ ↓", "walk"}, {"← →", "parent · child"}, {"Enter", "send · empty: focus terminal"}, {"^T", "list"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.focus == paneDetail:
