@@ -190,12 +190,12 @@ the tab row.
 With the hooks installed, each item is a permission, a plan review, a question
 or a finished turn; Den adds its own questions, to close agents, to install
 skills or to reopen agents after a restart. Waiting permissions and plans can
-be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one, `/always` allows it and
-the same tool again this session, `/open` focuses the terminal, `/dismiss`
-clears an item. Finished turns are appended to
-`~/.local/state/den/history.jsonl` (the newest `inbox.history`, 100 by default,
-come back on restart). The request shows the whole command or edit the
-permission is about.
+be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one,
+`/always` allows it and the same tool again this session, `/open` focuses the
+terminal, `/dismiss` clears an item. Finished turns are appended to
+`~/.local/state/den/history.jsonl` (the newest `inbox.history`, 100 by
+default, come back on restart). The request shows the whole command or edit
+the permission is about.
 
 Den holds a permission request only while you are not at that terminal. If the
 agent's window is focused, or you switch to it, the normal Claude Code dialog
