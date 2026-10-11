@@ -27,7 +27,7 @@ Hyprland.
 - [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Skills for roles](#skills-for-roles)
 - [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
-- [Review](#review) · [The agent badge](#the-agent-badge)
+- [Review](#review) · [Worktrees in Review](#worktrees-in-review) · [The agent badge](#the-agent-badge)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
 - [Troubleshooting](#troubleshooting) · [Den, Herdr and OpenRig](#den-herdr-and-openrig) · [Contributing](#contributing) · [License](#license)
 
@@ -971,6 +971,10 @@ What Den does that is its own:
 - **Events for scripts:** `den wait`, `den send --wait`, a versioned
   `den events -json` and `[on]` commands per event kind, with metadata only.
   (Herdr has a socket API and `agent prompt --wait`.)
+- **A worktree per agent:** `spawn_agent` can start an agent in its own git
+  worktree, and Review asks before it merges the branch and, separately,
+  before it removes the worktree. (Herdr, agent-deck and claude-squad also make
+  worktrees first-class.)
 - **Bringing agents back:** after a reboot or a closed Den, one inbox question
   reopens the agents that were live with `claude --resume`, and puts them back
   in their tree and mission; `/reopen <name>` does it for one agent. (Herdr
