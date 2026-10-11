@@ -2,6 +2,8 @@
 
 One screen for every coding agent on this machine.
 
+![Den's Fleet view: seven Claude Code agents, five of them in the orchestrator's tree of who directs whom, each with its role, task, model and context use, and the selected tech lead's details, critter, usage gauges and recent tool calls on the right.](docs/images/fleet.png)
+
 Den is a small terminal UI that finds the Claude Code sessions already running
 in your terminals, shows who they are (the agent-badge critter, role and task),
 streams everything that needs your answer into one inbox, and lets you talk to
@@ -176,6 +178,8 @@ the tab row.
 - **Orchestrator**: the chat with the agent that knows the fleet.
 
 ### Inbox
+
+![Den's Inbox: a waiting permission request from a backend developer agent to run go test, with Ctrl+Y allow, /always and Ctrl+N deny, above two finished turns from a technical writer and a reviewer.](docs/images/inbox.png)
 
 With the hooks installed, each item is a permission, a plan review, a question
 or a finished turn. Waiting permissions and plans can be answered from Den:
