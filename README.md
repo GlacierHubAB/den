@@ -1,6 +1,6 @@
 # Den
 
-One screen for every coding agent on this machine.
+See, approve and steer all your Claude Code agents from one terminal screen.
 
 ![Den's Fleet view: seven Claude Code agents, five of them in the orchestrator's tree of who directs whom, each with its role, task, model and context use, and the selected tech lead's details, critter, usage gauges and recent tool calls on the right.](docs/images/fleet.png)
 
