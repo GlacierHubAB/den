@@ -397,3 +397,32 @@ func TestOrchestratorIdleForRequestPicksAndWaits(t *testing.T) {
 		t.Errorf("bad duration: %+v %v", d, ok)
 	}
 }
+
+func TestOrchestratorCloseQuestionShowsInTheChat(t *testing.T) {
+	m := closeModel(t)
+	m.tab, m.width, m.height = tabOrch, 120, 40
+	m.input = newInput(m.st)
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "▶ asking you to close fuzzy · not needed", toolUseID: "c1", at: time.Now()})
+	m.orch.thinking = true
+	payload, _ := json.Marshal(bridge.CloseInput{Peers: []string{"fuzzy"}, Reason: "not needed"})
+	req := bridge.TestRequest(bridge.Envelope{Event: bridge.CloseEvent, Payload: payload})
+	m.handleRequest(req)
+	out := ansi.Strip(m.View().Content)
+	for _, want := range []string{"Close Fuzzy Sprite? It waits for you.", "Fuzzy Sprite (fuzzy) · idle · pid 50002", "^Y close them", "waiting for your ^Y or ^N on the close question"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chat lacks %q:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(m.flash, "The orchestrator asks: Close Fuzzy Sprite?") {
+		t.Errorf("flash = %q", m.flash)
+	}
+	// ^N from the chat answers it and the question leaves the chat.
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if d, ok := req.Decided(); !ok || d.Behavior != "deny" {
+		t.Errorf("decision = %+v %v", d, ok)
+	}
+	if out := ansi.Strip(m.View().Content); strings.Contains(out, "It waits for you") {
+		t.Error("the answered question still shows in the chat")
+	}
+}

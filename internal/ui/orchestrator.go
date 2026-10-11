@@ -536,6 +536,17 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 				break
 			}
 			body = m.plainLines(text, bodyW, s.muted)
+			// The close tool waits for the human: its question is shown
+			// right here, answerable with the same keys as in the Inbox.
+			if strings.HasPrefix(e.text, "▶ asking you to close") {
+				if it := m.pendingOrchClose(); it != nil {
+					body = append(body, s.attn.Render("◐ "+it.Title+" It waits for you."))
+					for _, l := range it.Body {
+						body = append(body, m.plainLines(l, bodyW-2, s.fg)...)
+					}
+					body = append(body, s.key.Render("^Y")+s.keyLabel.Render(" close them")+"  "+s.key.Render("^N")+s.keyLabel.Render(" keep them")+s.dim.Render("  · also in the Inbox"))
+				}
+			}
 		}
 		for i, l := range body {
 			prefix := strings.Repeat(" ", label+1)
@@ -554,6 +565,8 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 		think := "thinking…"
 		if m.orch.starting {
 			think = m.orch.status
+		} else if m.pendingOrchClose() != nil {
+			think = "waiting for your ^Y or ^N on the close question"
 		} else if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
 			think = "thinking… " + humanAge(q)
 		}

@@ -386,11 +386,28 @@ func (m *Model) handleCloseRequest(r *bridge.Request) {
 		}
 		cands, skipped, held = m.staleAgents(d, among)
 	}
-	if _, note := m.proposePlan(cands, false, "orchestrator", in.Reason, r, refused, skipped, held, d); note != "" {
+	it, note := m.proposePlan(cands, false, "orchestrator", in.Reason, r, refused, skipped, held, d)
+	if note != "" {
 		// Replied already; nothing waits.
 		return
 	}
+	it.Intent = orchAsked
+	m.flash, m.flashErr = "The orchestrator asks: "+it.Title+" ^Y closes, ^N keeps them.", false
 	m.refresh()
+}
+
+// orchAsked marks a close question the orchestrator raised.
+const orchAsked = "asked by the orchestrator"
+
+// pendingOrchClose is the orchestrator's close question still waiting on
+// the human, nil when there is none.
+func (m Model) pendingOrchClose() *inbox.Item {
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.Close && it.Answerable() && it.Intent == orchAsked {
+			return it
+		}
+	}
+	return nil
 }
 
 // decideClose is ^Y or ^N on a close question.
