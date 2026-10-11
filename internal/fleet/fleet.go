@@ -49,6 +49,22 @@ func (s Status) String() string {
 	return "unknown"
 }
 
+// Key is the status as a stable identifier for scripts and widgets:
+// "unknown", "needs_you", "working", "idle" or "gone".
+func (s Status) Key() string {
+	switch s {
+	case NeedsYou:
+		return "needs_you"
+	case Working:
+		return "working"
+	case Idle:
+		return "idle"
+	case Gone:
+		return "gone"
+	}
+	return "unknown"
+}
+
 // Agent is one coding agent as Den sees it.
 type Agent struct {
 	Session discover.Session
@@ -69,6 +85,16 @@ type Agent struct {
 	HasLimit       bool
 	Tail           []transcript.Entry // recent prompts, replies and tool calls
 	Path           string             // transcript path, "" when none
+}
+
+// MarshalJSON adds StatusName, the status as a string, next to the integer
+// Status, which stays for compatibility.
+func (a Agent) MarshalJSON() ([]byte, error) {
+	type fields Agent
+	return json.Marshal(struct {
+		fields
+		StatusName string
+	}{fields(a), a.Status.Key()})
 }
 
 // Task is the current task label, falling back to the transcript title and
