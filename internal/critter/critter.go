@@ -420,9 +420,12 @@ func SmallRows(px [N][N]string) [N / 4][N / 2]Cell {
 // OctantRows renders the sprite with octant characters, 2x4 pixels per
 // cell, so the whole 16x16 creature fits 8 columns by 4 rows at full
 // resolution. A cell carries up to two colours, like the half-block
-// renderer: the most common colour is the character's foreground and the
-// second most common its background, and every other pixel joins
-// whichever of the two it is nearer, so outlines, shading and eyes survive.
+// renderer: the most common colour is the character's foreground, the
+// colour that stands out most against it (count times distance) is the
+// background, and every other pixel joins whichever of the two it is
+// nearer. Picking the background by contrast rather than by count keeps
+// the dark outline and the eyes, which a cell full of pink shades would
+// otherwise vote away.
 // A cell on the sprite's edge, with transparent pixels, can only paint one
 // colour (the background would fill the transparent pixels too), so there
 // every pixel takes the most common colour.
@@ -447,8 +450,7 @@ func OctantRows(px [N][N]string, ink string) [N / 4][N / 2]Cell {
 			fg := mostCommon(counts)
 			bg := ""
 			if filled == 8 && len(counts) > 1 {
-				delete(counts, fg)
-				bg = mostCommon(counts)
+				bg = mostContrasting(counts, fg)
 			}
 			var bits int
 			for i, v := range cell {
@@ -469,6 +471,22 @@ func OctantRows(px [N][N]string, ink string) [N / 4][N / 2]Cell {
 		}
 	}
 	return rows
+}
+
+// mostContrasting returns the colour whose count times distance from fg is
+// largest: the one that would be missed most if it merged into fg.
+func mostContrasting(counts map[string]int, fg string) string {
+	best, bestScore := "", -1.0
+	for c, n := range counts {
+		if c == fg {
+			continue
+		}
+		score := float64(n) * dist(hexToRGB(c), hexToRGB(fg))
+		if score > bestScore || (score == bestScore && c < best) {
+			best, bestScore = c, score
+		}
+	}
+	return best
 }
 
 // nearer reports whether colour v is at least as close to a as to b.
