@@ -222,6 +222,9 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 // it, for logging.
 func (m *Model) addChat(e chatEntry) chatEntry {
 	e.mission = m.orch.thread
+	if e.card != nil {
+		e.card.Thread = e.mission
+	}
 	m.orch.chat = append(m.orch.chat, e)
 	return e
 }
@@ -467,11 +470,9 @@ func (m Model) orchPane(w, h int) string {
 // own thread. focusStart and focusEnd bound the focused card, -1 for none.
 func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focusStart, focusEnd int) {
 	s := m.st
-	label := 16
-	bodyW := w - label - 3
-	if bodyW < 20 {
-		label, bodyW = 0, w-2
-	}
+	// The speaker's name sits on its own line above the text, so the text
+	// has the pane's width less a margin.
+	bodyW := max(10, w-2)
 	// The orchestrator's code highlights carry its own colour, the way an
 	// agent's do in the detail pane.
 	orchColor := s.pal.Bright
@@ -502,10 +503,10 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 		}
 		switch e.role {
 		case "you":
-			from = s.dim.Render("you ›")
+			from = s.dim.Render("you")
 			body = m.plainLines(e.text, bodyW, s.fg)
 		case "orchestrator":
-			from = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor)).Render("orchestrator ›")
+			from = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor)).Bold(true).Render("orchestrator")
 			body = mo.markdownLines(e.text, bodyW)
 			if e.streaming {
 				if len(body) == 0 {
@@ -558,16 +559,11 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 				}
 			}
 		}
-		for i, l := range body {
-			prefix := strings.Repeat(" ", label+1)
-			if i == 0 && label > 0 {
-				pad := label - ansi.StringWidth(from)
-				if pad < 0 {
-					pad = 0
-				}
-				prefix = strings.Repeat(" ", pad) + from + " "
-			}
-			lines = append(lines, prefix+l)
+		if from != "" {
+			lines = append(lines, " "+from)
+		}
+		for _, l := range body {
+			lines = append(lines, " "+l)
 		}
 		lines = append(lines, "")
 	}
@@ -582,7 +578,7 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 		} else if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
 			think = "thinking… " + humanAge(q)
 		}
-		lines = append(lines, strings.Repeat(" ", label+1)+s.dim.Render(think))
+		lines = append(lines, " "+s.dim.Render(think))
 	}
 	return lines, focusStart, focusEnd
 }

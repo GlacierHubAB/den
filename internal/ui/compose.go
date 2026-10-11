@@ -9,7 +9,6 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -34,15 +33,17 @@ type sentMsg struct {
 // before Den delivers it anyway.
 const guardMax = 10 * time.Minute
 
-// inputMaxRows is how tall the command line grows before it scrolls.
-const inputMaxRows = 8
-
 func newInput(st styles) textarea.Model {
 	ta := textarea.New()
 	ta.Placeholder = "Ask the orchestrator, or @Name to message one agent · /help for commands"
 	ta.ShowLineNumbers = false
-	ta.CharLimit = 20000
-	ta.MaxHeight = inputMaxRows
+	// The textarea sizes itself from its own word wrap, so the rows it
+	// shows are the rows it has; no limit on the text, only on the rows.
+	ta.CharLimit = 0
+	ta.DynamicHeight = true
+	ta.MinHeight = 1
+	ta.MaxHeight = minInputCap
+	ta.MaxContentHeight = maxInputContent
 	ta.EndOfBufferCharacter = ' '
 	ta.SetVirtualCursor(true)
 	// The first line carries the prompt; continuation lines align under it.
@@ -76,22 +77,35 @@ func applyInputStyles(ta *textarea.Model, st styles) {
 	ta.SetStyles(s)
 }
 
+// minInputCap is the fewest rows the command line may grow to, on a
+// short terminal; maxInputContent is far more than anyone types, so the
+// textarea never refuses a newline or trims a paste.
+const (
+	minInputCap     = 3
+	maxInputContent = 9000
+)
+
+// inputMaxRows is how tall the command line grows before it scrolls: a
+// third of the screen.
+func (m Model) inputMaxRows() int {
+	h := m.height
+	if h <= 0 {
+		h = 40
+	}
+	return max(minInputCap, h/3)
+}
+
 // fitInput sizes the command line to its content: one row for a short
-// line, more as it wraps or gains newlines, up to inputMaxRows, after which
-// the textarea scrolls and keeps the cursor in view.
+// line, more as it wraps (by display width, at word boundaries) or gains
+// newlines, up to inputMaxRows, after which the textarea scrolls and keeps
+// the cursor in view. Growing scrolls back up, so the first row stays.
 func (m *Model) fitInput() {
 	w := m.width
 	if w <= 0 {
 		w = 120
 	}
-	m.input.SetWidth(max(10, w-2))
-	inner := max(1, w-2-2) // minus the margin and the prompt
-	rows := 0
-	for _, l := range strings.Split(m.input.Value(), "\n") {
-		lw := ansi.StringWidth(l)
-		rows += max(1, (lw+inner-1)/inner)
-	}
-	m.input.SetHeight(clamp(rows, 1, inputMaxRows))
+	m.input.MaxHeight = m.inputMaxRows()
+	m.input.SetWidth(max(10, w-2)) // recalculates the height
 }
 
 // clear empties the command line after a send and lets go of the images.

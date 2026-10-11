@@ -52,8 +52,8 @@ func TestNewlineGrowsInputUpToCap(t *testing.T) {
 		type_("line")
 	}
 	type_("last")
-	if m.input.Height() != inputMaxRows {
-		t.Errorf("height = %d, want the cap %d", m.input.Height(), inputMaxRows)
+	if m.input.Height() != m.inputMaxRows() {
+		t.Errorf("height = %d, want the cap %d", m.input.Height(), m.inputMaxRows())
 	}
 	if lines := strings.Count(m.input.Value(), "\n"); lines != 12 {
 		t.Errorf("newlines = %d, want 12", lines)

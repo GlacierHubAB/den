@@ -29,7 +29,16 @@ func TestOrchestratorTabRendersConversation(t *testing.T) {
 	m.handleOrchEvent(orch.Event{Kind: orch.Result, Text: "ignored duplicate", CostUSD: 0.05})
 	out := m.View().Content
 	plain := ansi.Strip(out)
-	for _, want := range []string{"orchestrator ›", "Mossy Lemur is waiting", "Mossy Lemur  CODING AGENT", "delivered", "Rebase on main first. Then open the PR.", "$0.05"} {
+	named := false
+	for _, l := range strings.Split(plain, "\n") {
+		if strings.Trim(l, " │") == "orchestrator" {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("no line naming the orchestrator above its text:\n%s", plain)
+	}
+	for _, want := range []string{"Mossy Lemur is waiting", "Mossy Lemur  CODING AGENT", "delivered", "Rebase on main first. Then open the PR.", "$0.05"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing %q in:\n%s", want, plain)
 		}

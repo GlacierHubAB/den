@@ -42,6 +42,7 @@ type cardRecord struct {
 	Result    string    `json:"result,omitempty"`
 	Files     int       `json:"files,omitempty"`
 	MissionID string    `json:"mission,omitempty"`
+	Thread    string    `json:"thread,omitempty"`
 	Stopped   time.Time `json:"stopped,omitempty"`
 }
 
@@ -98,7 +99,7 @@ func (m *Model) logCard(d *dispatch) {
 	appendChatRecord(m.chatLog, chatRecord{Kind: "card", At: d.SentAt, Card: &cardRecord{
 		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: d.Brief,
 		SentAt: d.SentAt, StartedAt: d.StartedAt, EndedAt: d.EndedAt,
-		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Stopped: d.Stopped,
+		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped,
 	}})
 }
 
@@ -136,13 +137,20 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 	for _, r := range records {
 		if r.Kind == "card" && r.Card != nil {
 			c := r.Card
+			// Cards logged before threads were kept fall back to their run's
+			// mission.
+			thread := c.Thread
+			if thread == "" {
+				thread = c.MissionID
+			}
+			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
 			if d, ok := cards[c.ID]; ok {
-				*d = dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID, Stopped: c.Stopped}
+				*d = nd
 				continue
 			}
-			d := &dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID, Stopped: c.Stopped}
+			d := &nd
 			cards[c.ID] = d
-			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At})
+			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread})
 			continue
 		}
 		chat = append(chat, chatEntry{role: r.Kind, text: r.Text, to: r.To, status: r.Status, at: r.At, mission: r.Mission})

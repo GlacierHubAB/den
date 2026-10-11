@@ -209,8 +209,11 @@ when you leave, so it never lands under something you are typing.
 
 The line at the bottom is always open. Type to ask the orchestrator, `@Name …`
 to message one agent (`Tab` completes the name), `/help` for commands. It grows
-with what you type, one row for a short message and up to eight as text wraps
-or you add line breaks, then scrolls; the panes above shrink to make room.
+with what you type, one row for a short message and more as text wraps (by
+display width, so wide characters count double) or you add line breaks, up to
+a third of the screen; past that it scrolls inside itself and keeps the cursor
+line in view. Nothing you type or paste is cut off. The panes above shrink to
+make room.
 
 Images travel with a message. Paste or drag an image file (a path, a `file://`
 URL or several lines of them) and it becomes a chip, `[Image #1]`, in the text;
@@ -288,6 +291,9 @@ file or `DEN_ORCHESTRATOR_MODEL` says otherwise (`"off"` keeps Claude Code's
 default). Only Den's MCP server is loaded into it (`--strict-mcp-config`); your
 own MCP servers never are. A watchdog names a silent turn, restarts it once and
 resends what it owes.
+
+Each message has its speaker's name on the line above it, so the text uses
+the pane's full width.
 
 The chat persists: every entry and card state is appended to
 `~/.local/state/den/orchestrator.jsonl` and restored on launch (newest 500).
@@ -508,8 +514,11 @@ starts its own people.
 
 Den drives the runs: it asks the orchestrator to dispatch, tags the resulting
 cards with the mission, notices when they settle, and asks again when the shape
-calls for another pass. `Enter` on a mission opens it: the fields, then its
-runs with the same dispatch cards the chat shows. `/pause` holds the next run,
+calls for another pass. `Enter` on a mission opens it: the fields, a line per
+run with its progress or summary, then the mission's conversation, where the
+agents the orchestrator dispatched work inline as dispatch cards, in the order
+they were sent, just as in the Orchestrator chat. A dispatch made while you
+talk about a finished mission shows there too. `/pause` holds the next run,
 `/resume` lets it go, `/stop` ends the mission and keeps its history. Missions
 persist in `~/.local/state/den/missions.jsonl`; the project pick and pinned
 projects in `overview.json` beside it.

@@ -47,6 +47,10 @@ type dispatch struct {
 	Result    string // the agent's last message, verbatim
 	Files     int
 	MissionID string // the mission this dispatch is a run of, "" for a plain one
+	// Thread is the conversation the card was made in: the mission the
+	// human was talking about, "" for the plain chat. A dispatch about a
+	// finished mission has a thread but no run.
+	Thread string
 	// Stopped is when the agent's turn ended while people under it were
 	// still at work; the card finishes once they are done.
 	Stopped  time.Time

@@ -191,7 +191,7 @@ func (m *Model) cardForSpawn(p pendingSpawn, name, sid string) {
 			continue
 		}
 		now := time.Now()
-		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started"}
+		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started", Thread: e.mission}
 		if d.SentAt.IsZero() {
 			d.SentAt = now
 		}

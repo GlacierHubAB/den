@@ -215,26 +215,7 @@ func (m Model) missionBrief(ms *mission.Mission) string {
 // run, the last run's summary, or the next scheduled time.
 func (m Model) missionNow(ms *mission.Mission) string {
 	if r := ms.CurrentRun(); r != nil {
-		cards := m.missionCards(ms, r)
-		var working, done, needs []string
-		for _, d := range cards {
-			switch d.State {
-			case cardNeedsYou:
-				needs = append(needs, d.Agent)
-			case cardDone:
-				done = append(done, d.Agent)
-			case cardWorking, cardQueued:
-				working = append(working, d.Agent)
-			}
-		}
-		switch {
-		case len(needs) > 0:
-			return fmt.Sprintf("run %d · %s needs you · %d of %d done", r.N, strings.Join(needs, ", "), len(done), len(cards))
-		case len(cards) == 0:
-			return fmt.Sprintf("run %d · dispatching", r.N)
-		default:
-			return fmt.Sprintf("run %d · %d of %d done · %s working", r.N, len(done), len(cards), strings.Join(working, ", "))
-		}
+		return fmt.Sprintf("run %d · %s", r.N, m.runProgress(ms, r))
 	}
 	if n := len(ms.Runs); n > 0 && ms.Runs[n-1].Summary != "" {
 		last := fmt.Sprintf("run %d · %s", ms.Runs[n-1].N, ms.Runs[n-1].Summary)
@@ -250,6 +231,32 @@ func (m Model) missionNow(ms *mission.Mission) string {
 		return ms.Reason
 	}
 	return ""
+}
+
+// runProgress says how a run's agents are doing.
+func (m Model) runProgress(ms *mission.Mission, r *mission.Run) string {
+	cards := m.missionCards(ms, r)
+	var working, done, needs []string
+	for _, d := range cards {
+		switch d.State {
+		case cardNeedsYou:
+			needs = append(needs, d.Agent)
+		case cardDone:
+			done = append(done, d.Agent)
+		case cardWorking, cardQueued:
+			working = append(working, d.Agent)
+		}
+	}
+	switch {
+	case len(needs) > 0:
+		return fmt.Sprintf("%s needs you · %d of %d done", strings.Join(needs, ", "), len(done), len(cards))
+	case len(cards) == 0:
+		return "dispatching"
+	case len(working) == 0:
+		return fmt.Sprintf("%d of %d done", len(done), len(cards))
+	default:
+		return fmt.Sprintf("%d of %d done · %s working", len(done), len(cards), strings.Join(working, ", "))
+	}
 }
 
 func untilShort(t time.Time) string {
@@ -392,19 +399,26 @@ func (m Model) proposalLines(w int) []string {
 }
 
 // threadLines is the mission's conversation with the orchestrator, drawn
-// the way the Orchestrator tab draws it. Cards show under their runs, not
-// here. A proposal from before threads were kept shows the words it
-// started from.
+// the way the Orchestrator tab draws it: the agents it dispatched work in
+// it as cards, in the order they were sent. A proposal from before threads
+// were kept shows the words it started from.
 func (m Model) threadLines(ms *mission.Mission, w int) []string {
-	lines, _, _ := m.chatLines(w, func(e chatEntry) bool { return e.mission == ms.ID && e.card == nil })
+	lines, _, _ := m.chatLines(w, func(e chatEntry) bool {
+		return e.mission == ms.ID || e.card != nil && e.card.MissionID == ms.ID
+	})
 	if len(lines) == 0 && ms.Text != "" {
-		lines = append(m.plainLines("you › "+ms.Text, w-4, m.st.dim), "")
+		lines = append([]string{" " + m.st.dim.Render("you")}, m.plainLines(ms.Text, w-2, m.st.fg)...)
+		for i := 1; i < len(lines); i++ {
+			lines[i] = " " + lines[i]
+		}
+		lines = append(lines, "")
 	}
 	return lines
 }
 
-// missionLines is an open mission: its fields, its runs with their cards,
-// newest run first, then its conversation.
+// missionLines is an open mission: its fields, its runs newest first,
+// each a line with its progress or summary, then its conversation, where
+// the runs' agents work.
 func (m Model) missionLines(w int) []string {
 	s := m.st
 	ms := m.missions.Get(m.ov.open)
@@ -439,19 +453,14 @@ func (m Model) missionLines(w int) []string {
 			when += " → " + r.EndedAt.Format("15:04")
 		}
 		head := s.dim.Render(fmt.Sprintf("  run %d · %s", r.N, when))
-		trail := ""
-		if r.Summary != "" {
-			trail = s.dim.Render(ansi.Truncate(r.Summary, max(10, w-30), "…")) + " "
+		trail := r.Summary
+		if r.EndedAt.IsZero() {
+			trail = m.runProgress(ms, &r)
+		}
+		if trail != "" {
+			trail = s.dim.Render(ansi.Truncate(trail, max(10, w-30), "…")) + " "
 		}
 		out = append(out, ansi.Truncate(justify(head, trail, w), w, "…"))
-		if i == len(ms.Runs)-1 || r.EndedAt.IsZero() {
-			for _, d := range m.missionCards(ms, &r) {
-				out = append(out, "")
-				for _, l := range m.cardLines(d, w-2, false, now) {
-					out = append(out, " "+l)
-				}
-			}
-		}
 	}
 	out = append(out, "")
 	out = append(out, m.threadLines(ms, w)...)
