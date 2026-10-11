@@ -44,25 +44,27 @@ func ask(store *Store) (*Item, *bridge.Request) {
 func TestQuestionsOffStayInTheTerminal(t *testing.T) {
 	store := New()
 	it, r := ask(store)
-	// Unchanged behaviour: the PermissionRequest is an ordinary permission
-	// item and the question a notice; nothing takes typed answers.
-	if it == nil || it.Kind != Permission || it.AsksInDen() {
-		t.Fatalf("permission item = %+v", it)
+	// Den does not hold the call: a bare allow would be ignored by Claude
+	// Code, so its dialog answers it and the PreToolUse notice is the entry.
+	if it != nil {
+		t.Fatalf("held as %+v", it)
 	}
-	if done, ok := store.AnswerQuestion(it, "1"); done || ok {
+	if d, decided := r.Decided(); !decided || d.Behavior != "" {
+		t.Errorf("released with %+v %v, want no decision at once", d, decided)
+	}
+	items := store.Items()
+	if len(items) != 1 || items[0].Kind != Question || items[0].State != InTerminal || items[0].Answerable() || items[0].Title != "Which colour scheme? (+1 more)" {
+		t.Fatalf("items = %+v", items)
+	}
+	if store.Answer(items[0], "allow") {
+		t.Error("allowed a question in den")
+	}
+	if done, ok := store.AnswerQuestion(items[0], "1"); done || ok {
 		t.Error("answered a question with the option off")
 	}
-	if _, decided := r.Decided(); decided {
-		t.Error("decided with the option off")
-	}
-	q := 0
-	for _, o := range store.Items() {
-		if o.Kind == Question && o.State == InTerminal {
-			q++
-		}
-	}
-	if q != 1 {
-		t.Errorf("question notices = %d", q)
+	store.Apply(askHook("PostToolUse", map[string]any{"tool_name": "AskUserQuestion"}))
+	if items[0].State != Resolved || store.Waiting() != 0 {
+		t.Errorf("after the terminal answer: %+v", items[0])
 	}
 }
 
@@ -158,12 +160,15 @@ func TestQuestionReleasedToTheTerminal(t *testing.T) {
 	}
 }
 
-func TestUnreadableQuestionTakesTheUsualPath(t *testing.T) {
+func TestUnreadableQuestionGoesToTheDialog(t *testing.T) {
 	store := New()
 	store.AnswerQuestions(true)
 	r := askHook("PermissionRequest", map[string]any{"tool_name": "AskUserQuestion", "tool_input": map[string]any{"questions": []any{}}})
-	if it := store.Apply(r); it == nil || it.Kind != Permission {
+	if it := store.Apply(r); it != nil {
 		t.Errorf("item = %+v", it)
+	}
+	if d, decided := r.Decided(); !decided || d.Behavior != "" {
+		t.Errorf("an unreadable call must go straight to the dialog: %+v %v", d, decided)
 	}
 }
 

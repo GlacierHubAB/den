@@ -206,6 +206,12 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		if it := s.holdQuestion(r); it != nil {
 			return it
 		}
+		if in.ToolName == question.Tool {
+			// Not held for Den: a bare allow would be ignored by Claude Code,
+			// so let its dialog answer it; the PreToolUse notice stays.
+			r.Reply(bridge.Decision{})
+			return nil
+		}
 		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
@@ -269,7 +275,7 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 	case "Notification":
 		switch in.NotificationType {
 		case "permission_prompt":
-			if s.hasOpen(in.SessionID, Permission, Plan) || s.holdsQuestion(in.SessionID) {
+			if s.hasOpen(in.SessionID, Permission, Plan) || s.asking(in.SessionID) {
 				return nil // Claude Code's notice for a dialog Den already shows
 			}
 			it := s.add(&Item{SessionID: in.SessionID, Kind: Permission, State: InTerminal, Title: firstNonEmpty(in.Message, "Waiting for your permission")})
@@ -329,6 +335,17 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 		}
 	}
 	return it
+}
+
+// asking reports whether an AskUserQuestion of the session is open, held
+// or in its terminal: Claude Code's permission notice is that dialog.
+func (s *Store) asking(sessionID string) bool {
+	for _, it := range s.items {
+		if it.SessionID == sessionID && it.Kind == Question && it.Tool == question.Tool && it.State != Resolved {
+			return true
+		}
+	}
+	return false
 }
 
 // holdsQuestion reports whether a question of the session waits in Den.

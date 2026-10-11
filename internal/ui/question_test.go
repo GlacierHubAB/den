@@ -113,13 +113,16 @@ func TestQuestionLetGoWhenTheHookHangsUp(t *testing.T) {
 func TestQuestionOptionOff(t *testing.T) {
 	m, r := heldQuestion(t, false)
 	for _, it := range m.store.Items() {
-		if it.AsksInDen() {
-			t.Fatalf("held a question with the option off: %+v", it)
+		if it.AsksInDen() || it.Kind == inbox.Permission {
+			t.Fatalf("option off: %+v", it)
 		}
+	}
+	if !strings.Contains(ansi.Strip(m.View().Content), "answer in the terminal") || strings.Contains(ansi.Strip(m.View().Content), "Wants to use AskUserQuestion") {
+		t.Errorf("option off inbox:\n%s", ansi.Strip(m.View().Content))
 	}
 	mm, _ := m.command("/answer 1")
 	m = mm.(Model)
-	if _, decided := r.Decided(); decided || !strings.Contains(m.flash, "No question") {
+	if d, _ := r.Decided(); d.Behavior != "" || !strings.Contains(m.flash, "No question") {
 		t.Errorf("/answer with the option off: flash %q", m.flash)
 	}
 }
