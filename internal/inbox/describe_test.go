@@ -7,7 +7,7 @@ import (
 )
 
 func TestDescribeToolCarriesTheWholeRequest(t *testing.T) {
-	long := `S=/tmp/claude-1000/-home-grvlle/33503402/scratchpad/ser.py; python3 $S "y\r" 8 | grep -v '^\s*$' | head -8`
+	long := `S=/tmp/claude-1000/-home-user/11111111/scratchpad/ser.py; python3 $S "y\r" 8 | grep -v '^\s*$' | head -8`
 	raw, _ := json.Marshal(map[string]any{"command": long + "\necho done", "description": "Open the password reset option on the router menu"})
 	title, intent, body := describeTool("Bash", raw)
 	if title != "Wants to run" || intent != "Open the password reset option on the router menu" {

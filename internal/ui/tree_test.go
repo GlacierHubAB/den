@@ -137,7 +137,7 @@ done</cross-session-message>`)
 
 func TestOpenRequestIsShownInFullWithIntent(t *testing.T) {
 	m := treeModel()
-	long := `S=/tmp/claude-1000/-home-grvlle/33503402-df6e-4023-8df1-fcd6e8e482ed/scratchpad/ser.py; python3 $S "exit\r" 2 >/dev/null; python3 $S "3\r" 4 | tail -6`
+	long := `S=/tmp/claude-1000/-home-user/11111111-2222-4333-8444-555555555502/scratchpad/ser.py; python3 $S "exit\r" 2 >/dev/null; python3 $S "3\r" 4 | tail -6`
 	m.store.Apply(req("PermissionRequest", "snug-capybara", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": long, "description": "Open the password reset option on the router menu"}}))
 	m.refresh()
 	for name, out := range map[string]string{

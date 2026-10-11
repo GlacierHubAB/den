@@ -20,10 +20,10 @@ func TestOrchestratorTabRendersConversation(t *testing.T) {
 	st := newStyles(theme.Deepharness)
 	m := Model{st: st, agents: sample(), store: inbox.New(), tab: tabOrch, width: 120, height: 30}
 	m.input = newInput(st)
-	m.agents[0].Session.Name = "grvlle-45"
+	m.agents[0].Session.Name = "user-45"
 	m.orch.chat = append(m.orch.chat, chatEntry{role: "you", text: "what is everyone blocked on?", at: time.Now()})
 	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "Mossy Lemur is waiting on a permission for gh pr create."})
-	in, _ := json.Marshal(map[string]string{"to": "grvlle-45", "message": "Rebase on main first.\nThen open the PR."})
+	in, _ := json.Marshal(map[string]string{"to": "user-45", "message": "Rebase on main first.\nThen open the PR."})
 	m.handleOrchEvent(orch.Event{Kind: orch.ToolUse, Tool: "SendMessage", ToolUseID: "t1", Input: in})
 	m.handleOrchEvent(orch.Event{Kind: orch.ToolResult, ToolUseID: "t1", Text: "Sent."})
 	m.handleOrchEvent(orch.Event{Kind: orch.Result, Text: "ignored duplicate", CostUSD: 0.05})
@@ -43,7 +43,7 @@ func TestOrchestratorTabRendersConversation(t *testing.T) {
 		}
 	}
 	r := m.roster()
-	if len(r) != 4 || r[0].Peer != "grvlle-45" {
+	if len(r) != 4 || r[0].Peer != "user-45" {
 		t.Errorf("roster = %+v", r)
 	}
 }
@@ -79,8 +79,8 @@ func TestDispatchCardLifecycle(t *testing.T) {
 	st := newStyles(theme.Deepharness)
 	m := Model{st: st, base: sample(), store: inbox.New(), tab: tabOrch, width: 120, height: 40, orch: orchState{cardCur: -1}}
 	m.input = newInput(st)
-	m.base[0].Session.Name = "grvlle-45"
-	m.base[1].Session.Name = "grvlle-46"
+	m.base[0].Session.Name = "user-45"
+	m.base[1].Session.Name = "user-46"
 	m.base[1].Session.SessionID = "fedcba9876543210"
 	m.refresh() // hook handling refreshes from base, as the real model does
 	sid := m.base[0].Session.SessionID
@@ -89,7 +89,7 @@ func TestDispatchCardLifecycle(t *testing.T) {
 		m.handleOrchEvent(orch.Event{Kind: orch.ToolUse, Tool: "SendMessage", ToolUseID: id, Input: in})
 		m.handleOrchEvent(orch.Event{Kind: orch.ToolResult, ToolUseID: id, Text: "Sent."})
 	}
-	send("t1", "grvlle-45", "Review the release notes.")
+	send("t1", "user-45", "Review the release notes.")
 	cards := m.cards()
 	if len(cards) != 1 || cards[0].State != cardQueued || cards[0].Reason != "delivered" {
 		t.Fatalf("after send: %+v", cards)
@@ -118,7 +118,7 @@ func TestDispatchCardLifecycle(t *testing.T) {
 		t.Errorf("back to working: %+v", d)
 	}
 	// Two live cards show the in-flight strip.
-	send("t2", "grvlle-46", "Check the installer.")
+	send("t2", "user-46", "Check the installer.")
 	out = ansi.Strip(m.View().Content)
 	if !strings.Contains(out, "in flight") || !strings.Contains(out, "Snug Capybara") {
 		t.Errorf("strip missing with two live cards:\n%s", out)
