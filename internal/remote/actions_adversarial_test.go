@@ -445,14 +445,17 @@ func TestAdvCloseRefusesAClaudeThatStartedLaterThanTheFile(t *testing.T) {
 // stubReplies is a fake den for Manager.Send / CloseAgent: it says hello
 // (approve), then for each line Den writes it runs body with $id set to the
 // command's id and $line to the line.
-func stubReplies(t *testing.T, body string) *rig {
+func stubReplies(t *testing.T, body string) *rig { return stubRepliesPolicy(t, "approve", body) }
+
+// stubRepliesPolicy is stubReplies for a host configured, and saying, policy.
+func stubRepliesPolicy(t *testing.T, policy, body string) *rig {
 	t.Helper()
 	l := sshtest.New(t, "b")
 	r := l.Remote("b")
 	script := `#!/bin/sh
 read -r _request
 now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-printf '{"type":"hello","proto":1,"den":"v0.2.0","hostname":"stub","remote_now":"%s","policy":"approve","labels":true}\n' "$now"
+printf '{"type":"hello","proto":1,"den":"v0.2.0","hostname":"stub","remote_now":"%s","policy":"` + policy + `","labels":true}\n' "$now"
 while read -r line; do
   case "$line" in *'"type":"ping"'*) continue;; esac
   id=$(printf '%s' "$line" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
@@ -464,9 +467,11 @@ done
 		t.Fatal(err)
 	}
 	l.Local.Apply()
-	l.Local.WriteRemotes(fmt.Sprintf("[hosts.b]\ntarget = \"b\"\npolicy = \"approve\"\nden_path = %q\n", stub))
+	l.Local.WriteRemotes(fmt.Sprintf("[hosts.b]\ntarget = \"b\"\npolicy = %q\nden_path = %q\n", policy, stub))
 	g := &rig{t: t, l: l, r: r}
-	g.opts = func(o *remote.Options) { o.SendWait, o.CloseWait = 3*time.Second, 3*time.Second }
+	g.opts = func(o *remote.Options) {
+		o.SendWait, o.CloseWait, o.DiffWait = 3*time.Second, 3*time.Second, 3*time.Second
+	}
 	return g
 }
 
