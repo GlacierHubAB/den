@@ -106,6 +106,7 @@ type Options struct {
 	Retake     time.Duration // a host attached elsewhere is asked again this often; default 1 min
 	SendWait   time.Duration // how long Send waits for the host's result; default 10 s
 	CloseWait  time.Duration // how long Close waits for it; default 15 s
+	DiffWait   time.Duration // how long Diff waits for it; default 30 s
 	Now        func() time.Time
 }
 
@@ -151,6 +152,9 @@ func (o *Options) defaults() {
 	}
 	if o.CloseWait == 0 {
 		o.CloseWait = defaultCloseWait
+	}
+	if o.DiffWait == 0 {
+		o.DiffWait = defaultDiffWait
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -324,7 +328,8 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 	st := m.state[h.Label]
 	out := make([]fleet.Agent, 0, len(st.known.Agents))
 	for _, meta := range st.known.Agents {
-		a := fleet.FromMeta(recheck(meta, h), h.Label, st.known.Received, m.o.Prices)
+		meta, _ = recheck(meta, h, st.known.Policy)
+		a := fleet.FromMeta(meta, h.Label, st.known.Received, m.o.Prices)
 		a.HostState, a.Stale = string(st.status.State), st.status.State != Live && st.status.State != AttachedElsewhere
 		out = append(out, a)
 	}
@@ -677,8 +682,11 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			m.mu.Lock()
 			st := m.state[h.Label]
 			agents := make([]fleet.Meta, 0, len(sm.Agents))
+			overreach := false
 			for _, a := range sm.Agents {
-				agents = append(agents, cleanMeta(recheck(a, h)))
+				a, dropped := recheck(a, h, applied)
+				overreach = overreach || dropped
+				agents = append(agents, cleanMeta(a))
 			}
 			st.known.Agents, st.known.Received, st.known.Heartbeat = agents, in.at, in.at
 			st.status.Agents, st.status.LastSeen = len(agents), in.at
@@ -690,6 +698,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			u := Update{Kind: FleetChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(h)}
 			m.mu.Unlock()
 			m.send(u)
+			if overreach {
+				m.flag(h, "content in a snapshot its policy does not allow")
+			}
 		case TypeEvent:
 			var em Event
 			if json.Unmarshal(in.line, &em) != nil {
@@ -752,6 +763,12 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue
 			}
 			r.Error = sanitize.Label(r.Error, 160)
+			if r.Diff != nil && (h.Policy != Full || applied != Full) {
+				r.Diff, r.OK, r.Error = nil, false, "a diff its policy does not allow"
+				m.flag(h, "a diff its policy does not allow")
+			} else if r.Diff != nil {
+				r.Diff = cleanDiff(r.Diff)
+			}
 			if !lk.resolve(r) {
 				m.flag(h, "a result for a request that is not open")
 			}

@@ -40,6 +40,10 @@ type fakeFeed struct {
 	sendErr   error
 	closeErr  error
 	closeKill bool
+	// What Diff got, and what it answers.
+	diffs   []string // "host/session"
+	diff    *remote.Diff
+	diffErr error
 }
 
 func (f *fakeFeed) Start()                        {}
@@ -56,6 +60,10 @@ func (f *fakeFeed) Send(host, sid, text string) error {
 func (f *fakeFeed) CloseAgent(host, sid string, force bool) (bool, error) {
 	f.closed = append(f.closed, fmt.Sprintf("%s/%s force=%v", host, sid, force))
 	return f.closeKill, f.closeErr
+}
+func (f *fakeFeed) Diff(host, sid string) (*remote.Diff, error) {
+	f.diffs = append(f.diffs, host+"/"+sid)
+	return f.diff, f.diffErr
 }
 func (f *fakeFeed) setState(label string, s remote.State) {
 	for i := range f.hosts {

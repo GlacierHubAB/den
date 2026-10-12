@@ -53,6 +53,9 @@ type remoteFeed interface {
 	Send(host, sessionID, text string) error
 	CloseAgent(host, sessionID string, force bool) (killed bool, err error)
 	Actionable(host string) error
+	// Diff reads a remote agent's work on its host for Review,
+	// under the full policy only.
+	Diff(host, sessionID string) (*remote.Diff, error)
 }
 
 // remoteState is the remote hosts as the views show them.
@@ -192,6 +195,9 @@ func (m *Model) syncRemote() {
 		if a.Stale {
 			m.remote.last[a.Session.SessionID] = a.Status
 			a.Status = fleet.Unknown
+			// Content from a host that is not live is not current: the
+			// details pane, like Review, shows none of it.
+			a.Title, a.RemoteCWD, a.Tail = "", "", nil
 		}
 		m.remote.agents = append(m.remote.agents, a)
 	}
@@ -211,6 +217,9 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 			// /remote connect said it was trying; say how it went.
 			m.flash, m.flashErr = hostNow(u.Host, h.State), h.State != remote.Live
 			cmd = tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		}
+		if u.Kind == remote.HostChanged {
+			cmd = tea.Batch(cmd, m.remoteReviewChanged(u.Host))
 		}
 		if h, ok := m.hostStatus(u.Host); ok && !linked(h.State) {
 			why := "released to the terminal on " + u.Host + " (link lost)"

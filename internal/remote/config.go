@@ -65,10 +65,18 @@ func ElsewhereNote(host string) string {
 	return fmt.Sprintf("another Den controls %s, this one only observes it", host)
 }
 
-// Supported is the most this build of `den remote serve` applies: approve,
-// which relays held requests. full applies as approve for now: Tail and
-// diffs stay on the host.
-const Supported = Approve
+// FullNote is what Den says where a host's content would show (Review, the
+// details pane) but its policy keeps it on the host, and how to change that.
+func FullNote(host string, p Policy) string {
+	if !p.Valid() {
+		p = Observe
+	}
+	return fmt.Sprintf("diff on %s, policy %s; to review it here, set policy = \"full\" for it in remotes.toml", host, p)
+}
+
+// Supported is the most this build of `den remote serve` applies: full,
+// which adds titles, folders, recent activity and diffs on request.
+const Supported = Full
 
 // Host is one [hosts.<label>] table of remotes.toml.
 type Host struct {

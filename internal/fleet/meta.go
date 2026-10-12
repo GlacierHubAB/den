@@ -1,7 +1,9 @@
 package fleet
 
 import (
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/cost"
@@ -14,9 +16,9 @@ import (
 // LabelMax caps a badge role or task, and a peer name, in Meta.
 const LabelMax = 80
 
-// Meta is the metadata-only projection of an Agent: what may leave the
-// machine under a remote host's observe policy (docs/REMOTE.md). It holds no
-// prompt, reply, command, tool input, file path, cwd, transcript or socket
+// Meta is the metadata-only projection of an Agent: what may leave the machine
+// under a remote host's observe policy (docs/REMOTE.md). Outside Full it holds
+// no prompt, reply, command, tool input, file path, cwd, transcript or socket
 // path, title or Tail. A field added here crosses the wire to every remote
 // Den, so TestMetaFieldsAreAllowlisted names each one; keep it that way.
 //
@@ -53,7 +55,62 @@ type Meta struct {
 	Sub      map[string]transcript.Tokens `json:"subagent_tokens,omitempty"` // its subagents' tokens by model id
 	Reported *float64                     `json:"reported_usd,omitempty"`    // Claude Code's own cost figure
 	Unpriced bool                         `json:"reported_unpriced,omitempty"`
+
+	// Full is what only a host under the full policy sends: content, not
+	// metadata. serve sets it only then, and Den drops it unless both the
+	// host's configured and applied policies are full. It is never saved to
+	// disk on either side.
+	Full *MetaFull `json:"full,omitempty"`
 }
+
+// MetaFull is an agent's content for the details pane of a Den whose host
+// policy is full: its title, its folder on the host, and its recent
+// activity. Every string is sanitised and capped on the host and again on
+// arrival.
+type MetaFull struct {
+	Title   string      `json:"title,omitempty"`
+	CWD     string      `json:"cwd,omitempty"` // a path on the host, never used as a local one
+	Tail    []MetaEntry `json:"tail,omitempty"`
+	TailCut bool        `json:"tail_cut,omitempty"` // older entries were left out to fit
+}
+
+// MetaEntry is a transcript.Entry with its time as an age.
+type MetaEntry struct {
+	Age     int64        `json:"age_ms"` // -1 unknown
+	Kind    string       `json:"kind"`
+	Text    string       `json:"text,omitempty"`
+	Tool    string       `json:"tool,omitempty"`
+	Code    string       `json:"code,omitempty"`
+	Output  string       `json:"output,omitempty"`
+	Changes []MetaChange `json:"changes,omitempty"`
+}
+
+// MetaChange is one file a tool call changed.
+type MetaChange struct {
+	Path    string     `json:"path"`
+	Created bool       `json:"created,omitempty"`
+	Deleted bool       `json:"deleted,omitempty"`
+	Hunks   []MetaHunk `json:"hunks,omitempty"`
+}
+
+// MetaHunk is a transcript.Hunk.
+type MetaHunk struct {
+	OldStart int      `json:"old_start"`
+	NewStart int      `json:"new_start"`
+	Lines    []string `json:"lines"`
+}
+
+// Caps of MetaFull, per agent. A snapshot is one message line, so Full
+// takes a budget its sender divides among the agents.
+const (
+	FullTitleMax   = 200
+	FullCWDMax     = 1024
+	FullTextMax    = 4 << 10 // a prompt, reply, command or output
+	FullChanges    = 4       // per entry
+	FullHunkLines  = 40      // per change
+	FullTailMax    = 20      // entries
+	FullTailBudget = 24 << 10
+)
 
 // MetaLimits is the numeric part of badge.Usage.
 type MetaLimits struct {
@@ -117,6 +174,155 @@ func (a Agent) Meta(index int, now time.Time, labels bool) Meta {
 		}
 	}
 	return m
+}
+
+// FullMeta is the agent's MetaFull, measured at now, with its Tail kept
+// newest first within budget bytes of text.
+func (a Agent) FullMeta(now time.Time, budget int) *MetaFull {
+	f := &MetaFull{
+		Title: sanitize.Label(a.Title, FullTitleMax),
+		CWD:   capBytes(sanitize.Line(a.Session.CWD), FullCWDMax),
+	}
+	var rev []MetaEntry
+	used := 0
+	for i := len(a.Tail) - 1; i >= 0; i-- {
+		if len(rev) == FullTailMax {
+			f.TailCut = true
+			break
+		}
+		e := metaEntry(a.Tail[i], now)
+		n := e.size()
+		if used+n > budget {
+			f.TailCut = true
+			break
+		}
+		used += n
+		rev = append(rev, e)
+	}
+	for i := len(rev) - 1; i >= 0; i-- {
+		f.Tail = append(f.Tail, rev[i])
+	}
+	return f
+}
+
+func metaEntry(e transcript.Entry, now time.Time) MetaEntry {
+	m := MetaEntry{
+		Age:    -1,
+		Kind:   sanitize.Label(e.Kind, 16),
+		Text:   capBytes(sanitize.Text(e.Text), FullTextMax),
+		Tool:   sanitize.Label(e.Tool, LabelMax),
+		Code:   capBytes(sanitize.Text(e.Code), FullTextMax),
+		Output: capBytes(sanitize.Text(e.Output), FullTextMax),
+	}
+	if !e.At.IsZero() {
+		m.Age = max(0, now.Sub(e.At).Milliseconds())
+	}
+	for _, c := range e.Changes[:min(len(e.Changes), FullChanges)] {
+		mc := MetaChange{Path: capBytes(sanitize.Line(c.Path), FullCWDMax), Created: c.Created, Deleted: c.Deleted}
+		left := FullHunkLines
+		for _, h := range c.Hunks {
+			if left <= 0 {
+				break
+			}
+			lines := h.Lines[:min(len(h.Lines), left)]
+			left -= len(lines)
+			mh := MetaHunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: make([]string, len(lines))}
+			for i, l := range lines {
+				mh.Lines[i] = capBytes(sanitize.Code(l), 1000)
+			}
+			mc.Hunks = append(mc.Hunks, mh)
+		}
+		m.Changes = append(m.Changes, mc)
+	}
+	return m
+}
+
+// size is how many bytes e takes on the wire, about.
+func (e MetaEntry) size() int {
+	n := 64 + WireLen(e.Text) + WireLen(e.Tool) + WireLen(e.Code) + WireLen(e.Output)
+	for _, c := range e.Changes {
+		n += 48 + WireLen(c.Path)
+		for _, h := range c.Hunks {
+			n += 48
+			for _, l := range h.Lines {
+				n += WireLen(l) + 1
+			}
+		}
+	}
+	return n
+}
+
+// WireLen is how many bytes s takes as a JSON string, as encoding/json
+// writes it: <, > and & escaped, and U+2028 and U+2029 too.
+func WireLen(s string) int {
+	n := 2
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '"' || c == '\\' || c == '\n' || c == '\t' || c == '\r':
+			n += 2
+		case c < 0x20 || c == '<' || c == '>' || c == '&':
+			n += 6
+		case c == 0xE2 && i+2 < len(s) && s[i+1] == 0x80 && (s[i+2] == 0xA8 || s[i+2] == 0xA9):
+			n += 6
+			i += 2
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// capBytes cuts s to at most max bytes on a rune boundary, ending in "…"
+// when cut.
+func capBytes(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	cut := max - len("…")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
+// fromFull applies a received MetaFull to a, sanitising it again: Title,
+// RemoteCWD (never Session.CWD, which Den reads as a local folder) and Tail
+// with times counted back from received.
+func (a *Agent) fromFull(f *MetaFull, received time.Time) {
+	a.Title = sanitize.Label(f.Title, FullTitleMax)
+	a.RemoteCWD = capBytes(sanitize.Line(f.CWD), FullCWDMax)
+	for _, e := range f.Tail[:min(len(f.Tail), FullTailMax)] {
+		te := transcript.Entry{
+			Kind:   sanitize.Label(e.Kind, 16),
+			Text:   capBytes(sanitize.Text(e.Text), FullTextMax),
+			Tool:   sanitize.Label(e.Tool, LabelMax),
+			Code:   capBytes(sanitize.Text(e.Code), FullTextMax),
+			Output: capBytes(sanitize.Text(e.Output), FullTextMax),
+		}
+		if e.Age >= 0 {
+			te.At = received.Add(-time.Duration(e.Age) * time.Millisecond)
+		}
+		for _, c := range e.Changes[:min(len(e.Changes), FullChanges)] {
+			fc := transcript.FileChange{Path: capBytes(sanitize.Line(c.Path), FullCWDMax), Created: c.Created, Deleted: c.Deleted}
+			left := FullHunkLines
+			for _, h := range c.Hunks {
+				if left <= 0 {
+					break
+				}
+				lines := h.Lines[:min(len(h.Lines), left)]
+				left -= len(lines)
+				th := transcript.Hunk{OldStart: h.OldStart, NewStart: h.NewStart}
+				for _, l := range lines {
+					if l = sanitize.Code(l); l != "" && strings.ContainsRune(" +-", rune(l[0])) {
+						th.Lines = append(th.Lines, capBytes(l, 1000))
+					}
+				}
+				fc.Hunks = append(fc.Hunks, th)
+			}
+			te.Changes = append(te.Changes, fc)
+		}
+		a.Tail = append(a.Tail, te)
+	}
 }
 
 func cleanModels(in map[string]transcript.Tokens) map[string]transcript.Tokens {
@@ -200,6 +406,9 @@ func FromMeta(m Meta, host string, received time.Time, prices cost.Table) Agent 
 		acc.Reported = &transcript.Reported{USD: *m.Reported, Unknown: m.Unpriced}
 	}
 	a.Cost = prices.Of(acc)
+	if m.Full != nil {
+		a.fromFull(m.Full, received)
+	}
 	return a
 }
 

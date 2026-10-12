@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -30,10 +31,24 @@ var metaAllowed = []string{
 	"input", "output", "cache_creation", "cache_read",
 }
 
+// fullAllowed is every JSON field Meta.Full may carry: content, which only a
+// host under the full policy sends (docs/REMOTE.md).
+var fullAllowed = []string{
+	"full",
+	// MetaFull
+	"title", "cwd", "tail", "tail_cut",
+	// MetaEntry
+	"age_ms", "kind", "text", "tool", "code", "output", "changes",
+	// MetaChange, MetaHunk
+	"path", "created", "deleted", "hunks", "old_start", "new_start", "lines",
+}
+
 // metaForbidden are names a content field would plausibly carry.
 var metaForbidden = []string{"tail", "title", "path", "cwd", "messagingsocketpath", "socket", "transcript", "text", "code", "prompt", "reply", "input_text", "tool_input", "command", "changes"}
 
-func jsonFields(t reflect.Type, seen map[reflect.Type]bool, out map[string]bool) {
+// jsonFields collects the JSON names of t's fields, recursively; a field
+// named in skip is left out with everything under it.
+func jsonFields(t reflect.Type, seen map[reflect.Type]bool, out map[string]bool, skip ...string) {
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Map {
 		t = t.Elem()
 	}
@@ -53,33 +68,46 @@ func jsonFields(t reflect.Type, seen map[reflect.Type]bool, out map[string]bool)
 		if name == "" {
 			name = f.Name
 		}
+		if slices.Contains(skip, name) {
+			continue
+		}
 		out[name] = true
-		jsonFields(f.Type, seen, out)
+		jsonFields(f.Type, seen, out, skip...)
 	}
 }
 
+// TestMetaFieldsAreAllowlisted proves the field sets per policy: outside
+// Full, Meta (what observe and approve send) has only allowlisted metadata
+// and no content-like name; Full has only its own allowlist.
 func TestMetaFieldsAreAllowlisted(t *testing.T) {
-	got := map[string]bool{}
-	jsonFields(reflect.TypeFor[Meta](), map[reflect.Type]bool{}, got)
-	allowed := map[string]bool{}
-	for _, f := range metaAllowed {
-		allowed[f] = true
-	}
-	var extra []string
-	for f := range got {
-		if !allowed[f] {
-			extra = append(extra, f)
+	check := func(what string, got map[string]bool, list []string, content bool) {
+		allowed := map[string]bool{}
+		for _, f := range list {
+			allowed[f] = true
 		}
-		for _, bad := range metaForbidden {
-			if strings.ToLower(f) == bad {
-				t.Errorf("Meta serialises a content field %q", f)
+		var extra []string
+		for f := range got {
+			if !allowed[f] {
+				extra = append(extra, f)
+			}
+			for _, bad := range metaForbidden {
+				if !content && strings.ToLower(f) == bad {
+					t.Errorf("%s serialises a content field %q", what, f)
+				}
 			}
 		}
+		sort.Strings(extra)
+		if len(extra) > 0 {
+			t.Errorf("%s has fields not on its allowlist: %v; check what they carry, then add them", what, extra)
+		}
 	}
-	sort.Strings(extra)
-	if len(extra) > 0 {
-		t.Errorf("Meta has fields not on the allowlist: %v; check they are metadata, then add them to metaAllowed", extra)
-	}
+	meta := map[string]bool{}
+	jsonFields(reflect.TypeFor[Meta](), map[reflect.Type]bool{}, meta, "full")
+	check("Meta under observe and approve", meta, metaAllowed, false)
+	full := map[string]bool{}
+	jsonFields(reflect.TypeFor[MetaFull](), map[reflect.Type]bool{}, full)
+	full["full"] = true
+	check("Meta.Full", full, fullAllowed, true)
 }
 
 // TestMetaCarriesNoSecrets: a session whose prompt,
@@ -122,8 +150,20 @@ func TestMetaCarriesNoSecrets(t *testing.T) {
 	}
 	m := a.Meta(0, time.Now(), true)
 	raw, _ := json.Marshal(m)
-	if strings.Contains(string(raw), "SECRET") {
+	if strings.Contains(string(raw), "SECRET") || strings.Contains(string(raw), `"full"`) {
 		t.Fatalf("Meta leaks content: %s", raw)
+	}
+	// Full is where the content goes, and only there.
+	withFull := m
+	withFull.Full = a.FullMeta(time.Now(), FullTailBudget)
+	raw2, _ := json.Marshal(withFull)
+	for _, want := range []string{"SECRET-reply", "SECRET-title", "SECRET-command", "SECRET-cwd-dir"} {
+		if !strings.Contains(string(raw2), want) {
+			t.Errorf("FullMeta lacks %s: %s", want, raw2)
+		}
+	}
+	if back := FromMeta(withFull, "devbox", time.Now(), cost.NewTable(nil)); back.Title != "SECRET-title" || back.Session.CWD != "" || !strings.Contains(back.RemoteCWD, "SECRET-cwd-dir") || len(back.Tail) == 0 {
+		t.Errorf("FromMeta with Full = title %q cwd %q remote cwd %q tail %d", back.Title, back.Session.CWD, back.RemoteCWD, len(back.Tail))
 	}
 	if m.Repo != "den" || m.Branch != "main" || m.Status != "working" || m.Model != "claude-fable-5-1" || m.Tokens["claude-fable-5-1"].Total() == 0 {
 		t.Errorf("Meta lost metadata: %s", raw)
@@ -214,5 +254,14 @@ func TestFromMetaIgnoresTheHostsName(t *testing.T) {
 	a := FromMeta(Meta{Session: id, Name: "Mossy Lemur fix the login", Peer: "worker", Status: "idle"}, "devbox", time.Now(), cost.NewTable(nil))
 	if want := badge.Name(id); a.Name != want || a.Session.Name != "worker" {
 		t.Errorf("name %q (want %q), peer %q", a.Name, want, a.Session.Name)
+	}
+}
+
+func TestWireLenMatchesEncodingJSON(t *testing.T) {
+	for _, s := range []string{"", "plain", `"\` + "\n\t\r", "<a & b>", "\x01\x1f", "\u2028\u2029", "é漢字", strings.Repeat("\u2028", 333)} {
+		raw, _ := json.Marshal(s)
+		if got := WireLen(s); got != len(raw) {
+			t.Errorf("WireLen(%q) = %d, json %d", s, got, len(raw))
+		}
 	}
 }

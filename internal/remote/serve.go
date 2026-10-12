@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,13 +22,14 @@ import (
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // ServeOptions tune Serve; the zero value is what `den remote serve` uses.
 type ServeOptions struct {
 	Version       string                        // this den's version, for hello
 	EventsPath    string                        // default events.Path()
-	Snapshot      func() ([]fleet.Agent, error) // default fleet.Snapshot, without Tail
+	Snapshot      func() ([]fleet.Agent, error) // default fleet.Snapshot, with Tail only under full
 	Watch         []string                      // default the sessions dir and the badge store
 	Skew          time.Duration                 // fakes a host clock this far off; default clockOffset, 0 outside sshtest builds
 	Debounce      time.Duration                 // a burst of file changes becomes one snapshot; default 250 ms
@@ -43,18 +45,27 @@ type ServeOptions struct {
 	CloseOps      closer.Ops                    // how close signals; default closer.System
 	CloseSelf     closer.Self                   // what a close must leave alone; default this process and its ancestors
 	DirtyTTL      time.Duration                 // how long a checkout's dirty flag is trusted; default 20 s
+	DiffWait      time.Duration                 // how long one diff may take on the host; default 20 s
+
+	snapshotDefault bool
 }
 
 // noTail sets fleet.Recent to 0 once per process for serve.
 var noTail sync.Once
 
+// fullBudget is how many bytes of content one snapshot carries under full,
+// divided among the agents, well inside MaxLine with the metadata.
+const fullBudget = 160 << 10
+
 func (o *ServeOptions) defaults() {
+	o.snapshotDefault = o.Snapshot == nil
 	if o.EventsPath == "" {
 		o.EventsPath = events.Path()
 	}
 	if o.Snapshot == nil {
 		// Never read what is never sent. Set once, before any snapshot runs:
-		// actions read the fleet from goroutines of their own.
+		// actions read the fleet from goroutines of their own. Under full,
+		// Serve reads the Tail itself (withTail).
 		noTail.Do(func() { fleet.Recent = 0 })
 		o.Snapshot = fleet.Snapshot
 	}
@@ -94,6 +105,9 @@ func (o *ServeOptions) defaults() {
 	}
 	if o.CloseSelf.PID == 0 {
 		o.CloseSelf = closer.DenSelf("", "")
+	}
+	if o.DiffWait == 0 {
+		o.DiffWait = 20 * time.Second
 	}
 	if o.DirtyTTL == 0 {
 		o.DirtyTTL = 20 * time.Second
@@ -229,7 +243,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	if rl != nil {
 		defer rl.close()
 	}
-	acts := newActions(policy.rank() >= Approve.rank(), o, func(v any) error { return writeMsg(out, v) })
+	full := policy == Full
+	if full && o.snapshotDefault {
+		o.Snapshot = withTail(o.Snapshot)
+	}
+	acts := newActions(policy.rank() >= Approve.rank(), full, o, func(v any) error { return writeMsg(out, v) })
 	defer func() {
 		cancel() // an action in flight stops waiting
 		acts.wait()
@@ -265,14 +283,35 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 		// the host's clock wrote: a skew shifts both and cancels out.
 		now := time.Now()
 		s := Snapshot{Type: TypeSnapshot, RemoteNow: now.Add(o.Skew).UTC(), Agents: make([]fleet.Meta, 0, len(agents))}
+		// Under full each agent's content shares what a line has room for.
+		budget := min(fleet.FullTailBudget, fullBudget/max(1, len(agents)))
 		for i, a := range agents {
 			m := a.Meta(i, now, req.Labels)
+			if full {
+				m.Full = a.FullMeta(now, budget)
+			}
 			if dirty != nil {
 				m.Dirty = dirty.get(a.Session.CWD)
 			}
 			s.Agents = append(s.Agents, m)
 		}
-		return writeMsg(out, s)
+		err := writeMsg(out, s)
+		if errors.Is(err, ErrLineTooLong) && full {
+			// Too many agents for their content: send their metadata,
+			// titles and folders, then the metadata alone, never nothing.
+			for i := range s.Agents {
+				if f := s.Agents[i].Full; f != nil {
+					s.Agents[i].Full = &fleet.MetaFull{Title: f.Title, CWD: f.CWD, TailCut: len(f.Tail) > 0 || f.TailCut}
+				}
+			}
+			if err = writeMsg(out, s); errors.Is(err, ErrLineTooLong) {
+				for i := range s.Agents {
+					s.Agents[i].Full = nil
+				}
+				err = writeMsg(out, s)
+			}
+		}
+		return err
 	}
 	if err := snap(agents); err != nil {
 		return err
@@ -361,8 +400,8 @@ func fromDenMsg(ctx context.Context, line []byte, rl *relay, acts *actions, log 
 	case err != nil:
 		return fmt.Errorf("a message from Den that is not JSON")
 	case len(unknown) > 0 || allowedIn[typ] == nil:
-		return fmt.Errorf("proto 1 takes only decision, ping, send and close after hello, not %s", sanitize.Label(typ, 40))
-	case typ == TypeSend || typ == TypeClose:
+		return fmt.Errorf("proto 1 takes only decision, ping, send, close and diff after hello, not %s", sanitize.Label(typ, 40))
+	case typ == TypeSend || typ == TypeClose || typ == TypeDiff:
 		return acts.handle(ctx, typ, line)
 	case typ == TypeDecision:
 		var d Decision
@@ -376,6 +415,19 @@ func fromDenMsg(ctx context.Context, line []byte, rl *relay, acts *actions, log 
 		rl.decide(d)
 	}
 	return nil
+}
+
+// withTail is snapshot with each agent's recent activity read, for full.
+func withTail(snapshot func() ([]fleet.Agent, error)) func() ([]fleet.Agent, error) {
+	return func() ([]fleet.Agent, error) {
+		agents, err := snapshot()
+		for i, a := range agents {
+			if a.Path != "" {
+				agents[i].Tail = transcript.Tail(a.Path, fleet.FullTailMax)
+			}
+		}
+		return agents, err
+	}
 }
 
 func snapAgain(o ServeOptions, snap func([]fleet.Agent) error) error {

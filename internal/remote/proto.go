@@ -28,7 +28,8 @@
 // reconnects take its own held requests back from a serve whose link died
 // half-open, and tells a second Den apart. After it, serve reads only
 // decision, ping, send and close lines (below), within MaxLine and a rate
-// cap; anything else gets an error (code request) and serve exits. It exits
+// cap; anything else gets an error (code request) and serve exits. (diff,
+// below, too.) It exits
 // quietly on stdin's EOF.
 //
 //	{"type":"decision","id":"…","hash":"…","behavior":"allow","message":"…","answers":{"Which?":"A"}}
@@ -48,12 +49,12 @@
 //	{"type":"send","id":"…","session":"…","text":"…"}
 //	{"type":"close","id":"…","session":"…","force":false}
 //
-// The two actions, send and close, the whole of what Den may ask serve to
-// do: there is no generic exec and no shell, and text travels in this
-// message, never in an argument list. Both are allowed only when the policy
-// serve applies is approve or full; under observe serve answers each with a
-// failed result and does nothing, and Den does not send them at all. id is
-// Den's own, echoed in the result. session is a Claude Code session id,
+// The two actions, send and close, the whole of what Den may ask serve to do
+// besides diff: there is no generic exec and no shell, and text travels in
+// this message, never in an argument list. Both are allowed only when the
+// policy serve applies is approve or full; under observe serve answers each
+// with a failed result and does nothing, and Den does not send them at all. id
+// is Den's own, echoed in the result. session is a Claude Code session id,
 // matched exactly against the host's live sessions (~/.claude/sessions, pid
 // alive) when the command arrives, not when Den last saw a snapshot. send
 // posts text, at most MaxSendText bytes, to that session's own
@@ -62,6 +63,18 @@
 // only with force, SIGTERM then a wait, SIGKILL only with force, no window to
 // close (a host has no desktop). At most MaxActions run at once on one serve.
 //
+//	{"type":"diff","id":"…","session":"…"}
+//
+// The third command, for remote Review: the diff of a session's work, as Review
+// shows it. Allowed only when the policy serve applies is full, and Den
+// asks only when its own setting for the host is full too; under approve
+// or observe serve answers with a failed result and reads nothing. serve
+// finds the session as for send and close, takes its folder from the
+// host's own session file (never from the message), and reads the checkout
+// with git that runs nothing the repository's config names (gitsafe). The
+// result carries the diff, capped (MaxDiffBytes, MaxDiffFiles,
+// MaxDiffFileLines, MaxDiffLine) and sanitised, with what was cut said.
+//
 // serve to Den, on serve's stdout:
 //
 //	{"type":"hello","proto":1,"den":"v0.2.0","claude":"2.1.300","hostname":"devbox",
@@ -69,8 +82,7 @@
 //	 "cursor":{…}}
 //
 // First, once. policy is what serve applies: the lower of the requested
-// policy and Supported (approve in this build: full applies as approve
-// until a later slice), so a host can be held to less than it is
+// policy and Supported (full in this build), so a host can be held to less than it is
 // configured for but never given more. cursor is where its event stream
 // starts. When another Den already relays this host's held requests,
 // serve applies observe and says who holds them:
@@ -79,6 +91,10 @@
 //
 //	{"type":"snapshot","remote_now":"…","agents":[fleet.Meta, …]}
 //
+// Under full each agent also carries "full": its title, folder and recent
+// activity (fleet.MetaFull), sanitised and capped to share what one line
+// has room for; under observe and approve that key is never sent, and Den
+// drops it (and flags the host) unless its own setting is full too.
 // The host's whole fleet as fleet.Meta, on start and after each change to
 // the session files or the badge store (debounced), and every
 // SnapshotEvery while nothing changes.
@@ -106,9 +122,9 @@
 // A held request is no longer waiting: its hook gave up (Claude Code
 // answered it in the terminal, or its own wait ran out).
 //
-//	{"type":"result","id":"…","ok":true,"killed":false,"error":"…"}
+//	{"type":"result","id":"…","ok":true,"killed":false,"error":"…","diff":{…}}
 //
-// The outcome of a send or close, once, with the id Den gave it. error is
+// The outcome of a send, close or diff (diff only for a diff), once, with the id Den gave it. error is
 // short, sanitised and says why nothing happened; killed says a close
 // needed SIGKILL. A result for an id Den has no request open for is
 // dropped and the host flagged. send has no acknowledgement from Claude
@@ -165,7 +181,8 @@ const (
 	TypePing     = "ping"     // Den to serve
 	TypeSend     = "send"     // Den to serve, approve or full only
 	TypeClose    = "close"    // Den to serve, approve or full only
-	TypeResult   = "result"   // serve to Den: the outcome of a send or close
+	TypeDiff     = "diff"     // Den to serve, full only
+	TypeResult   = "result"   // serve to Den: the outcome of a send, close or diff
 )
 
 // Limits of the actions.
@@ -174,6 +191,8 @@ const (
 	MaxSendText = 64 << 10
 	// MaxActions caps the sends and closes one serve runs at once.
 	MaxActions = 8
+	// MaxDiffs caps the diffs one serve reads at once, apart from MaxActions.
+	MaxDiffs = 2
 )
 
 // Request is Den's hello to serve.
@@ -279,6 +298,7 @@ type Result struct {
 	OK     bool   `json:"ok"`
 	Killed bool   `json:"killed,omitempty"`
 	Error  string `json:"error,omitempty"`
+	Diff   *Diff  `json:"diff,omitempty"` // a diff's, under full only
 }
 
 // Ping is Den saying it is still there.
@@ -305,7 +325,7 @@ var allowed = map[string][]string{
 	TypeError:    {"type", "code", "message"},
 	TypeHeld:     {"type", "id", "session", "tool", "body"},
 	TypeGone:     {"type", "id"},
-	TypeResult:   {"type", "id", "ok", "killed", "error"},
+	TypeResult:   {"type", "id", "ok", "killed", "error", "diff"},
 }
 
 // allowedIn is the same for what serve reads after Den's hello request.
@@ -314,6 +334,7 @@ var allowedIn = map[string][]string{
 	TypePing:     {"type"},
 	TypeSend:     {"type", "id", "session", "text"},
 	TypeClose:    {"type", "id", "session", "force"},
+	TypeDiff:     {"type", "id", "session"},
 }
 
 // ErrLineTooLong is a message over MaxLine.

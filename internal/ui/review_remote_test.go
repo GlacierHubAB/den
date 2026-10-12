@@ -1,0 +1,246 @@
+package ui
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/remote"
+	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/transcript"
+)
+
+// runReview runs a command the Review view started and applies what it
+// produces, as the update loop would.
+func runReview(m *Model, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			runReview(m, c)
+		}
+	case reviewRemoteMsg:
+		runReview(m, m.applyRemoteReview(msg))
+	case reviewLoadedMsg:
+		m.applyReview(msg)
+	case sentMsg:
+		m.applyReviewSent(msg)
+	}
+}
+
+func setPolicy(f *fakeFeed, label string, p remote.Policy) {
+	for i := range f.hosts {
+		if f.hosts[i].Label == label {
+			f.hosts[i].Policy, f.hosts[i].Applied = p, p
+		}
+	}
+}
+
+func remoteDiff() *remote.Diff {
+	return &remote.Diff{
+		Root: "/home/user/den", Repo: "den", Branch: "feature", Worktree: true, Ahead: 2,
+		Cut: "cut: files over 2000 lines",
+		Files: []remote.DiffFile{
+			{Path: "main.go", Hunks: []remote.DiffHunk{{OldStart: 1, NewStart: 1, Lines: []string{" package main", "+func run() {}"}, Mine: []int{1}}}},
+			{Path: "huge.txt", Cut: true, Hunks: []remote.DiffHunk{{NewStart: 1, Lines: []string{"+x"}, Mine: []int{0}}}},
+		},
+	}
+}
+
+// Agents on hosts whose policy is not full stay greyed, saying why and how
+// to change it; an offline host says so; nothing is asked of either.
+func TestReviewRemoteGreyedBelowFull(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	m.tab = tabReview
+	m.proj.cur = "" // every project: both hosts
+	runReview(m, m.loadReview())
+	out := frame(m)
+	for _, want := range []string{"Mossy Lemur @devbox", "diff on devbox, policy observe", `policy = "full"`, "gpu is offline"} {
+		if !strings.Contains(strings.Join(strings.Fields(out), " "), want) {
+			t.Errorf("Review lacks %q:\n%s", want, out)
+		}
+	}
+	if len(feed.diffs) > 0 {
+		t.Errorf("asked for a diff below full: %v", feed.diffs)
+	}
+	setPolicy(feed, "devbox", remote.Approve)
+	m.syncRemote()
+	if out := frame(m); !strings.Contains(out, "diff on devbox, policy approve") {
+		t.Errorf("approve not said:\n%s", out)
+	}
+}
+
+func TestReviewRemoteUnderFull(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	m.syncRemote()
+	m.tab = tabReview
+	m.proj.cur = "den @devbox"
+	feed.diff = remoteDiff()
+	runReview(m, m.loadReview())
+	if len(feed.diffs) != 1 || feed.diffs[0] != "devbox/"+dupSession {
+		t.Fatalf("diffs asked = %v (the host gets the bare session id)", feed.diffs)
+	}
+	if len(m.rev.works) != 1 {
+		t.Fatalf("works = %+v", m.rev.works)
+	}
+	w := m.rev.works[0]
+	if w.Host != "devbox" || w.SessionID != dupSession+"@devbox" || w.Root != "/home/user/den @devbox" || w.Main != "den @devbox" || w.Added != 2 {
+		t.Errorf("work = %+v", w)
+	}
+	out := frame(m)
+	for _, want := range []string{"Mossy Lemur @devbox", "den · feature", "cut: files over 2000 lines", "func run"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Review lacks %q:\n%s", want, out)
+		}
+	}
+
+	// Merging or removing its worktree stays on this machine.
+	for _, run := range []func([]string) (tea.Model, tea.Cmd){m.mergeCommand, m.cleanupCommand} {
+		mm, _ := run(nil)
+		if got := mm.(Model).flash; !strings.Contains(got, "on devbox") || !strings.Contains(got, "this machine only") {
+			t.Errorf("worktree action: %q", got)
+		}
+	}
+
+	// A comment /sends through the host's session.
+	m.rev.commentsPath = filepath.Join(t.TempDir(), "reviews.json")
+	m.rev.comments = append(m.rev.comments, review.Comment{ID: "c1", Root: w.Root, Host: "devbox", Path: "main.go", Side: "new", Start: 2, End: 2,
+		Quote: []string{"+func run() {}"}, Body: "name it start", SessionID: w.SessionID, Created: time.Now()})
+	mm, cmd := m.sendReview(nil)
+	*m = mm.(Model)
+	runReview(m, cmd)
+	if len(feed.sent) != 1 || !strings.HasPrefix(feed.sent[0], "devbox/"+dupSession+": ") || !strings.Contains(feed.sent[0], "name it start") {
+		t.Errorf("sent = %v", feed.sent)
+	}
+	if m.rev.comments[0].Draft() {
+		t.Error("the comment is still a draft")
+	}
+	// It quotes the host's diff: it is never written down.
+	if raw, err := os.ReadFile(m.rev.commentsPath); err != nil || strings.Contains(string(raw), "name it start") || strings.Contains(string(raw), "func run") {
+		t.Errorf("reviews.json holds a remote comment: %s", raw)
+	}
+
+	// The link drops: the diff goes, and is not shown again as current.
+	feed.setState("devbox", remote.Offline)
+	m.syncRemote()
+	m.remoteReviewChanged("devbox")
+	if len(m.rev.works) != 0 || !strings.Contains(frame(m), "devbox is offline") {
+		t.Errorf("after the drop: works %d\n%s", len(m.rev.works), frame(m))
+	}
+}
+
+func TestReviewRemoteLoadingAndFailure(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	m.syncRemote()
+	m.tab = tabReview
+	m.proj.cur = "den @devbox"
+	cmd := m.loadRemoteReviews()
+	if out := frame(m); !strings.Contains(out, "reading its diff on devbox") {
+		t.Errorf("no loading state:\n%s", out)
+	}
+	if again := m.loadRemoteReviews(); again != nil {
+		t.Error("a second read started while one is in flight")
+	}
+	feed.diffErr = errors.New("devbox did not answer within 30s; whether it acted is not known")
+	runReview(m, cmd)
+	if out := frame(m); !strings.Contains(out, "did not answer within 30s") {
+		t.Errorf("no failure said:\n%s", out)
+	}
+}
+
+// The details pane shows a remote agent's folder, title and recent
+// activity when its host sent them (full), and none otherwise.
+func TestRemoteDetailsUnderFull(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	for i := range feed.agents {
+		if feed.agents[i].Host == "devbox" {
+			feed.agents[i].Title = "port the parser to Go"
+			feed.agents[i].RemoteCWD = "/home/user/den"
+			feed.agents[i].Tail = []transcript.Entry{{Kind: "text", Text: "Ported the lexer.", At: time.Now()}}
+		}
+	}
+	m.syncRemote()
+	m.refresh()
+	for i, a := range m.agents {
+		if a.Host == "devbox" {
+			m.cursor = i
+		}
+	}
+	out := m.detailPane(80, 60)
+	for _, want := range []string{"/home/user/den", "port the parser to Go", "Ported the lexer."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("details lack %q:\n%s", want, out)
+		}
+	}
+	for i, a := range m.agents {
+		if a.Host == "gpu" && a.Status != fleet.Gone {
+			m.cursor = i
+		}
+	}
+	if out := m.detailPane(80, 60); strings.Contains(out, "recent") || strings.Contains(out, "cwd") {
+		t.Errorf("an agent without content shows some:\n%s", out)
+	}
+}
+
+// serve reads at most remote.MaxDiffs diffs at once; Review asks for no
+// more per host, and the next as each answer comes.
+func TestReviewRemoteAsksMaxDiffsPerHost(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	for _, id := range []string{"33333333-2222-4333-8444-555555555555", "44444444-2222-4333-8444-555555555555", "55555555-2222-4333-8444-555555555555"} {
+		feed.agents = append(feed.agents, remoteAgent("devbox", id, "Agent "+id[:2], fleet.Idle, 0))
+	}
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	cmd := m.loadRemoteReviews()
+	loading := 0
+	for _, rr := range m.rev.remote {
+		if rr.loading {
+			loading++
+		}
+	}
+	if loading != remote.MaxDiffs {
+		t.Fatalf("%d diffs asked at once, want %d", loading, remote.MaxDiffs)
+	}
+	feed.diff = remoteDiff()
+	runReview(m, cmd)
+	if len(feed.diffs) != 4 {
+		t.Errorf("asked %d of 4 agents: %v", len(feed.diffs), feed.diffs)
+	}
+}
+
+// A remote agent's content never goes into the orchestrator's prompt, and
+// a host that is not live shows none of it.
+func TestRemoteContentStaysOutOfTheRosterAndOffline(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	for i := range feed.agents {
+		feed.agents[i].Title, feed.agents[i].RemoteCWD = "SECRET-title", "/home/user/SECRET"
+		feed.agents[i].Labels.Task = ""
+		feed.agents[i].Tail = []transcript.Entry{{Kind: "text", Text: "SECRET-reply", At: time.Now()},
+			{Kind: "tool", Tool: "Edit", Changes: []transcript.FileChange{{Path: "/home/user/SECRET/a.go"}}}}
+	}
+	m.syncRemote()
+	m.refresh()
+	for _, r := range m.roster() {
+		if r.Host != "" && (strings.Contains(fmt.Sprint(r), "SECRET")) {
+			t.Errorf("roster carries remote content: %+v", r)
+		}
+	}
+	for _, a := range m.agents {
+		if a.Host == "gpu" && (a.Title != "" || len(a.Tail) > 0 || a.RemoteCWD != "") {
+			t.Errorf("an offline host's agent keeps content: %+v", a)
+		}
+	}
+}

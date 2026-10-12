@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -15,12 +16,16 @@ import (
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
-// actions is serve's half of the two commands Den may give a host, send and
-// close. They are the whole allowlist. Each is resolved against the
-// host's live sessions when it arrives, by exact session id; neither runs a
-// shell or any other program, and no text from the wire is ever an argument.
+// actions is serve's half of the commands Den may give a host: send and close,
+// and under full diff (diff.go), for remote Review. They are the whole
+// allowlist. Each is resolved against the host's live sessions when it
+// arrives, by exact session id; neither runs a shell or any other program, and
+// no text from the wire is ever an argument.
 type actions struct {
 	allowed  bool // the applied policy is approve or full
+	full     bool // the applied policy is full: diff is allowed
+	diffOf   func(ctx context.Context, ag fleet.Agent) (*Diff, error)
+	diffWait time.Duration
 	sessions func() ([]fleet.Agent, error)
 	post     func(socket, text string) error // peer.Send
 	ops      closer.Ops
@@ -28,14 +33,15 @@ type actions struct {
 	up       func(v any) error
 	log      func(string)
 
-	sem chan struct{} // MaxActions at once
-	wg  sync.WaitGroup
+	sem     chan struct{} // MaxActions sends and closes at once
+	diffSem chan struct{} // MaxDiffs diffs at once, apart: a slow git never holds up a send
+	wg      sync.WaitGroup
 }
 
-func newActions(allowed bool, o ServeOptions, up func(any) error) *actions {
+func newActions(allowed, full bool, o ServeOptions, up func(any) error) *actions {
 	return &actions{
-		allowed: allowed, sessions: o.Snapshot, post: peer.Send, ops: o.CloseOps, self: o.CloseSelf,
-		up: up, log: o.Log, sem: make(chan struct{}, MaxActions),
+		allowed: allowed, full: full && allowed, diffOf: hostDiff, diffWait: o.DiffWait, sessions: o.Snapshot, post: peer.Send, ops: o.CloseOps, self: o.CloseSelf,
+		up: up, log: o.Log, sem: make(chan struct{}, MaxActions), diffSem: make(chan struct{}, MaxDiffs),
 	}
 }
 
@@ -56,6 +62,12 @@ func (a *actions) handle(ctx context.Context, typ string, line []byte) error {
 			return fmt.Errorf("a malformed send")
 		}
 		id, sid, text = c.ID, c.Session, c.Text
+	case TypeDiff:
+		var c DiffCmd
+		if json.Unmarshal(line, &c) != nil {
+			return fmt.Errorf("a malformed diff")
+		}
+		id, sid = c.ID, c.Session
 	default:
 		var c CloseCmd
 		if json.Unmarshal(line, &c) != nil {
@@ -73,6 +85,8 @@ func (a *actions) handle(ctx context.Context, typ string, line []byte) error {
 	switch {
 	case !a.allowed:
 		return fail("this host's policy is observe; it takes no actions")
+	case typ == TypeDiff && !a.full:
+		return fail("this host's policy is approve; its diffs stay on it unless it is full")
 	case sid == "" || len(sid) > 128 || sanitize.Line(sid) != sid:
 		return fail("no such session")
 	case typ == TypeSend && strings.TrimSpace(text) == "":
@@ -80,19 +94,29 @@ func (a *actions) handle(ctx context.Context, typ string, line []byte) error {
 	case typ == TypeSend && len(text) > MaxSendText:
 		return fail(fmt.Sprintf("the text is over %d KB", MaxSendText>>10))
 	}
+	sem := a.sem
+	if typ == TypeDiff {
+		sem = a.diffSem
+	}
 	select {
-	case a.sem <- struct{}{}:
+	case sem <- struct{}{}:
 	default:
+		if typ == TypeDiff {
+			return fail("busy reading other diffs; try again")
+		}
 		return fail("too many actions at once")
 	}
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
-		defer func() { <-a.sem }()
+		defer func() { <-sem }()
 		var r Result
-		if typ == TypeSend {
+		switch typ {
+		case TypeSend:
 			r = a.send(sid, text)
-		} else {
+		case TypeDiff:
+			r = a.diff(ctx, sid)
+		default:
 			r = a.close(ctx, sid, force)
 		}
 		r.Type, r.ID = TypeResult, id
@@ -102,7 +126,10 @@ func (a *actions) handle(ctx context.Context, typ string, line []byte) error {
 		} else {
 			a.log(fmt.Sprintf("%s %s failed: %s", typ, shortID(id), r.Error))
 		}
-		a.up(r)
+		if err := a.up(r); errors.Is(err, ErrLineTooLong) {
+			// Never left unanswered: Den would wait out its timeout.
+			a.up(Result{Type: TypeResult, ID: id, Error: "the " + typ + " is too large to send"})
+		}
 	}()
 	return nil
 }
@@ -153,6 +180,22 @@ func (a *actions) send(sid, text string) Result {
 		return Result{Error: "could not write to its inbox socket"}
 	}
 	return Result{OK: true}
+}
+
+// diff reads the diff of the session's work in its checkout here. A failure
+// says what failed, never where.
+func (a *actions) diff(ctx context.Context, sid string) Result {
+	ag, why := a.resolve(sid)
+	if why != "" {
+		return Result{Error: why}
+	}
+	ctx, cancel := context.WithTimeout(ctx, a.diffWait)
+	defer cancel()
+	d, err := a.diffOf(ctx, ag)
+	if err != nil {
+		return Result{Error: err.Error()}
+	}
+	return Result{OK: true, Diff: d}
 }
 
 // close ends the session's process under the closer's rules: not Den's own

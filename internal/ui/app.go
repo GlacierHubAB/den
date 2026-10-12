@@ -466,6 +466,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reviewLoadedMsg:
 		m.applyReview(msg)
 		return m, nil
+	case reviewRemoteMsg:
+		return m, m.applyRemoteReview(msg)
 	case changedMsg:
 		m.st = newStyles(theme.Load())
 		applyInputStyles(&m.input, m.st)

@@ -47,6 +47,11 @@ type work struct {
 	Worktree bool   // Root is a linked worktree
 	Branch   string // the worktree's branch
 	Ahead    int    // commits on Branch that the main checkout's branch lacks
+
+	// Host is the remote host the work is on, "" for this machine. Its Root
+	// is then a key, never a folder Den reads (review_remote.go).
+	Host string
+	Cut  string // what the host left out of the diff, and why
 }
 
 // project is the repository the work belongs to for the project pick.
@@ -58,8 +63,10 @@ func (w work) project() string {
 }
 
 type reviewState struct {
-	works    []work // the picked project's, or all when nothing is picked
-	all      []work
+	works    []work                   // the picked project's, or all when nothing is picked
+	all      []work                   // local and remote
+	local    []work                   // as the last local load found them
+	remote   map[string]*remoteReview // by agent key
 	cur      int
 	fileCur  int
 	scroll   int // diff rows scrolled off the top
@@ -128,6 +135,7 @@ func (m *Model) loadReview() tea.Cmd {
 		return nil
 	}
 	m.rev.loading = true
+	remote := m.loadRemoteReviews()
 	in := m.reviewInputs()
 	var open []review.Comment
 	for _, c := range m.rev.comments {
@@ -135,11 +143,11 @@ func (m *Model) loadReview() tea.Cmd {
 			open = append(open, c)
 		}
 	}
-	return func() tea.Msg {
+	return tea.Batch(remote, func() tea.Msg {
 		msg := loadWorks(in)
 		msg.addressed = addressedComments(open)
 		return msg
-	}
+	})
 }
 
 // loadWorks reads each agent's file changes from its transcript, finds the
@@ -215,10 +223,7 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 		for _, a := range agents {
 			paths = append(paths, a.Path)
 		}
-		base, err := worktreeBase(ctx, root, paths)
-		if err != nil {
-			base, err = review.Base(ctx, root, since)
-		}
+		base, err := review.BaseFor(ctx, root, paths, since)
 		if err == nil {
 			var files []review.File
 			files, err = review.Diff(ctx, root, base)
@@ -328,6 +333,17 @@ func ownedCounts(f review.File, session string) (added, removed int) {
 // applyReview takes a finished load and keeps the selection on the same
 // agent and file where they still exist.
 func (m *Model) applyReview(msg reviewLoadedMsg) {
+	m.rev.loading = false
+	m.rev.loadedAt = time.Now()
+	m.markAddressed(msg.addressed)
+	m.rev.local, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
+	m.mergeReview()
+}
+
+// mergeReview lists the local work and the remote work of live hosts,
+// filtered to the picked project, keeping the selection on the same agent
+// and file where they still exist.
+func (m *Model) mergeReview() {
 	var keepWork, keepFile string
 	if w := m.curWork(); w != nil {
 		keepWork = w.SessionID + "\x00" + w.Root
@@ -335,17 +351,16 @@ func (m *Model) applyReview(msg reviewLoadedMsg) {
 			keepFile = f.Path
 		}
 	}
-	m.rev.loading = false
-	m.rev.loadedAt = time.Now()
-	m.markAddressed(msg.addressed)
-	m.rev.all, m.rev.errs, m.rev.note = msg.works, msg.errs, msg.note
+	remote := m.remoteWorks()
+	sort.Slice(remote, func(i, j int) bool { return remote[i].SessionID < remote[j].SessionID })
+	m.rev.all = append(append([]work(nil), m.rev.local...), remote...)
 	m.rev.works = nil
-	for _, w := range msg.works {
+	for _, w := range m.rev.all {
 		if m.proj.cur == "" || w.project() == m.proj.cur {
 			m.rev.works = append(m.rev.works, w)
 		}
 	}
-	if len(m.rev.works) == 0 && len(msg.works) > 0 {
+	if len(m.rev.works) == 0 && len(m.rev.all) > 0 {
 		if p, ok := m.curProject(); ok {
 			m.rev.note = "No agent has changed anything in " + p.Name + " since it started. ← → or /project picks another project."
 		}
