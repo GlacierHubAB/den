@@ -23,6 +23,12 @@ const (
 	// the same reasoning: well above what the token ceiling could cost at
 	// cache-read prices, far below a figure that would swamp every total.
 	maxReportedUSD = 100_000
+	// maxModels caps the models one agent's tokens are kept for, per map;
+	// a session uses a handful.
+	maxModels = 32
+	// maxModelKey caps a model id used as a key. Model ids are short
+	// ("claude-opus-4-5-20251101", "us.anthropic.claude-…-v1:0").
+	maxModelKey = 128
 )
 
 // checkAgents is what Den keeps of a snapshot's agents: each one checked
@@ -53,11 +59,22 @@ func checkAgents(in []fleet.Meta, h Host, applied Policy) (agents []fleet.Meta, 
 // checkMeta checks one agent from a host. ok is false when it must be
 // dropped whole: its session id is not a UUID. Otherwise figures that are
 // not plausible are cleared, never shown or summed: tokens out of bounds
-// (the agent then shows no cost) and a reported cost out of bounds. why
-// says what was dropped.
+// (the agent then shows no cost), a reported cost out of bounds, a model
+// id with anything but letters, digits and . _ : -, or more models than a
+// session uses. why says what was dropped.
 func checkMeta(a fleet.Meta) (_ fleet.Meta, why []string, ok bool) {
 	if !isSessionID(a.Session) {
 		return a, []string{"an agent whose session id is not a UUID"}, false
+	}
+	var badKey, tooMany bool
+	a.Tokens, badKey, tooMany = checkModels(a.Tokens)
+	var bk, tm bool
+	a.Sub, bk, tm = checkModels(a.Sub)
+	if badKey || bk {
+		why = append(why, "a model name with characters Den does not accept")
+	}
+	if tooMany || tm {
+		why = append(why, "tokens for more models than a session uses")
 	}
 	if !plausible(a.Tokens, a.Sub) {
 		a.Tokens, a.Sub = nil, nil
@@ -68,6 +85,42 @@ func checkMeta(a fleet.Meta) (_ fleet.Meta, why []string, ok bool) {
 		why = append(why, "an implausible reported cost")
 	}
 	return a, why, true
+}
+
+// checkModels keeps the entries of a tokens-by-model map whose key is a
+// model id Den accepts; more than maxModels entries drop the whole map.
+func checkModels(in map[string]transcript.Tokens) (out map[string]transcript.Tokens, badKey, tooMany bool) {
+	if len(in) > maxModels {
+		return nil, false, true
+	}
+	for k, v := range in {
+		if !modelKey(k) {
+			badKey = true
+			continue
+		}
+		if out == nil {
+			out = map[string]transcript.Tokens{}
+		}
+		out[k] = v
+	}
+	return out, badKey, false
+}
+
+// modelKey reports whether s may be kept as a model id: 1 to maxModelKey
+// characters, each a letter, a digit or one of . _ : -.
+func modelKey(s string) bool {
+	if s == "" || len(s) > maxModelKey {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.' || c == '_' || c == ':' || c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // plausible reports whether a session's tokens are within bounds: no count

@@ -3,6 +3,7 @@ package remote
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"slices"
@@ -182,6 +183,47 @@ func TestPlausible(t *testing.T) {
 		a, why, ok := checkMeta(fleet.Meta{Session: sidA, Reported: &r})
 		if !ok || a.Reported != nil || len(why) != 1 {
 			t.Errorf("reported %v: kept %v, why %q", r, a.Reported, why)
+		}
+	}
+}
+
+// Model ids are keys in the file Den keeps of a host: only letters, digits
+// and . _ : - up to maxModelKey are kept, and no more than maxModels.
+func TestModelKeysAreRestricted(t *testing.T) {
+	good := "us.anthropic.claude-opus-4-5-20251101-v1:0"
+	m, _ := hostileRun(t, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{
+		Session: sidA, Status: "idle",
+		Tokens: map[string]transcript.Tokens{
+			good:                      {Input: 10},
+			"../../x":                 {Input: 20},
+			"a\u001b]52;c;eA==\u0007": {Input: 30},
+			"claude opus":             {Input: 40},
+			strings.Repeat("a", 129):  {Input: 50},
+			"":                        {Input: 60},
+		},
+	}}})
+	a := m.Agents()[0]
+	if a.Cost.Tokens.Input != 10 {
+		t.Errorf("tokens kept = %d, want only the good model's 10", a.Cost.Tokens.Input)
+	}
+	if !hasFlag(m, "model name") {
+		t.Errorf("flags %q", state(m).Flags)
+	}
+	k, _ := LoadKnown(m.o.StateDir, "b")
+	if len(k.Agents) != 1 || len(k.Agents[0].Tokens) != 1 || k.Agents[0].Tokens[good] != (transcript.Tokens{Input: 10}) {
+		t.Errorf("saved tokens = %+v", k.Agents)
+	}
+
+	many := map[string]transcript.Tokens{}
+	for i := range maxModels + 1 {
+		many[fmt.Sprintf("m%d", i)] = transcript.Tokens{Input: 1}
+	}
+	if a, why, _ := checkMeta(fleet.Meta{Session: sidA, Sub: many}); a.Sub != nil || len(why) != 1 {
+		t.Errorf("%d models kept %d, why %q", len(many), len(a.Sub), why)
+	}
+	for s, want := range map[string]bool{good: true, "claude-sonnet-4-5": true, "x/y": false, "a b": false, "é": false} {
+		if modelKey(s) != want {
+			t.Errorf("modelKey(%q) = %v", s, !want)
 		}
 	}
 }
