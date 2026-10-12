@@ -18,6 +18,8 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("XDG_STATE_HOME", dir)
+	// The settle guard is tested on its own; elsewhere ^Y acts at once.
+	answerSettle = 0
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)
