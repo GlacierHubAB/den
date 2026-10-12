@@ -2,6 +2,7 @@ package remote
 
 import (
 	"math"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -37,6 +38,16 @@ const (
 	// maxModelKey caps a model id used as a key. Model ids are short
 	// ("claude-opus-4-5-20251101", "us.anthropic.claude-…-v1:0").
 	maxModelKey = 128
+	// maxAge caps an agent's ages (since it started, last changed status,
+	// was last active) and how long ago an event happened: a year, longer
+	// than any session runs or a host keeps events for.
+	maxAge = 366 * 24 * time.Hour
+	// maxAhead is how far past this clock an event may be dated, once the
+	// host's clock offset is taken out: jitter, never the future.
+	maxAhead = time.Minute
+	// maxOffset caps the clock offset Den takes from a host: a clock that
+	// far off is broken or lying, so its times are taken as they are.
+	maxOffset = maxAge
 )
 
 // checkAgents is what Den keeps of a snapshot's agents: each one checked
@@ -95,7 +106,48 @@ func checkMeta(a fleet.Meta) (_ fleet.Meta, why []string, ok bool) {
 	if checkUsage(&a) {
 		why = append(why, "implausible context or usage figures")
 	}
+	if checkAges(&a) {
+		why = append(why, "implausible ages")
+	}
 	return a, why, true
+}
+
+// checkAges makes each age that is neither unknown (-1) nor within maxAge
+// unknown, so Den never shows a negative or absurd one, and reports
+// whether it changed any.
+func checkAges(a *fleet.Meta) (cleared bool) {
+	for _, p := range []*int64{&a.StatusAge, &a.StartedAge, &a.ActiveAge} {
+		if *p != -1 && (*p < 0 || *p > maxAge.Milliseconds()) {
+			*p, cleared = -1, true
+		}
+	}
+	return cleared
+}
+
+// eventTime says why an event's time, on this clock, is not one Den takes:
+// more than maxAge before now, or more than maxAhead after it.
+func eventTime(t, now time.Time) string {
+	switch {
+	case t.After(now.Add(maxAhead)):
+		return "an event dated in the future"
+	case t.Before(now.Add(-maxAge)):
+		return "an event dated more than a year ago"
+	}
+	return ""
+}
+
+// offset is a host's clock offset from its remote_now received at now,
+// or zero (and false) when it is not plausible. A host that sends no
+// remote_now has no known offset.
+func offset(remoteNow, now time.Time) (time.Duration, bool) {
+	if remoteNow.IsZero() {
+		return 0, true
+	}
+	off := remoteNow.Sub(now)
+	if off > maxOffset || off < -maxOffset {
+		return 0, false
+	}
+	return off, true
 }
 
 // checkUsage clears the context and usage figures that are out of bounds,
@@ -192,12 +244,13 @@ func (m *Manager) Flag(label, what string) {
 	}
 }
 
-// malformed is check for an event whose session id is not a UUID: only a
-// UUID names a session, so it is dropped like an event for a session the
-// host never listed, and counts towards flooding the same way.
-func (g *gate) malformed(ev events.Event) (verdict, string) {
+// refuse is check for an event Den does not take whatever its session:
+// its session id is not a UUID (only a UUID names a session), or its time
+// is not plausible. It is dropped like an event for a session the host
+// never listed, and counts towards flooding the same way.
+func (g *gate) refuse(ev events.Event, why string) (verdict, string) {
 	if !ev.Time.Before(g.start) {
 		g.live = true
 	}
-	return drop, "an event whose session id is not a UUID"
+	return drop, why
 }

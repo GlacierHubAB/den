@@ -496,7 +496,7 @@ func (m Model) agentsPane(w, h int) string {
 		}
 		age := ""
 		if a.Status != fleet.Gone {
-			age = humanAge(a.Since())
+			age = agentAge(a, a.Session.StatusChanged())
 		}
 		if stale {
 			age, ctx = "last known: "+last.String(), ""
@@ -995,9 +995,9 @@ func (m Model) detailLines(w int) (lines []string, reqFrom, reqTo int) {
 		line(s.dim.Render(fmt.Sprintf("%-9s", k)) + s.fg.Render(v))
 	}
 	if last, stale := m.lastKnown(a); stale {
-		kv("status", "last known: "+last.String()+" · "+humanAge(a.Since()))
+		kv("status", "last known: "+last.String()+" · "+agentAge(a, a.Session.StatusChanged()))
 	} else {
-		kv("status", a.Status.String()+" · "+humanAge(a.Since()))
+		kv("status", a.Status.String()+" · "+agentAge(a, a.Session.StatusChanged()))
 	}
 	if it := m.openItem(a.Session.SessionID); it != nil {
 		b.WriteString("\n")
@@ -1061,7 +1061,9 @@ func (m Model) detailLines(w int) (lines []string, reqFrom, reqTo int) {
 		}
 		kv("cwd", a.RemoteCWD)
 		kv("title", a.Title)
-		kv("started", humanAge(time.Since(a.Session.Started()))+" ago")
+		if age := agentAge(a, a.Session.Started()); age != "?" {
+			kv("started", age+" ago")
+		}
 		sid, _ := splitKey(a.Session.SessionID)
 		kv("session", sanitize.Line(sid[:min(8, len(sid))]+" · "+a.Session.Name))
 		if len(a.Tail) > 0 {
@@ -1203,8 +1205,25 @@ func (m Model) hints(w int) string {
 	return " " + strings.Join(parts, "   ")
 }
 
+// maxShownAge is the oldest age Den shows for a remote agent; anything
+// older is an instant it does not know (zero) or one no agent could have.
+const maxShownAge = 366 * 24 * time.Hour
+
+// agentAge is how long ago at was, for agent a. A remote agent's instant
+// that is unknown (the host sent no age) or not plausible reads "?": a
+// host's figures never show as an absurd age.
+func agentAge(a fleet.Agent, at time.Time) string {
+	d := time.Since(at)
+	if a.Host != "" && (at.UnixMilli() <= 0 || d > maxShownAge) {
+		return "?"
+	}
+	return humanAge(d)
+}
+
 func humanAge(d time.Duration) string {
 	switch {
+	case d < 0:
+		return "0s" // an instant ahead of this clock: never a negative age
 	case d < time.Minute:
 		return fmt.Sprintf("%ds", int(d.Seconds()))
 	case d < time.Hour:

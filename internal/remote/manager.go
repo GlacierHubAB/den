@@ -756,6 +756,46 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	live, applied := false, Policy("")
 	restart := m.state[h.Label].restart
 	var lk *link
+	// A held request is taken, like an event, only for a session the host
+	// listed in its last snapshot or announced with session_start. One for
+	// a session not listed yet waits for the snapshot that lists it (a new
+	// session's file reaches a snapshot a moment after its first hook can
+	// fire); after unlistedSnapshots more without it, it goes back to its
+	// terminal with no decision, and the host is flagged.
+	var parked []parkedHeld
+	listed := func(session string) bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return g.listed(session, m.state[h.Label].known.Agents)
+	}
+	offer := func(hm Held) {
+		r, why := held.add(hm, h.Policy, applied)
+		if r == nil {
+			if why != "" {
+				m.flag(h, why)
+			}
+			return
+		}
+		m.send(Update{Kind: HeldArrived, Host: h.Label, Request: r})
+	}
+	recheck := func(afterSnapshot bool) {
+		keep := parked[:0]
+		for _, p := range parked {
+			switch {
+			case listed(p.hm.Session):
+				offer(p.hm)
+			case afterSnapshot && p.snapshots+1 >= unlistedSnapshots:
+				held.refuse(p.hm)
+				m.flag(h, "a held request for a session the host never listed")
+			default:
+				if afterSnapshot {
+					p.snapshots++
+				}
+				keep = append(keep, p)
+			}
+		}
+		parked = keep
+	}
 	defer func() {
 		// The session is over: no action can start, and the ones waiting are
 		// told the link ended.
@@ -848,7 +888,8 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			st.status.Hostname = sanitize.Label(hm.Hostname, 64)
 			st.status.Den = sanitize.Label(hm.Den, 40)
 			st.status.Claude = sanitize.Label(hm.Claude, 40)
-			st.status.Offset = hm.RemoteNow.Sub(in.at)
+			off, sane := offset(hm.RemoteNow, in.at)
+			st.status.Offset = off
 			st.status.LastSeen = in.at
 			st.known.Hostname, st.known.Den, st.known.Claude = st.status.Hostname, st.status.Den, st.status.Claude
 			st.known.Policy, st.known.Offset = applied, st.status.Offset
@@ -856,6 +897,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				st.known.Cursor = hm.Cursor
 			}
 			m.mu.Unlock()
+			if !sane {
+				m.flag(h, "an implausible clock")
+			}
 			live = true
 			g.begin(in.at)
 			if a := hm.Attached; a != nil {
@@ -881,16 +925,25 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			st.known.Agents, st.known.Received, st.known.Heartbeat = agents, in.at, in.at
 			g.snapshot()
 			st.status.Agents, st.status.LastSeen = len(agents), in.at
+			sane := true
 			if !sm.RemoteNow.IsZero() {
-				st.status.Offset = sm.RemoteNow.Sub(in.at)
+				var off time.Duration
+				off, sane = offset(sm.RemoteNow, in.at)
+				st.status.Offset = off
 				st.known.Offset = st.status.Offset
 			}
 			saveKnown(m.o.StateDir, st.known)
 			u := Update{Kind: FleetChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(h)}
 			m.mu.Unlock()
 			m.send(u)
+			if !sane {
+				m.flag(h, "an implausible clock")
+			}
 			if overreach {
 				m.flag(h, "content in a snapshot its policy does not allow")
+			}
+			if len(parked) > 0 {
+				recheck(true)
 			}
 		case TypeEvent:
 			var em Event
@@ -912,8 +965,14 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			ev.Time = ev.Time.Add(-st.status.Offset).UTC().Truncate(time.Millisecond)
 			st.known.Cursor = em.Cursor
 			st.status.LastSeen = in.at
-			v, why := g.malformed(ev)
-			if isSessionID(em.Event.Session) {
+			var v verdict
+			var why string
+			switch {
+			case !isSessionID(em.Event.Session):
+				v, why = g.refuse(ev, "an event whose session id is not a UUID")
+			case eventTime(ev.Time, in.at) != "":
+				v, why = g.refuse(ev, eventTime(ev.Time, in.at))
+			default:
 				v, why = g.check(ev, st.known.Agents, in.at)
 			}
 			if v == drop {
@@ -938,6 +997,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			if v == logOnly {
 				continue
 			}
+			if ev.Kind == events.SessionStart && len(parked) > 0 {
+				recheck(false)
+			}
 			m.send(Update{Kind: EventArrived, Host: h.Label, Event: ev})
 			if m.waiting(h.Label) > m.o.MaxBacklog {
 				// Stop reading rather than drop: the rest waits on the host,
@@ -960,14 +1022,23 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, "a malformed held request")
 				continue
 			}
-			r, why := held.add(hm, h.Policy, applied)
-			if r == nil {
-				if why != "" {
-					m.flag(h, why)
-				}
+			if why := held.check(hm, h.Policy, applied); why != "" {
+				m.flag(h, why)
 				continue
 			}
-			m.send(Update{Kind: HeldArrived, Host: h.Label, Request: r})
+			if listed(hm.Session) {
+				offer(hm)
+				continue
+			}
+			switch {
+			case slices.ContainsFunc(parked, func(p parkedHeld) bool { return p.hm.ID == hm.ID }):
+				m.flag(h, "a held request offered twice")
+			case len(parked) >= MaxHeld:
+				held.refuse(hm)
+				m.flag(h, "a held request for a session the host never listed")
+			default:
+				parked = append(parked, parkedHeld{hm: hm})
+			}
 		case TypeResult:
 			var r Result
 			if json.Unmarshal(in.line, &r) != nil || lk == nil {
@@ -990,6 +1061,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, "a malformed gone")
 				continue
 			}
+			parked = slices.DeleteFunc(parked, func(p parkedHeld) bool { return p.hm.ID == g.ID })
 			if r := held.gone(g.ID); r != nil {
 				m.send(Update{Kind: HeldReleased, Host: h.Label, Request: r})
 			}

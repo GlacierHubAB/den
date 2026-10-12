@@ -45,69 +45,135 @@ func newHeldSet(ctx context.Context, host string, answered *answeredIDs, write f
 // or a host trying to have the human answer twice, perhaps for a different
 // body. Either way it is refused, flagged, and sent back to its terminal
 // with no decision, where the human answers it on the host.
+//
+// They also keep the hash of the first body each id came with: an id is
+// one request, so offered again with another body it is refused the same
+// way, and the body the human read never changes under them.
 type answeredIDs struct {
 	mu    sync.Mutex
-	ids   map[string]bool
+	ids   map[string]*heldID
 	order []string
+}
+
+// heldID is what a host's held id has been: its first body, and whether
+// Den answered it.
+type heldID struct {
+	hash     string
+	answered bool
 }
 
 // maxAnswered bounds answeredIDs: a human answers far fewer requests in one
 // run of Den, and serve forgets an id long before that many more come.
 const maxAnswered = 4096
 
-func newAnsweredIDs() *answeredIDs { return &answeredIDs{ids: map[string]bool{}} }
+func newAnsweredIDs() *answeredIDs { return &answeredIDs{ids: map[string]*heldID{}} }
 
-func (a *answeredIDs) add(id string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.ids[id] {
-		return
+// entry is id's record, made when first seen. Called with a.mu held.
+func (a *answeredIDs) entry(id, hash string) *heldID {
+	if e := a.ids[id]; e != nil {
+		return e
 	}
 	if len(a.order) >= maxAnswered {
 		delete(a.ids, a.order[0])
 		a.order = a.order[1:]
 	}
-	a.ids[id] = true
+	e := &heldID{hash: hash}
+	a.ids[id] = e
 	a.order = append(a.order, id)
+	return e
+}
+
+// add records that Den answered id.
+func (a *answeredIDs) add(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.entry(id, "").answered = true
 }
 
 func (a *answeredIDs) has(id string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.ids[id]
+	e := a.ids[id]
+	return e != nil && e.answered
+}
+
+// same reports whether id comes with the body it first came with (hash),
+// and keeps hash as that body when id is new.
+func (a *answeredIDs) same(id, hash string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	e := a.entry(id, hash)
+	if e.hash == "" {
+		e.hash = hash
+	}
+	return e.hash == hash
+}
+
+// check says what to flag when a held message cannot become a request: the
+// host's policy does not allow it, here or as the host applies it, or the
+// message is not what serve sends. "" when it can.
+func (s *heldSet) check(hm Held, configured, applied Policy) string {
+	switch {
+	case configured.rank() < Approve.rank() || applied.rank() < Approve.rank():
+		return "a held request under observe"
+	case !isID(hm.ID):
+		return "a held request with a malformed id"
+	case !isSessionID(hm.Session):
+		return "a held request whose session id is not a UUID"
+	case !plainField(hm.Tool):
+		return "a held request with a malformed tool"
+	case !checkBody(hm.Tool, hm.Body):
+		return "a held request whose body the policy does not allow"
+	}
+	return ""
+}
+
+// parkedHeld is a held request for a session the host has not listed yet,
+// and how many snapshots have come since without it.
+type parkedHeld struct {
+	hm        Held
+	snapshots int
+}
+
+// unlistedSnapshots is how many snapshots a held request waits for its
+// session to be listed: the one already on its way, and the next.
+const unlistedSnapshots = 2
+
+// refuse sends a held request back to its terminal on the host with no
+// decision, where the human answers it there.
+func (s *heldSet) refuse(hm Held) {
+	if s.ctx.Err() == nil {
+		s.write(Decision{Type: TypeDecision, ID: hm.ID, Hash: BodyHash(hm.Body)})
+	}
 }
 
 // add turns a held message into a request for the inbox. It fails (with
-// what to flag) when the host's policy does not allow it, here or as the
-// host applies it, or the message is not what serve sends.
+// what to flag) when check does, or the id is spent or is another request's.
 func (s *heldSet) add(hm Held, configured, applied Policy) (*bridge.Request, string) {
-	switch {
-	case configured.rank() < Approve.rank() || applied.rank() < Approve.rank():
-		return nil, "a held request under observe"
-	case !isID(hm.ID):
-		return nil, "a held request with a malformed id"
-	case !isSessionID(hm.Session):
-		return nil, "a held request whose session id is not a UUID"
-	case !plainField(hm.Tool):
-		return nil, "a held request with a malformed tool"
-	case !checkBody(hm.Tool, hm.Body):
-		return nil, "a held request whose body the policy does not allow"
+	if why := s.check(hm, configured, applied); why != "" {
+		return nil, why
 	}
 	if s.answered.has(hm.ID) {
 		// Single use (answeredIDs): back to its terminal, with no decision.
-		if s.ctx.Err() == nil {
-			s.write(Decision{Type: TypeDecision, ID: hm.ID, Hash: BodyHash(hm.Body)})
-		}
+		s.refuse(hm)
 		return nil, "a held request offered again after it was answered"
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.ctx.Err() != nil {
+		s.mu.Unlock()
 		return nil, ""
 	}
 	if s.open[hm.ID] != nil {
+		s.mu.Unlock()
 		return nil, "a held request offered twice"
 	}
+	if !s.answered.same(hm.ID, BodyHash(hm.Body)) {
+		// One id is one request: the body the human was shown stays.
+		s.mu.Unlock()
+		s.refuse(hm)
+		return nil, "a held request offered again with a different body"
+	}
+	defer s.mu.Unlock()
 	if len(s.open) >= MaxHeld {
 		return nil, "more held requests than a serve holds"
 	}

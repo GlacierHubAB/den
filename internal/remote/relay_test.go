@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
@@ -42,6 +43,28 @@ type hookResult struct {
 func hook(t *testing.T, sock, session, tool string, input any) <-chan hookResult {
 	t.Helper()
 	return hookWait(t, sock, session, tool, input, 20*time.Second)
+}
+
+// hook is the package hook for a session the scratch host lists, written
+// first when the test has not, as Claude Code writes its session file
+// before any hook: Den takes held requests only for sessions the host
+// lists.
+func (s *scratch) hook(t *testing.T, session, tool string, input any) <-chan hookResult {
+	t.Helper()
+	s.listed(t, session)
+	return hook(t, s.sock, session, tool, input)
+}
+
+// listed writes a session file for session unless one has it already.
+func (s *scratch) listed(t *testing.T, session string) {
+	t.Helper()
+	files, _ := filepath.Glob(filepath.Join(s.cfg, "sessions", "*.json"))
+	for _, f := range files {
+		if b, err := os.ReadFile(f); err == nil && strings.Contains(string(b), session) {
+			return
+		}
+	}
+	s.session(t, 900+len(files), session, "coder")
 }
 
 // hookWait is hook with the hook's own wait, after which it hangs up.
@@ -189,7 +212,7 @@ func TestRelayAllowAndDenyRoundTrip(t *testing.T) {
 	if st, err := os.Stat(s.sock); err != nil || st.Mode().Perm() != 0o600 || st.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("den-remote.sock = %v, %v", st, err)
 	}
-	allow := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go test ./...", "description": "Run the tests", "timeout": 5})
+	allow := s.hook(t, sidA, "Bash", map[string]any{"command": "go test ./...", "description": "Run the tests", "timeout": 5})
 	h := sv.held()
 	if h.Session != sidA || h.Tool != "Bash" || !isID(h.ID) || string(h.Body) != `{"command":"go test ./...","description":"Run the tests"}` {
 		t.Fatalf("held = %+v %s", h, h.Body)
@@ -198,7 +221,7 @@ func TestRelayAllowAndDenyRoundTrip(t *testing.T) {
 	if r := got(t, allow, 2*time.Second); !r.ok || r.d.Behavior != "allow" {
 		t.Errorf("allow: %+v", r)
 	}
-	deny := hook(t, s.sock, sidA, "Write", map[string]any{"file_path": "/home/user/proj/x.go", "content": "package x\n"})
+	deny := s.hook(t, sidA, "Write", map[string]any{"file_path": "/home/user/proj/x.go", "content": "package x\n"})
 	h = sv.held()
 	sv.decide(h, "deny")
 	if r := got(t, deny, 2*time.Second); !r.ok || r.d.Behavior != "deny" || r.d.Message != "from the test" {
@@ -213,12 +236,12 @@ func TestRelayAllowAndDenyRoundTrip(t *testing.T) {
 func TestRelayReplayedDecisionIsIgnored(t *testing.T) {
 	s := newScratch(t)
 	sv, _ := serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, nil)
-	first := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "make"})
+	first := s.hook(t, sidA, "Bash", map[string]any{"command": "make"})
 	h := sv.held()
 	sv.decide(h, "deny")
 	got(t, first, 2*time.Second)
 	// The same decision again, then for the next request with the old id.
-	second := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "make"})
+	second := s.hook(t, sidA, "Bash", map[string]any{"command": "make"})
 	h2 := sv.held()
 	if h2.ID == h.ID {
 		t.Fatal("two requests share an id")
@@ -239,7 +262,7 @@ func TestRelayReplayedDecisionIsIgnored(t *testing.T) {
 func TestRelayBodyHashMismatchIsRefused(t *testing.T) {
 	s := newScratch(t)
 	sv, _ := serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, nil)
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "rm -rf build"})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "rm -rf build"})
 	h := sv.held()
 	other := BodyHash([]byte(`{"command":"echo harmless"}`))
 	writeMsg(sv.in, Decision{Type: TypeDecision, ID: h.ID, Hash: other, Behavior: "allow"})
@@ -259,7 +282,7 @@ func TestRelayBodyHashMismatchIsRefused(t *testing.T) {
 func TestRelayDropMidWaitFailsOpen(t *testing.T) {
 	s := newScratch(t)
 	sv, _ := serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, nil)
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "sleep 1"})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "sleep 1"})
 	sv.held()
 	start := time.Now()
 	sv.in.Close() // the link drops: serve sees stdin EOF
@@ -278,7 +301,7 @@ func TestRelayDropMidWaitFailsOpen(t *testing.T) {
 func TestRelaySilentDenFailsOpen(t *testing.T) {
 	s := newScratch(t)
 	_, _ = serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, func(o *ServeOptions) { o.Silence = 400 * time.Millisecond })
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "true"})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "true"})
 	if r := got(t, c, 3*time.Second); r.ok {
 		t.Errorf("the hook got a decision from a silent Den: %+v", r)
 	}
@@ -318,7 +341,7 @@ func TestRelayUnderObserveDoesNotHold(t *testing.T) {
 	if hello.Policy != Observe {
 		t.Fatalf("hello = %+v", hello)
 	}
-	r := got(t, hook(t, s.sock, sidA, "Bash", map[string]any{"command": "ls"}), time.Second)
+	r := got(t, s.hook(t, sidA, "Bash", map[string]any{"command": "ls"}), time.Second)
 	if r.ok || r.dur > 100*time.Millisecond {
 		t.Errorf("observe: %+v", r)
 	}
@@ -371,7 +394,7 @@ func TestRelayAskUserQuestionRoundTrip(t *testing.T) {
 	input := map[string]any{"questions": []map[string]any{
 		{"question": asked, "header": "Colours", "options": []map[string]string{{"label": "Warm"}, {"label": "Cool"}}},
 	}}
-	c := hook(t, s.sock, sidA, "AskUserQuestion", input)
+	c := s.hook(t, sidA, "AskUserQuestion", input)
 	h := sv.held()
 	if bytes.Contains(h.Body, []byte("\\u001b")) || !checkBody(h.Tool, h.Body) {
 		t.Fatalf("body not sanitised: %s", h.Body)
@@ -388,7 +411,7 @@ func TestRelayQuestionNotHeldWhenTheHostDoesNotAnswerQuestions(t *testing.T) {
 	s := newScratch(t)
 	serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, nil)
 	input := map[string]any{"questions": []map[string]any{{"question": "Which?", "options": []map[string]string{{"label": "A"}}}}}
-	if r := got(t, hook(t, s.sock, sidA, "AskUserQuestion", input), time.Second); !r.ok || r.d.Behavior != "" {
+	if r := got(t, s.hook(t, sidA, "AskUserQuestion", input), time.Second); !r.ok || r.d.Behavior != "" {
 		t.Errorf("question with answer_questions off: %+v", r)
 	}
 }
@@ -396,7 +419,7 @@ func TestRelayQuestionNotHeldWhenTheHostDoesNotAnswerQuestions(t *testing.T) {
 func TestRelayCommandThatSanitisingWouldChangeIsNotRelayed(t *testing.T) {
 	s := newScratch(t)
 	serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, nil)
-	r := got(t, hook(t, s.sock, sidA, "Bash", map[string]any{"command": "echo ok\x1b[2K; rm -rf ~"}), time.Second)
+	r := got(t, s.hook(t, sidA, "Bash", map[string]any{"command": "echo ok\x1b[2K; rm -rf ~"}), time.Second)
 	if !r.ok || r.d.Behavior != "" {
 		t.Errorf("a command with escapes was held: %+v", r)
 	}
@@ -409,7 +432,7 @@ func TestRelaySecondControllerIsRefused(t *testing.T) {
 	if hello.Policy != Observe || hello.Attached == nil || hello.Attached.Pid != os.Getpid() || hello.Attached.Since.IsZero() {
 		t.Fatalf("second hello = %+v", hello)
 	}
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "ls"})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "ls"})
 	h := first.held()
 	// The second Den's decision goes nowhere: it holds nothing.
 	second.decide(h, "allow")
@@ -423,7 +446,7 @@ func TestRelaySecondControllerIsRefused(t *testing.T) {
 func TestRelayHandoverToTheSameDen(t *testing.T) {
 	s := newScratch(t)
 	old, _ := serveDirect(t, s, Request{Policy: Approve, Controller: ctlA}, nil)
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go build ./..."})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "go build ./..."})
 	h := old.held()
 	// The link died half-open: the old serve still holds the hook. The same
 	// Den reconnects.
@@ -450,7 +473,7 @@ func TestRelayHandoverToTheSameDen(t *testing.T) {
 		t.Errorf("hook = %+v", r)
 	}
 	// New hooks reach the new serve on the same path.
-	c2 := hook(t, s.sock, sidB, "Bash", map[string]any{"command": "ls"})
+	c2 := s.hook(t, sidB, "Bash", map[string]any{"command": "ls"})
 	fresh.decide(fresh.held(), "allow")
 	if r := got(t, c2, 2*time.Second); r.d.Behavior != "allow" {
 		t.Errorf("after handover: %+v", r)
@@ -468,7 +491,7 @@ func TestRelayFailedHandoverFailsOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	ln.SetUnlinkOnClose(false)
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "ls"})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "ls"})
 	hookConn, err := ln.AcceptUnix()
 	if err != nil {
 		t.Fatal(err)
@@ -498,7 +521,7 @@ func TestRelayFailedHandoverFailsOpen(t *testing.T) {
 	if !sv.log.has("handover failed") {
 		t.Error("the failed handover was not logged")
 	}
-	c2 := hook(t, s.sock, sidB, "Bash", map[string]any{"command": "ls"})
+	c2 := s.hook(t, sidB, "Bash", map[string]any{"command": "ls"})
 	sv.decide(sv.held(), "allow")
 	if r := got(t, c2, 2*time.Second); r.d.Behavior != "allow" {
 		t.Errorf("the clean start does not relay: %+v", r)
@@ -561,7 +584,7 @@ func TestManagerRelaysAndAnswers(t *testing.T) {
 	s := newScratch(t)
 	g := manage(t, s, approveHost(), ctlA, nil)
 	waitFor(t, "live", func() bool { return state(g.m).State == Live })
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go vet ./..."})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "go vet ./..."})
 	r := g.next(t)
 	if r.Host != "b" || r.Event != "PermissionRequest" || r.Input.ToolName != "Bash" || r.SessionID != sidA || !r.WantsReply() {
 		t.Fatalf("request = %+v", r)
@@ -582,7 +605,7 @@ func TestManagerFiveConcurrentOutOfOrderAndDrop(t *testing.T) {
 	cmds := []string{"one", "two", "three", "four", "five"}
 	hooks := map[string]<-chan hookResult{}
 	for _, cmd := range cmds {
-		hooks[cmd] = hook(t, s.sock, sidA, "Bash", map[string]any{"command": "echo " + cmd})
+		hooks[cmd] = s.hook(t, sidA, "Bash", map[string]any{"command": "echo " + cmd})
 	}
 	reqs := map[string]*bridge.Request{}
 	for range cmds {
@@ -601,7 +624,7 @@ func TestManagerFiveConcurrentOutOfOrderAndDrop(t *testing.T) {
 	}
 
 	for _, cmd := range cmds {
-		hooks[cmd] = hook(t, s.sock, sidB, "Bash", map[string]any{"command": "echo " + cmd})
+		hooks[cmd] = s.hook(t, sidB, "Bash", map[string]any{"command": "echo " + cmd})
 	}
 	var held []*bridge.Request
 	for range cmds {
@@ -648,7 +671,7 @@ func TestManagerSecondControllerObserves(t *testing.T) {
 			t.Error("a host attached elsewhere shows its live agents as stale")
 		}
 	}
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "ls"})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "ls"})
 	first.next(t).Reply(bridge.Decision{Behavior: "allow"})
 	select {
 	case r := <-second.held:
@@ -668,6 +691,7 @@ func TestManagerDropsHeldUnderObserve(t *testing.T) {
 		lr := newLineReader(in, MaxLine)
 		lr.next()
 		writeMsg(out, Hello{Type: TypeHello, Proto: Proto, Policy: Approve, RemoteNow: time.Now()})
+		writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{Session: sidA, Status: "idle"}}})
 		writeMsg(out, Held{Type: TypeHeld, ID: newID(), Session: sidA, Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
 		// CloseRequest-shaped input: an unknown type, and a held request
 		// with extra fields naming another event.
@@ -721,7 +745,7 @@ func TestAlwaysIsScopedToTheHost(t *testing.T) {
 	g := manage(t, s, approveHost(), ctlA, nil)
 	waitFor(t, "live", func() bool { return state(g.m).State == Live })
 	store := inbox.New()
-	c := hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go test ./..."})
+	c := s.hook(t, sidA, "Bash", map[string]any{"command": "go test ./..."})
 	it := store.Apply(g.next(t))
 	if it == nil || it.Host != "b" || !it.Answerable() || !store.Answer(it, "always") {
 		t.Fatalf("item = %+v", it)
@@ -729,7 +753,7 @@ func TestAlwaysIsScopedToTheHost(t *testing.T) {
 	if r := got(t, c, 2*time.Second); r.d.Behavior != "allow" {
 		t.Fatalf("first = %+v", r)
 	}
-	c = hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go test ./..."}) // the exact command again
+	c = s.hook(t, sidA, "Bash", map[string]any{"command": "go test ./..."}) // the exact command again
 	if it := store.Apply(g.next(t)); it != nil {
 		t.Fatalf("the rule did not cover the same host and session: %+v", it)
 	}
@@ -751,7 +775,7 @@ func TestLinkLostItemIsNotAnswerable(t *testing.T) {
 	g := manage(t, s, approveHost(), ctlA, nil)
 	waitFor(t, "live", func() bool { return state(g.m).State == Live })
 	store := inbox.New()
-	hook(t, s.sock, sidA, "Bash", map[string]any{"command": "ls"})
+	s.hook(t, sidA, "Bash", map[string]any{"command": "ls"})
 	it := store.Apply(g.next(t))
 	g.d.cut()
 	<-g.gone
@@ -770,6 +794,7 @@ func TestManagerHookGoneReleasesTheItem(t *testing.T) {
 	s := newScratch(t)
 	g := manage(t, s, approveHost(), ctlA, nil)
 	waitFor(t, "live", func() bool { return state(g.m).State == Live })
+	s.listed(t, sidA)
 	c := hookWait(t, s.sock, sidA, "Bash", map[string]any{"command": "ls"}, 300*time.Millisecond)
 	r := g.next(t)
 	got(t, c, 2*time.Second)

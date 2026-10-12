@@ -81,6 +81,17 @@ func (r *Remote) SeedSession(o SessionOpts) *Session {
 	return r.seed.add(o)
 }
 
+// Seeded reports whether a session with id was seeded on the remote, live
+// or not.
+func (r *Remote) Seeded(id string) bool {
+	for _, s := range r.seed.sessions {
+		if s.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // SeedSession is Remote.SeedSession for the local side's fake ~/.claude.
 func (lo *Local) SeedSession(o SessionOpts) *Session {
 	lo.lab.t.Helper()

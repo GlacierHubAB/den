@@ -744,3 +744,31 @@ func TestSameSessionIDElsewhereIsFlagged(t *testing.T) {
 		t.Errorf("the item does not say it:\n%s", out)
 	}
 }
+
+// An age is never shown negative, whatever instant a host or a file gave,
+// and a remote agent's unknown (zero) or absurd instant reads "?"; a local
+// agent's ages read as before.
+func TestAgesNeverNegativeOrAbsurd(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		-2_279_085_990 * time.Second: "0s",
+		-time.Second:                 "0s",
+		3 * 24 * time.Hour:           "3d",
+		90 * time.Second:             "1m",
+	} {
+		if got := humanAge(d); got != want {
+			t.Errorf("humanAge(%s) = %q, want %q", d, got, want)
+		}
+	}
+	remote, local := fleet.Agent{Host: "devbox"}, fleet.Agent{}
+	for _, at := range []time.Time{time.UnixMilli(0), time.Now().AddDate(-2, 0, 0)} {
+		if got := agentAge(remote, at); got != "?" {
+			t.Errorf("remote agent, %v: %q", at, got)
+		}
+	}
+	if got := agentAge(remote, time.Now().Add(-3*time.Hour)); got != "3h" {
+		t.Errorf("remote agent, 3h ago: %q", got)
+	}
+	if got := agentAge(local, time.UnixMilli(0)); got == "?" {
+		t.Error("a local agent's age changed")
+	}
+}
