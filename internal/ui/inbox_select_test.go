@@ -81,12 +81,12 @@ func TestAnswerIgnoresTheSelectedItemResolvedBeforeTheKey(t *testing.T) {
 		if decided(b) {
 			t.Fatalf("^%c answered the other request", k)
 		}
-		if !strings.Contains(got.flash, "That request was answered; select one to answer.") {
+		if !strings.Contains(got.flash, "The request you selected was already answered; nothing was sent. A request is waiting: select it to answer") {
 			t.Errorf("^%c flash = %q", k, got.flash)
 		}
 	}
 	mm, _ := m.command("/always")
-	if decided(b) || !strings.Contains(mm.(Model).flash, "was answered") {
+	if decided(b) || !strings.Contains(mm.(Model).flash, "already answered") {
 		t.Errorf("/always: flash %q", mm.(Model).flash)
 	}
 	// Even with no refresh between the change and the key.
@@ -111,7 +111,7 @@ func TestSelectionFollowsTheItemWhenOthersArriveAbove(t *testing.T) {
 	if it := m.inboxSelected(); it == nil || it.Kind != inbox.Done {
 		t.Fatalf("selection moved to %+v", it)
 	}
-	if got := ctrl(m, 'y'); decided(p) || !strings.Contains(got.flash, "Nothing is waiting") {
+	if got := ctrl(m, 'y'); decided(p) || !strings.Contains(got.flash, "The item you selected is not a request; nothing was answered. A request is waiting") {
 		t.Errorf("^Y on the notice: decided %v, flash %q", decided(p), got.flash)
 	}
 	// The human selects it: then ^Y answers it.
@@ -156,7 +156,7 @@ func TestSelectedItemRemovedLeavesNothingSelected(t *testing.T) {
 	if decided(b) || decided(c) {
 		t.Fatal("^Y answered a request the human never selected")
 	}
-	if !strings.Contains(got.flash, "The item you selected is gone; select one to answer.") {
+	if !strings.Contains(got.flash, "The item you selected is gone; nothing was answered. 2 requests are waiting: select one to answer") {
 		t.Errorf("flash = %q", got.flash)
 	}
 	if got.inboxCur != -1 {
