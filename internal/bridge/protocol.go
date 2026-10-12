@@ -79,13 +79,21 @@ type InstallInput struct {
 // SendEvent is not a hook either: `den send name@host …` sends it to the
 // running Den to message an agent on a remote host, because only Den holds the
 // ssh session to that host. Den resolves the agent itself, in its own fleet,
-// and answers allow with a note, or deny with why nothing was sent.
+// and answers allow with a note, or with why nothing was sent: SendDeclined
+// when the human said no, SendCancelled when the question ended before they
+// answered, and deny for everything else.
 //
 // Like InstallEvent it is only ever read from the local den.sock: a remote
 // host's messages never reach the bridge (its held requests enter as
 // PermissionRequests of Den's own making), and a Request that did come
 // from a host is refused. The message is plain text and approves nothing.
 const SendEvent = "SendRequest"
+
+// The behaviours of a SendEvent answer besides allow and deny.
+const (
+	SendDeclined  = "declined"  // the human answered ^N
+	SendCancelled = "cancelled" // the question ended unanswered: the agent's session ended, or the link was lost
+)
 
 // SendInput is the payload of a SendEvent.
 type SendInput struct {

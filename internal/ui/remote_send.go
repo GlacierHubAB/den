@@ -214,6 +214,7 @@ func (m Model) decideSend(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	delete(m.sends, it.ID)
 	if verb != "allow" {
+		s.req.Reply(bridge.Decision{Behavior: bridge.SendDeclined, Message: "declined in Den; nothing was sent"})
 		m.store.Settle(it, false, "declined in Den; nothing was sent")
 		m.refresh()
 		return m.say("Not sent.", false)

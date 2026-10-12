@@ -32,9 +32,10 @@ func send(args []string) {
 		if *wait {
 			fail("den: --wait does not work for an agent on %s yet", host)
 		}
-		out, err := sendViaDen(bridge.SocketPath(), args[0], strings.Join(args[1:], " "))
+		out, code, err := sendViaDen(bridge.SocketPath(), args[0], strings.Join(args[1:], " "))
 		if err != nil {
-			fail("%v", err)
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(code)
 		}
 		fmt.Println(out)
 		return
@@ -69,11 +70,20 @@ func remoteHostOf(who string) (string, bool) {
 	return host, host != "local"
 }
 
+// Exit codes of den send name@host (docs/REMOTE.md).
+const (
+	sendNotSent   = 1 // bad usage, no such agent, or Den refused or failed to send
+	sendDeclined  = 4 // the human answered ^N
+	sendCancelled = 5 // the question ended before the human answered
+	sendNoDen     = 6 // no Den is running here
+	sendUnknown   = 7 // no answer from Den: whether it was sent is not known
+)
+
 // sendViaDen asks the running Den to message an agent on a remote host:
 // only Den holds the ssh session to it. The text travels over den.sock, and
 // from there down that session, never in an argument list. Without a Den
 // nothing is sent.
-func sendViaDen(sock, who, text string) (string, error) {
+func sendViaDen(sock, who, text string) (string, int, error) {
 	host, _ := remoteHostOf(who)
 	cwd, _ := os.Getwd()
 	payload, _ := json.Marshal(bridge.SendInput{Who: who, Text: text, AskedBy: fmt.Sprintf("den send, pid %d in %s", os.Getpid(), cwd)})
@@ -82,13 +92,26 @@ func sendViaDen(sock, who, text string) (string, error) {
 	// their answer.
 	fmt.Fprintf(os.Stderr, "den: Den asks you in its inbox before it sends to %s; waiting for your answer there\n", who)
 	d, err := bridge.Call(sock, env, 30*time.Minute)
+	msg := sanitize.Line(d.Message)
 	switch {
 	case errors.Is(err, bridge.ErrNoDen):
-		return "", fmt.Errorf("den: Den is not attached to %s; nothing was sent (start Den, or run den send on %s itself)", host, host)
+		return "", sendNoDen, fmt.Errorf("den: Den is not attached to %s; nothing was sent (start Den, or run den send on %s itself)", host, host)
 	case err != nil:
-		return "", fmt.Errorf("den: no answer from Den (%v); whether it was sent is not known", err)
-	case d.Behavior != "allow":
-		return "", fmt.Errorf("den: %s", sanitize.Line(d.Message))
+		return "", sendUnknown, fmt.Errorf("den: no answer from Den (%v); whether it was sent is not known", err)
+	case d.Behavior == "allow":
+		return msg, 0, nil
+	case d.Behavior == bridge.SendDeclined:
+		return "", sendDeclined, fmt.Errorf("den: %s", orElse(msg, "declined in Den; nothing was sent"))
+	case d.Behavior == bridge.SendCancelled, d.Behavior == "":
+		return "", sendCancelled, fmt.Errorf("den: %s", orElse(msg, "Den ended the request before you answered; nothing was sent"))
 	}
-	return sanitize.Line(d.Message), nil
+	return "", sendNotSent, fmt.Errorf("den: %s", orElse(msg, "Den refused the request; nothing was sent"))
+}
+
+// orElse is s, or def when s is empty.
+func orElse(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }

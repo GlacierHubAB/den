@@ -37,7 +37,9 @@ at once if the agent is idle already. `needs-you` and `done` are the next
 | 3 | the agent's session ended or its process is gone |
 
 `den send --wait` starts following before the message goes out and waits for
-the next `done`, with the same exit codes and `--timeout`.
+the next `done`, with the same exit codes and `--timeout`. `den send name@host`,
+for an agent on a remote host, has exit codes of its own, in
+[REMOTE.md](REMOTE.md).
 
 ## Schema, version 1
 
