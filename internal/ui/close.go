@@ -340,11 +340,7 @@ func (m Model) askClose(cands []fleet.Agent, force bool, refused []closer.Refusa
 func (m Model) showClose(it *inbox.Item) (tea.Model, tea.Cmd) {
 	m.refresh()
 	m.tab = tabInbox
-	for i, o := range m.store.Items() {
-		if o == it {
-			m.inboxCur = i
-		}
-	}
+	m.selectItem(it)
 	return m.say(it.Title+" ^Y closes, ^N keeps them.", false)
 }
 
