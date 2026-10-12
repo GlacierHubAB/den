@@ -436,6 +436,20 @@ func (m *Manager) pending(label string) string {
 	return m.state[label].status.Pending
 }
 
+// Applied is the host labelled label as Den connects to it now: its
+// target and den_path are the ones the human connected, and held says
+// remotes.toml names others, which wait for /remote connect. ok is false
+// for a host this Manager does not have.
+func (m *Manager) Applied(label string) (h Host, held, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.state[label]
+	if st == nil {
+		return Host{}, false, false
+	}
+	return st.host, st.held, true
+}
+
 // hostNow is h as remotes.toml says now.
 func (m *Manager) hostNow(label string) Host {
 	m.mu.Lock()

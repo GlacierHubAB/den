@@ -42,6 +42,9 @@ type fakeFeed struct {
 	sendErr   error
 	closeErr  error
 	closeKill bool
+	// What Applied answers.
+	applied map[string]remote.Host
+	held    map[string]bool
 	// What Diff got, and what it answers.
 	diffs    []string // "host/session"
 	diff     *remote.Diff
@@ -57,6 +60,10 @@ func (f *fakeFeed) Reconnect(label string)        { f.reconnect = append(f.recon
 func (f *fakeFeed) Connect(label string)          { f.connect = append(f.connect, label) }
 func (f *fakeFeed) Close()                        {}
 func (f *fakeFeed) Actionable(string) error       { return f.actErr }
+func (f *fakeFeed) Applied(label string) (remote.Host, bool, bool) {
+	h, ok := f.applied[label]
+	return h, f.held[label], ok
+}
 func (f *fakeFeed) Flag(label, what string) {
 	for i := range f.hosts {
 		if f.hosts[i].Label == label && !slices.Contains(f.hosts[i].Flags, what) {

@@ -68,6 +68,17 @@ func (m *Model) handleInstallRequest(r *bridge.Request) tea.Cmd {
 		deny(fmt.Sprintf("no host labelled %q in %s", in.Host, remote.Path()))
 		return nil
 	}
+	if m.remote.feed != nil {
+		// The probe runs before the human sees anything: it goes to the
+		// target Den connects to, never one remotes.toml only asks for.
+		if a, held, ok := m.remote.feed.Applied(h.Label); ok {
+			if held {
+				deny("remotes.toml points " + h.Label + " at another target or den_path; /remote connect " + h.Label + " to apply it first, then install")
+				return nil
+			}
+			h.Target, h.DenPath = a.Target, a.DenPath
+		}
+	}
 	for _, it := range m.store.Items() {
 		if it.Kind == inbox.Install && it.State == inbox.Waiting && it.SessionID == inbox.HostPrefix+h.Label {
 			deny("an install on " + h.Label + " is already waiting in Den's inbox")

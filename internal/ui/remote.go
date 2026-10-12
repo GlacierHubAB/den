@@ -59,6 +59,9 @@ type remoteFeed interface {
 	Diff(host, sessionID string) (*remote.Diff, error)
 	// Flag marks a host for something the views noticed (twins).
 	Flag(label, what string)
+	// Applied is a host as Den connects to it, and whether remotes.toml
+	// holds another target or den_path for it (remote.Manager.Applied).
+	Applied(label string) (h remote.Host, held, ok bool)
 }
 
 // remoteState is the remote hosts as the views show them.
