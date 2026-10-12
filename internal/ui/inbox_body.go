@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
@@ -67,7 +69,7 @@ func (m Model) unreadNote(it *inbox.Item, n int) string {
 	if m.tab == tabInbox && it.ID == m.inboxSel {
 		return lines + " below: read them (↓) before ^Y"
 	}
-	return m.nameFor(it.SessionID) + "'s request has " + lines + " than the Inbox shows at once: select it there and read it to the end before ^Y"
+	return m.nameFor(itemKey(it)) + "'s request has " + lines + " than the Inbox shows at once: select it there and read it to the end before ^Y"
 }
 
 // scrollBody scrolls the selected item by delta rows when it is taller
@@ -107,4 +109,41 @@ func (m Model) bodyWindow(block []string, h, w int) []string {
 		note = fmt.Sprintf(" ↑ %d lines above · read to the end", off)
 	}
 	return append(out, fill(m.st.attn.Render(note), w, m.st.fg))
+}
+
+// detailShowsWhole reports whether the Fleet view's Details pane has all
+// of the item's request on screen now, as View lays it out.
+func (m Model) detailShowsWhole(it *inbox.Item) bool {
+	if m.tab != tabFleet || m.tree.mapView {
+		return false
+	}
+	w := m.width
+	if w <= 0 {
+		w = 120
+	}
+	if w < 72 {
+		return false // the agents list alone, no Details pane
+	}
+	a, ok := m.selected()
+	if !ok || m.openItem(a.Session.SessionID) != it {
+		return false
+	}
+	rw := w - clamp(w*42/100, 36, 64)
+	_, ph := m.paneArea()
+	h := ph - 2
+	lines, from, to := m.detailLines(rw - 2)
+	off := 0
+	if m.detailScroll > 0 && len(lines) > h {
+		off = min(m.detailScroll, len(lines)-h)
+	}
+	return to > from && from >= off && to <= off+h
+}
+
+// showInInbox is ^Y on a request the current view does not show whole:
+// nothing is answered; the Inbox opens with it selected, to be read there.
+func (m Model) showInInbox(it *inbox.Item) (tea.Model, tea.Cmd) {
+	m.tab = tabInbox
+	m.refresh()
+	m.selectItem(it)
+	return m.say(m.nameFor(itemKey(it))+"'s request: read it here first; ^Y again to allow", true)
 }

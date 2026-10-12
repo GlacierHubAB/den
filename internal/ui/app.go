@@ -1201,6 +1201,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
 	}
+	if m.tab != tabInbox && verb != "deny" && !m.detailShowsWhole(it) {
+		return m.showInInbox(it)
+	}
 	if why := m.readGate(it); why != "" && verb != "deny" {
 		return m.say(why, true)
 	}

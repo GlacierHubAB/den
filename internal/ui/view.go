@@ -898,10 +898,25 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 }
 
 func (m Model) detailPane(w, h int) string {
+	lines, _, _ := m.detailLines(w)
+	if lines == nil {
+		return "\n " + m.st.dim.Render("Select an agent.")
+	}
+	if m.detailScroll > 0 && len(lines) > h {
+		off := min(m.detailScroll, len(lines)-h)
+		lines = lines[off:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// detailLines is the detail pane's content for the selected agent, w wide,
+// before scrolling, and the rows [reqFrom, reqTo) its open request takes
+// (both 0 with none). nil when no agent is selected.
+func (m Model) detailLines(w int) (lines []string, reqFrom, reqTo int) {
 	s := m.st
 	a, ok := m.selected()
 	if !ok {
-		return "\n " + s.dim.Render("Select an agent.")
+		return nil, 0, 0
 	}
 	var b strings.Builder
 	const indent = "  "
@@ -986,9 +1001,11 @@ func (m Model) detailPane(w, h int) string {
 	}
 	if it := m.openItem(a.Session.SessionID); it != nil {
 		b.WriteString("\n")
+		reqFrom = strings.Count(b.String(), "\n")
 		for _, l := range m.requestLines(it, a, w-4) {
 			line(l)
 		}
+		reqTo = strings.Count(b.String(), "\n")
 	}
 	if kids := m.childrenOf(a.Session.SessionID); len(kids) > 0 {
 		b.WriteString("\n")
@@ -1056,11 +1073,7 @@ func (m Model) detailPane(w, h int) string {
 		}
 		b.WriteString("\n")
 		line(s.key.Render("Enter") + s.keyLabel.Render(" how to reach it: ssh -t "+m.hostTarget(a.Host)))
-		lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
-		if m.detailScroll > 0 && len(lines) > h {
-			lines = lines[min(m.detailScroll, len(lines)-h):]
-		}
-		return strings.Join(lines, "\n")
+		return strings.Split(strings.TrimRight(b.String(), "\n"), "\n"), reqFrom, reqTo
 	}
 	kv("where", a.Where())
 	if a.HasGit {
@@ -1082,12 +1095,7 @@ func (m Model) detailPane(w, h int) string {
 	}
 	b.WriteString("\n")
 	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render(mentionText(a)) + s.keyLabel.Render(" to message"))
-	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
-	if m.detailScroll > 0 && len(lines) > h {
-		off := min(m.detailScroll, len(lines)-h)
-		lines = lines[off:]
-	}
-	return strings.Join(lines, "\n")
+	return strings.Split(strings.TrimRight(b.String(), "\n"), "\n"), reqFrom, reqTo
 }
 
 // completionRows lists matching agents while an @mention is being typed.
