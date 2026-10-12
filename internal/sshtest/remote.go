@@ -2,12 +2,14 @@ package sshtest
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -451,4 +453,29 @@ func (r *Remote) signalSSHD(sig syscall.Signal) int {
 		}
 	}
 	return n
+}
+
+// ServePIDs lists the `den remote serve` processes running on this host: the
+// ones started through the private sshd carry the lab's marker in their
+// environment and "remote serve" in their command line.
+func (r *Remote) ServePIDs() []int {
+	var out []int
+	entries, _ := os.ReadDir("/proc")
+	marker := []byte("DEN_SSHTEST=" + r.lab.Dir + "\x00")
+	home := []byte("HOME=" + r.Home + "\x00")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		cmd, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil || !strings.Contains(strings.ReplaceAll(string(cmd), "\x00", " "), "remote serve") {
+			continue
+		}
+		env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+		if err == nil && bytes.Contains(env, marker) && bytes.Contains(env, home) {
+			out = append(out, pid)
+		}
+	}
+	return out
 }
