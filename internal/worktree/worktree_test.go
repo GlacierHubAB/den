@@ -374,7 +374,7 @@ func TestPlanRefusesARepositoryWithItsOwnMergeDriver(t *testing.T) {
 }
 
 // Merging, by fast-forward or with a merge commit, and removing the
-// worktree run none of the repository's hooks.
+// worktree run none of the repository's hooks, and sign nothing.
 func TestMergeAndCleanupRunNoHook(t *testing.T) {
 	for _, ff := range []bool{true, false} {
 		name := "merge-commit"
@@ -389,6 +389,7 @@ func TestMergeAndCleanupRunNoHook(t *testing.T) {
 				commit(t, main, "other.txt", "o\n", "Main moves on")
 			}
 			gitsafetest.Hooks(t, filepath.Join(main, ".git", "hooks"), marked)
+			gitsafetest.Signer(t, main, marked)
 			p, err := Plan(ctx, wt)
 			if err != nil || p.FastForward != ff {
 				t.Fatalf("plan = %+v err=%v", p, err)
@@ -410,12 +411,16 @@ func TestMergeAndCleanupRunNoHook(t *testing.T) {
 				t.Errorf("branch survived: %q", out)
 			}
 			if got := marks(t, marked); len(got) > 0 {
-				t.Errorf("hooks ran: %v", got)
+				t.Errorf("the repository made git run %v", got)
 			}
-			// The hooks are live: plain git runs them.
-			sh(t, main, "commit", "-q", "--allow-empty", "-m", "plain")
-			if got := strings.Join(marks(t, marked), " "); !strings.Contains(got, "hook-commit-msg") {
-				t.Errorf("the hooks never ran under plain git (ran: %s)", got)
+			// The hooks and the signer are live: plain git runs them (and
+			// fails, as the signer signs nothing).
+			exec.Command("git", "-C", main, "commit", "-q", "--allow-empty", "-m", "plain").Run()
+			got := strings.Join(marks(t, marked), " ")
+			for _, want := range []string{"hook-commit-msg", "signer"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s never ran under plain git (ran: %s)", want, got)
+				}
 			}
 		})
 	}
