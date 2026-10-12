@@ -123,3 +123,12 @@ func TestCommentsOldFileLoads(t *testing.T) {
 		t.Errorf("addressed written %d times, want only for the addressed comment:\n%s", n, raw)
 	}
 }
+
+// A comment on a remote agent's work names the folder as the agent knows
+// it on its host, not Review's "folder @host" key.
+func TestMessageNamesARemoteFolderAsOnItsHost(t *testing.T) {
+	msg := Message([]Comment{{Root: "/home/user/den @devbox", Host: "devbox", Path: "main.go", Start: 2, End: 2, Quote: []string{"+func run() {}"}, Body: "name it start"}})
+	if !strings.Contains(msg, "\nIn /home/user/den:\n") || strings.Contains(msg, "@devbox") {
+		t.Errorf("message:\n%s", msg)
+	}
+}

@@ -352,7 +352,9 @@ failure shows its reason. If none of the changes in the checkout are the
 agent's, Review says so and shows nothing. A diff over 200 KB, 300 files or
 2000 lines in a file is cut and says what was left out. A file whose name has
 control characters is listed by its cleaned name, without its content; its
-content never leaves the host, in the agent's Tail either.
+content never leaves the host, in the agent's Tail either. The host sends only
+how many of its lines the agent added and removed, so the agent's counts
+include it, as they do locally.
 
 When the host goes offline its diffs disappear ("devbox is offline"); they are
 read again when it is back. Below `full` the agent is greyed with "diff on

@@ -57,7 +57,14 @@ type DiffFile struct {
 	// and the content is not sent.
 	Unsafe bool       `json:"unsafe,omitempty"`
 	Hunks  []DiffHunk `json:"hunks,omitempty"`
+	// Added and Removed count the session's own lines in an Unsafe file,
+	// whose lines are not sent, so Review's counts still include it.
+	Added   int `json:"added,omitempty"`
+	Removed int `json:"removed,omitempty"`
 }
+
+// maxUnsafeCount bounds the line counts a host gives for an Unsafe file.
+const maxUnsafeCount = 1 << 20
 
 // DiffHunk is a review hunk; Mine lists the indexes of the lines the
 // session wrote.
@@ -179,6 +186,7 @@ func packDiff(d *Diff, files []review.File, session string) {
 			break
 		}
 		if f.Unsafe {
+			df.Added, df.Removed = ownedLines(f, session)
 			d.Files = append(d.Files, df)
 			continue
 		}
@@ -227,6 +235,24 @@ func packDiff(d *Diff, files []review.File, session string) {
 	}
 }
 
+// ownedLines counts the lines of f that session added and removed.
+func ownedLines(f review.File, session string) (added, removed int) {
+	for hi, h := range f.Hunks {
+		for li, l := range h.Lines {
+			if hi >= len(f.Owner) || li >= len(f.Owner[hi]) || f.Owner[hi][li] != session || l == "" {
+				continue
+			}
+			switch l[0] {
+			case '+':
+				added++
+			case '-':
+				removed++
+			}
+		}
+	}
+	return min(added, maxUnsafeCount), min(removed, maxUnsafeCount)
+}
+
 func capLine(s string, max int) string { return capBytes(sanitize.Line(s), max) }
 
 // capBytes cuts s to at most max bytes on a rune boundary, ending in "…".
@@ -255,6 +281,9 @@ func cleanDiff(d *Diff) *Diff {
 	for _, f := range d.Files[:min(len(d.Files), MaxDiffFiles)] {
 		cf := DiffFile{Path: capLine(f.Path, maxDiffPath), OldPath: capLine(f.OldPath, maxDiffPath),
 			Created: f.Created, Deleted: f.Deleted, Binary: f.Binary, Cut: f.Cut, Unsafe: f.Unsafe}
+		if cf.Unsafe {
+			cf.Added, cf.Removed = min(max(0, f.Added), maxUnsafeCount), min(max(0, f.Removed), maxUnsafeCount)
+		}
 		n := 0
 		for _, h := range f.Hunks {
 			if cf.Unsafe {

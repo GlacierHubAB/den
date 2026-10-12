@@ -476,8 +476,8 @@ func TestRemoteAgentsWithoutWorkAreListedUnderTheirOwnProject(t *testing.T) {
 // A remote file whose name has control characters keeps that mark, so
 // Review says its content is not shown.
 func TestRemoteUnsafeNameIsMarked(t *testing.T) {
-	ws := workFromDiff("s@devbox", "devbox", &remote.Diff{Root: "/home/user/den", Files: []remote.DiffFile{{Path: "evilname.txt", Created: true, Unsafe: true}}})
-	if len(ws) != 1 || len(ws[0].Files) != 1 || !ws[0].Files[0].Unsafe || len(ws[0].Files[0].Hunks) > 0 {
+	ws := workFromDiff("s@devbox", "devbox", &remote.Diff{Root: "/home/user/den", Files: []remote.DiffFile{{Path: "evilname.txt", Created: true, Unsafe: true, Added: 4, Removed: 1}}})
+	if len(ws) != 1 || len(ws[0].Files) != 1 || !ws[0].Files[0].Unsafe || len(ws[0].Files[0].Hunks) > 0 || ws[0].Added != 4 || ws[0].Removed != 1 {
 		t.Errorf("works = %+v", ws)
 	}
 }
@@ -538,5 +538,36 @@ func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
 	}
 	if !strings.Contains(m.flash, "Handed 1 comment") || !strings.Contains(m.flash, "until devbox is back") {
 		t.Errorf("flash: %q", m.flash)
+	}
+}
+
+// A remote agent's row shows how long ago it last changed a file, as a
+// local row does, from the newest change in the tail its host sent.
+func TestReviewRemoteRowHasAnAge(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	for i := range feed.agents {
+		if feed.agents[i].Host == "devbox" && feed.agents[i].Session.SessionID == dupSession {
+			feed.agents[i].Tail = []transcript.Entry{
+				{Kind: "tool", Tool: "Edit", At: time.Now().Add(-7 * time.Minute), Changes: []transcript.FileChange{{Path: "main.go"}}},
+				{Kind: "text", Text: "Done.", At: time.Now().Add(-time.Minute)}, // no change: not the age
+			}
+		}
+	}
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = "den @devbox"
+	feed.diff = remoteDiff()
+	runReview(m, m.loadReview())
+	if len(m.rev.works) != 1 {
+		t.Fatalf("works = %+v", m.rev.works)
+	}
+	if last := m.rev.works[0].Last; time.Since(last) < 7*time.Minute || time.Since(last) > 8*time.Minute {
+		t.Errorf("last change = %v", last)
+	}
+	m.width = 300
+	if out := frame(m); !strings.Contains(out, "+2 −0 · 7m") {
+		t.Errorf("row lacks its age:\n%s", out)
 	}
 }

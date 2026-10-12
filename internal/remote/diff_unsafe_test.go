@@ -59,7 +59,7 @@ func TestHostDiffSendsAFileWithAnUnsafeNameWithoutItsContent(t *testing.T) {
 	for _, f := range d.Files {
 		byPath[f.Path] = f
 	}
-	if f, ok := byPath["evilname.txt"]; !ok || !f.Unsafe || len(f.Hunks) > 0 || !f.Created {
+	if f, ok := byPath["evilname.txt"]; !ok || !f.Unsafe || len(f.Hunks) > 0 || !f.Created || f.Added != 1 || f.Removed != 0 {
 		t.Errorf("the file with the unsafe name: %+v (files %+v)", f, d.Files)
 	}
 	if f := byPath["plain-new.txt"]; f.Unsafe || len(f.Hunks) != 1 {
@@ -74,5 +74,16 @@ func TestHostDiffSendsAFileWithAnUnsafeNameWithoutItsContent(t *testing.T) {
 	lying := &Diff{Files: []DiffFile{{Path: "evilname.txt", Unsafe: true, Hunks: []DiffHunk{{NewStart: 1, Lines: []string{"+secret"}, Mine: []int{0}}}}}}
 	if got := cleanDiff(lying); len(got.Files) != 1 || !got.Files[0].Unsafe || len(got.Files[0].Hunks) > 0 {
 		t.Errorf("cleanDiff kept content: %+v", got.Files)
+	}
+	// Its counts come through, held to bounds; a safe file's come from its
+	// lines alone.
+	counted := &Diff{Files: []DiffFile{
+		{Path: "a.txt", Unsafe: true, Added: 3, Removed: -4},
+		{Path: "b.txt", Unsafe: true, Added: 1 << 40},
+		{Path: "c.txt", Added: 9, Hunks: []DiffHunk{{NewStart: 1, Lines: []string{"+x"}, Mine: []int{0}}}},
+	}}
+	got := cleanDiff(counted).Files
+	if got[0].Added != 3 || got[0].Removed != 0 || got[1].Added != maxUnsafeCount || got[2].Added != 0 {
+		t.Errorf("counts = %+v", got)
 	}
 }
