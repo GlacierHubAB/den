@@ -141,6 +141,8 @@ func (m *Manager) linkFor(host, verb string) (*link, error) {
 	s := st.status.State
 	nothing := nothingDone(verb)
 	switch {
+	case st.off != "":
+		return nil, fmt.Errorf("%s is %s; %s", host, st.off, nothing)
 	case st.link == nil || (s != Live && s != AttachedElsewhere):
 		switch s {
 		case Connecting:

@@ -277,8 +277,9 @@ type Manager struct {
 }
 
 type hostState struct {
-	host      Host // as remotes.toml says now (Options.Reload)
-	held      bool // remotes.toml names another target or den_path: no connection until Connect
+	host      Host   // as remotes.toml says now (Options.Reload)
+	held      bool   // remotes.toml names another target or den_path: no connection until Connect
+	off       string // why remotes.toml no longer has the host enabled ("disabled in remotes.toml"): no connection, no action
 	restart   chan struct{}
 	status    HostStatus
 	known     Known
@@ -369,7 +370,32 @@ func (m *Manager) reload(raise string) {
 	for _, h := range m.hosts {
 		st, want := m.state[h.Label], now[h.Label]
 		if want.Label == "" {
-			continue // removed or disabled: that takes a restart
+			// Disabled or removed: the strongest lowering there is, so at
+			// once. The session ends, nothing connects or acts on it, and
+			// it stays in view until Den restarts.
+			off := "removed from remotes.toml"
+			if _, ok := cfg.Find(h.Label); ok {
+				off = "disabled in remotes.toml"
+			}
+			if st.off != off {
+				st.off = off
+				st.status.Pending = ""
+				m.kick(st)
+				ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(st.host)})
+			}
+			continue
+		}
+		if st.off != "" {
+			// Enabled again: a raise, which waits for /remote connect.
+			pending := "remotes.toml enables " + h.Label + " again; /remote connect " + h.Label + " to apply"
+			if h.Label != raise {
+				if pending != st.status.Pending {
+					st.status.Pending = pending
+					ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(st.host)})
+				}
+				continue
+			}
+			st.off = ""
 		}
 		old, asked := st.host, want
 		pending, held := "", false
@@ -405,14 +431,7 @@ func (m *Manager) reload(raise string) {
 			st.held = held
 			st.host = want
 			st.status.Policy, st.status.Target = want.Policy, want.Target
-			select {
-			case st.restart <- struct{}{}:
-			default:
-			}
-			select {
-			case st.reconnect <- struct{}{}:
-			default:
-			}
+			m.kick(st)
 		}
 		ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(want)})
 	}
@@ -420,6 +439,27 @@ func (m *Manager) reload(raise string) {
 	for _, u := range ups {
 		m.send(u)
 	}
+}
+
+// kick ends the host's session, if it has one, and wakes its loop to
+// apply what changed. Called with m.mu held.
+func (m *Manager) kick(st *hostState) {
+	select {
+	case st.restart <- struct{}{}:
+	default:
+	}
+	select {
+	case st.reconnect <- struct{}{}:
+	default:
+	}
+}
+
+// offWhy says why remotes.toml no longer has the host enabled, "" while
+// it does.
+func (m *Manager) offWhy(label string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].off
 }
 
 // isHeld says remotes.toml names another target or den_path for the host
@@ -623,6 +663,9 @@ func (m *Manager) setState(h Host, s State, reason string) {
 			st.status.Hint = fmt.Sprintf("install a den that speaks proto %d on the host: den remote install %s", Proto, h.Label)
 		case Disabled:
 			st.status.Hint = "find out why it floods, then /remote connect " + h.Label
+			if st.off != "" {
+				st.status.Hint = "restart Den to drop it from view, or enable it in remotes.toml and /remote connect " + h.Label
+			}
 		}
 	}
 	st.known.State, st.known.Reason, st.known.Since = s, reason, st.status.Since
@@ -658,6 +701,15 @@ func (m *Manager) loop(h Host) {
 		select {
 		case <-st.restart: // the session this asked to end is over
 		default:
+		}
+		if off := m.offWhy(h.Label); off != "" {
+			m.setState(h, Disabled, off)
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-st.reconnect: // Connect lifts it once remotes.toml enables it again
+			}
+			continue
 		}
 		if m.isHeld(h.Label) {
 			m.setState(h, Offline, m.pending(h.Label))

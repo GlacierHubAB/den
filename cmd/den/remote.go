@@ -235,7 +235,11 @@ func remoteEdit(op, label string) {
 	if op == "remove" {
 		os.Remove(filepath.Join(remote.StateDir(), label+".json"))
 	}
-	fmt.Printf("%sd %s. A running Den picks this up when it restarts.\n", strings.ToUpper(op[:1])+op[1:], label)
+	note := "A running Den ends its link to it at once."
+	if op == "enable" {
+		note = "A running Den connects it at /remote connect " + label + ", or when it restarts."
+	}
+	fmt.Printf("%sd %s. %s\n", strings.ToUpper(op[:1])+op[1:], label, note)
 }
 
 func remoteList(asJSON bool) {

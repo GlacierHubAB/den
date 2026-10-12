@@ -95,8 +95,9 @@ without it, `default_policy` in `remotes.toml` applies.
 In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
 host now, under `remotes.toml` as it is then, a raise or new target included
-(see [remotes.toml](#remotestoml)). `disable`, `enable` and `remove` take
-effect when Den restarts.
+(see [remotes.toml](#remotestoml)). `disable` and `remove` end the host's link
+at once; `enable` and `add` take effect when Den restarts, or for a host Den
+still shows, at `/remote connect`.
 
 Addressing a remote agent: `@Name@devbox text` messages it, `/close Name@devbox`
 closes it, and from a script `den send name@devbox "text"`. A bare `@Name` or
@@ -135,8 +136,11 @@ starts; until then `/remote` shows what the file asks for ("remotes.toml asks
 for full; /remote connect devbox to apply"). A new `target` or `den_path` also
 ends the link to the old one at once, and Den makes no connection for the host
 until you run `/remote connect` ("remotes.toml points devbox at user@other;
-/remote connect devbox to apply"). Adding, removing, disabling or enabling a host still takes a
-restart of Den; a file that does not parse keeps the settings in use.
+/remote connect devbox to apply"). Disabling or removing a host trusts it
+least of all, so it applies at once: the link ends, nothing connects to or
+acts on the host, and it stays in `/remote` as disabled until Den restarts.
+Enabling it again is a raise, applied by `/remote connect`. Adding a host takes
+a restart of Den; a file that does not parse keeps the settings in use.
 `policy` and `default_policy` take `observe` or `approve`.
 They also take `full`.
 
@@ -214,7 +218,7 @@ last known. They are never counted as working or needing you.
 | needs you | unknown or changed host key, or ssh cannot log in without a prompt | stops; run `ssh <target>`, then `/remote connect devbox` |
 | version mismatch | `den` is missing on the host, or too old for `remote serve` | stops; `den remote install devbox` |
 | live, controlled elsewhere | another Den holds the host's requests | shows the host's agents; answers and acts on nothing there; asks again every minute |
-| disabled | the host flooded Den with events (see Security model) | stops until `/remote connect devbox`, or until Den restarts |
+| disabled | the host flooded Den with events (see Security model), or `remotes.toml` disables or removes it | stops until `/remote connect devbox`, or until Den restarts; a host disabled in the file connects only once it is enabled there again |
 
 A link that goes silent is noticed in 45 to 60 seconds; a killed ssh at once.
 On the host, `den remote serve` exits once it has heard nothing from Den for
