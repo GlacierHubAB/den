@@ -916,7 +916,7 @@ the hosts. Each host has a **policy** in `~/.config/den/remotes.toml`
 | --- | --- |
 | `observe` (default) | Metadata only: status, names, role and task (not with `labels = false`), repository name and branch, context, tokens by model. You see the agents, get notified, and see the cost. |
 | `approve` | Plus the body of a waiting permission, plan or question. You answer it in the inbox with `Ctrl+Y`, `Ctrl+N` and `/always`; you can also message the host's agents (`@Name@devbox text`, `den send name@devbox …`) and close them (`/close Name@devbox`, `Ctrl+X`). |
-| `full` | Today the same as `approve`; recent activity and Review of a remote agent's diff are not part of this version. |
+| `full` | Plus each agent's title, folder and recent activity, and its diff in Review, read on the host. Held in memory, never written to disk. |
 
 What runs where: Den starts one system `ssh` per host while it runs, and on the
 host that session runs `den remote serve --proto 1`, which exits when the
@@ -936,7 +936,7 @@ silent link is noticed in 45 to 60 seconds. `den list -json` carries a `Host`
 field (and `Stale` when the link is down), `den events -json` a `host` field,
 and `[on]` commands get `DEN_HOST`.
 
-Limits today: Review cannot show a remote agent's diff; Linux hosts and Claude Code agents only (no macOS, no Codex);
+Limits today: Linux hosts and Claude Code agents only (no macOS, no Codex);
 Den cannot spawn agents on a host, missions cannot use remote agents, and the
 orchestrator lists them but cannot message or close them; `Enter` and `/open`
 cannot raise a terminal on another machine, they print `ssh -t <target>`;
@@ -1149,15 +1149,15 @@ What Den does that is its own:
 - **One Fleet across your machines,** over plain ssh with no daemon and no
   listener: agents on other hosts, their requests and their cost beside the
   local ones, metadata only by default; per host you can let Den answer their
-  permissions, and message and close them. (Herdr and agent-deck also connect
-  machines.)
+  permissions, message and close them, and review their work. (Herdr and
+  agent-deck also connect machines.)
 
 Where the others go further: Herdr keeps agents running when you close the
 client or lose SSH. Den restores conversations, the tree and missions after a
 restart with one question, but it does not keep processes alive. Herdr also
 works across several machines with full control of the panes there, where Den
-shows, answers, messages and closes remote agents but never types into their
-terminals; it supports many agent CLIs and runs on
+shows, answers, messages, closes and reviews remote agents but never types into
+their terminals; it supports many agent CLIs and runs on
 macOS and Windows. OpenRig gives agent teams persistent roles,
 addresses and a work queue, and runs Claude Code and Codex side by side.
 

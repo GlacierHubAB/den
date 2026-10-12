@@ -22,9 +22,8 @@ What you can do with a host:
 - on a host you set to `approve`, answer its waiting permissions, plans and
   questions in the inbox, as you do for local agents.
 - on an `approve` host, message its agents and close them.
-
-Review of a remote agent's changes is not part of this version: for that you go
-to the host.
+- on a host you set to `full`, also read their recent activity and review what
+  they changed.
 
 ## Requirements
 
@@ -123,6 +122,7 @@ that starts with `-` is refused. Den reads the file when it starts. A file that
 does not parse connects no host, and `/remote` says why. There is no command to
 change a host's policy: edit `policy` and restart Den.
 `policy` and `default_policy` take `observe` or `approve`.
+They also take `full`.
 
 ## Policies
 
@@ -135,11 +135,16 @@ policy does not allow.
 | --- | --- |
 | `observe` (default) | Metadata only. Per agent: status, critter name, session id, peer name, badge role and task (at most 80 characters, withheld with `labels = false`), model, Claude Code version, repository name and branch, context and usage figures, tokens by model, and how long ago things happened. Per event: kind, session, agent name, time, request kind, tool name, error type. |
 | `approve` | Everything under `observe`, plus, for a waiting permission, plan or question only, what Den shows to decide it: the command, the edit or file, the plan, the question and its options. Your answers travel the other way. |
+| `full` | Everything under `approve`, plus each agent's title, its folder on the host and its recent activity (prompts, replies, tool calls and their output, each capped), and, when you open Review, the diff of the session's own work in its checkout, sanitised and capped. |
 
 Under `observe` a host never sends prompts, replies, transcripts, commands,
 tool input, file paths, working directories, window titles or recent activity.
 Under `approve` that stays true except for the body of a waiting request.
 Text you send to an agent and a request to close one also travel to the host.
+Only `full` sends content, so set it for hosts whose work you are willing to
+read on this machine. Content from a `full` host is held in memory while Den
+runs and never written down on this machine: not to `remote/<label>.json`,
+`reviews.json`, `den list -json` or the orchestrator's roster.
 
 Badge role and task are short summaries Claude Code's own model writes about
 the work, so they say a little about it. Set `labels = false` on a sensitive
@@ -167,6 +172,8 @@ host to keep them back.
   devbox is its own project, `den @devbox`.
 - **The orchestrator** lists remote agents in its roster as host-tagged lines
   that say `SendMessage` cannot reach them. It does not act on remote agents.
+- **Details pane, `full` hosts.** It also shows the agent's folder on the host,
+  its title and its recent activity.
 - **Inbox, `approve` hosts.** The item shows the host chip, "on devbox" in its
   title and the whole body Den was sent. `Ctrl+Y`, `Ctrl+N` and `/always`
   answer it exactly as for a local agent; `/always` allows that tool again for
@@ -281,6 +288,26 @@ On an `approve` host:
   dropped: the result is "not known".
 
 The orchestrator cannot message or close remote agents.
+A `full` host does all of this too: it is `approve` plus content.
+
+## Review on a `full` host
+
+Remote agents on a `full` host are listed in Review with their `@host` chip.
+Den asks the host for each diff, at most 2 at a time per host. The host reads
+it in the agent's checkout, with the session's own work marked, as Review does
+locally. While it waits, the row says "reading its diff on devbox…", and a
+failure shows its reason. If none of the changes in the checkout are the
+agent's, Review says so and shows nothing. A diff over 200 KB, 300 files or
+2000 lines in a file is cut and says what was left out.
+
+When the host goes offline its diffs disappear ("devbox is offline"); they are
+read again when it is back. Below `full` the agent is greyed with "diff on
+devbox, policy observe; to review it here, set policy = "full" for it in
+remotes.toml".
+
+Review comments `/send` through the host like `@` messages. `/merge` and
+`/cleanup` refuse remote work. Comments on remote work last until Den exits and
+are not saved.
 
 ## For scripts
 
@@ -294,7 +321,6 @@ on this machine.
 
 ## Limits
 
-- Den cannot review a remote agent's changes in this version.
 - Linux hosts only; agents are Claude Code only.
 - Remote agents cannot be spawned or restored from Den, missions cannot use
   them, and the orchestrator cannot message or close them.
