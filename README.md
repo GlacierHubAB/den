@@ -211,7 +211,9 @@ With the hooks installed, each item is a permission, a plan review, a question
 or a finished turn; Den adds its own questions, to close agents, to install
 skills or to reopen agents after a restart. Waiting permissions and plans can
 be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one,
-`/always` allows it and the same tool again this session, `/open` focuses the
+`/always` allows it and the same again this session (for a command, that exact
+command only; a command with shell operators, substitutions, redirections or
+several lines is allowed one `Ctrl+Y` at a time), `/open` focuses the
 terminal, `/dismiss` clears an item, and `/unread` keeps the selected item
 counted as new until you open or dismiss it (`/unread` again marks it read).
 Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest

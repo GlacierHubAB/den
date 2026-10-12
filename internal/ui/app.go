@@ -1135,6 +1135,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Cleanup {
 		return m.decideCleanup(it, verb)
 	}
+	if why := inbox.AlwaysRefusal(it); verb == "always" && why != "" {
+		return m.say(why, true)
+	}
 	if !m.store.Answer(it, verb) {
 		m.refresh()
 		return m.say(m.nameFor(it.SessionID)+": "+it.Resolved, true)
