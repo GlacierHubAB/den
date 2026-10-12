@@ -20,16 +20,61 @@ import (
 // When the session ends, every one still open is let go as "link lost":
 // it is never left looking answerable, and a reply to it goes nowhere.
 type heldSet struct {
-	host  string
-	ctx   context.Context // the session's; done once it ended
-	write func(v any) error
+	host     string
+	ctx      context.Context // the session's; done once it ended
+	write    func(v any) error
+	answered *answeredIDs // the host's, across its sessions
 
 	mu   sync.Mutex
 	open map[string]*bridge.Request
 }
 
-func newHeldSet(ctx context.Context, host string, write func(any) error) *heldSet {
-	return &heldSet{host: host, ctx: ctx, write: write, open: map[string]*bridge.Request{}}
+func newHeldSet(ctx context.Context, host string, answered *answeredIDs, write func(any) error) *heldSet {
+	return &heldSet{host: host, ctx: ctx, write: write, answered: answered, open: map[string]*bridge.Request{}}
+}
+
+// answeredIDs are the held ids a host's requests were answered under, the
+// newest maxAnswered of them, kept for as long as Den runs.
+//
+// A held id is single use. serve keeps an id when it offers a request
+// again after a reconnect, which is how a request still open on the host,
+// re-held by the next serve after a handover, becomes answerable again
+// here. An id Den has answered is never answerable again: serve forgets a
+// request once it delivers the decision, so the same id offered again is
+// either a decision that never arrived (the link died with it in the pipe)
+// or a host trying to have the human answer twice, perhaps for a different
+// body. Either way it is refused, flagged, and sent back to its terminal
+// with no decision, where the human answers it on the host.
+type answeredIDs struct {
+	mu    sync.Mutex
+	ids   map[string]bool
+	order []string
+}
+
+// maxAnswered bounds answeredIDs: a human answers far fewer requests in one
+// run of Den, and serve forgets an id long before that many more come.
+const maxAnswered = 4096
+
+func newAnsweredIDs() *answeredIDs { return &answeredIDs{ids: map[string]bool{}} }
+
+func (a *answeredIDs) add(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ids[id] {
+		return
+	}
+	if len(a.order) >= maxAnswered {
+		delete(a.ids, a.order[0])
+		a.order = a.order[1:]
+	}
+	a.ids[id] = true
+	a.order = append(a.order, id)
+}
+
+func (a *answeredIDs) has(id string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.ids[id]
 }
 
 // add turns a held message into a request for the inbox. It fails (with
@@ -41,10 +86,19 @@ func (s *heldSet) add(hm Held, configured, applied Policy) (*bridge.Request, str
 		return nil, "a held request under observe"
 	case !isID(hm.ID):
 		return nil, "a held request with a malformed id"
-	case !plainField(hm.Session) || !plainField(hm.Tool):
-		return nil, "a held request with a malformed session or tool"
+	case !isSessionID(hm.Session):
+		return nil, "a held request whose session id is not a UUID"
+	case !plainField(hm.Tool):
+		return nil, "a held request with a malformed tool"
 	case !checkBody(hm.Tool, hm.Body):
 		return nil, "a held request whose body the policy does not allow"
+	}
+	if s.answered.has(hm.ID) {
+		// Single use (answeredIDs): back to its terminal, with no decision.
+		if s.ctx.Err() == nil {
+			s.write(Decision{Type: TypeDecision, ID: hm.ID, Hash: BodyHash(hm.Body)})
+		}
+		return nil, "a held request offered again after it was answered"
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -73,6 +127,7 @@ func (s *heldSet) add(hm Held, configured, applied Policy) (*bridge.Request, str
 		if !open || s.ctx.Err() != nil {
 			return // gone, or the link it came on is lost
 		}
+		s.answered.add(id)
 		s.write(Decision{Type: TypeDecision, ID: id, Hash: hash, Behavior: d.Behavior, Message: d.Message, Answers: d.Answers})
 	})
 	s.open[id] = r
@@ -110,6 +165,26 @@ func (s *heldSet) releaseAll() []*bridge.Request {
 // line, nothing sanitising would change.
 func plainField(s string) bool {
 	return s != "" && len(s) <= 80 && sanitize.Line(s) == s
+}
+
+// isSessionID reports whether s is a Claude Code session id: a UUID in its
+// 8-4-4-4-12 hex form. Every session id a host sends must be one; it keys
+// the agent, names its critter and ends up in titles and the event log.
+func isSessionID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F'):
+			return false
+		}
+	}
+	return true
 }
 
 // ControllerPath is where this machine's Den keeps its controller id.

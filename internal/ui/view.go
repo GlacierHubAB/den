@@ -441,6 +441,7 @@ func (m Model) agentsPane(w, h int) string {
 		if a.Host != "" {
 			name += muted.Render(hostChip(a))
 		}
+		twin := m.twinNote(a.Session.SessionID)
 		role := ""
 		if a.Labels.Role != "" {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
@@ -454,6 +455,9 @@ func (m Model) agentsPane(w, h int) string {
 			}
 		}
 		l1 := marker + fg.Render(" ") + guide + glyph + fg.Render(" ") + name + role
+		if twin != "" {
+			l1 += attn.Render("  " + twin)
+		}
 		if d := m.directsLabel(a.Session.SessionID, dim, attn); d != "" {
 			l1 += fg.Render("   ") + d
 		}
@@ -571,6 +575,9 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 	}
 	head += s.dim.Render(" · ") + s.dim.Render(it.Title)
 	out := []string{head}
+	if twin := m.twinNote(itemKey(it)); twin != "" {
+		out = append(out, s.attn.Render(twin))
+	}
 	if it.Intent != "" {
 		for _, l := range strings.Split(ansi.Wrap(it.Intent, w, ""), "\n") {
 			out = append(out, s.fg.Render(l))
@@ -698,6 +705,9 @@ func (m Model) inboxPane(w, h int) string {
 		text = append(text, head)
 		if via := m.viaLine(itemKey(it)); via != "" {
 			text = append(text, ansi.Truncate(via, textW, "…"))
+		}
+		if twin := m.twinNote(itemKey(it)); twin != "" {
+			text = append(text, attn.Render(ansi.Truncate(twin, textW, "…")))
 		}
 		body := fg
 		if it.State == inbox.Resolved || it.Kind >= inbox.Done {

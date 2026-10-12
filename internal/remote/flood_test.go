@@ -86,7 +86,7 @@ func floodServe(raw string) int {
 			if sp.Unknown || len(sessions) == 0 {
 				var b [16]byte
 				rand.Read(b[:])
-				sid = fmt.Sprintf("%x-%x-4%x-8%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])[:36]
+				sid = fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 			} else {
 				sid = sessions[sent%len(sessions)]
 			}

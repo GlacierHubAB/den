@@ -254,8 +254,9 @@ type hostState struct {
 	status    HostStatus
 	known     Known
 	reconnect chan struct{}
-	link      *link // the live session's way to carry actions, nil without one
-	gate      *gate // which of its events Den takes; used by its session only
+	link      *link        // the live session's way to carry actions, nil without one
+	gate      *gate        // which of its events Den takes; used by its session only
+	answered  *answeredIDs // held ids answered on any of the host's sessions
 }
 
 // NewManager prepares sessions for cfg's enabled hosts, starting from what
@@ -277,6 +278,7 @@ func NewManager(cfg Config, o Options) *Manager {
 		m.state[h.Label] = &hostState{
 			known:     k,
 			reconnect: make(chan struct{}, 1),
+			answered:  newAnsweredIDs(),
 			status: HostStatus{
 				Label: h.Label, Target: h.Target, Policy: h.Policy, State: st, Reason: k.Reason, Since: k.Since,
 				Hostname: k.Hostname, Den: k.Den, Claude: k.Claude, Applied: k.Policy, Offset: k.Offset, Agents: len(k.Agents),
@@ -545,7 +547,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	// Decisions are made in Den's update loop (a request's Reply); they
 	// are queued here and written by their own goroutine, in order, so a
 	// slow or stuck ssh pipe never holds up the TUI.
-	held := newHeldSet(ctx, h.Label, pipeQueue(ctx, write, 2*MaxHeld))
+	held := newHeldSet(ctx, h.Label, m.state[h.Label].answered, pipeQueue(ctx, write, 2*MaxHeld))
 	defer func() {
 		cancel() // replies from now on go nowhere
 		for _, r := range held.releaseAll() {
@@ -705,15 +707,12 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, "a malformed snapshot")
 				continue
 			}
+			agents, flags, overreach := checkAgents(sm.Agents, h, applied)
+			for _, f := range flags {
+				m.flag(h, f)
+			}
 			m.mu.Lock()
 			st := m.state[h.Label]
-			agents := make([]fleet.Meta, 0, len(sm.Agents))
-			overreach := false
-			for _, a := range sm.Agents {
-				a, dropped := recheck(a, h, applied)
-				overreach = overreach || dropped
-				agents = append(agents, cleanMeta(a))
-			}
 			st.known.Agents, st.known.Received, st.known.Heartbeat = agents, in.at, in.at
 			g.snapshot()
 			st.status.Agents, st.status.LastSeen = len(agents), in.at
@@ -748,7 +747,10 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			ev.Time = ev.Time.Add(-st.status.Offset).UTC().Truncate(time.Millisecond)
 			st.known.Cursor = em.Cursor
 			st.status.LastSeen = in.at
-			v, why := g.check(ev, st.known.Agents, in.at)
+			v, why := g.malformed(ev)
+			if isSessionID(em.Event.Session) {
+				v, why = g.check(ev, st.known.Agents, in.at)
+			}
 			if v == drop {
 				// Past it, but not worth a write each: the cursor is saved
 				// with the next event Den keeps, a heartbeat or the end.

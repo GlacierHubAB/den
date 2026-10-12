@@ -154,7 +154,11 @@ host to keep them back.
 
 - **Fleet.** A remote agent has an `@devbox` chip after its name and the same
   role, task, branch and context figures as a local one. Its critter name is
-  computed here from its session id; a host cannot choose it. The details pane
+  computed here from its session id; a host cannot choose it. Two agents with
+  the same session id (here and on a host, or on two hosts) get the same name,
+  as their badges show it; Den keeps the names and says "same session id as
+  Mossy Lemur @gpu" on both rows, their details and their inbox items, and
+  flags each host involved in `/remote`. The details pane
   adds the host, the link, the policy, the host's Claude Code version, and the
   clock offset when it is over 2 seconds (ages are always the host's own,
   never compared with this machine's clock). `Enter` and `/open` cannot raise
@@ -197,6 +201,9 @@ last known. They are never counted as working or needing you.
 | disabled | the host flooded Den with events (see Security model) | stops until `/remote connect devbox`, or until Den restarts |
 
 A link that goes silent is noticed in 45 to 60 seconds; a killed ssh at once.
+On the host, `den remote serve` exits once it has heard nothing from Den for
+60 seconds, under every policy, so a link that died half-open leaves nothing
+running there.
 Events that happened while the link was down arrive once it is back, once each.
 Items waiting from the host read "released to the terminal on devbox (link
 lost)", and the terminal's own dialog shows: a request is never left looking
@@ -426,11 +433,23 @@ on this machine.
 - **Everything from a host is sanitised.** Escape sequences, control
   characters and bidirectional overrides are removed from every string a host
   sends, before it is shown, put in a notification or title, or logged.
+- **What a host sends is checked, not trusted.** Every session id must be a
+  UUID; an agent, event or request with anything else is dropped and the host
+  flagged in `/remote`. Token counts below zero or over ten billion for one
+  session, and a reported cost over $100,000, are cleared and flagged: that
+  agent shows no cost and adds nothing to the totals. A context size or window
+  over ten million tokens, and a usage percentage outside 0 to 100, are cleared
+  and flagged too, and never kept in the host's file. A model id may hold only
+  letters, digits and `. _ : -`, at most 128 characters, and at most 32 per
+  agent; tokens under any other are dropped and flagged.
 - **A host cannot answer for you.** Decisions only go from Den to the host
   and are never read from it. Each is bound to a random request id and to a
   hash of the body you were shown, is valid once, and only while the request
   is open and on the connection that offered it. A late, replayed or
-  mismatched decision is dropped. A compromised host can lie about what its
+  mismatched decision is dropped. An id you answered is never answerable
+  again: if the host offers it again, Den flags the host and sends the request
+  to its terminal. A request still waiting when the link dropped keeps its id
+  and comes back to the inbox when the link does. A compromised host can lie about what its
   own agent will run, which it controls anyway; it cannot approve anything for
   another host or for this machine.
 - **What you approve is what you saw.** The host cuts the body and Den checks

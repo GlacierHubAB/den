@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestReplyNeverWaitsOnThePipe(t *testing.T) {
 		lr.next() // Den's request
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Approve, RemoteNow: time.Now()})
 		for _, id := range ids {
-			writeMsg(out, Held{Type: TypeHeld, ID: id, Session: "s1", Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
+			writeMsg(out, Held{Type: TypeHeld, ID: id, Session: sidA, Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
 		}
 		select { // stuck: nothing more is read from the pipe for now
 		case <-readAgain:
@@ -86,5 +87,66 @@ func TestReplyNeverWaitsOnThePipe(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatalf("decision for %s never came", ids[i][:4])
 		}
+	}
+}
+
+// A held id is single use: once answered, the same id offered again (on
+// the same session or a later one) is refused, flagged and sent back to its
+// terminal with no decision. A request that was never answered, let go when
+// its link was lost, is answerable again when the next session re-holds it.
+func TestHeldIDsAreSingleUse(t *testing.T) {
+	answered := newAnsweredIDs()
+	var mu sync.Mutex
+	var wrote []Decision
+	write := func(v any) error {
+		mu.Lock()
+		defer mu.Unlock()
+		wrote = append(wrote, v.(Decision))
+		return nil
+	}
+	session := func() (*heldSet, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return newHeldSet(ctx, "devbox", answered, write), cancel
+	}
+	id1, id2 := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	hm := func(id, cmd string) Held {
+		return Held{Type: TypeHeld, ID: id, Session: sidA, Tool: "Bash", Body: json.RawMessage(`{"command":"` + cmd + `"}`)}
+	}
+
+	s1, end1 := session()
+	r, why := s1.add(hm(id1, "ls"), Approve, Approve)
+	if r == nil {
+		t.Fatalf("a fresh request was refused: %s", why)
+	}
+	if r2, _ := s1.add(hm(id2, "ls"), Approve, Approve); r2 == nil {
+		t.Fatal("a second fresh request was refused")
+	}
+	r.Reply(bridge.Decision{Behavior: "allow"})
+	if r, why := s1.add(hm(id1, "rm -rf ~"), Approve, Approve); r != nil || !strings.Contains(why, "after it was answered") {
+		t.Errorf("an answered id offered again on the same session: request %v, flag %q", r != nil, why)
+	}
+	end1()
+	s1.releaseAll() // id2 was never answered: let go as link lost
+
+	s2, end2 := session()
+	defer end2()
+	if r, why := s2.add(hm(id1, "ls"), Approve, Approve); r != nil || !strings.Contains(why, "after it was answered") {
+		t.Errorf("an answered id offered again on a later session: request %v, flag %q", r != nil, why)
+	}
+	r2, why := s2.add(hm(id2, "ls"), Approve, Approve)
+	if r2 == nil {
+		t.Fatalf("a request still open on the host, re-held after a reconnect, was refused: %s", why)
+	}
+	r2.Reply(bridge.Decision{Behavior: "deny"})
+
+	mu.Lock()
+	defer mu.Unlock()
+	var behaviors []string
+	for _, d := range wrote {
+		behaviors = append(behaviors, d.ID[:1]+":"+d.Behavior)
+	}
+	// id1 allowed once, then each re-offer sent back with no decision; id2 denied.
+	if got, want := strings.Join(behaviors, " "), "a:allow a: a: b:deny"; got != want {
+		t.Errorf("decisions written = %q, want %q", got, want)
 	}
 }

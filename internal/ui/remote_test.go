@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -54,6 +55,13 @@ func (f *fakeFeed) Agents() []fleet.Agent         { return f.agents }
 func (f *fakeFeed) Reconnect(label string)        { f.reconnect = append(f.reconnect, label) }
 func (f *fakeFeed) Close()                        {}
 func (f *fakeFeed) Actionable(string) error       { return f.actErr }
+func (f *fakeFeed) Flag(label, what string) {
+	for i := range f.hosts {
+		if f.hosts[i].Label == label && !slices.Contains(f.hosts[i].Flags, what) {
+			f.hosts[i].Flags = append(f.hosts[i].Flags, what)
+		}
+	}
+}
 func (f *fakeFeed) Send(host, sid, text string) error {
 	f.sent = append(f.sent, host+"/"+sid+": "+text)
 	return f.sendErr
@@ -681,5 +689,48 @@ func TestHandleRequestSendsRemoteRequestsAway(t *testing.T) {
 	it := m.topAnswerable()
 	if len(sent) != 1 || sent[0].Behavior != "deny" || it == nil || it.Host != "devbox" {
 		t.Errorf("sent %+v, item %+v", sent, it)
+	}
+}
+
+// One session id on this machine, devbox and gpu: the critter names stay
+// as each host shows them, so each row, the details and the held request's
+// item say which agent shares the id, and each remote host is flagged. An
+// agent whose id is its own says nothing.
+func TestSameSessionIDElsewhereIsFlagged(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	approveDevbox(feed)
+	m.syncRemote()
+	m.refresh()
+	for key, want := range map[string]string{
+		dupSession:             "same session id as Mossy Lemur @devbox",
+		dupSession + "@devbox": "same session id as Mossy Lemur @gpu",
+		dupSession + "@gpu":    "same session id as Mossy Lemur here",
+	} {
+		if got := m.twinNote(key); got != want {
+			t.Errorf("%s: note %q, want %q", key, got, want)
+		}
+	}
+	if got := m.twinNote("22222222-2222-4333-8444-555555555555@gpu"); got != "" {
+		t.Errorf("an agent with its own id: %q", got)
+	}
+	for _, h := range feed.hosts {
+		if !slices.ContainsFunc(h.Flags, func(f string) bool { return strings.Contains(f, "same session id as Mossy Lemur") }) {
+			t.Errorf("%s not flagged: %q", h.Label, h.Flags)
+		}
+	}
+	if out := frame(m); strings.Count(out, "same session id as") < 3 {
+		t.Errorf("rows do not say it:\n%s", out)
+	}
+
+	var sent []bridge.Decision
+	r := heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "ls"}, &sent)
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+	if it := m.topAnswerable(); it == nil || it.Host != "devbox" {
+		t.Fatalf("item = %+v", it)
+	}
+	m.tab = tabInbox
+	m.inboxCur = 0
+	if out := frame(m); !strings.Contains(out, "same session id as Mossy Lemur @gpu") {
+		t.Errorf("the item does not say it:\n%s", out)
 	}
 }

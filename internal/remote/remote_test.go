@@ -445,7 +445,7 @@ func TestLabelsFalseWithholdsRoleOnBothSides(t *testing.T) {
 	d = &pipeDialer{serve: func(ctx context.Context, in io.Reader, out io.Writer) error {
 		newLineReader(in, MaxLine).next()
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Full, RemoteNow: time.Now()})
-		writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{Session: "s1", Status: "idle", Role: "coder", Task: "t"}}})
+		writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{Session: sidA, Status: "idle", Role: "coder", Task: "t"}}})
 		<-ctx.Done()
 		return nil
 	}}
@@ -471,8 +471,8 @@ func TestHostileHost(t *testing.T) {
 		newLineReader(in, MaxLine).next()
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Observe, Hostname: "dev\x1b]0;pwn\x07box", RemoteNow: time.Now()})
 		io.WriteString(out, `{"type":"exec","cmd":"rm -rf ~"}`+"\n")
-		io.WriteString(out, `{"type":"snapshot","remote_now":"2026-10-12T12:00:00Z","agents":[{"session":"s1","status":"working","name":"Mossy\u001b[2J Lemur","role":"co\u001b]52;c;aGk=\u0007der","path":"/SECRET"}],"tail":"x"}`+"\n")
-		io.WriteString(out, `{"type":"event","cursor":{"ino":1,"off":1},"event":{"v":1,"kind":"close_request","session":"s1"}}`+"\n")
+		io.WriteString(out, `{"type":"snapshot","remote_now":"2026-10-12T12:00:00Z","agents":[{"session":"11111111-2222-4333-8444-555555555555","status":"working","name":"Mossy\u001b[2J Lemur","role":"co\u001b]52;c;aGk=\u0007der","path":"/SECRET"}],"tail":"x"}`+"\n")
+		io.WriteString(out, `{"type":"event","cursor":{"ino":1,"off":1},"event":{"v":1,"kind":"close_request","session":"11111111-2222-4333-8444-555555555555"}}`+"\n")
 		<-oversize
 		io.WriteString(out, `{"type":"snapshot","agents":"`+strings.Repeat("x", MaxLine+10)+`"}`+"\n")
 		<-ctx.Done()
@@ -483,7 +483,7 @@ func TestHostileHost(t *testing.T) {
 	defer m.Close()
 	waitFor(t, "agent", func() bool { return len(m.Agents()) == 1 })
 	a := m.Agents()[0]
-	if a.Name != badge.Name("s1") || a.Labels.Role != "coder" || state(m).Hostname != "devbox" {
+	if a.Name != badge.Name(sidA) || a.Labels.Role != "coder" || state(m).Hostname != "devbox" {
 		t.Errorf("not sanitised: name %q role %q host %q", a.Name, a.Labels.Role, state(m).Hostname)
 	}
 	// The event comes after the snapshot that made the agent appear, so its
@@ -603,9 +603,9 @@ func TestVersionMismatch(t *testing.T) {
 func TestLastKnownMarksStale(t *testing.T) {
 	s := newScratch(t)
 	now := time.Now()
-	saveKnown(s.stateDir, Known{Label: "b", State: Live, Heartbeat: now, Received: now, Agents: []fleet.Meta{{Session: "s1", Status: "working", Role: "r"}}})
-	saveKnown(s.stateDir, Known{Label: "c", State: Live, Heartbeat: now.Add(-time.Hour), Received: now, Agents: []fleet.Meta{{Session: "s2", Status: "working"}}})
-	saveKnown(s.stateDir, Known{Label: "d", State: Offline, Heartbeat: now, Received: now, Agents: []fleet.Meta{{Session: "s3", Status: "idle"}}})
+	saveKnown(s.stateDir, Known{Label: "b", State: Live, Heartbeat: now, Received: now, Agents: []fleet.Meta{{Session: sidA, Status: "working", Role: "r"}}})
+	saveKnown(s.stateDir, Known{Label: "c", State: Live, Heartbeat: now.Add(-time.Hour), Received: now, Agents: []fleet.Meta{{Session: "11111111-2222-4333-8444-555555555556", Status: "working"}}})
+	saveKnown(s.stateDir, Known{Label: "d", State: Offline, Heartbeat: now, Received: now, Agents: []fleet.Meta{{Session: "11111111-2222-4333-8444-555555555557", Status: "idle"}}})
 	cfg := Config{Hosts: []Host{
 		{Label: "b", Target: "b", Policy: Observe, Enabled: true, Labels: false},
 		{Label: "c", Target: "c", Policy: Observe, Enabled: true, Labels: true},

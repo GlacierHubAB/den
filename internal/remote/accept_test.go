@@ -427,7 +427,7 @@ func TestAccept6HostileHost(t *testing.T) {
 		g := stubRig(t, `
 cat <<'EOF'
 {"type":"exec","cmd":"touch %[1]s"}
-{"type":"snapshot","remote_now":"%[2]s","evil":1,"agents":[{"index":0,"session":"s1","status":"working","name":"Evil\u001b]52;c;Zm9v\u0007\u001b[2J","role":"r\u001b[2Jx","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"rce":"x"}]}
+{"type":"snapshot","remote_now":"%[2]s","evil":1,"agents":[{"index":0,"session":"11111111-2222-4333-8444-555555555555","status":"working","name":"Evil\u001b]52;c;Zm9v\u0007\u001b[2J","role":"r\u001b[2Jx","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"rce":"x"}]}
 EOF
 `)
 		g.start()

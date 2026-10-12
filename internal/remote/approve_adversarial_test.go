@@ -132,7 +132,7 @@ func TestAdvForgedHeldRequests(t *testing.T) {
 		}
 	}
 	g.mu.Unlock()
-	for _, want := range []string{"malformed id", "malformed session or tool", "does not allow", "unknown fields in held"} {
+	for _, want := range []string{"malformed id", "session id is not a UUID", "malformed tool", "does not allow", "unknown fields in held"} {
 		if !g.flagged(want) {
 			t.Errorf("not flagged: %q; flags %v", want, g.status().Flags)
 		}
