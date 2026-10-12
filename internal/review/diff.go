@@ -7,10 +7,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/gitsafe"
@@ -149,7 +151,7 @@ func Diff(ctx context.Context, dir, base string) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := git(ctx, root, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames", "-U3",
+	out, err := git(ctx, root, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--find-renames", "-U3",
 		"--src-prefix=a/", "--dst-prefix=b/", base, "--")
 	if err != nil {
 		return nil, err
@@ -160,31 +162,59 @@ func Diff(ctx context.Context, dir, base string) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, p := range strings.Split(list, "\x00") {
+	read := 0 // bytes of untracked files read so far
+	for i, p := range strings.Split(list, "\x00") {
 		if p == "" {
 			continue
 		}
-		files = append(files, untracked(root, p))
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if i >= untrackedFiles || read >= untrackedBytes {
+			// Listed, not read: a checkout full of new files costs a
+			// bounded amount.
+			files = append(files, File{Path: p, Created: true, Binary: true})
+			continue
+		}
+		f, n := untracked(root, p)
+		read += n
+		files = append(files, f)
 	}
 	return files, nil
 }
 
-// untracked turns a new file git does not know about into an all-added File.
-func untracked(root, rel string) File {
+// How much of a checkout's untracked files Diff reads at most; the rest are
+// listed as binary.
+const (
+	untrackedFiles = 1000
+	untrackedBytes = 16 << 20
+)
+
+// untracked turns a new file git does not know about into an all-added
+// File, and says how many bytes it read.
+func untracked(root, rel string) (File, int) {
 	f := File{Path: rel, Created: true}
-	// Lstat: a symlink is listed, never followed to a file outside the repo.
-	st, err := os.Lstat(filepath.Join(root, rel))
+	// O_NOFOLLOW and a check of what was opened: a symlink is listed, never
+	// followed to a file outside the repo, even if it replaces the file
+	// between a look and the read. O_NONBLOCK: a FIFO never blocks the open.
+	fh, err := os.OpenFile(filepath.Join(root, rel), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		f.Binary = true
+		return f, 0
+	}
+	defer fh.Close()
+	st, err := fh.Stat()
 	if err != nil || !st.Mode().IsRegular() || st.Size() > untrackedLimit {
 		f.Binary = true
-		return f
+		return f, 0
 	}
-	raw, err := os.ReadFile(filepath.Join(root, rel))
-	if err != nil || bytes.IndexByte(raw, 0) >= 0 {
+	raw, err := io.ReadAll(io.LimitReader(fh, untrackedLimit+1))
+	if err != nil || len(raw) > untrackedLimit || bytes.IndexByte(raw, 0) >= 0 {
 		f.Binary = true
-		return f
+		return f, len(raw)
 	}
 	if len(raw) == 0 {
-		return f
+		return f, 0
 	}
 	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	h := transcript.Hunk{OldStart: 0, NewStart: 1, Lines: make([]string, len(lines))}
@@ -192,7 +222,7 @@ func untracked(root, rel string) File {
 		h.Lines[i] = "+" + sanitize.Code(l)
 	}
 	f.Hunks = []transcript.Hunk{h}
-	return f
+	return f, len(raw)
 }
 
 // ParseUnified reads `git diff` output into files and hunks.

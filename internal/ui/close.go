@@ -61,7 +61,7 @@ func (m Model) guardReason(a fleet.Agent) string {
 func (m Model) staleAgents(d time.Duration, among map[string]bool) (picked []fleet.Agent, skipped, held []closer.Refusal) {
 	now := closeNow()
 	for _, a := range m.agents {
-		if a.Status != fleet.Idle || (among != nil && !among[a.Session.SessionID]) {
+		if a.Status != fleet.Idle || a.Host != "" || (among != nil && !among[a.Session.SessionID]) {
 			continue
 		}
 		// A duration needs a known last activity; unknown is never stale.
@@ -202,13 +202,16 @@ func (m Model) closeSelected(force bool) (tea.Model, tea.Cmd) {
 	switch m.tab {
 	case tabInbox:
 		if it := m.inboxSelected(); it != nil {
-			a, ok = m.agentFor(it.SessionID)
+			a, ok = m.agentFor(itemKey(it))
 		}
 	default:
 		a, ok = m.selected()
 	}
 	if !ok {
 		return m.say("Select an agent first.", true)
+	}
+	if a.Host != "" {
+		return m.say(a.Name+" runs on "+a.Host+": Den cannot close remote agents yet. "+m.remoteHint(a)+".", true)
 	}
 	return m.askClose([]fleet.Agent{a}, force, nil)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -36,5 +37,21 @@ func TestNothingRuns(t *testing.T) {
 	plain.Run()
 	if ents, _ := os.ReadDir(marks); len(ents) == 0 {
 		t.Error("the fixture's filter never ran under plain git")
+	}
+}
+
+// Emptying only the outer repository's filters is not enough: git diff
+// looks into a submodule with the submodule's own config.
+func TestSubmoduleFilterIsLive(t *testing.T) {
+	repo, marks := gitsafetest.Hostile(t)
+	cmd := exec.Command("git", "-C", repo, "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--")
+	cmd.Env = append(environ(), "GIT_CONFIG_COUNT=4",
+		"GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=filter.evil.clean", "GIT_CONFIG_VALUE_1=",
+		"GIT_CONFIG_KEY_2=filter.evil.process", "GIT_CONFIG_VALUE_2=",
+		"GIT_CONFIG_KEY_3=filter.a=b.clean", "GIT_CONFIG_VALUE_3=")
+	cmd.Run()
+	if _, err := os.Stat(filepath.Join(marks, "submodule-clean")); err != nil {
+		t.Fatal("the fixture's submodule filter did not run without the submodule overrides; the test would prove nothing")
 	}
 }

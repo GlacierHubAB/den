@@ -29,6 +29,9 @@ func (m Model) projectStrip(w int) string {
 	fleetTotal := ""
 	if f := m.fleetCost(); f.Total() > 0 {
 		fleetTotal = "fleet " + f.Line()
+		if by := m.hostCostNote(); by != "" {
+			fleetTotal += " (" + by + ")"
+		}
 	}
 	if m.orch.cost > 0 {
 		if fleetTotal != "" {

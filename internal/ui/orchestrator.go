@@ -170,9 +170,13 @@ func (m Model) roster() []orch.RosterAgent {
 			Title: a.Title, Files: fleet.TouchedFolders(a), Recent: fleet.RecentActivity(a),
 			Earlier: a.Labels.History,
 			IsSelf:  m.isOrchestrator(a), Terminal: a.Window != nil,
+			Host: a.Host,
+		}
+		if last, stale := m.lastKnown(a); stale {
+			r.Status = "host offline, last known " + last.String()
 		}
 		for _, it := range m.store.Items() {
-			if it.SessionID == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
+			if itemKey(it) == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
 				line := it.Kind.String() + ": " + it.Title
 				if len(it.Body) > 0 {
 					line += " " + it.Body[0]

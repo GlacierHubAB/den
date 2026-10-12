@@ -159,6 +159,9 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if target.Status == fleet.Gone {
 		return m.say(target.Name+" is gone.", true)
 	}
+	if target.Host != "" {
+		return m.say(target.Name+" runs on "+target.Host+": Den cannot message remote agents yet. "+m.remoteHint(target)+".", true)
+	}
 	cleared := m.clear()
 	if m.atTerminal(target.Session.SessionID) {
 		it := m.store.Sent(target.Session.SessionID, mt.body, "waiting: you are at that terminal")

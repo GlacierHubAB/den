@@ -72,6 +72,9 @@ func (m Model) View() tea.View {
 
 func (m Model) counts() (needs, working, idle, unknown, gone int) {
 	for _, a := range m.agents {
+		if a.Stale {
+			continue // last known only: its host row says so
+		}
 		switch a.Status {
 		case fleet.NeedsYou:
 			needs++
@@ -100,13 +103,22 @@ var wordmark = []string{
 func (m Model) header(w int) []string {
 	s := m.st
 	needs, working, idle, unknown, _ := m.counts()
-	fleetParts := []string{fmt.Sprintf("%d agents", len(m.agents))}
+	stale := 0
+	for _, a := range m.agents {
+		if a.Stale {
+			stale++
+		}
+	}
+	fleetParts := []string{agentsWord(len(m.agents) - stale)}
 	if needs > 0 {
 		fleetParts = append(fleetParts, s.attn.Render(fmt.Sprintf("%d need you", needs)))
 	}
 	fleetParts = append(fleetParts, fmt.Sprintf("%d working", working), fmt.Sprintf("%d idle", idle))
 	if unknown > 0 {
 		fleetParts = append(fleetParts, fmt.Sprintf("%d unknown", unknown))
+	}
+	if stale > 0 {
+		fleetParts = append(fleetParts, fmt.Sprintf("%d last known on hosts offline", stale))
 	}
 	fleetLine := s.dim.Render(strings.Join(fleetParts, " · "))
 
@@ -266,11 +278,18 @@ func (m Model) panes(w, h int) string {
 	lw := clamp(w*42/100, 36, 64)
 	rw := w - lw
 	a := m.box("Agents", m.agentsPane(lw-2, h-2), lw, h, m.focus == paneAgents)
-	d := m.box(m.detailTitle(), m.detailPane(rw-2, h-2), rw, h, m.focus == paneDetail)
+	detail := m.detailPane(rw-2, h-2)
+	if m.remote.listing {
+		detail = strings.Join(m.remoteLines(rw-2), "\n")
+	}
+	d := m.box(m.detailTitle(), detail, rw, h, m.focus == paneDetail)
 	return lipgloss.JoinHorizontal(lipgloss.Top, a, d)
 }
 
 func (m Model) detailTitle() string {
+	if m.remote.listing {
+		return "Remote hosts"
+	}
 	return "Details"
 }
 
@@ -362,7 +381,11 @@ func (m Model) agentsPane(w, h int) string {
 		return s.err.Render(ansi.Wrap("scan failed: "+m.err.Error(), w-2, ""))
 	}
 	if len(m.agents) == 0 {
-		return "\n  " + s.dim.Render("No Claude Code sessions running.")
+		out := "\n  " + s.dim.Render("No Claude Code sessions running.")
+		if rows := m.idleHostRows(w); len(rows) > 0 {
+			out += "\n\n" + strings.Join(rows, "\n")
+		}
+		return out
 	}
 	var b strings.Builder
 	b.WriteString("\n")
@@ -382,7 +405,13 @@ func (m Model) agentsPane(w, h int) string {
 			if last != "" {
 				b.WriteString("\n")
 			}
-			b.WriteString("  " + s.section.Render(fmt.Sprintf("%s · %d", strings.ToUpper(sec), counts[sec])) + "\n")
+			if host, ok := strings.CutPrefix(sec, "@"); ok {
+				for _, r := range m.hostRows(host, w) {
+					b.WriteString(r + "\n")
+				}
+			} else {
+				b.WriteString("  " + s.section.Render(fmt.Sprintf("%s · %d", strings.ToUpper(sec), counts[sec])) + "\n")
+			}
 			last = sec
 			if sec == "orchestrator" {
 				b.WriteString(fill(m.orchestratorRow(w), w, s.fg) + "\n")
@@ -409,9 +438,20 @@ func (m Model) agentsPane(w, h int) string {
 		if selected {
 			name = bright.Render(a.Name)
 		}
+		if a.Host != "" {
+			name += muted.Render(hostChip(a))
+		}
 		role := ""
 		if a.Labels.Role != "" {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
+		}
+		last, stale := m.lastKnown(a)
+		if stale {
+			// Dimmed through and through: the host is not live.
+			glyph, name = muted.Render("·"), dim.Render(a.Name+hostChip(a))
+			if a.Labels.Role != "" {
+				role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
+			}
 		}
 		l1 := marker + fg.Render(" ") + guide + glyph + fg.Render(" ") + name + role
 		if d := m.directsLabel(a.Session.SessionID, dim, attn); d != "" {
@@ -424,8 +464,11 @@ func (m Model) agentsPane(w, h int) string {
 			taskMark = "↳ "
 		}
 		taskStyle := dim
-		if selected {
+		if selected && !stale {
 			taskStyle = fg
+		}
+		if stale {
+			taskStyle = muted
 		}
 		l2 := marker + fg.Render(" ") + cont + fg.Render("  ") + taskStyle.Render(ansi.Truncate(taskMark+a.Task(), w-5-indentW, "…"))
 
@@ -444,6 +487,9 @@ func (m Model) agentsPane(w, h int) string {
 		age := ""
 		if a.Status != fleet.Gone {
 			age = humanAge(a.Since())
+		}
+		if stale {
+			age, ctx = "last known: "+last.String(), ""
 		}
 		// Narrow panes drop the harness first, then the model; age and
 		// context always fit.
@@ -475,13 +521,16 @@ func (m Model) agentsPane(w, h int) string {
 			b.WriteString(fill(r, w, fg) + "\n")
 		}
 	}
+	if rows := m.idleHostRows(w); len(rows) > 0 {
+		b.WriteString("\n" + strings.Join(rows, "\n"))
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
 // openItem is the request waiting on the human for a session, if any.
 func (m Model) openItem(sessionID string) *inbox.Item {
 	for _, it := range m.store.Items() {
-		if it.SessionID == sessionID && it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks()) {
+		if itemKey(it) == sessionID && it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks()) {
 			return it
 		}
 	}
@@ -552,8 +601,12 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "merge it")+"  "+key("^N", "not now"))
 	case it.Answerable() && it.Kind == inbox.Cleanup:
 		out = append(out, key("^Y", "remove the worktree")+"  "+key("^N", "keep it"))
+	case it.Answerable() && it.Kind == inbox.Install:
+		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
+	case hostOf(itemKey(it)) != "":
+		out = append(out, s.dim.Render("answer on "+hostOf(itemKey(it)))+"  "+key("/open", "how to reach it"))
 	default:
 		out = append(out, s.dim.Render("answer in the terminal")+"  "+key("/open", ""))
 	}
@@ -627,8 +680,11 @@ func (m Model) inboxPane(w, h int) string {
 			stripe = bright.Render("▌")
 		}
 		sp := fg.Render(" ")
-		color := m.colorFor(it.SessionID)
-		name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(it.SessionID))
+		color := m.colorFor(itemKey(it))
+		name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(itemKey(it)))
+		if host := hostOf(itemKey(it)); host != "" {
+			name += muted.Render(" @" + host)
+		}
 		role := ""
 		if it.Role != "" {
 			role = sp + s.chip(color).Render(strings.ToUpper(it.Role))
@@ -638,7 +694,7 @@ func (m Model) inboxPane(w, h int) string {
 		textW := w - 4 - avatarW - 1
 		var text []string
 		text = append(text, head)
-		if via := m.viaLine(it.SessionID); via != "" {
+		if via := m.viaLine(itemKey(it)); via != "" {
 			text = append(text, ansi.Truncate(via, textW, "…"))
 		}
 		body := fg
@@ -654,7 +710,7 @@ func (m Model) inboxPane(w, h int) string {
 		default:
 			title := it.Title
 			if it.Kind == inbox.Idle {
-				title = m.idleTitle(it.SessionID, title)
+				title = m.idleTitle(itemKey(it), title)
 			}
 			lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
 			if len(lines) > 2 {
@@ -679,7 +735,7 @@ func (m Model) inboxPane(w, h int) string {
 		}
 		for _, l := range bodyLines {
 			if open {
-				text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(it.SessionID)).st.code)...)
+				text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(itemKey(it))).st.code)...)
 				continue
 			}
 			text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
@@ -719,14 +775,20 @@ func (m Model) inboxPane(w, h int) string {
 			if it.Kind == inbox.Cleanup {
 				acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
 			}
+			if it.Kind == inbox.Install {
+				acts = key("^Y", "install it") + sp + sp + key("^N", "decline")
+			}
 			if it.AsksInDen() {
 				acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
 			}
 			text = append(text, acts)
 		case it.State == inbox.InTerminal:
 			why := "answer in the terminal"
+			if host := hostOf(itemKey(it)); host != "" {
+				why = "answer it in the terminal on " + host
+			}
 			if it.Resolved != "" {
-				why = it.Resolved + " · answer in the terminal"
+				why = it.Resolved + " · " + why
 			}
 			text = append(text, dim.Render(why)+sp+sp+key("/open", ""))
 		case it.Kind == inbox.Done:
@@ -737,7 +799,7 @@ func (m Model) inboxPane(w, h int) string {
 			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
 		}
 		// Avatar on the left, 8 columns by 4 rows; the text runs beside it.
-		avatar := m.smallCritter(it.SessionID, selected)
+		avatar := m.smallCritter(itemKey(it), selected)
 		n := max(len(text), len(avatar))
 		rows := make([]string, 0, n+1)
 		for r := 0; r < n; r++ {
@@ -826,7 +888,11 @@ func (m Model) detailPane(w, h int) string {
 	if sub != "" {
 		sub += " · "
 	}
-	sub += sanitize.Line(a.Session.ShortCWD())
+	if a.Host != "" {
+		sub += "on " + a.Host
+	} else {
+		sub += sanitize.Line(a.Session.ShortCWD())
+	}
 	head = append(head, s.dim.Render(ansi.Truncate(sub, textW, "…")))
 	if textW == w-4 {
 		for _, l := range head {
@@ -854,7 +920,11 @@ func (m Model) detailPane(w, h int) string {
 		}
 		line(s.dim.Render(fmt.Sprintf("%-9s", k)) + s.fg.Render(v))
 	}
-	kv("status", a.Status.String()+" · "+humanAge(a.Since()))
+	if last, stale := m.lastKnown(a); stale {
+		kv("status", "last known: "+last.String()+" · "+humanAge(a.Since()))
+	} else {
+		kv("status", a.Status.String()+" · "+humanAge(a.Since()))
+	}
 	if it := m.openItem(a.Session.SessionID); it != nil {
 		b.WriteString("\n")
 		for _, l := range m.requestLines(it, a, w-4) {
@@ -904,6 +974,24 @@ func (m Model) detailPane(w, h int) string {
 	}
 	for _, r := range m.agentCostLines(a) {
 		kv(r[0], r[1])
+	}
+	if a.Host != "" {
+		// A remote agent carries metadata only: no folder, window, pid or
+		// recent activity crosses the link.
+		kv("where", a.Where())
+		for _, r := range m.remoteDetail(a) {
+			kv(r[0], r[1])
+		}
+		kv("started", humanAge(time.Since(a.Session.Started()))+" ago")
+		sid, _ := splitKey(a.Session.SessionID)
+		kv("session", sanitize.Line(sid[:min(8, len(sid))]+" · "+a.Session.Name))
+		b.WriteString("\n")
+		line(s.key.Render("Enter") + s.keyLabel.Render(" how to reach it: ssh -t "+m.hostTarget(a.Host)))
+		lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+		if m.detailScroll > 0 && len(lines) > h {
+			lines = lines[min(m.detailScroll, len(lines)-h):]
+		}
+		return strings.Join(lines, "\n")
 	}
 	kv("where", a.Where())
 	if a.HasGit {
@@ -1002,7 +1090,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":

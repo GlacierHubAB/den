@@ -20,6 +20,9 @@ type RosterAgent struct {
 	Waiting  []string // inbox items waiting on the human, one line each
 	IsSelf   bool     // the orchestrator itself
 	Terminal bool     // has a terminal window
+	// Host is the remote host the agent runs on, "" for this machine.
+	// SendMessage is machine-local, so it cannot reach a remote agent.
+	Host string
 }
 
 // TemplateInfo is what Den tells the orchestrator about one mission template.
@@ -38,13 +41,21 @@ func Compose(agents []RosterAgent, text string) string {
 func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) string {
 	var b strings.Builder
 	b.WriteString("<den_fleet>\n")
-	n := 0
+	n, remote := 0, 0
 	for _, a := range agents {
 		if a.IsSelf {
 			continue
 		}
 		n++
-		fmt.Fprintf(&b, "- %s → peer %q", a.Critter, a.Peer)
+		if a.Host != "" {
+			remote++
+			fmt.Fprintf(&b, "- %s @%s → on host %s, SendMessage cannot reach it", a.Critter, a.Host, a.Host)
+			if a.Peer != "" {
+				fmt.Fprintf(&b, " (its session name there is %q)", a.Peer)
+			}
+		} else {
+			fmt.Fprintf(&b, "- %s → peer %q", a.Critter, a.Peer)
+		}
 		if a.Role != "" {
 			b.WriteString(" · " + a.Role)
 		}
@@ -74,6 +85,9 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 	}
 	if n == 0 {
 		b.WriteString("(no other agents running)\n")
+	}
+	if remote > 0 {
+		b.WriteString("Agents marked @host run on another machine. SendMessage is local to this machine and cannot reach them, and Den cannot message them yet: do not try; tell the human instead.\n")
 	}
 	b.WriteString("</den_fleet>\n")
 	if len(templates) > 0 {

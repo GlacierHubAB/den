@@ -32,6 +32,7 @@ const (
 	Failed                 // a turn ended on an API error, or tool calls keep failing
 	Merge                  // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
 	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
+	Install                // Den asks: copy this den to a remote host? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -64,6 +65,8 @@ func (k Kind) String() string {
 		return "merge"
 	case Cleanup:
 		return "cleanup"
+	case Install:
+		return "install"
 	}
 	return "?"
 }
@@ -80,6 +83,7 @@ const (
 // Item is one inbox entry.
 type Item struct {
 	ID        string
+	Host      string // the remote host label the agent runs on, "" for this machine
 	SessionID string
 	Kind      Kind
 	State     State
@@ -119,7 +123,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -134,9 +138,9 @@ func (it *Item) Request() *bridge.Request { return it.req }
 type Store struct {
 	history int            // see HistoryLimit
 	failing int            // see ToolFailureLimit
-	streak  map[string]int // sessionID -> tool calls failed in a row
+	streak  map[string]int // agentKey(host, session) -> tool calls failed in a row
 	items   []*Item
-	always  map[string]map[string]bool // sessionID -> allow key
+	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
 	asks    bool // hold AskUserQuestion permission requests to be answered here
 }
@@ -186,10 +190,15 @@ func (s *Store) Waiting() int {
 	return n
 }
 
-// SessionNeedsYou reports whether a session has anything waiting.
-func (s *Store) SessionNeedsYou(sessionID string) bool {
+// SessionNeedsYou reports whether a session on this machine has anything
+// waiting.
+func (s *Store) SessionNeedsYou(sessionID string) bool { return s.NeedsYouOn("", sessionID) }
+
+// NeedsYouOn reports whether a session on host ("" for this machine) has
+// anything waiting.
+func (s *Store) NeedsYouOn(host, sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.needsYou() {
+		if it.is(host, sessionID) && it.needsYou() {
 			return true
 		}
 	}
@@ -208,8 +217,9 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 
 func (s *Store) apply(r *bridge.Request) *Item {
 	in := r.Input
+	host := r.Host
 	// Any sign of life ends a stall.
-	s.resolveSession(in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
+	s.resolveSession(host, in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
 	switch r.Event {
 	case "PermissionRequest":
 		if it := s.holdQuestion(r); it != nil {
@@ -221,11 +231,11 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{})
 			return nil
 		}
-		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] {
+		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[agentKey(host, in.SessionID)][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
-		it := s.add(&Item{SessionID: in.SessionID, Tool: in.ToolName, req: r})
+		it := s.add(&Item{Host: host, SessionID: in.SessionID, Tool: in.ToolName, req: r})
 		if in.ToolName == "ExitPlanMode" {
 			it.Kind = Plan
 			it.Title = "Plan ready for review"
@@ -236,7 +246,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		}
 		// Drop the soft "permission_prompt" notice for the same session.
 		for _, o := range s.items {
-			if o != it && o.SessionID == in.SessionID && o.Kind == Permission && o.req == nil && o.State != Resolved {
+			if o != it && o.is(host, in.SessionID) && o.Kind == Permission && o.req == nil && o.State != Resolved {
 				o.State, o.Resolved = Resolved, "superseded"
 			}
 		}
@@ -245,18 +255,18 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		if in.ToolName != question.Tool {
 			return nil
 		}
-		if s.holdsQuestion(in.SessionID) {
+		if s.holdsQuestion(host, in.SessionID) {
 			return nil // already held for Den
 		}
-		it := s.add(&Item{SessionID: in.SessionID, Kind: Question, State: InTerminal, Tool: in.ToolName})
+		it := s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Question, State: InTerminal, Tool: in.ToolName})
 		it.Title, it.Options = describeQuestion(in.ToolInput)
 		return it
 	case "PostToolUse":
-		s.resolveSession(in.SessionID, "answered in terminal", func(it *Item) bool {
+		s.resolveSession(host, in.SessionID, "answered in terminal", func(it *Item) bool {
 			return it.Kind == Question || (it.Kind <= Plan && it.State == InTerminal)
 		})
-		delete(s.streak, in.SessionID)
-		s.resolveSession(in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
+		delete(s.streak, agentKey(host, in.SessionID))
+		s.resolveSession(host, in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
 		return nil
 	case "PostToolUseFailure":
 		// Failing commands are part of normal work; only a run of them is
@@ -265,48 +275,48 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		if in.IsInterrupt {
 			return nil
 		}
-		s.streak[in.SessionID]++
-		n := s.streak[in.SessionID]
+		s.streak[agentKey(host, in.SessionID)]++
+		n := s.streak[agentKey(host, in.SessionID)]
 		if s.failing <= 0 || n < s.failing {
 			return nil
 		}
 		title := fmt.Sprintf("%d tool calls failed in a row", n)
 		for _, it := range s.items {
-			if it.SessionID == in.SessionID && it.Kind == Failed && it.Tool != "" && it.State != Resolved {
+			if it.is(host, in.SessionID) && it.Kind == Failed && it.Tool != "" && it.State != Resolved {
 				it.Title, it.Tool = title, sanitize.Line(in.ToolName)
 				return nil
 			}
 		}
-		return s.add(&Item{SessionID: in.SessionID, Kind: Failed, Tool: in.ToolName, Title: title})
+		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Failed, Tool: in.ToolName, Title: title})
 	case "StopFailure":
-		s.resolveSession(in.SessionID, "turn failed", func(it *Item) bool { return it.Kind != Done && it.Kind != Failed })
-		return s.add(&Item{SessionID: in.SessionID, Kind: Failed, Title: FailureTitle(in.FailureType())})
+		s.resolveSession(host, in.SessionID, "turn failed", func(it *Item) bool { return it.Kind != Done && it.Kind != Failed })
+		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Failed, Title: FailureTitle(in.FailureType())})
 	case "Notification":
 		switch in.NotificationType {
 		case "permission_prompt":
-			if s.hasOpen(in.SessionID, Permission, Plan) || s.asking(in.SessionID) {
+			if s.hasOpen(host, in.SessionID, Permission, Plan) || s.asking(host, in.SessionID) {
 				return nil // Claude Code's notice for a dialog Den already shows
 			}
-			it := s.add(&Item{SessionID: in.SessionID, Kind: Permission, State: InTerminal, Title: firstNonEmpty(in.Message, "Waiting for your permission")})
+			it := s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Permission, State: InTerminal, Title: firstNonEmpty(in.Message, "Waiting for your permission")})
 			return it
 		case "idle_prompt":
-			if s.hasOpen(in.SessionID, Idle) {
+			if s.hasOpen(host, in.SessionID, Idle) {
 				return nil
 			}
-			return s.add(&Item{SessionID: in.SessionID, Kind: Idle, Title: firstNonEmpty(in.Message, "Waiting for your input")})
+			return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Idle, Title: firstNonEmpty(in.Message, "Waiting for your input")})
 		case "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog":
-			if s.hasOpen(in.SessionID, Question) {
+			if s.hasOpen(host, in.SessionID, Question) {
 				return nil
 			}
-			return s.add(&Item{SessionID: in.SessionID, Kind: Question, State: InTerminal, Title: firstNonEmpty(in.Message, "Needs your input")})
+			return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Question, State: InTerminal, Title: firstNonEmpty(in.Message, "Needs your input")})
 		}
 	case "UserPromptSubmit":
-		s.resolveSession(in.SessionID, "you replied", func(it *Item) bool { return it.Kind != Done })
+		s.resolveSession(host, in.SessionID, "you replied", func(it *Item) bool { return it.Kind != Done })
 	case "Stop":
-		s.resolveSession(in.SessionID, "turn finished", func(it *Item) bool { return it.Kind != Done })
-		return s.add(&Item{SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
+		s.resolveSession(host, in.SessionID, "turn finished", func(it *Item) bool { return it.Kind != Done })
+		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
 	case "SessionEnd":
-		s.resolveSession(in.SessionID, "session ended", func(it *Item) bool { return true })
+		s.resolveSession(host, in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
 }
@@ -326,12 +336,12 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 	}
 	var it *Item
 	for _, o := range s.items {
-		if o.SessionID == in.SessionID && o.Kind == Question && o.State == InTerminal && o.req == nil && o.Tool == question.Tool {
+		if o.is(r.Host, in.SessionID) && o.Kind == Question && o.State == InTerminal && o.req == nil && o.Tool == question.Tool {
 			it = o
 		}
 	}
 	if it == nil {
-		it = s.add(&Item{SessionID: in.SessionID, Kind: Question, Tool: in.ToolName})
+		it = s.add(&Item{Host: r.Host, SessionID: in.SessionID, Kind: Question, Tool: in.ToolName})
 	}
 	it.State, it.Resolved, it.req = Waiting, "", r
 	it.Questions, it.Answers, it.Step = qs, map[string]string{}, 0
@@ -339,7 +349,7 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 	// Claude Code's "permission_prompt" notice is this dialog too, and an
 	// earlier question of the session is gone from its terminal by now.
 	for _, o := range s.items {
-		if o != it && o.SessionID == in.SessionID && o.State != Resolved && ((o.Kind == Permission && o.req == nil) || o.Kind == Question) {
+		if o != it && o.is(r.Host, in.SessionID) && o.State != Resolved && ((o.Kind == Permission && o.req == nil) || o.Kind == Question) {
 			o.State, o.Resolved = Resolved, "superseded"
 		}
 	}
@@ -348,9 +358,9 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 
 // asking reports whether an AskUserQuestion of the session is open, held
 // or in its terminal: Claude Code's permission notice is that dialog.
-func (s *Store) asking(sessionID string) bool {
+func (s *Store) asking(host, sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.Kind == Question && it.Tool == question.Tool && it.State != Resolved {
+		if it.is(host, sessionID) && it.Kind == Question && it.Tool == question.Tool && it.State != Resolved {
 			return true
 		}
 	}
@@ -358,9 +368,9 @@ func (s *Store) asking(sessionID string) bool {
 }
 
 // holdsQuestion reports whether a question of the session waits in Den.
-func (s *Store) holdsQuestion(sessionID string) bool {
+func (s *Store) holdsQuestion(host, sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.AsksInDen() {
+		if it.is(host, sessionID) && it.AsksInDen() {
 			return true
 		}
 	}
@@ -467,7 +477,7 @@ func (s *Store) LetGo() bool {
 // AddStalled adds a Stalled notice for a session that has been working
 // with no hook event for quiet. Any hook event from it resolves the notice.
 func (s *Store) AddStalled(sessionID string, quiet time.Duration) *Item {
-	if s.hasOpen(sessionID, Stalled) {
+	if s.hasOpen("", sessionID, Stalled) {
 		return nil
 	}
 	mins := int(quiet.Minutes())
@@ -523,10 +533,11 @@ func (s *Store) Answer(it *Item, verb string) bool {
 		it.State, it.Resolved = Resolved, "allowed in den"
 	case "always":
 		if key := allowKey(it.Tool, it.req.Input.ToolInput); key != "" {
-			if s.always[it.SessionID] == nil {
-				s.always[it.SessionID] = map[string]bool{}
+			k := agentKey(it.Host, it.SessionID)
+			if s.always[k] == nil {
+				s.always[k] = map[string]bool{}
 			}
-			s.always[it.SessionID][key] = true
+			s.always[k][key] = true
 		}
 		it.req.Reply(bridge.Decision{Behavior: "allow"})
 		it.State, it.Resolved = Resolved, "allowed, and again this session"
@@ -564,7 +575,16 @@ func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Restore, Tool: "restore", Title: title, Body: body})
 }
 
-// Settle resolves a Close, Skills, Budget or Restore item with the outcome and sends it to whoever
+// AddInstall adds Den's question: copy this den to a remote host? host is
+// its label; req is the request of the den remote command that asked.
+func (s *Store) AddInstall(host, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
+}
+
+// HostPrefix makes a remote host's label an item's SessionID, for Den's
+// questions about the host rather than one of its agents.
+const HostPrefix = "host:"
+
 // AddMerge adds Den's question: merge this agent's worktree branch? sessionID
 // is the agent that works in the worktree.
 func (s *Store) AddMerge(sessionID, title string, body []string) *Item {
@@ -592,7 +612,7 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 
 // SessionClosed resolves everything open for an agent Den closed.
 func (s *Store) SessionClosed(sessionID string) {
-	s.resolveSession(sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
+	s.resolveSession("", sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
 }
 
 // Release hands a waiting permission back to the terminal dialog.
@@ -728,9 +748,9 @@ func (s *Store) add(it *Item) *Item {
 	return it
 }
 
-func (s *Store) hasOpen(sessionID string, kinds ...Kind) bool {
+func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 	for _, it := range s.items {
-		if it.SessionID != sessionID || it.State == Resolved {
+		if !it.is(host, sessionID) || it.State == Resolved {
 			continue
 		}
 		for _, k := range kinds {
@@ -742,9 +762,9 @@ func (s *Store) hasOpen(sessionID string, kinds ...Kind) bool {
 	return false
 }
 
-func (s *Store) resolveSession(sessionID, why string, match func(*Item) bool) {
+func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.State != Resolved && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
@@ -752,6 +772,15 @@ func (s *Store) resolveSession(sessionID, why string, match func(*Item) bool) {
 		}
 	}
 }
+
+// is reports whether the item belongs to the agent with this session on
+// host ("" for this machine). Session ids are only unique per host.
+func (it *Item) is(host, sessionID string) bool {
+	return it.Host == host && it.SessionID == sessionID
+}
+
+// agentKey keys per-agent state by host and session.
+func agentKey(host, sessionID string) string { return host + "\x00" + sessionID }
 
 // allowKey is the "always" rule key: tool plus the first two words of a
 // Bash command, or the tool name alone for everything else.

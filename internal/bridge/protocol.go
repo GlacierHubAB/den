@@ -59,6 +59,23 @@ type SkillsInput struct {
 	Reason  string   `json:"reason,omitempty"`
 }
 
+// InstallEvent is not a hook either: `den remote install` (and `den
+// remote add`) send it to ask the human, in Den's inbox, to copy this den
+// to a remote host (docs/REMOTE.md), and wait for
+// the outcome. Den makes the plan itself and carries it out only on ^Y.
+//
+// It is only ever read from the local den.sock. A remote host's messages
+// travel its ssh pipe to remote.Manager, whose closed set of types has no
+// way to reach the bridge, so no host can ask for an install, and an agent
+// on this machine can only ask: the human answers.
+const InstallEvent = "InstallRequest"
+
+// InstallInput is the payload of an InstallEvent.
+type InstallInput struct {
+	Host    string `json:"host"`     // the host's label in remotes.toml
+	AskedBy string `json:"asked_by"` // who ran the command, for the question
+}
+
 // HookInput is the subset of Claude Code's hook JSON that Den reads.
 type HookInput struct {
 	SessionID        string          `json:"session_id"`

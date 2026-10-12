@@ -17,3 +17,15 @@ func inode(path string) uint64 {
 	}
 	return 0
 }
+
+// inodeOf identifies an open file.
+func inodeOf(f *os.File) uint64 {
+	st, err := f.Stat()
+	if err != nil {
+		return 0
+	}
+	if s, ok := st.Sys().(*syscall.Stat_t); ok {
+		return s.Ino
+	}
+	return 0
+}
