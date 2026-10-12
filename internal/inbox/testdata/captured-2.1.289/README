@@ -1,0 +1,8 @@
+Hook payloads recorded from a real Claude Code 2.1.289 run (a logging wrapper
+around `den hook`), then neutralised: ids are 00000000-0000-4000-8000-0000000000NN,
+paths are under /home/user, the scratch directory is /tmp/scratch.
+The *-reply.json file is what the hook printed for the plan. The sessions:
+001 a command, 003 and 009 plans, 005 a question, 007 an idle agent.
+Real timing: a permission_prompt Notification arrives about 6 s after a
+PermissionRequest that is still held, an idle_prompt about 5 s after Stop,
+and PreToolUse(AskUserQuestion) 60 ms before its PermissionRequest.

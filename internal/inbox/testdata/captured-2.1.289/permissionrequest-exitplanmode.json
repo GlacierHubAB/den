@@ -1,0 +1,13 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000003",
+  "transcript_path": "/home/user/.claude/projects/-home-user-proj-real/00000000-0000-4000-8000-000000000003.jsonl",
+  "cwd": "/home/user/proj/real",
+  "prompt_id": "00000000-0000-4000-8000-000000000004",
+  "permission_mode": "plan",
+  "hook_event_name": "PermissionRequest",
+  "tool_name": "ExitPlanMode",
+  "tool_input": {
+    "plan": "# Plan: create pD.txt\n\n## Context\nThe user wants a file `pD.txt` containing the word `x`.\n\n## Step\n1. Create `/home/user/proj/real/pD.txt` with the content `x`.\n\n## Verification\nRead `pD.txt` and confirm it contains `x`.\n",
+    "planFilePath": "/home/user/.claude/plans/plan-create-the-file-indexed-stroustrup.md"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000009",
+  "transcript_path": "/home/user/.claude/projects/-home-user-proj-real/00000000-0000-4000-8000-000000000009.jsonl",
+  "cwd": "/home/user/proj/real",
+  "prompt_id": "00000000-0000-4000-8000-000000000010",
+  "permission_mode": "default",
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "Done! ✓ Created `/home/user/proj/real/pA.txt` containing the word `x`.",
+  "background_tasks": [],
+  "session_crons": []
+}
