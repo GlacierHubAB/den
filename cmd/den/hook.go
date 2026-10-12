@@ -20,8 +20,38 @@ import (
 
 // runHook is `den hook`: Claude Code runs it for each subscribed event with
 // the hook JSON on stdin. It always exits 0 so a missing or busy Den never
-// changes what Claude Code does.
+// changes what Claude Code does: even a panic ends in exit 0 with nothing
+// on stdout. Go exits 2 on a panic, and Claude Code reads a hook's exit 2
+// as blocking (for PermissionRequest, a denial), so a bug here would deny
+// the agent's tool call instead of leaving it to the terminal.
+//
+// Exit paths it cannot catch: a fatal runtime error (out of memory, a
+// concurrent map write), a signal, and SIGPIPE when Claude Code closed the
+// pipe before the decision was written (it is no longer reading then). The
+// hook starts no goroutine, so every panic is on this one.
 func runHook() {
+	defer hookRecover()
+	hook()
+}
+
+// exitHook ends den hook after a panic; tests replace it.
+var exitHook = os.Exit
+
+// hookRecover turns a panic in the hook into a quiet exit 0: no decision,
+// so Claude Code shows its own dialog.
+func hookRecover() {
+	if recover() != nil {
+		exitHook(0)
+	}
+}
+
+// hookPanic is a test seam: when set, hook calls it first.
+var hookPanic func()
+
+func hook() {
+	if hookPanic != nil {
+		hookPanic()
+	}
 	raw, err := io.ReadAll(os.Stdin)
 	if err != nil || len(raw) == 0 {
 		return
