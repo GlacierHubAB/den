@@ -78,7 +78,10 @@ func sendViaDen(sock, who, text string) (string, error) {
 	cwd, _ := os.Getwd()
 	payload, _ := json.Marshal(bridge.SendInput{Who: who, Text: text, AskedBy: fmt.Sprintf("den send, pid %d in %s", os.Getpid(), cwd)})
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.SendEvent, Payload: payload}
-	d, err := bridge.Call(sock, env, 30*time.Second)
+	// Den asks the human first (see docs/REMOTE.md), so this waits for
+	// their answer.
+	fmt.Fprintf(os.Stderr, "den: Den asks you in its inbox before it sends to %s; waiting for your answer there\n", who)
+	d, err := bridge.Call(sock, env, 30*time.Minute)
 	switch {
 	case errors.Is(err, bridge.ErrNoDen):
 		return "", fmt.Errorf("den: Den is not attached to %s; nothing was sent (start Den, or run den send on %s itself)", host, host)

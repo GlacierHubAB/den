@@ -269,7 +269,14 @@ On an `approve` host:
   agents. `den send name@host` needs an exact name, a peer name or a unique
   prefix on that host, and lists the candidates otherwise. The text goes down
   the ssh session to the agent's inbox on the host, never in an argument list.
-  Sending needs no confirmation, as for local agents. A message too large once
+  Typed in Den (`@Name@devbox text`), sending needs no confirmation, as for
+  local agents. `den send name@devbox` can be run by any process on this
+  machine, agents included, so Den asks first: one inbox question, "Send a
+  message to Mossy Lemur on devbox?", with the host, the agent, who ran the
+  command and the full text; `Ctrl+Y` sends it, `Ctrl+N` does not, and there is
+  no "always". The command waits for that answer (up to 30 minutes) and says
+  what happened; if it gave up meanwhile, `Ctrl+Y` sends nothing, and a lost
+  link declines it. A message too large once
   encoded says so, and the host refuses a messaging socket that is a symlink
   or not the agent's own. A host that is offline gets nothing: "devbox is
   offline; nothing was sent".

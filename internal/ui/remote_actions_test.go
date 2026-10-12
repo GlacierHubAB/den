@@ -15,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/remote"
 )
 
 // Send and close in the UI: @mentions and closes reach a remote agent through
@@ -389,15 +390,47 @@ func TestSendRequestFromDenSockMessagesARemoteAgent(t *testing.T) {
 		pl, _ := json.Marshal(bridge.SendInput{Who: who, Text: text, AskedBy: "den send, pid 1"})
 		return bridge.TestRequest(bridge.Envelope{Event: bridge.SendEvent, Payload: pl})
 	}
-	r := ask("mossy@devbox", "run the tests")
-	cmd := m.handleRequest(r)
-	msg := firstMsg(t, cmd, func(x tea.Msg) bool { _, ok := x.(cliSentMsg); return ok }).(cliSentMsg)
-	m.applyCLISent(msg)
+	r := ask("mossy@devbox", "run the tests\nthen push")
+	if cmd := m.handleRequest(r); cmd != nil {
+		t.Fatal("a den send went out without asking")
+	}
+	// One question in the inbox, with the host, the agent and the full text.
+	var it *inbox.Item
+	for _, o := range m.store.Items() {
+		if o.Kind == inbox.Message {
+			it = o
+		}
+	}
+	if it == nil || !it.Answerable() || it.Host != "devbox" || it.SessionID != dupSession {
+		t.Fatalf("no send question: %+v", it)
+	}
+	text := it.Title + "\n" + strings.Join(it.Body, "\n")
+	for _, want := range []string{"Send a message to Mossy Lemur on devbox?", "on devbox · Mossy Lemur (user-devbox)", "asked by den send, pid 1", "run the tests\nthen push"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the question lacks %q:\n%s", want, text)
+		}
+	}
+	m.tab = tabInbox
+	m.selectItem(it)
+	if out := frame(m); !strings.Contains(out, "^Y send it  ^N do not send") || strings.Contains(out, "/always this session") {
+		t.Errorf("inbox view:\n%s", out)
+	}
+	if _, ok := r.Decided(); ok || len(feed.sent) != 0 {
+		t.Fatalf("answered or sent before ^Y: sent %q", feed.sent)
+	}
+	// /always is not an answer here; ^Y sends it once.
+	if mm, _ := m.answer("always"); len(feed.sent) != 0 || !it.Answerable() || !strings.Contains(mm.(Model).flash, "asked for once") {
+		t.Errorf("/always: sent %q, flash %q", feed.sent, mm.(Model).flash)
+	}
+	mm, cmd := m.answer("allow")
+	*m = mm.(Model)
+	msg := firstMsg(t, cmd, func(x tea.Msg) bool { _, ok := x.(askedSentMsg); return ok }).(askedSentMsg)
+	m.finishAskedSend(msg)
 	d, ok := r.Decided()
 	if !ok || d.Behavior != "allow" || !strings.Contains(d.Message, "delivered to Mossy Lemur on devbox") {
 		t.Errorf("reply = %+v", d)
 	}
-	if len(feed.sent) != 1 || feed.sent[0] != "devbox/"+dupSession+": run the tests" {
+	if len(feed.sent) != 1 || feed.sent[0] != "devbox/"+dupSession+": run the tests\nthen push" {
 		t.Errorf("feed.sent = %q", feed.sent)
 	}
 	for _, c := range []struct{ who, text, want string }{
@@ -558,5 +591,48 @@ func TestProtectBareNameCoversLocalAndRemote(t *testing.T) {
 	mm, _ = m.closeCommand([]string{"idle"})
 	if it := openClose(mm.(Model)); it == nil || !strings.Contains(strings.Join(it.Body, "\n"), "Holds context, not selected: Mossy Lemur (keep)") || strings.Contains(strings.Join(it.Body, "\n"), "SIGTERM there") {
 		t.Errorf("flagged remote agent in an idle close: %+v", it)
+	}
+}
+
+func TestSendQuestionDeclinedGivenUpOrLinkLost(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	m.tab = tabInbox
+	ask := func() (*bridge.Request, *inbox.Item) {
+		pl, _ := json.Marshal(bridge.SendInput{Who: "mossy@devbox", Text: "rm -rf build", AskedBy: "den send, pid 2"})
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.SendEvent, Payload: pl})
+		m.handleRequest(r)
+		for _, o := range m.store.Items() {
+			if o.Kind == inbox.Message && o.Answerable() {
+				m.selectItem(o)
+				return r, o
+			}
+		}
+		t.Fatal("no send question")
+		return nil, nil
+	}
+	// ^N: nothing sent, the command told so.
+	r, _ := ask()
+	mm, _ := m.answer("deny")
+	*m = mm.(Model)
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "declined in Den; nothing was sent") || len(feed.sent) != 0 {
+		t.Errorf("^N: %+v, sent %q", d, feed.sent)
+	}
+	// The den send that asked gave up: ^Y sends nothing.
+	r, it := ask()
+	bridge.TestHangUp(r)
+	mm, _ = m.answer("allow")
+	*m = mm.(Model)
+	if len(feed.sent) != 0 || it.State != inbox.Resolved || !strings.Contains(it.Resolved, "gave up") {
+		t.Errorf("after hang-up: sent %q, item %v %q", feed.sent, it.State, it.Resolved)
+	}
+	// The link drops while it waits: released and refused.
+	r, it = ask()
+	feed.setState("devbox", remote.Offline)
+	m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HostChanged, Host: "devbox"}, ok: true})
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "nothing was sent") || it.Answerable() {
+		t.Errorf("link lost: %+v, item %v", d, it.State)
+	}
+	if len(feed.sent) != 0 {
+		t.Errorf("sent %q", feed.sent)
 	}
 }

@@ -168,7 +168,7 @@ den list [-json]        what Den sees, for scripts and debugging
 den focus mossy         focus an agent's terminal by name, session id or pid
 den explain mossy       how Den arrived at that agent's name, status, window…
 den send mossy "rebase on main first"   message an agent from a script; --wait for its turn to end
-den send mossy@devbox "…"               the same for an agent on a remote host, through the running Den (no --wait)
+den send mossy@devbox "…"               the same for an agent on a remote host, through the running Den, after your ^Y in its inbox (no --wait)
 den wait mossy --until done             block until an agent is idle, needs you, or done
 den ask "who is blocked on what?"       one orchestrator turn from a script
 den events -json        follow the event stream, one JSON object per line

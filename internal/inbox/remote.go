@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/events"
 )
 
@@ -99,6 +100,12 @@ func (s *Store) ReleaseHost(host, why string) bool {
 		it.State, it.Resolved = Resolved, why
 		if it.Kind == Close {
 			it.Resolved = "the link to " + host + " was lost; nothing was closed"
+		}
+		if it.Kind == Message {
+			it.Resolved = "the link to " + host + " was lost; nothing was sent"
+			if it.req != nil {
+				it.req.Reply(bridge.Decision{Behavior: "deny", Message: it.Resolved})
+			}
 		}
 		changed = true
 	}
