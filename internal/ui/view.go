@@ -608,174 +608,17 @@ func (m Model) inboxPane(w, h int) string {
 	// item ^Y and ^N act on: found by its id, never by a row number.
 	bound, cur := m.inboxSelected(), -1
 	var blocks [][]string
-	const avatarW = 8
 	for i, it := range items {
 		selected := active && it == bound
 		if selected {
 			cur = i
 		}
-		fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
-		stripe := muted.Render("▏")
-		kindStyle := muted
-		switch {
-		case it.Answerable():
-			stripe, kindStyle = attn.Render("▌"), attn
-		case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
-			stripe, kindStyle = attn.Render("▏"), attn
-		case it.Kind == inbox.Done:
-			stripe, kindStyle = ok.Render("▏"), ok
-			if !it.Seen {
-				stripe = ok.Render("▌")
-			}
-		case it.Kind == inbox.Failed && it.State != inbox.Resolved:
-			stripe, kindStyle = err.Render("▌"), err
-		case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
-			stripe, kindStyle = attn.Render("▏"), attn
-		case it.Kind == inbox.Sent:
-			switch {
-			case strings.HasPrefix(it.Resolved, "failed"):
-				stripe, kindStyle = err.Render("▏"), err
-			case it.State == inbox.Resolved:
-				stripe, kindStyle = ok.Render("▏"), dim
-			default:
-				stripe, kindStyle = attn.Render("▏"), attn
-			}
-		}
-		if it.Unread {
-			stripe = bright.Render("▌")
-		}
-		sp := fg.Render(" ")
-		color := m.colorFor(it.SessionID)
-		name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(it.SessionID))
-		role := ""
-		if it.Role != "" {
-			role = sp + s.chip(color).Render(strings.ToUpper(it.Role))
-		}
-		head := name + role + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
-
-		textW := w - 4 - avatarW - 1
-		var text []string
-		text = append(text, head)
-		if via := m.viaLine(it.SessionID); via != "" {
-			text = append(text, ansi.Truncate(via, textW, "…"))
-		}
-		body := fg
-		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
-			body = dim
-		}
-		// Headline: for a finished turn, what the agent was working on; for
-		// everything else, what is being asked. Then the one-line gist.
-		switch {
-		case it.Kind == inbox.Done && it.Task != "":
-			text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
-			text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
-		default:
-			title := it.Title
-			if it.Kind == inbox.Idle {
-				title = m.idleTitle(it.SessionID, title)
-			}
-			lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
-			if len(lines) > 2 {
-				lines = lines[:2]
-				lines[1] = ansi.Truncate(lines[1], textW-2, "…")
-			}
-			for _, l := range lines {
-				text = append(text, body.Render(l))
-			}
-		}
-		// An open request shows the whole thing being decided, wrapped;
-		// history keeps one line of it.
-		open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks())
-		if open && it.Intent != "" {
-			for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
-				text = append(text, fg.Render(l))
-			}
-		}
-		bodyLines := it.Body
-		if !open && len(bodyLines) > 1 {
-			bodyLines = bodyLines[:1]
-		}
-		for _, l := range bodyLines {
-			if open {
-				text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(it.SessionID)).st.code)...)
-				continue
-			}
-			text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
-		}
-		for j, o := range it.Options {
-			text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
-		}
-		key := func(k, label string) string {
-			if label == "" {
-				return bright.Render(k)
-			}
-			return bright.Render(k) + dim.Render(" "+label)
-		}
-		switch {
-		case it.Kind == inbox.Sent:
-			text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
-		case it.Answerable() && !selected:
-			why := "waiting"
-			if it.At.After(m.inboxAt) {
-				why = "new request"
-			}
-			text = append(text, attn.Render(why)+dim.Render(" · select it to answer (↑ ↓)"))
-		case it.Answerable():
-			acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
-			if it.Kind == inbox.Plan {
-				acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
-			}
-			if it.Kind == inbox.Close {
-				acts = key("^Y", "close them") + sp + sp + key("^N", "keep them")
-			}
-			if it.Kind == inbox.Skills {
-				acts = key("^Y", "install them") + sp + sp + key("^N", "decline")
-			}
-			if it.Kind == inbox.Budget {
-				acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
-			}
-			if it.Kind == inbox.Restore {
-				acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
-			}
-			if it.Kind == inbox.Merge {
-				acts = key("^Y", "merge it") + sp + sp + key("^N", "not now")
-			}
-			if it.Kind == inbox.Cleanup {
-				acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
-			}
-			if it.AsksInDen() {
-				acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
-			}
-			text = append(text, acts)
-		case it.State == inbox.InTerminal:
-			why := "answer in the terminal"
-			if it.Resolved != "" {
-				why = it.Resolved + " · answer in the terminal"
-			}
-			text = append(text, dim.Render(why)+sp+sp+key("/open", ""))
-		case it.Kind == inbox.Done:
-			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
-		case it.State == inbox.Resolved:
-			text = append(text, muted.Render(it.Resolved))
-		default:
-			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
-		}
-		// Avatar on the left, 8 columns by 4 rows; the text runs beside it.
-		avatar := m.smallCritter(it.SessionID, selected)
-		n := max(len(text), len(avatar))
-		rows := make([]string, 0, n+1)
-		for r := 0; r < n; r++ {
-			left := fg.Render(strings.Repeat(" ", avatarW))
-			if r < len(avatar) {
-				left = avatar[r]
-			}
-			right := ""
-			if r < len(text) {
-				right = text[r]
-			}
-			rows = append(rows, fill(stripe+sp+left+sp+right, w, fg))
-		}
-		blocks = append(blocks, append(rows, ""))
+		blocks = append(blocks, append(m.inboxBlock(it, selected, w), ""))
+	}
+	// A selected item taller than the pane is all the pane shows, scrolled
+	// under a marker; ^Y waits until it was read to its end (inbox_body.go).
+	if h > 0 && active && cur >= 0 && len(blocks[cur])-1 > h {
+		return strings.Join(m.bodyWindow(blocks[cur][:len(blocks[cur])-1], h, w), "\n")
 	}
 	// Keep the selected item in view: drop whole blocks from the top until
 	// the selection fits in h rows.
@@ -799,11 +642,198 @@ func (m Model) inboxPane(w, h int) string {
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
+// inboxAvatarW is the width of the critter beside an inbox item.
+const inboxAvatarW = 8
+
+// inboxBlock is one inbox item as the Inbox pane draws it, w wide, without
+// the blank row that follows it.
+func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
+	s := m.st
+	const avatarW = inboxAvatarW
+	fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
+	stripe := muted.Render("▏")
+	kindStyle := muted
+	switch {
+	case it.Answerable():
+		stripe, kindStyle = attn.Render("▌"), attn
+	case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
+		stripe, kindStyle = attn.Render("▏"), attn
+	case it.Kind == inbox.Done:
+		stripe, kindStyle = ok.Render("▏"), ok
+		if !it.Seen {
+			stripe = ok.Render("▌")
+		}
+	case it.Kind == inbox.Failed && it.State != inbox.Resolved:
+		stripe, kindStyle = err.Render("▌"), err
+	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
+		stripe, kindStyle = attn.Render("▏"), attn
+	case it.Kind == inbox.Sent:
+		switch {
+		case strings.HasPrefix(it.Resolved, "failed"):
+			stripe, kindStyle = err.Render("▏"), err
+		case it.State == inbox.Resolved:
+			stripe, kindStyle = ok.Render("▏"), dim
+		default:
+			stripe, kindStyle = attn.Render("▏"), attn
+		}
+	}
+	if it.Unread {
+		stripe = bright.Render("▌")
+	}
+	sp := fg.Render(" ")
+	color := m.colorFor(it.SessionID)
+	name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(it.SessionID))
+	role := ""
+	if it.Role != "" {
+		role = sp + s.chip(color).Render(strings.ToUpper(it.Role))
+	}
+	head := name + role + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
+
+	textW := w - 4 - avatarW - 1
+	var text []string
+	text = append(text, head)
+	if via := m.viaLine(it.SessionID); via != "" {
+		text = append(text, ansi.Truncate(via, textW, "…"))
+	}
+	body := fg
+	if it.State == inbox.Resolved || it.Kind >= inbox.Done {
+		body = dim
+	}
+	// Headline: for a finished turn, what the agent was working on; for
+	// everything else, what is being asked. Then the one-line gist.
+	switch {
+	case it.Kind == inbox.Done && it.Task != "":
+		text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
+		text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
+	default:
+		title := it.Title
+		if it.Kind == inbox.Idle {
+			title = m.idleTitle(it.SessionID, title)
+		}
+		lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
+		if len(lines) > 2 {
+			lines = lines[:2]
+			lines[1] = ansi.Truncate(lines[1], textW-2, "…")
+		}
+		for _, l := range lines {
+			text = append(text, body.Render(l))
+		}
+	}
+	// An open request shows the whole thing being decided, wrapped;
+	// history keeps one line of it.
+	open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks())
+	if open && it.Intent != "" {
+		for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
+			text = append(text, fg.Render(l))
+		}
+	}
+	bodyLines := it.Body
+	if !open && len(bodyLines) > 1 {
+		bodyLines = bodyLines[:1]
+	}
+	for _, l := range bodyLines {
+		if open {
+			text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(it.SessionID)).st.code)...)
+			continue
+		}
+		text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
+	}
+	for j, o := range it.Options {
+		text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
+	}
+	key := func(k, label string) string {
+		if label == "" {
+			return bright.Render(k)
+		}
+		return bright.Render(k) + dim.Render(" "+label)
+	}
+	switch {
+	case it.Kind == inbox.Sent:
+		text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
+	case it.Answerable() && !selected:
+		why := "waiting"
+		if it.At.After(m.inboxAt) {
+			why = "new request"
+		}
+		text = append(text, attn.Render(why)+dim.Render(" · select it to answer (↑ ↓)"))
+	case it.Answerable():
+		acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
+		if it.Kind == inbox.Plan {
+			acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
+		}
+		if it.Kind == inbox.Close {
+			acts = key("^Y", "close them") + sp + sp + key("^N", "keep them")
+		}
+		if it.Kind == inbox.Skills {
+			acts = key("^Y", "install them") + sp + sp + key("^N", "decline")
+		}
+		if it.Kind == inbox.Budget {
+			acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
+		}
+		if it.Kind == inbox.Restore {
+			acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
+		}
+		if it.Kind == inbox.Merge {
+			acts = key("^Y", "merge it") + sp + sp + key("^N", "not now")
+		}
+		if it.Kind == inbox.Cleanup {
+			acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
+		}
+		if it.AsksInDen() {
+			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
+		}
+		text = append(text, acts)
+	case it.State == inbox.InTerminal:
+		why := "answer in the terminal"
+		if it.Resolved != "" {
+			why = it.Resolved + " · answer in the terminal"
+		}
+		text = append(text, dim.Render(why)+sp+sp+key("/open", ""))
+	case it.Kind == inbox.Done:
+		text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
+	case it.State == inbox.Resolved:
+		text = append(text, muted.Render(it.Resolved))
+	default:
+		text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
+	}
+	// Avatar on the left, 8 columns by 4 rows; the text runs beside it.
+	avatar := m.smallCritter(it.SessionID, selected)
+	n := max(len(text), len(avatar))
+	rows := make([]string, 0, n+1)
+	for r := 0; r < n; r++ {
+		left := fg.Render(strings.Repeat(" ", avatarW))
+		if r < len(avatar) {
+			left = avatar[r]
+		}
+		right := ""
+		if r < len(text) {
+			right = text[r]
+		}
+		rows = append(rows, fill(stripe+sp+left+sp+right, w, fg))
+	}
+	return rows
+}
+
 func (m Model) detailPane(w, h int) string {
+	lines, _, _ := m.detailLines(w)
+	if lines == nil {
+		return "\n " + m.st.dim.Render("Select an agent.")
+	}
+	if m.detailScroll > 0 && len(lines) > h {
+		off := min(m.detailScroll, len(lines)-h)
+		lines = lines[off:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// detailLines is the detail pane's content for the selected agent, w wide,
+// before scrolling, and the rows [reqFrom, reqTo) its open request takes
+// (both 0 with none). nil when no agent is selected.
+func (m Model) detailLines(w int) (lines []string, reqFrom, reqTo int) {
 	s := m.st
 	a, ok := m.selected()
 	if !ok {
-		return "\n " + s.dim.Render("Select an agent.")
+		return nil, 0, 0
 	}
 	var b strings.Builder
 	const indent = "  "
@@ -880,9 +910,11 @@ func (m Model) detailPane(w, h int) string {
 	kv("status", a.Status.String()+" · "+humanAge(a.Since()))
 	if it := m.openItem(a.Session.SessionID); it != nil {
 		b.WriteString("\n")
+		reqFrom = strings.Count(b.String(), "\n")
 		for _, l := range m.requestLines(it, a, w-4) {
 			line(l)
 		}
+		reqTo = strings.Count(b.String(), "\n")
 	}
 	if kids := m.childrenOf(a.Session.SessionID); len(kids) > 0 {
 		b.WriteString("\n")
@@ -948,12 +980,7 @@ func (m Model) detailPane(w, h int) string {
 	}
 	b.WriteString("\n")
 	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render("@"+a.Name) + s.keyLabel.Render(" to message"))
-	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
-	if m.detailScroll > 0 && len(lines) > h {
-		off := min(m.detailScroll, len(lines)-h)
-		lines = lines[off:]
-	}
-	return strings.Join(lines, "\n")
+	return strings.Split(strings.TrimRight(b.String(), "\n"), "\n"), reqFrom, reqTo
 }
 
 // completionRows lists matching agents while an @mention is being typed.

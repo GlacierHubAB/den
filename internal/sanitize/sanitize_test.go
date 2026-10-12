@@ -55,7 +55,16 @@ func TestText(t *testing.T) {
 		{"cjk", "日本語のテキスト", "日本語のテキスト"},
 		{"emoji zwj", "👩\u200d👩\u200d👧 family 🏳\ufe0f\u200d🌈", "👩\u200d👩\u200d👧 family 🏳\ufe0f\u200d🌈"},
 		{"combining", "e\u0301 n\u0303", "e\u0301 n\u0303"},
-		{"zwj zwnj kept", "a\u200db\u200cc", "a\u200db\u200cc"},
+		{"joiners between latin letters go", "a\u200db\u200cc", "abc"},
+		{"persian zwnj kept", "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"},
+		{"devanagari zwj kept", "\u0915\u094d\u200d\u0937", "\u0915\u094d\u200d\u0937"},
+		{"a run of joiners keeps one", "\u0645\u200c\u200c\u200d\u062e 👩\u200d\u200d👩", "\u0645\u200d\u062e 👩\u200d👩"},
+		{"tag characters", "ok\U000e0049\U000e0067\U000e006e\U000e006f\U000e0072\U000e0065 done", "ok done"},
+		{"subdivision flag loses its tags", "\U0001f3f4\U000e0067\U000e0062\U000e007f", "\U0001f3f4"},
+		{"zero-width and format", "a\u200bb\u2060c\u2061d\u2064e\ufeff\u00adf\u180eg\u034fh", "abcdefgh"},
+		{"hangul fillers", "x\u3164\u115f\u1160\uffa0y", "xy"},
+		{"variation selectors", "\u8fbb\U000e0100 x\ufe00 \u2764\ufe0f\ufe0f a\ufe0e", "\u8fbb x \u2764\ufe0f a\ufe0e"},
+		{"joiner after an escape", "👩\u200d\x1b[31m👩", "👩👩"},
 		{"rtl text kept", "שלום مرحبا", "שלום مرحبا"},
 		{"empty", "", ""},
 	}
@@ -202,6 +211,7 @@ func FuzzText(f *testing.F) {
 		"\x1b]8;;http://x\x1b\\y\x1b]8;;\x1b\\", "\u009b31m", "\u009d0;t\u009c",
 		"\x1bP\x1b\\", "\x1b(B", "\u202eabc", "\xff\xfe", "👩\u200d👩\u200d👧", "e\u0301",
 		"\x1b", "\x1b]", "\x1b[", "\xc2", "\xc2\x9c",
+		"a\u200bb\U000e0041", "\u0645\u200c\u062e", "\u2764\ufe0f\u200d🔥", "x\ufe0f\ufe0f\u200d", "\u00ad\u3164\U000e0101",
 	} {
 		f.Add(s)
 	}
@@ -219,6 +229,22 @@ func FuzzText(f *testing.F) {
 				t.Fatalf("Text(%q) = %q keeps C1 %U", in, out, r)
 			case bidi(r):
 				t.Fatalf("Text(%q) = %q keeps bidi %U", in, out, r)
+			case invisible(r) && r != zwj && r != zwnj && r != vs15 && r != vs16:
+				t.Fatalf("Text(%q) = %q keeps invisible %U", in, out, r)
+			}
+		}
+		// A kept joiner or variation selector is never the first rune, and
+		// never next to another invisible one: at most one per gap.
+		rs := []rune(out)
+		for i, r := range rs {
+			if !invisible(r) {
+				continue
+			}
+			if i == 0 || (invisible(rs[i-1]) && !(r == zwj && rs[i-1] == vs16)) {
+				t.Fatalf("Text(%q) = %q has %U where it joins nothing", in, out, r)
+			}
+			if (r == zwj || r == zwnj) && (i+1 == len(rs) || invisible(rs[i+1])) {
+				t.Fatalf("Text(%q) = %q has a joiner %U before nothing", in, out, r)
 			}
 		}
 		if again := Text(out); again != out {

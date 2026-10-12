@@ -69,6 +69,8 @@ func TestSkillsOfferListsRepoCommitLicenseAndWaitsForYes(t *testing.T) {
 			t.Errorf("body lacks %q:\n%s", s, body)
 		}
 	}
+	m.tab = tabInbox
+	m.selectItem(it)
 	mm, cmd := m.answer("allow")
 	m = mm.(Model)
 	var done skillsDoneMsg

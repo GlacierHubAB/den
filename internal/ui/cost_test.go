@@ -155,6 +155,8 @@ func TestBudgetAnswerContinueAndStop(t *testing.T) {
 	if it == nil {
 		t.Fatal("no question")
 	}
+	m.tab = tabInbox
+	m.selectItem(it)
 	mm, _ := m.answer("allow")
 	m = mm.(Model)
 	if ms.State != mission.Running || !ms.Budget.Waived || m.budgetItem(ms.ID) != nil {
@@ -170,6 +172,7 @@ func TestBudgetAnswerContinueAndStop(t *testing.T) {
 	if m.budgetItem(ms.ID) == nil || ms.State != mission.Paused {
 		t.Fatalf("new budget not enforced: state=%s", ms.State)
 	}
+	m.selectItem(m.budgetItem(ms.ID))
 	mm, _ = m.answer("deny")
 	m = mm.(Model)
 	if ms.State != mission.Done || ms.Runs[0].EndedAt.IsZero() {

@@ -219,6 +219,7 @@ func TestAnswerWaitsWhenTheTopRequestJustChanged(t *testing.T) {
 
 	m := testModel(140, 40)
 	m.tab = tabFleet
+	m.base = m.agents // the agent stays in the fleet, its request in Details
 	sid := m.agents[0].Session.SessionID
 	a := heldPerm(&m, sid, "echo first")
 	now = now.Add(5 * time.Second)

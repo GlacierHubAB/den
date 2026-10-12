@@ -20,6 +20,22 @@
 //     ESC ( B, and a lone ESC.
 //   - C0 controls other than \n and \t, DEL, and all C1 (U+0080–U+009F).
 //   - Bidi controls: U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C.
+//   - Invisible characters that can carry text a reader does not see (an
+//     LLM reads them all the same) or make two strings look alike: every
+//     Unicode format character (category Cf: tag characters U+E0000–E007F,
+//     zero-width space and non-joiner, word joiner and invisible operators
+//     U+2060–U+2064, U+FEFF, soft hyphen U+00AD, U+180E and the rest), the
+//     combining grapheme joiner U+034F, the Hangul fillers U+115F, U+1160,
+//     U+3164 and U+FFA0, and variation selectors U+FE00–U+FE0D and
+//     U+E0100–U+E01EF. Some are kept where they do what they are for, one
+//     at a time: a zero-width joiner between two emoji (a family); a joiner
+//     or non-joiner between two letters of a script that spells with them
+//     (Arabic and Persian, Syriac, N'Ko, the Indic scripts, Sinhala,
+//     Mongolian, Khmer, Myanmar); U+FE0E or U+FE0F right after the
+//     character it styles. Between Latin letters, or in a run, they go:
+//     that is how text is hidden in plain sight.
+//     Tag sequences (subdivision flags) lose their tags and show as a plain
+//     black flag.
 //   - Invalid UTF-8, byte by byte. It is dropped rather than replaced with
 //     U+FFFD, so a stray byte cannot change the width of what is shown.
 //
@@ -33,6 +49,7 @@ package sanitize
 import (
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -66,6 +83,9 @@ func text(s string, sgr bool) string {
 	}
 	var b strings.Builder
 	b.Grow(len(s))
+	// last is the last rune written, for what a joiner or a variation
+	// selector may follow; base is the last one that is neither.
+	var last, base rune
 	for i := 0; i < len(s); {
 		c := s[i]
 		switch {
@@ -88,6 +108,7 @@ func text(s string, sgr bool) string {
 			continue
 		case c == '\n' || c == '\t':
 			b.WriteByte(c)
+			last, base = rune(c), rune(c)
 			i++
 			continue
 		case c < 0x20 || c == del:
@@ -95,6 +116,7 @@ func text(s string, sgr bool) string {
 			continue
 		case c < utf8.RuneSelf:
 			b.WriteByte(c)
+			last, base = rune(c), rune(c)
 			i++
 			continue
 		}
@@ -110,11 +132,83 @@ func text(s string, sgr bool) string {
 		case r >= 0x80 && r <= 0x9f:
 			// Any other C1 control.
 		case bidi(r):
+		case r == zwj || r == zwnj:
+			next, _ := utf8.DecodeRuneInString(s[i:])
+			if joins(r, base, last, next) {
+				b.WriteString(s[i-n : i])
+				last = r
+			}
+		case r == vs15 || r == vs16:
+			if last != 0 && last == base && !invisible(last) {
+				b.WriteString(s[i-n : i])
+				last = r
+			}
+		case invisible(r):
 		default:
 			b.WriteString(s[i-n : i])
+			last, base = r, r
 		}
 	}
 	return b.String()
+}
+
+const (
+	zwnj = 0x200c // zero-width non-joiner
+	zwj  = 0x200d // zero-width joiner
+	vs15 = 0xfe0e // text presentation
+	vs16 = 0xfe0f // emoji presentation
+)
+
+// invisible reports whether r is an invisible character Text removes
+// (see the package comment). Bidi controls, the joiner and U+FE0E/U+FE0F
+// are handled where Text meets them.
+func invisible(r rune) bool {
+	switch {
+	case unicode.Is(unicode.Cf, r):
+		return true
+	case r == 0x034f, r == 0x115f, r == 0x1160, r == 0x3164, r == 0xffa0:
+		return true
+	case r >= 0xfe00 && r <= 0xfe0f, r >= 0xe0100 && r <= 0xe01ef:
+		return true
+	}
+	return false
+}
+
+// joins reports whether the joiner or non-joiner j, met after base (the
+// last visible rune written; last is the last rune written at all) and
+// before next, is kept.
+func joins(j, base, last, next rune) bool {
+	if last != base && !(j == zwj && last == vs16) {
+		return false // one joiner at a time, right after what it joins
+	}
+	if j == zwj && emoji(base) && emoji(next) {
+		return true
+	}
+	return joinerScript(base) && joinerScript(next)
+}
+
+// joinerScripts spell with the zero-width joiner and non-joiner.
+var joinerScripts = []*unicode.RangeTable{
+	unicode.Arabic, unicode.Syriac, unicode.Nko, unicode.Devanagari, unicode.Bengali, unicode.Gurmukhi,
+	unicode.Gujarati, unicode.Oriya, unicode.Tamil, unicode.Telugu, unicode.Kannada, unicode.Malayalam,
+	unicode.Sinhala, unicode.Mongolian, unicode.Khmer, unicode.Myanmar,
+}
+
+// joinerScript reports whether r is a letter or mark of a joiner script.
+func joinerScript(r rune) bool {
+	return (unicode.IsLetter(r) || unicode.IsMark(r)) && unicode.In(r, joinerScripts...)
+}
+
+// emoji reports whether r is a character a zero-width joiner may join:
+// pictographs, symbols and dingbats, as near as a range check gets.
+func emoji(r rune) bool {
+	switch {
+	case r >= 0x1f000 && r <= 0x1faff:
+		return true
+	case r >= 0x2300 && r <= 0x23ff, r >= 0x2600 && r <= 0x27bf, r >= 0x2b00 && r <= 0x2bff:
+		return true
+	}
+	return r == 0x00a9 || r == 0x00ae || r == 0x203c || r == 0x2049 || r == 0x2122 || r == 0x2139
 }
 
 // Line is Text for a single line: a name, a title, a label, a one-line

@@ -227,8 +227,14 @@ func TestFleetDetailShowsKeysOnlyOnTheRequestTheyAnswer(t *testing.T) {
 	if !strings.Contains(out, "answer "+m.nameFor(first)+"'s request first") {
 		t.Errorf("the detail does not say which request ^Y answers:\n%s", out)
 	}
+	// ^Y answers the first agent's request, which this view does not
+	// show: it opens the Inbox on it instead, and answers only from there.
+	m = ctrl(m, 'y')
+	if decided(a) || decided(b) || m.tab != tabInbox || m.inboxSelected() != itemOf(m, a) || !strings.Contains(m.flash, "read it here first") {
+		t.Fatalf("^Y from Fleet: first decided %v, second decided %v, tab %v, flash %q", decided(a), decided(b), m.tab, m.flash)
+	}
 	if ctrl(m, 'y'); !decided(a) || decided(b) {
-		t.Errorf("^Y: first decided %v, second decided %v", decided(a), decided(b))
+		t.Errorf("^Y in the Inbox: first decided %v, second decided %v", decided(a), decided(b))
 	}
 }
 
