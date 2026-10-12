@@ -223,6 +223,10 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 		}
 		if u.Kind == remote.HostChanged {
 			cmd = tea.Batch(cmd, m.remoteReviewChanged(u.Host))
+		} else if m.tab == tabReview {
+			// Agents a host lists after its round began, as on a
+			// reconnect, are read in that round, not the next.
+			cmd = tea.Batch(cmd, m.loadRemote())
 		}
 		if h, ok := m.hostStatus(u.Host); ok && !linked(h.State) {
 			why := "released to the terminal on " + u.Host + " (link lost)"

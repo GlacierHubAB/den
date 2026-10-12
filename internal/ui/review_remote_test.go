@@ -387,6 +387,58 @@ func TestReviewRemoteBackoffGrowsWhileTheDiffKeepsFailing(t *testing.T) {
 	}
 }
 
+// After a reconnect, an agent whose diff has not been read again says it
+// is being read, never that it has no changes, and the snapshot that lists
+// it again gets it read in that round rather than the next.
+func TestRemoteReconnectSaysReadingUntilTheDiffIsRead(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	feed.diff = &remote.Diff{Root: "/home/user/den", Repo: "den"} // no changes
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = ""
+	runReview(m, m.loadRemoteReviews())
+	agent := func() fleet.Agent {
+		for _, a := range m.agents {
+			if a.Host == "devbox" {
+				return a
+			}
+		}
+		t.Fatal("no devbox agent")
+		return fleet.Agent{}
+	}
+	if got := m.remoteNote(agent()); got != "no changes on devbox" {
+		t.Fatalf("read: %q", got)
+	}
+	update := func(kind remote.UpdateKind) {
+		runReview(m, m.handleRemote(remoteMsg{ok: true, u: remote.Update{Kind: kind, Host: "devbox"}}))
+		m.refresh()
+	}
+
+	feed.setState("devbox", remote.Offline)
+	update(remote.HostChanged)
+	// Back, its hello in before the snapshot that lists the agents again.
+	feed.agents[0].Stale = true
+	feed.setState("devbox", remote.Live)
+	feed.diffs = nil
+	update(remote.HostChanged)
+	if len(feed.diffs) > 0 {
+		t.Fatalf("asked before the agents were listed: %v", feed.diffs)
+	}
+	if got := m.remoteNote(agent()); got != "reading its diff on devbox…" {
+		t.Errorf("after the reconnect: %q", got)
+	}
+	feed.agents[0].Stale = false
+	update(remote.FleetChanged)
+	if len(feed.diffs) != 1 {
+		t.Errorf("not read when listed again: %v", feed.diffs)
+	}
+	if got := m.remoteNote(agent()); got != "no changes on devbox" {
+		t.Errorf("read again: %q", got)
+	}
+}
+
 // A remote file whose name has control characters keeps that mark, so
 // Review says its content is not shown.
 func TestRemoteUnsafeNameIsMarked(t *testing.T) {

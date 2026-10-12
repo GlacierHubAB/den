@@ -236,7 +236,9 @@ func (m Model) remoteNote(a fleet.Agent) string {
 	}
 	rr := m.rev.remote[a.Session.SessionID]
 	switch {
-	case rr == nil || (rr.loading && rr.at.IsZero()):
+	case rr == nil || (rr.at.IsZero() && rr.err == ""):
+		// Not read since its host came back: never "no changes" before
+		// its diff has been read.
 		return "reading its diff on " + a.Host + "…"
 	case rr.err != "":
 		return rr.err
