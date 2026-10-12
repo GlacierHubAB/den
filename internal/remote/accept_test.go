@@ -27,6 +27,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if advFloodMain() {
+		return
+	}
 	remote.ShortenCloserWaitsForTests()
 	os.Exit(sshtest.Main(m))
 }
