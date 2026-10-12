@@ -146,14 +146,24 @@ git push -u origin hotfix/<topic>
 gh pr create --repo GlacierHubAB/den --base main --title "<what it fixes>"
 ```
 
-Merge it with a merge commit, tag the next patch version on `main` as in
-steps 4 to 6, then bring the same fix to `dev` so the next release keeps it:
+Merge it with a merge commit once `ci-passed` is green, wait for `ci` on
+`main`, then tag the next patch version on `main` as in steps 4 to 6. Then
+bring the same fix to `dev` so the next release keeps it: cherry-pick the
+hotfix branch's commits (not the merge commit) onto a branch from `dev`, and
+squash-merge that pull request:
 
 ```
 git switch -c fix/<topic> origin/dev
-git cherry-pick -x <the hotfix commit>
+git cherry-pick -x <first hotfix commit>^..<last hotfix commit>
 gh pr create --repo GlacierHubAB/den --base dev --title "<what it fixes> (from v0.4.1)"
 ```
+
+v0.3.2 went this way: `hotfix/den-sock-v0.3.2` from `main`, pull request #1
+into `main` as a merge commit, the annotated tag `v0.3.2` on that merge
+commit, then pull request #2 with the same three commits into `dev`. After
+it, `dev` had the same tree as `main`. A security fix is described plainly in
+the pull request and the release notes (what is affected, what to upgrade),
+without steps to exploit it.
 
 ## Who does what
 
@@ -169,6 +179,9 @@ The release is built with the newest patch of the Go minor named by
 `GO_VERSION` in `.github/workflows/ci.yml` and `release.yml` (now `1.26.x`),
 so a standard-library security fix reaches the next release without a code
 change. `govulncheck` in CI uses the same Go, so it reports what a release
-would ship. `go.mod`'s `go` line is the oldest Go that can build Den. Moving
-to a new Go minor means changing `GO_VERSION` in both workflows in one pull
+would ship. `go.mod`'s `go` line is the oldest Go that can build Den; its
+`toolchain` line (now `go1.26.9`) makes a local `make release` with an older
+Go fetch at least that patch, so a hand-made build does not ship the
+standard-library vulnerabilities of 1.26.0. Moving to a new Go minor means
+changing `GO_VERSION` in both workflows and the `toolchain` line in one pull
 request.

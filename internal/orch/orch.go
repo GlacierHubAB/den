@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 )
 
@@ -258,7 +259,11 @@ func (o *Orchestrator) Close() {
 	}
 }
 
+// emit sends an event on, its text and tool name sanitised: they come from
+// the model and from tool results. A sequence split across two deltas loses
+// its ESC in the first, so the rest shows as plain text.
 func (o *Orchestrator) emit(e Event) {
+	e.Text, e.Tool = sanitize.Text(e.Text), sanitize.Line(e.Tool)
 	select {
 	case o.events <- e:
 	default:
@@ -460,8 +465,13 @@ func ParseClose(raw json.RawMessage) (CloseInput, bool) {
 }
 
 // Describe renders a tool call the orchestrator made as one line for the
-// chat, for every tool that is not a SendMessage.
+// chat, for every tool that is not a SendMessage. The line is sanitised: the
+// peers, role, brief and reason are the model's.
 func Describe(tool string, input json.RawMessage) string {
+	return sanitize.Line(describe(tool, input))
+}
+
+func describe(tool string, input json.RawMessage) string {
 	if tool == CloseAgentTool {
 		if c, ok := ParseClose(input); ok {
 			line := "▶ asking you to close " + strings.Join(c.Peers, ", ")

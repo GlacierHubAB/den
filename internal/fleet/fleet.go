@@ -20,6 +20,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/gitinfo"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/procs"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -114,7 +115,7 @@ func (a Agent) Task() string {
 	case a.Title != "":
 		return a.Title
 	}
-	return a.Session.Name
+	return sanitize.Line(a.Session.Name)
 }
 
 // Where renders "repo · branch" or the short cwd.
@@ -125,7 +126,7 @@ func (a Agent) Where() string {
 	if a.HasGit {
 		return a.Git.Repo
 	}
-	return a.Session.ShortCWD()
+	return sanitize.Line(a.Session.ShortCWD())
 }
 
 // Since is how long the agent has been in its current status.
@@ -239,6 +240,7 @@ func Snapshot() ([]Agent, error) {
 				a.Window = &m
 			}
 		}
+		clean(&a)
 		agents = append(agents, a)
 	}
 	sort.SliceStable(agents, func(i, j int) bool {
@@ -248,6 +250,26 @@ func Snapshot() ([]Agent, error) {
 		return agents[i].Session.StartedAt < agents[j].Session.StartedAt
 	})
 	return agents, nil
+}
+
+// clean sanitises the text Den only ever shows: badge labels, the git repo
+// and branch, and the window's title, class and workspace. The transcript
+// facts and tail come sanitised from package transcript. The session's
+// fields stay as Claude Code wrote them, because Den uses them to find and
+// address the session (its id, peer name, cwd and socket); Task, Where,
+// Explain and the UI sanitise them where they show them.
+func clean(a *Agent) {
+	a.Labels.Role = sanitize.Line(a.Labels.Role)
+	a.Labels.Task = sanitize.Line(a.Labels.Task)
+	for i, h := range a.Labels.History {
+		a.Labels.History[i] = sanitize.Line(h)
+	}
+	a.Git.Repo = sanitize.Line(a.Git.Repo)
+	a.Git.Branch = sanitize.Line(a.Git.Branch)
+	if a.Window != nil {
+		c := &a.Window.Client
+		c.Title, c.Class, c.Workspace.Name = sanitize.Line(c.Title), sanitize.Line(c.Class), sanitize.Line(c.Workspace.Name)
+	}
 }
 
 // Focus brings the agent's terminal to the front. Inside herdr it also asks
@@ -307,7 +329,9 @@ func herdrPane(sessionID string) (string, error) {
 // Explain says how Den arrived at what it shows for an agent.
 func Explain(a Agent) []string {
 	var out []string
-	add := func(f string, args ...any) { out = append(out, fmt.Sprintf(f, args...)) }
+	// Sanitised as a whole: the cwd, session id and socket path are printed
+	// as Claude Code recorded them.
+	add := func(f string, args ...any) { out = append(out, sanitize.Text(fmt.Sprintf(f, args...))) }
 	add("name      %s, generated from the session id %s the way agent-badge does", a.Name, a.Session.SessionID)
 	if a.Labels.Role != "" || a.Labels.Task != "" {
 		add("labels    role %q and task %q from the agent-badge plugin store", a.Labels.Role, a.Labels.Task)

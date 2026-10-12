@@ -15,6 +15,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // diffLine is one line of a file's diff that the cursor can stand on.
@@ -233,7 +234,7 @@ func (m Model) filesTitle() string {
 
 func (m Model) diffTitle() string {
 	if f := m.curFile(); f != nil {
-		return f.Path
+		return sanitize.Code(f.Path)
 	}
 	return "Diff"
 }
@@ -331,7 +332,7 @@ func (m Model) filesPane(w, h int) string {
 			continue // headings are drawn just before their first file
 		}
 		f := wk.Files[i]
-		dir, name := filepath.Split(f.Path)
+		dir, name := filepath.Split(sanitize.Code(f.Path))
 		indent := ""
 		if dir != "" {
 			indent = "  "
@@ -436,7 +437,7 @@ func (m Model) diffRowsDrawn(w, from, to int) []diffRow {
 	if a, r := ownedCounts(*f, wk.SessionID); a+r > 0 {
 		by += fmt.Sprintf(" · +%d −%d of it", a, r)
 	}
-	rows := []diffRow{hdr(s.bright.Render(" "+f.Path) + s.dim.Render("  "+by)), hdr("")}
+	rows := []diffRow{hdr(s.bright.Render(" "+sanitize.Code(f.Path)) + s.dim.Render("  "+by)), hdr("")}
 	switch {
 	case f.Binary:
 		return append(rows, hdr(s.dim.Render(" Binary file, not shown.")))
@@ -720,7 +721,7 @@ func (m Model) notesPane(w, h int) string {
 					mark = s.ok.Render("✓")
 				}
 			}
-			where := filepath.Base(c.Path) + ":" + strconv.Itoa(c.Start)
+			where := sanitize.Code(filepath.Base(c.Path)) + ":" + strconv.Itoa(c.Start)
 			body := s.fg.Render(strings.ReplaceAll(c.Body, "\n", " "))
 			if !c.Draft() {
 				body = s.dim.Render(strings.ReplaceAll(c.Body, "\n", " "))
@@ -781,7 +782,7 @@ func (m Model) selectionLabel() string {
 	hi = min(hi, len(lines)-1)
 	lo = min(lo, hi)
 	a, b := lines[lo], lines[hi]
-	label := filepath.Base(f.Path) + " L" + strconv.Itoa(a.num)
+	label := sanitize.Code(filepath.Base(f.Path)) + " L" + strconv.Itoa(a.num)
 	if hi > lo {
 		label += "–" + strconv.Itoa(b.num)
 	}

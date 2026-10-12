@@ -16,6 +16,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/notify"
 	"github.com/GlacierHubAB/den/internal/question"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // runHook is `den hook`: Claude Code runs it for each subscribed event with
@@ -174,7 +175,7 @@ func logHook(in bridge.HookInput, delivered bool) {
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
-	fmt.Fprintf(f, "%s %-18s %s %s\n", time.Now().Format("2006-01-02 15:04:05"), in.HookEventName, sid, status)
+	fmt.Fprintf(f, "%s %-18s %s %s\n", time.Now().Format("2006-01-02 15:04:05"), sanitize.Line(in.HookEventName), sanitize.Line(sid), status)
 }
 
 func installHooks() {
@@ -232,12 +233,12 @@ func runEvents() {
 	defer srv.Close()
 	fmt.Fprintf(os.Stderr, "listening on %s (ctrl+c to stop)\n", bridge.SocketPath())
 	for r := range srv.Requests() {
-		fmt.Printf("%s  %-18s %s  %s %s %s\n", time.Now().Format("15:04:05"), r.Event, short(r.SessionID), r.Input.ToolName, r.Input.NotificationType, firstN(r.Input.LastAssistant+r.Input.Message+r.Input.Prompt, 80))
+		fmt.Printf("%s  %-18s %s  %s %s %s\n", time.Now().Format("15:04:05"), sanitize.Line(r.Event), sanitize.Line(short(r.SessionID)), sanitize.Line(r.Input.ToolName), sanitize.Line(r.Input.NotificationType), firstN(sanitize.Text(r.Input.LastAssistant+r.Input.Message+r.Input.Prompt), 80))
 		if r.WantsReply() {
 			d := bridge.Decision{}
 			if v := os.Getenv("DEN_EVENTS_DECISION"); v == "allow" || v == "deny" {
 				d = bridge.Decision{Behavior: v, Message: "den events test decision"}
-				fmt.Printf("          -> replied %s for %s %s\n", v, r.Input.ToolName, firstN(string(r.Input.ToolInput), 100))
+				fmt.Printf("          -> replied %s for %s %s\n", v, sanitize.Line(r.Input.ToolName), firstN(sanitize.Text(string(r.Input.ToolInput)), 100))
 			}
 			r.Reply(d)
 		}
@@ -250,7 +251,7 @@ func runEvents() {
 func followEvents() {
 	stop := make(chan struct{}) // until killed
 	events.Open(events.Path()).Run(stop, func(raw []byte, _ events.Event) {
-		os.Stdout.Write(append(raw, '\n'))
+		os.Stdout.Write(append(sanitize.JSON(raw), '\n'))
 	})
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/roster"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -301,7 +302,7 @@ func (m Model) restoreLines(a roster.Agent) (lines []string, usd float64, priced
 	if a.Model != "" {
 		head = append(head, transcript.PrettyModel(a.Model))
 	}
-	head = append(head, shortPath(a.CWD, ""))
+	head = append(head, sanitize.Line(shortPath(a.CWD, "")))
 	var more []string
 	switch {
 	case a.Parent == tree.Orchestrator:

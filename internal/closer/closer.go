@@ -9,12 +9,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe"
 )
 
 // Target is one agent that may be closed.
@@ -23,6 +24,10 @@ type Target struct {
 	Name      string // critter name
 	Peer      string // session name
 	PID       int
+	// Started is when its Claude Code session started (startedAt), for
+	// System's check that PID is still that process; zero looks it up in
+	// this machine's sessions files by SessionID.
+	Started   time.Time
 	Status    string   // "working", "needs you", "idle", "unknown", "gone"
 	Window    string   // Hyprland address of its terminal, "" when unknown
 	WindowHow string   // how the window was matched: "title", "cwd", "herdr"
@@ -254,25 +259,33 @@ func Inspect(ctx context.Context, p *Plan) {
 	}
 }
 
-// dirty lists uncommitted paths in dir, "" when it is not a checkout.
+// dirty lists uncommitted paths in dir, none when it is not a checkout.
 func dirty(ctx context.Context, dir string) []string {
+	paths, _ := Checkout(ctx, dir)
+	return paths
+}
+
+// Checkout lists uncommitted paths in dir, and whether dir is a checkout git
+// could read at all (an unknown state is not a clean one).
+func Checkout(ctx context.Context, dir string) (paths []string, ok bool) {
 	if dir == "" {
-		return nil
+		return nil, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain", "--untracked-files=normal").Output()
+	// The checkout may belong to an agent, or to a host's user: nothing its
+	// config names may run (gitsafe), and status takes no optional locks.
+	out, err := gitsafe.Command(ctx, dir, "status", "--porcelain", "--untracked-files=normal").Output()
 	if err != nil {
-		return nil
+		return nil, false
 	}
-	var paths []string
 	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if len(l) > 3 {
 			paths = append(paths, strings.TrimSpace(l[3:]))
 		}
 	}
 	sort.Strings(paths)
-	return paths
+	return paths, true
 }
 
 // Ops is what Run needs from the system; tests fake it.
@@ -299,49 +312,91 @@ type Result struct {
 }
 
 // Run carries the plan out: SIGTERM, a wait, SIGKILL only when forced, then
-// the window. A window that is Den's own is never touched.
+// the window. A window that is Den's own is never touched. With Ops that
+// verify (System), each process is first checked to be the agent's Claude
+// Code and held by a pidfd, and a target that fails the check is not
+// signalled at all. When ctx ends during the wait, nothing is escalated:
+// the target is reported with ErrNotKnown, never killed.
 func Run(ctx context.Context, p Plan, self Self, ops Ops) []Result {
 	var out []Result
+	v, verify := ops.(Verifier)
 	for _, t := range p.Targets {
-		r := Result{Target: t}
-		if err := ops.Signal(t.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-			r.Err = err
-			out = append(out, r)
-			continue
-		}
-		r.Ended = waitGone(ctx, ops, t.PID, StopWait)
-		if !r.Ended && p.Force {
-			if err := ops.Signal(t.PID, syscall.SIGKILL); err == nil || errors.Is(err, syscall.ESRCH) {
-				r.Ended = waitGone(ctx, ops, t.PID, KillWait)
-				r.Killed = r.Ended
-			} else {
-				r.Err = err
-			}
-		}
-		if r.Ended && t.Window != "" && t.Window != self.Window {
-			if err := ops.CloseWindow(t.Window); err == nil {
-				r.WindowClosed = true
-			} else if !strings.Contains(err.Error(), "not found") {
-				r.Err = err
-			}
-		}
-		out = append(out, r)
+		out = append(out, runOne(ctx, p, self, ops, v, verify, t))
 	}
 	return out
 }
 
-func waitGone(ctx context.Context, ops Ops, pid int, wait time.Duration) bool {
+func runOne(ctx context.Context, p Plan, self Self, ops Ops, v Verifier, verify bool, t Target) Result {
+	r := Result{Target: t}
+	signal := func(sig syscall.Signal) error { return ops.Signal(t.PID, sig) }
+	alive := func() bool { return ops.Alive(t.PID) }
+	if verify {
+		h, err := v.Hold(t)
+		switch {
+		case errors.Is(err, ErrGone):
+			r.Ended = true
+			closeWindow(&r, t, self, ops)
+			return r
+		case err != nil:
+			r.Err = err
+			return r
+		}
+		defer h.Release()
+		signal, alive = h.Signal, h.Alive
+	}
+	if err := signal(syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		r.Err = err
+		return r
+	}
+	gone, cut := waitGone(ctx, alive, StopWait)
+	r.Ended = gone
+	switch {
+	case !gone && cut:
+		r.Err = ErrNotKnown
+	case !gone && p.Force:
+		if err := signal(syscall.SIGKILL); err == nil || errors.Is(err, syscall.ESRCH) {
+			r.Ended, cut = waitGone(ctx, alive, KillWait)
+			r.Killed = r.Ended
+			if !r.Ended && cut {
+				r.Err = ErrNotKnown
+			}
+		} else {
+			r.Err = err
+		}
+	}
+	closeWindow(&r, t, self, ops)
+	return r
+}
+
+// closeWindow closes an ended target's window, never Den's own.
+func closeWindow(r *Result, t Target, self Self, ops Ops) {
+	if !r.Ended || t.Window == "" || t.Window == self.Window {
+		return
+	}
+	if err := ops.CloseWindow(t.Window); err == nil {
+		r.WindowClosed = true
+	} else if !strings.Contains(err.Error(), "not found") {
+		r.Err = err
+	}
+}
+
+// waitGone waits up to wait for the process to be gone. cut says ctx
+// ended first.
+func waitGone(ctx context.Context, alive func() bool, wait time.Duration) (gone, cut bool) {
 	deadline := time.Now().Add(wait)
 	for {
-		if !ops.Alive(pid) {
-			return true
+		if !alive() {
+			return true, false
 		}
-		if time.Now().After(deadline) || ctx.Err() != nil {
-			return false
+		if ctx.Err() != nil {
+			return false, true
+		}
+		if time.Now().After(deadline) {
+			return false, false
 		}
 		select {
 		case <-ctx.Done():
-			return !ops.Alive(pid)
+			return !alive(), true
 		case <-time.After(pollEvery):
 		}
 	}

@@ -26,7 +26,9 @@ XDG_STATE_HOME=$(mktemp -d) go test ./internal/review -run TestAttribute
 CI (`.github/workflows/ci.yml`) runs on every pull request into `dev` or
 `main` and every push to them: `gofmt`, `go mod tidy`, the
 `THIRD_PARTY_LICENSES` check, `actionlint`, `make test` with `-race` on the
-release Go and the newest Go, `govulncheck` and a `gitleaks` scan. The tests
+release Go and the newest Go (with the full history checked out and
+`openssh-client`, `openssh-server` and `tmux` installed for the remote
+acceptance tests), `govulncheck` and a `gitleaks` scan. The tests
 must pass without a git identity and without network, as they do there: a test
 that runs `git commit` or `git merge` sets `user.name` and `user.email` in its
 own repository. Please run `make test` before you open a pull request.
