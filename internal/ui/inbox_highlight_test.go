@@ -11,6 +11,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/remote"
 )
 
 // The row drawn as selected, and the only row with answer keys, is the
@@ -319,5 +320,49 @@ func TestTypedAnswerRightAfterAQuestionArrivesIsHeld(t *testing.T) {
 	}
 	if !strings.Contains(m.flash, "Next question for") {
 		t.Errorf("flash = %q", m.flash)
+	}
+}
+
+func TestHighlightIsHostKeyedWithLocalAndRemoteInterleaved(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	approveDevbox(feed)
+	m.syncRemote()
+	m.tab = tabInbox
+	// The local and the devbox agent share a session id.
+	heldPerm(m, dupSession, "echo local one")
+	var sent []bridge.Decision
+	r := heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "echo remote"}, &sent)
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+	m.refresh()
+	for _, it := range m.store.Items() {
+		if it.Host == "devbox" && it.Answerable() {
+			m.selectItem(it)
+		}
+	}
+	checkBound(t, *m, "echo remote")
+	// Local requests with the same session id arrive below it, one drawn
+	// before Den refreshes, one after.
+	l2 := arrive(m, dupSession, "echo local two", false)
+	checkBound(t, *m, "echo remote")
+	m.refresh()
+	l3 := heldPerm(m, dupSession, "echo local three")
+	checkBound(t, *m, "echo remote")
+	for _, cmd := range []string{"echo local one", "echo local two", "echo local three"} {
+		if row := rowFor(t, paneRows(t, *m), cmd); !strings.Contains(row.text, "select it to answer") {
+			t.Errorf("a local request is not marked:\n%s", row.text)
+		}
+	}
+	*m = ctrl(*m, 'y')
+	if len(sent) != 1 || sent[0].Behavior != "allow" || decided(l2) || decided(l3) {
+		t.Fatalf("sent %+v, local two decided %v (flash %q)", sent, decided(l2), m.flash)
+	}
+	// Answered, it stays selected without keys; ^Y now answers nothing.
+	checkBound(t, *m, "echo remote")
+	got := ctrl(*m, 'y')
+	if len(sent) != 1 || decided(l2) {
+		t.Errorf("a second ^Y answered: sent %+v, local decided %v", sent, decided(l2))
+	}
+	if !strings.HasPrefix(got.flash, "The request you selected was already answered; nothing was sent. 3 requests are waiting") {
+		t.Errorf("flash = %q", got.flash)
 	}
 }
