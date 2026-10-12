@@ -479,15 +479,25 @@ on this machine.
   over ten million tokens, and a usage percentage outside 0 to 100, are cleared
   and flagged too, and never kept in the host's file. A model id may hold only
   letters, digits and `. _ : -`, at most 128 characters, and at most 32 per
-  agent; tokens under any other are dropped and flagged.
+  agent; tokens under any other are dropped and flagged. An agent's age
+  (since it started, changed status or was last active) below zero or over a
+  year becomes unknown and is flagged, and shows as `?`. An event dated in the
+  future or over a year ago is dropped and flagged, and counts towards
+  flooding. A clock more than a year off is flagged and its times taken as
+  they are.
 - **A host cannot answer for you.** Decisions only go from Den to the host
   and are never read from it. Each is bound to a random request id and to a
   hash of the body you were shown, is valid once, and only while the request
   is open and on the connection that offered it. A late, replayed or
   mismatched decision is dropped. An id you answered is never answerable
   again: if the host offers it again, Den flags the host and sends the request
-  to its terminal. A request still waiting when the link dropped keeps its id
-  and comes back to the inbox when the link does. A compromised host can lie about what its
+  to its terminal. An id is one request: offered again with a different body,
+  it goes to its terminal the same way, and the body you were shown never
+  changes. A request still waiting when the link dropped keeps its id
+  and comes back to the inbox when the link does. A request is taken only for
+  a session the host listed in a snapshot or announced as started, as events
+  are; one for any other session waits for the next two snapshots, then goes
+  to its terminal with no decision, and the host is flagged. A compromised host can lie about what its
   own agent will run, which it controls anyway; it cannot approve anything for
   another host or for this machine.
 - **What you approve is what you saw.** The host cuts the body and Den checks

@@ -36,6 +36,7 @@ func stubApprove(lines []string) string {
 read -r _request
 now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 printf '{"type":"hello","proto":1,"den":"v0.2.0","hostname":"stub","remote_now":"%s","policy":"approve","labels":true}\n' "$now"
+printf '{"type":"snapshot","remote_now":"%s","agents":[{"session":"` + idA + `","status":"idle"},{"session":"` + idB + `","status":"idle"}]}\n' "$now"
 cat <<'STUBEOF'
 ` + strings.Join(lines, "\n") + `
 STUBEOF
@@ -289,6 +290,7 @@ func TestAdvInterleavedGoneAndHeld(t *testing.T) {
 // holdCmd is hold with a handle on the hook process, to hang it up.
 func (g *rig) holdCmd(session, tool string, input map[string]any) (*exec.Cmd, <-chan hookOut) {
 	g.t.Helper()
+	g.listed(session) // as hold does
 	b, _ := json.Marshal(map[string]any{"session_id": session, "hook_event_name": "PermissionRequest",
 		"tool_name": tool, "tool_input": input, "cwd": "/home/user/proj"})
 	c := exec.Command(g.l.Den, "hook")

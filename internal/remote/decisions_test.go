@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/fleet"
 )
 
 // A host that stops reading its stdin (a stuck pipe) must not hold up
@@ -24,6 +25,7 @@ func TestReplyNeverWaitsOnThePipe(t *testing.T) {
 		lr := newLineReader(in, MaxLine)
 		lr.next() // Den's request
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Approve, RemoteNow: time.Now()})
+		writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{Session: sidA, Status: "idle"}}})
 		for _, id := range ids {
 			writeMsg(out, Held{Type: TypeHeld, ID: id, Session: sidA, Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
 		}

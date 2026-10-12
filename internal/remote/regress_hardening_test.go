@@ -51,9 +51,10 @@ func stubWith(t *testing.T, policy, script string) *rig {
 read -r _request
 now=$(date -u +%%Y-%%m-%%dT%%H:%%M:%%S.000Z)
 printf '{"type":"hello","proto":1,"den":"v0.2.0","hostname":"stub","remote_now":"%%s","policy":"%s","labels":true}\n' "$now"
+printf '{"type":"snapshot","remote_now":"%%s","agents":[{"session":"%s","status":"idle"},{"session":"%s","status":"idle"}]}\n' "$now"
 %s
 cat >/dev/null
-`, policy, script)
+`, policy, idA, idB, script)
 	if err := os.WriteFile(stub, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}

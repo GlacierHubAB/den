@@ -39,10 +39,36 @@ func approveRig(t *testing.T) *rig {
 	return g
 }
 
+// listed seeds session on host b unless the test did, and then gives the
+// Manager, if it runs and the link is live, a moment to list it, as a real
+// session's file is there well before its first hook. It never fails: a
+// test may want the hook to find no Den.
+func (g *rig) listed(session string) {
+	g.t.Helper()
+	if g.r.Seeded(session) {
+		return
+	}
+	g.r.SeedSession(sshtest.SessionOpts{ID: session})
+	if g.m == nil || g.statusQuiet().State != remote.Live {
+		return
+	}
+	for end := time.Now().Add(10 * time.Second); time.Now().Before(end); time.Sleep(20 * time.Millisecond) {
+		for _, a := range g.m.Agents() {
+			if strings.HasPrefix(a.Session.SessionID, session) {
+				return
+			}
+		}
+	}
+}
+
 // hold runs `den hook` on host b for a PermissionRequest, as Claude Code
-// would, and returns what it prints once it exits.
+// would, and returns what it prints once it exits. A session the test has
+// not seeded is seeded first, as Claude Code writes its session file
+// before any hook: Den takes held requests only for sessions the host
+// lists.
 func (g *rig) hold(session, tool string, input map[string]any) <-chan hookOut {
 	g.t.Helper()
+	g.listed(session)
 	b, _ := json.Marshal(map[string]any{"session_id": session, "hook_event_name": "PermissionRequest",
 		"tool_name": tool, "tool_input": input, "cwd": "/home/user/proj"})
 	out := make(chan hookOut, 1)
