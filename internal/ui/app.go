@@ -635,6 +635,16 @@ func (m *Model) selectInbox(i int) {
 	}
 }
 
+// questionWaiting reports whether a question waits for its answer in Den.
+func (m Model) questionWaiting() bool {
+	for _, it := range m.store.Items() {
+		if it.AsksInDen() {
+			return true
+		}
+	}
+	return false
+}
+
 // inboxWaiting counts the requests waiting on the human that ^Y and ^N do
 // not act on: each must be selected before it can be answered.
 func (m Model) inboxWaiting() int {
@@ -706,6 +716,20 @@ func refusedNote(what, waiting string) string {
 type shownTarget struct {
 	id    string
 	since time.Time
+}
+
+// unsettled reports whether it only just became what ^Y, ^N and Enter act
+// on without the human choosing it, or got there before any render showed
+// it: that first key is held, and the next one acts.
+func (m *Model) unsettled(it *inbox.Item) bool {
+	if it.ID != m.shown.id {
+		m.shown = shownTarget{id: it.ID, since: answerNow()}
+	}
+	if !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
+		m.shown.since = time.Time{}
+		return true
+	}
+	return false
 }
 
 // answerSettle is how long an item must have been what ^Y acts on before
@@ -906,9 +930,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-		if it := m.inboxSelected(); m.tab == tabInbox && it != nil && it.AsksInDen() {
-			if text := strings.TrimSpace(m.input.Value()); text != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") {
+		if text := strings.TrimSpace(m.input.Value()); m.tab == tabInbox && text != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") {
+			// Text typed while a question is shown answers the selected
+			// question or nothing: it never goes on to the orchestrator.
+			if it := m.inboxSelected(); it != nil && it.AsksInDen() {
+				if m.unsettled(it) {
+					return m.say("A new question just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press Enter again to answer it.", true)
+				}
 				return m.answerQuestion(it, text)
+			}
+			if m.questionWaiting() {
+				return m.say("Nothing was sent: the item you selected is not a waiting question. Select the question to answer it (↑ ↓), or start with @Name to message an agent.", true)
 			}
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
@@ -1062,15 +1094,10 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 			return m.say(refusedNote("The item you selected is not a request; nothing was answered.", m.unboundNote()), true)
 		}
 	}
-	if it != nil && it.ID != m.shown.id {
-		// It became the target without a render showing it as one.
-		m.shown = shownTarget{id: it.ID, since: answerNow()}
-	}
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
 	}
-	if it.ID == m.shown.id && !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
-		m.shown.since = time.Time{}
+	if m.unsettled(it) {
 		return m.say("A new request just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press again to answer it.", true)
 	}
 	if it.Kind == inbox.Question {
