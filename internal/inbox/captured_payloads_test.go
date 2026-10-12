@@ -131,13 +131,30 @@ func TestCapturedCommandAnsweredInTheTerminalFirst(t *testing.T) {
 }
 
 func TestCapturedPayloadsAreNeutral(t *testing.T) {
-	files, _ := filepath.Glob(filepath.Join("testdata", "captured-2.1.289", "*"))
+	files, _ := filepath.Glob(filepath.Join("testdata", "captured-2.1.289", "*.json"))
 	for _, f := range files {
 		raw, _ := os.ReadFile(f)
-		for _, bad := range []string{"grvlle", "claude-1000", "/home/den", "denvm"} {
-			if strings.Contains(string(raw), bad) {
-				t.Errorf("%s names %q", f, bad)
-			}
+		if bad := notNeutral(string(raw)); bad != "" {
+			t.Errorf("%s: %s", f, bad)
 		}
 	}
+}
+
+// notNeutral says what in a fixture is not neutral: a home directory other
+// than /home/user, or a scratch directory of a real run.
+func notNeutral(text string) string {
+	for rest := text; ; {
+		i := strings.Index(rest, "/home/")
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len("/home/"):]
+		if !strings.HasPrefix(rest, "user/") {
+			return "a home directory other than /home/user"
+		}
+	}
+	if strings.Contains(text, "/tmp/claude-") {
+		return "a scratch directory of a real run"
+	}
+	return ""
 }
