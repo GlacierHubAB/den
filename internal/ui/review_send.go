@@ -60,7 +60,15 @@ func (m Model) reviewRecipient(sessionID string) (fleet.Agent, bool) {
 		return fleet.Agent{}, false
 	}
 	a, ok := m.agentFor(sessionID)
-	if !ok || a.Status == fleet.Gone || a.Session.Socket == "" {
+	if !ok || a.Status == fleet.Gone {
+		return fleet.Agent{}, false
+	}
+	if a.Host != "" {
+		// A remote agent has no socket here: it is reachable while its host
+		// is live and allows actions.
+		return a, !a.Stale && m.remoteCan(a.Host) == nil
+	}
+	if a.Session.Socket == "" {
 		return fleet.Agent{}, false
 	}
 	return a, true
@@ -110,13 +118,13 @@ func (m Model) sendReview(args []string) (tea.Model, tea.Cmd) {
 		}
 		m.noteCopies(ids)
 		if m.atTerminal(a.Session.SessionID) {
-			it := m.store.Sent(a.Session.SessionID, text, "waiting: you are at that terminal")
+			it := m.sentItem(a, text, "waiting: you are at that terminal")
 			m.queue = append(m.queue, outgoing{agent: a, text: text, item: it, since: time.Now(), review: ids})
 			held = append(held, a.Name)
 			continue
 		}
-		it := m.store.Sent(a.Session.SessionID, text, "sending…")
-		cmds = append(cmds, deliverReview(a, text, it, ids))
+		it := m.sentItem(a, text, "sending…")
+		cmds = append(cmds, deliverReview(m.sender(), a, text, it, ids))
 		sent = append(sent, a.Name)
 	}
 	if len(held) > 0 {
@@ -177,9 +185,9 @@ func (m Model) sendReviewToOrchestrator() (tea.Model, tea.Cmd) {
 
 // deliverReview is deliver for review comments: the reply carries their
 // ids, so they are marked sent only once the message is through.
-func deliverReview(a fleet.Agent, text string, it *inbox.Item, ids []string) tea.Cmd {
+func deliverReview(send sendFunc, a fleet.Agent, text string, it *inbox.Item, ids []string) tea.Cmd {
 	return func() tea.Msg {
-		err := sendPeer(a.Session.Socket, text)
+		err := send(a, text)
 		return sentMsg{item: it, name: a.Name, err: err, review: ids}
 	}
 }

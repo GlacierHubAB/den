@@ -93,10 +93,14 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 func (s *Store) ReleaseHost(host, why string) bool {
 	changed := false
 	for _, it := range s.items {
-		if it.Host == host && it.State != Resolved {
-			it.State, it.Resolved = Resolved, why
-			changed = true
+		if it.Host != host || it.State == Resolved || it.Kind == Sent {
+			continue // a message on its way reports its own outcome
 		}
+		it.State, it.Resolved = Resolved, why
+		if it.Kind == Close {
+			it.Resolved = "the link to " + host + " was lost; nothing was closed"
+		}
+		changed = true
 	}
 	return changed
 }

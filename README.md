@@ -168,6 +168,7 @@ den list [-json]        what Den sees, for scripts and debugging
 den focus mossy         focus an agent's terminal by name, session id or pid
 den explain mossy       how Den arrived at that agent's name, status, window…
 den send mossy "rebase on main first"   message an agent from a script; --wait for its turn to end
+den send mossy@devbox "…"               the same for an agent on a remote host, through the running Den (no --wait)
 den wait mossy --until done             block until an agent is idle, needs you, or done
 den ask "who is blocked on what?"       one orchestrator turn from a script
 den events -json        follow the event stream, one JSON object per line
@@ -322,7 +323,7 @@ when you leave, so it never lands under something you are typing.
 ## The command line
 
 The line at the bottom is always open. Type to ask the orchestrator, `@Name …`
-to message one agent (`Tab` completes the name), `/help` for commands. It grows
+to message one agent (`Tab` completes the name; `@Name@devbox` for one on a remote host), `/help` for commands. It grows
 with what you type, one row for a short message and more as text wraps (by
 display width, so wide characters count double) or you add line breaks, up to
 a third of the screen; past that it scrolls inside itself and keeps the cursor
@@ -347,7 +348,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/dismiss` `/x` | clear the selected inbox item |
 | `/unread` `/u` | keep the selected inbox item counted as new until opened or dismissed; again to mark it read |
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
-| `/close` `/kill` | close the selected agent; `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
+| `/close` `/kill` | close the selected agent (also one on a remote host, `/close Name@devbox`); `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
@@ -910,7 +911,7 @@ the hosts. Each host has a **policy** in `~/.config/den/remotes.toml`
 | Policy | What the host sends, and what you can do |
 | --- | --- |
 | `observe` (default) | Metadata only: status, names, role and task (not with `labels = false`), repository name and branch, context, tokens by model. You see the agents, get notified, and see the cost. |
-| `approve` | Plus the body of a waiting permission, plan or question. You answer it in the inbox with `Ctrl+Y`, `Ctrl+N` and `/always`. |
+| `approve` | Plus the body of a waiting permission, plan or question. You answer it in the inbox with `Ctrl+Y`, `Ctrl+N` and `/always`; you can also message the host's agents (`@Name@devbox text`, `den send name@devbox …`) and close them (`/close Name@devbox`, `Ctrl+X`). |
 | `full` | Today the same as `approve`; recent activity and Review of a remote agent's diff are not part of this version. |
 
 What runs where: Den starts one system `ssh` per host while it runs, and on the
@@ -931,7 +932,7 @@ silent link is noticed in 45 to 60 seconds. `den list -json` carries a `Host`
 field (and `Stale` when the link is down), `den events -json` a `host` field,
 and `[on]` commands get `DEN_HOST`.
 
-Limits today: Den cannot message, close or review a remote agent; Linux hosts and Claude Code agents only (no macOS, no Codex);
+Limits today: Review cannot show a remote agent's diff; Linux hosts and Claude Code agents only (no macOS, no Codex);
 Den cannot spawn agents on a host, missions cannot use remote agents, and the
 orchestrator lists them but cannot message or close them; `Enter` and `/open`
 cannot raise a terminal on another machine, they print `ssh -t <target>`;
@@ -1144,13 +1145,14 @@ What Den does that is its own:
 - **One Fleet across your machines,** over plain ssh with no daemon and no
   listener: agents on other hosts, their requests and their cost beside the
   local ones, metadata only by default; per host you can let Den answer their
-  permissions. (Herdr and agent-deck also connect machines.)
+  permissions, and message and close them. (Herdr and agent-deck also connect
+  machines.)
 
 Where the others go further: Herdr keeps agents running when you close the
 client or lose SSH. Den restores conversations, the tree and missions after a
 restart with one question, but it does not keep processes alive. Herdr also
 works across several machines with full control of the panes there, where Den
-shows remote agents and answers their requests but never types into their
+shows, answers, messages and closes remote agents but never types into their
 terminals; it supports many agent CLIs and runs on
 macOS and Windows. OpenRig gives agent teams persistent roles,
 addresses and a work queue, and runs Claude Code and Codex side by side.

@@ -21,9 +21,7 @@ What you can do with a host:
   agents dimmed.
 - on a host you set to `approve`, answer its waiting permissions, plans and
   questions in the inbox, as you do for local agents.
-
-Messaging and closing a remote agent are not part of this version: for those
-you go to the terminal on the host.
+- on an `approve` host, message its agents and close them.
 
 Review of a remote agent's changes is not part of this version: for that you go
 to the host.
@@ -99,6 +97,10 @@ In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
 host now. `disable`, `enable` and `remove` take effect when Den restarts.
 
+Addressing a remote agent: `@Name@devbox text` messages it, `/close Name@devbox`
+closes it, and from a script `den send name@devbox "text"`. A bare `@Name` or
+`den send name` means an agent on this machine first.
+
 ## remotes.toml
 
 `~/.config/den/remotes.toml` sits beside `config.toml`, so `DEN_CONFIG` moves
@@ -137,6 +139,7 @@ policy does not allow.
 Under `observe` a host never sends prompts, replies, transcripts, commands,
 tool input, file paths, working directories, window titles or recent activity.
 Under `approve` that stays true except for the body of a waiting request.
+Text you send to an agent and a request to close one also travel to the host.
 
 Badge role and task are short summaries Claude Code's own model writes about
 the work, so they say a little about it. Set `labels = false` on a sensitive
@@ -145,7 +148,8 @@ host to keep them back.
 ## What it looks like
 
 - **Fleet.** A remote agent has an `@devbox` chip after its name and the same
-  role, task, branch and context figures as a local one. The details pane
+  role, task, branch and context figures as a local one. Its critter name is
+  computed here from its session id; a host cannot choose it. The details pane
   adds the host, the link, the policy, the host's Claude Code version, and the
   clock offset when it is over 2 seconds (ages are always the host's own,
   never compared with this machine's clock). `Enter` and `/open` cannot raise
@@ -245,6 +249,39 @@ mode 0600 and `serve` refuses a connection from another user. `serve` keeps a
 metadata-only log of what it did with requests, never a command or text, in
 `remote-serve.log` in the state directory on the host.
 
+## Sending and closing
+
+On an `approve` host:
+
+- **Messaging.** `@Name@devbox text` messages an agent on a host (`Tab`
+  completes to "Name @devbox"). `@Name@local` means the one on this machine
+  when both have that name, and a bare `@Name` prefers agents on this machine.
+  From a script, `den send name@devbox "text"` goes through the running Den; it
+  exits 1 when Den is not attached, and `--wait` is not supported for remote
+  agents. `den send name@host` needs an exact name, a peer name or a unique
+  prefix on that host, and lists the candidates otherwise. The text goes down
+  the ssh session to the agent's inbox on the host, never in an argument list.
+  Sending needs no confirmation, as for local agents. A message too large once
+  encoded says so, and the host refuses a messaging socket that is a symlink
+  or not the agent's own. A host that is offline gets nothing: "devbox is
+  offline; nothing was sent".
+- **Closing.** `Ctrl+X`, `/close`, `/close Name@devbox` and `/close idle`
+  include remote agents. The question names the host: "Close Mossy Lemur on
+  devbox?", "on devbox · SIGTERM there, no window", and "! uncommitted changes
+  in its checkout on devbox". Every close needs `Ctrl+Y`. `/protect <Name>`
+  and `/flag` apply to remote agents too, but a protected folder in
+  `protected.json` only protects agents on this machine.
+
+  On the host, `serve` closes only a live Claude Code session, refuses a
+  working agent without `--force`, sends SIGTERM and only with `--force`
+  SIGKILL. Before it signals, it checks that the pid is still that session's
+  Claude Code (its name or executable, and a start time that fits) and signals
+  through a pidfd. If it cannot be sure (no pidfd, an unknown start time) it
+  refuses, and a forced close never escalates to SIGKILL after the link
+  dropped: the result is "not known".
+
+The orchestrator cannot message or close remote agents.
+
 ## For scripts
 
 `den list` and `den list -json` include remote agents as the running Den last
@@ -257,7 +294,6 @@ on this machine.
 
 ## Limits
 
-- Den cannot message or close a remote agent in this version.
 - Den cannot review a remote agent's changes in this version.
 - Linux hosts only; agents are Claude Code only.
 - Remote agents cannot be spawned or restored from Den, missions cannot use
@@ -305,6 +341,8 @@ on this machine.
   `den.sock`: without `XDG_RUNTIME_DIR` it is in `den-<uid>/` under `$TMPDIR`,
   so reinstall `den` and run `den install-hooks` again so the hooks and Den
   agree.
+- **"devbox is offline; nothing was sent".** The host is not live. Nothing
+  queues: send again when it is back.
 
 ## Security model
 
@@ -342,6 +380,8 @@ on this machine.
 - **What you approve is what you saw.** The host cuts the body and Den checks
   it again; a command, path or URL that would not show whole sends the request
   to the terminal instead.
+- **No generic command.** Messages and closes go through a closed pair of
+  commands with results. There is no shell on the host.
 - **What Den keeps.** On this machine: `remotes.toml`, and per host the last
   metadata it received and the position in its event stream
   (`remote/<label>.json` in the state directory, mode 0600).

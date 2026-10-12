@@ -103,6 +103,9 @@ type Agent struct {
 	Host      string `json:"Host,omitempty"`
 	HostState string `json:",omitempty"`
 	Stale     bool   `json:",omitempty"`
+	// Dirty is a remote agent's checkout having uncommitted changes, as its
+	// host last said; nil when unknown (and for local agents).
+	Dirty *bool `json:"Dirty,omitempty"`
 }
 
 // MarshalJSON adds StatusName, the status as a string, next to the integer

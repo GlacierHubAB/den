@@ -24,20 +24,24 @@ const LabelMax = 80
 // receiving side never compares clocks across machines. Dollars are not
 // sent: tokens go by model and the receiver prices them from its own table.
 type Meta struct {
-	Index      int    `json:"index"`            // position in this host's fleet, from 0
-	Session    string `json:"session"`          // Claude Code session id
-	Status     string `json:"status"`           // Status.Key()
-	Name       string `json:"name"`             // critter name
-	Peer       string `json:"peer,omitempty"`   // Claude Code's session name, --name
-	Role       string `json:"role,omitempty"`   // badge role, capped; withheld without labels
-	Task       string `json:"task,omitempty"`   // badge task, capped; withheld without labels
-	Model      string `json:"model,omitempty"`  // raw model id
-	Claude     string `json:"claude,omitempty"` // Claude Code version of the session
-	Repo       string `json:"repo,omitempty"`   // repository name, never its path
-	Branch     string `json:"branch,omitempty"` // checked-out branch
-	StatusAge  int64  `json:"status_age_ms"`    // since the last busy/idle change, -1 unknown
-	StartedAge int64  `json:"started_age_ms"`   // since the session started, -1 unknown
-	ActiveAge  int64  `json:"last_active_ms"`   // since LastActive, -1 unknown
+	Index   int    `json:"index"`            // position in this host's fleet, from 0
+	Session string `json:"session"`          // Claude Code session id
+	Status  string `json:"status"`           // Status.Key()
+	Name    string `json:"name"`             // critter name
+	Peer    string `json:"peer,omitempty"`   // Claude Code's session name, --name
+	Role    string `json:"role,omitempty"`   // badge role, capped; withheld without labels
+	Task    string `json:"task,omitempty"`   // badge task, capped; withheld without labels
+	Model   string `json:"model,omitempty"`  // raw model id
+	Claude  string `json:"claude,omitempty"` // Claude Code version of the session
+	Repo    string `json:"repo,omitempty"`   // repository name, never its path
+	Branch  string `json:"branch,omitempty"` // checked-out branch
+	// Dirty says the checkout has uncommitted changes. A yes or no, never a
+	// path; absent when unknown. serve fills it only under approve or full,
+	// for the close question.
+	Dirty      *bool `json:"dirty,omitempty"`
+	StatusAge  int64 `json:"status_age_ms"`  // since the last busy/idle change, -1 unknown
+	StartedAge int64 `json:"started_age_ms"` // since the session started, -1 unknown
+	ActiveAge  int64 `json:"last_active_ms"` // since LastActive, -1 unknown
 
 	Context        int  `json:"context_tokens,omitempty"` // context used by the last turn
 	Window         int  `json:"context_window,omitempty"` // the model's context window
@@ -164,9 +168,10 @@ func FromMeta(m Meta, host string, received time.Time, prices cost.Table) Agent 
 		UsageFromBadge: m.UsageFromBadge,
 		Host:           host,
 	}
-	if a.Name == "" {
-		a.Name = badge.Name(a.Session.SessionID)
-	}
+	// The critter name is computed here from the session id, as the badge on
+	// the host does, never taken from the host: a host that picked its
+	// agents' names could capture @mentions meant for others.
+	a.Name = badge.Name(a.Session.SessionID)
 	switch a.Status {
 	case Working:
 		a.Session.Status = "busy"
@@ -174,6 +179,7 @@ func FromMeta(m Meta, host string, received time.Time, prices cost.Table) Agent 
 		a.Session.Status = "idle"
 	}
 	a.Session.Alive = a.Status != Gone
+	a.Dirty = m.Dirty
 	if m.Repo != "" {
 		a.Git, a.HasGit = gitinfo.Info{Repo: sanitize.Label(m.Repo, LabelMax), Branch: sanitize.Label(m.Branch, LabelMax)}, true
 	}

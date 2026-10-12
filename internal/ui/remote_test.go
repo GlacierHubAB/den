@@ -33,6 +33,13 @@ type fakeFeed struct {
 	agents    []fleet.Agent
 	ch        chan remote.Update
 	reconnect []string
+	// What Send and CloseAgent got, and what they answer.
+	sent      []string // "host/session: text"
+	closed    []string // "host/session force"
+	actErr    error    // Actionable's answer
+	sendErr   error
+	closeErr  error
+	closeKill bool
 }
 
 func (f *fakeFeed) Start()                        {}
@@ -41,6 +48,15 @@ func (f *fakeFeed) Hosts() []remote.HostStatus    { return f.hosts }
 func (f *fakeFeed) Agents() []fleet.Agent         { return f.agents }
 func (f *fakeFeed) Reconnect(label string)        { f.reconnect = append(f.reconnect, label) }
 func (f *fakeFeed) Close()                        {}
+func (f *fakeFeed) Actionable(string) error       { return f.actErr }
+func (f *fakeFeed) Send(host, sid, text string) error {
+	f.sent = append(f.sent, host+"/"+sid+": "+text)
+	return f.sendErr
+}
+func (f *fakeFeed) CloseAgent(host, sid string, force bool) (bool, error) {
+	f.closed = append(f.closed, fmt.Sprintf("%s/%s force=%v", host, sid, force))
+	return f.closeKill, f.closeErr
+}
 func (f *fakeFeed) setState(label string, s remote.State) {
 	for i := range f.hosts {
 		if f.hosts[i].Label == label {
@@ -293,9 +309,9 @@ func TestEnterOnRemoteAgentNamesSSH(t *testing.T) {
 	if _, ok := cmd().(focusedMsg); ok {
 		t.Errorf("tried to focus a remote window")
 	}
-	// Closing is refused too.
+	// Closing an agent on a host that is not live is refused, with why.
 	cm, _ := got.closeSelected(false)
-	if !strings.Contains(cm.(Model).flash, "cannot close remote agents") {
+	if !strings.Contains(cm.(Model).flash, "gpu is offline") {
 		t.Errorf("close flash = %q", cm.(Model).flash)
 	}
 }

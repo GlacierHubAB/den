@@ -27,9 +27,9 @@
 // its state dir. It is an identity marker, not a secret: it lets a Den that
 // reconnects take its own held requests back from a serve whose link died
 // half-open, and tells a second Den apart. After it, serve reads only
-// decision and ping lines (below), within MaxLine and a rate cap; anything
-// else gets an error (code request) and serve exits. It exits quietly on
-// stdin's EOF.
+// decision, ping, send and close lines (below), within MaxLine and a rate
+// cap; anything else gets an error (code request) and serve exits. It exits
+// quietly on stdin's EOF.
 //
 //	{"type":"decision","id":"…","hash":"…","behavior":"allow","message":"…","answers":{"Which?":"A"}}
 //
@@ -44,6 +44,23 @@
 // Den is still there. Den sends one every PingEvery; a serve that relays
 // held requests and hears nothing from Den for Silence lets them all go to
 // their terminals and exits, so a half-open link does not hold them.
+//
+//	{"type":"send","id":"…","session":"…","text":"…"}
+//	{"type":"close","id":"…","session":"…","force":false}
+//
+// The two actions, send and close, the whole of what Den may ask serve to
+// do: there is no generic exec and no shell, and text travels in this
+// message, never in an argument list. Both are allowed only when the policy
+// serve applies is approve or full; under observe serve answers each with a
+// failed result and does nothing, and Den does not send them at all. id is
+// Den's own, echoed in the result. session is a Claude Code session id,
+// matched exactly against the host's live sessions (~/.claude/sessions, pid
+// alive) when the command arrives, not when Den last saw a snapshot. send
+// posts text, at most MaxSendText bytes, to that session's own
+// messagingSocketPath exactly as `den send` does on the host. close applies
+// the closer's rules there: only a live session found by id, a working agent
+// only with force, SIGTERM then a wait, SIGKILL only with force, no window to
+// close (a host has no desktop). At most MaxActions run at once on one serve.
 //
 // serve to Den, on serve's stdout:
 //
@@ -88,6 +105,14 @@
 //
 // A held request is no longer waiting: its hook gave up (Claude Code
 // answered it in the terminal, or its own wait ran out).
+//
+//	{"type":"result","id":"…","ok":true,"killed":false,"error":"…"}
+//
+// The outcome of a send or close, once, with the id Den gave it. error is
+// short, sanitised and says why nothing happened; killed says a close
+// needed SIGKILL. A result for an id Den has no request open for is
+// dropped and the host flagged. send has no acknowledgement from Claude
+// Code: ok means the write to the session's socket succeeded.
 //
 //	{"type":"error","code":"proto","message":"…"}
 //
@@ -138,6 +163,17 @@ const (
 	TypeGone     = "gone"
 	TypeDecision = "decision" // Den to serve
 	TypePing     = "ping"     // Den to serve
+	TypeSend     = "send"     // Den to serve, approve or full only
+	TypeClose    = "close"    // Den to serve, approve or full only
+	TypeResult   = "result"   // serve to Den: the outcome of a send or close
+)
+
+// Limits of the actions.
+const (
+	// MaxSendText caps the text of one send, in bytes.
+	MaxSendText = 64 << 10
+	// MaxActions caps the sends and closes one serve runs at once.
+	MaxActions = 8
 )
 
 // Request is Den's hello to serve.
@@ -220,6 +256,31 @@ type Decision struct {
 	Answers  map[string]string `json:"answers,omitempty"`
 }
 
+// SendCmd asks serve to post text to a session's inbox socket.
+type SendCmd struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Session string `json:"session"`
+	Text    string `json:"text"`
+}
+
+// CloseCmd asks serve to end a session's process.
+type CloseCmd struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Session string `json:"session"`
+	Force   bool   `json:"force,omitempty"`
+}
+
+// Result is serve's answer to a send or close.
+type Result struct {
+	Type   string `json:"type"`
+	ID     string `json:"id"`
+	OK     bool   `json:"ok"`
+	Killed bool   `json:"killed,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
 // Ping is Den saying it is still there.
 type Ping struct {
 	Type string `json:"type"`
@@ -244,12 +305,15 @@ var allowed = map[string][]string{
 	TypeError:    {"type", "code", "message"},
 	TypeHeld:     {"type", "id", "session", "tool", "body"},
 	TypeGone:     {"type", "id"},
+	TypeResult:   {"type", "id", "ok", "killed", "error"},
 }
 
 // allowedIn is the same for what serve reads after Den's hello request.
 var allowedIn = map[string][]string{
 	TypeDecision: {"type", "id", "hash", "behavior", "message", "answers"},
 	TypePing:     {"type"},
+	TypeSend:     {"type", "id", "session", "text"},
+	TypeClose:    {"type", "id", "session", "force"},
 }
 
 // ErrLineTooLong is a message over MaxLine.

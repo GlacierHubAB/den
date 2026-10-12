@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -40,7 +41,7 @@ func fakeServe(t *testing.T, remoteNow time.Time) remote.Dialer {
 			}
 			send(remote.Hello{Type: remote.TypeHello, Proto: remote.Proto, Den: "dev", Hostname: "devbox", RemoteNow: remoteNow, Policy: remote.Observe})
 			send(remote.Snapshot{Type: remote.TypeSnapshot, RemoteNow: remoteNow, Agents: []fleet.Meta{{
-				Session: dupSession, Status: "working", Name: "Mossy Lemur", Repo: "den", Branch: "main",
+				Session: dupSession, Status: "working", Name: "Fizzy Moth", Repo: "den", Branch: "main",
 				StatusAge: 60_000, StartedAge: 3_600_000, ActiveAge: 60_000,
 			}}})
 			ev := events.New(events.NeedsYou, dupSession)
@@ -127,7 +128,8 @@ func TestManagerToInbox(t *testing.T) {
 		t.Errorf("age = %v", age)
 	}
 	out := frame(&m)
-	if !strings.Contains(out, "Mossy Lemur @devbox") || !strings.Contains(out, "1 need you") {
+	// The critter name comes from the session id here, whatever the host called it.
+	if !strings.Contains(out, badge.Name(dupSession)+" @devbox") || !strings.Contains(out, "1 need you") {
 		t.Errorf("fleet:\n%s", out)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -481,7 +482,7 @@ func TestHostileHost(t *testing.T) {
 	defer m.Close()
 	waitFor(t, "agent", func() bool { return len(m.Agents()) == 1 })
 	a := m.Agents()[0]
-	if a.Name != "Mossy Lemur" || a.Labels.Role != "coder" || state(m).Hostname != "devbox" {
+	if a.Name != badge.Name("s1") || a.Labels.Role != "coder" || state(m).Hostname != "devbox" {
 		t.Errorf("not sanitised: name %q role %q host %q", a.Name, a.Labels.Role, state(m).Hostname)
 	}
 	// The event comes after the snapshot that made the agent appear, so its
