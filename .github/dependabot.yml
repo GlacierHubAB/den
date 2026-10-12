@@ -1,0 +1,25 @@
+# Weekly updates for Go modules and the pinned GitHub Actions, opened against
+# dev like any other change. Actions stay pinned to a commit; Dependabot
+# updates the SHA and the version comment together.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: "Go modules"
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"

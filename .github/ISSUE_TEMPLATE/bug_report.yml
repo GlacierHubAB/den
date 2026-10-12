@@ -1,0 +1,49 @@
+name: Bug report
+description: Den did something it should not, or did not do something it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove anything private from pasted output: paths, prompts, transcripts, session ids.
+        Security problems go to the Security tab, not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start den
+        2. ...
+  - type: input
+    id: den-version
+    attributes:
+      label: den version
+      description: Output of `den version`.
+    validations:
+      required: true
+  - type: input
+    id: claude-version
+    attributes:
+      label: claude --version
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Compositor and terminal
+      placeholder: Hyprland 0.x, Ghostty 1.x
+  - type: textarea
+    id: details
+    attributes:
+      label: den list, den explain, hooks.log
+      description: |
+        `den list` and `den explain <name>` for the agent in question, and the relevant
+        lines of `~/.local/state/den/hooks.log` if the inbox is involved.
+      render: text
