@@ -40,7 +40,7 @@ func Path(sessionID string) string {
 // Facts is what Den reads from the end of a transcript.
 type Facts struct {
 	Title string // Claude Code's AI-generated title, also the terminal title
-	Model string // raw model id of the last assistant message
+	Model string // raw model id in use: the newest model attachment or real assistant message
 }
 
 var modelRe = regexp.MustCompile(`"model":"([^"]+)"`)
@@ -60,10 +60,8 @@ func Read(path string) Facts {
 				f.Title = sanitize.Line(rec.Title)
 			}
 		}
-		if f.Model == "" && bytes.Contains(line, []byte(`"type":"assistant"`)) {
-			if m := modelRe.FindSubmatch(line); m != nil {
-				f.Model = sanitize.Line(string(m[1]))
-			}
+		if f.Model == "" {
+			f.Model = lineModel(line)
 		}
 		return f.Title != "" && f.Model != ""
 	})
@@ -71,6 +69,38 @@ func Read(path string) Facts {
 		return Facts{}
 	}
 	return f
+}
+
+// lineModel is the model a transcript line says is in use, "" when it
+// says none. Claude Code records the model it switches to (at start, and
+// in and out of plan mode, which may run another model) as a "model"
+// attachment before the next reply, and each reply carries its model. A
+// record Claude Code makes up itself, for an API error or when logged out
+// ("<synthetic>"), names no model.
+func lineModel(line []byte) string {
+	switch {
+	case bytes.Contains(line, []byte(`"type":"assistant"`)):
+		if bytes.Contains(line, []byte(`"isApiErrorMessage":true`)) {
+			return ""
+		}
+		if m := modelRe.FindSubmatch(line); m != nil && string(m[1]) != "<synthetic>" {
+			return sanitize.Line(string(m[1]))
+		}
+	case bytes.Contains(line, []byte(`"type":"attachment"`)) && bytes.Contains(line, []byte(`"modelId"`)):
+		var rec struct {
+			Type       string `json:"type"`
+			Attachment struct {
+				Type     string `json:"type"`
+				Identity struct {
+					ModelID string `json:"modelId"`
+				} `json:"identity"`
+			} `json:"attachment"`
+		}
+		if json.Unmarshal(line, &rec) == nil && rec.Type == "attachment" && rec.Attachment.Type == "model" {
+			return sanitize.Line(rec.Attachment.Identity.ModelID)
+		}
+	}
+	return ""
 }
 
 // scanBackwards feeds complete lines from the end of the file to fn until fn
