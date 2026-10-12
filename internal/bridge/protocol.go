@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 )
 
 // Envelope is what a hook sends. Payload is the raw hook input JSON.
@@ -104,8 +103,11 @@ func (in HookInput) FailureType() string {
 	return "unknown"
 }
 
-// SocketPath is where Den listens: $DEN_SOCKET, else $XDG_RUNTIME_DIR/den.sock,
-// else /tmp/den-<uid>.sock.
+// SocketPath is where Den listens: $DEN_SOCKET as given, else
+// $XDG_RUNTIME_DIR/den.sock, else den.sock in the private fallback
+// directory $TMPDIR/den-<uid> (FallbackDir), never directly in a shared
+// /tmp where another user could take the name first. Listen makes that
+// directory; clients dial through Dial, which checks it and the peer.
 func SocketPath() string {
 	if p := os.Getenv("DEN_SOCKET"); p != "" {
 		return p
@@ -113,5 +115,5 @@ func SocketPath() string {
 	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
 		return filepath.Join(d, "den.sock")
 	}
-	return filepath.Join(os.TempDir(), "den-"+strconv.Itoa(os.Getuid())+".sock")
+	return filepath.Join(FallbackDir(), "den.sock")
 }
