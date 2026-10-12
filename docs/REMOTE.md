@@ -357,7 +357,8 @@ on this machine.
   run `den remote install devbox`.
 - **Version mismatch.** `den` on the host is missing or too old for
   `remote serve`: `den remote install devbox`, or install a matching release
-  there by hand.
+  there by hand. Den connects again by itself once an install approved in its
+  inbox succeeds; after an install by hand, `/remote connect devbox`.
 - **Agents appear but no events or requests.** Den's hooks are not installed on
   the host: run `den install-hooks` there. Only sessions started afterwards
   report.

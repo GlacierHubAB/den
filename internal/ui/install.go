@@ -42,6 +42,7 @@ type installPlanMsg struct {
 // installDoneMsg is the end of an approved install.
 type installDoneMsg struct {
 	itemID string
+	host   string // the host's label
 	got    string
 	err    error
 }
@@ -124,19 +125,22 @@ func (m Model) decideInstall(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		return m.say("Declined the install.", false)
 	}
 	it.Resolved = "installing…"
-	id := it.ID
+	id, host := it.ID, plan.Host.Label
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		got, err := installRun(ctx, plan)
-		return installDoneMsg{itemID: id, got: got, err: err}
+		return installDoneMsg{itemID: id, host: host, got: got, err: err}
 	}
 	model, say := m.say("Installing den on "+plan.Host.Label+"…", false)
 	return model, tea.Batch(say, cmd)
 }
 
 // finishInstall settles the question with what happened, which also
-// answers the command that asked.
+// answers the command that asked. A host that was waiting for den (missing
+// or another version) is connected again at once, so the human need not
+// /remote connect it; a live one keeps its session, the old serve running
+// until that session ends.
 func (m *Model) finishInstall(msg installDoneMsg) tea.Cmd {
 	outcome := "installed: " + sanitize.Line(msg.got)
 	if msg.err != nil {
@@ -145,6 +149,12 @@ func (m *Model) finishInstall(msg installDoneMsg) tea.Cmd {
 	for _, it := range m.store.Items() {
 		if it.ID == msg.itemID {
 			m.store.Settle(it, msg.err == nil, outcome)
+		}
+	}
+	if msg.err == nil && m.remoteOn() {
+		if h, ok := m.hostStatus(msg.host); ok && !linked(h.State) && h.State != remote.Connecting {
+			m.remote.feed.Reconnect(msg.host)
+			outcome += "; connecting to " + msg.host
 		}
 	}
 	m.flash, m.flashErr = strings.ToUpper(outcome[:1])+outcome[1:], msg.err != nil

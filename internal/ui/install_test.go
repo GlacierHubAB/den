@@ -144,3 +144,53 @@ func TestInstallRefusedWithoutAQuestion(t *testing.T) {
 		t.Errorf("duplicate: %+v", d)
 	}
 }
+
+// installOn asks for an install on devbox and approves it, as the human
+// would with ^Y.
+func installOn(t *testing.T, m *Model) *bridge.Request {
+	t.Helper()
+	req := installRequest("devbox")
+	ask(m, req)
+	if installItem(*m) == nil {
+		t.Fatalf("no install question; flash %q", m.flash)
+	}
+	mm, cmd := m.answer("allow")
+	*m = mm.(Model)
+	for _, msg := range runBatch(cmd) {
+		if d, ok := msg.(installDoneMsg); ok {
+			m.finishInstall(d)
+		}
+	}
+	return req
+}
+
+func TestInstallReconnectsAHostWaitingForDen(t *testing.T) {
+	fakeRemoteInstall(t, nil)
+	m, feed, _ := remoteModel(t)
+	feed.setState("devbox", remote.VersionMismatch)
+	m.syncRemote()
+	installOn(t, m)
+	if len(feed.reconnect) != 1 || feed.reconnect[0] != "devbox" {
+		t.Errorf("reconnect = %q after an install on a version-mismatch host", feed.reconnect)
+	}
+	if !strings.Contains(m.flash, "connecting to devbox") {
+		t.Errorf("flash = %q", m.flash)
+	}
+}
+
+func TestInstallLeavesALiveHostOrAFailureAlone(t *testing.T) {
+	fakeRemoteInstall(t, nil)
+	m, feed, _ := remoteModel(t) // devbox is live
+	installOn(t, m)
+	if len(feed.reconnect) != 0 {
+		t.Errorf("a live host was reconnected: %q", feed.reconnect)
+	}
+	fakeRemoteInstall(t, errors.New("sha256 mismatch"))
+	m, feed, _ = remoteModel(t)
+	feed.setState("devbox", remote.VersionMismatch)
+	m.syncRemote()
+	installOn(t, m)
+	if len(feed.reconnect) != 0 {
+		t.Errorf("reconnected after a failed install: %q", feed.reconnect)
+	}
+}
