@@ -61,12 +61,18 @@ func sortedComments(comments []Comment) []Comment {
 }
 
 // writeComments writes the comments under one heading per repository.
+// A comment on a remote agent's work names the folder as the agent sees it
+// on its host: its Root is Review's key, the folder plus " @host".
 func writeComments(b *strings.Builder, cs []Comment) {
 	root := "\x00"
 	for _, c := range cs {
 		if c.Root != root {
 			root = c.Root
-			fmt.Fprintf(b, "\nIn %s:\n", root)
+			folder := root
+			if c.Host != "" {
+				folder = strings.TrimSuffix(root, " @"+c.Host)
+			}
+			fmt.Fprintf(b, "\nIn %s:\n", folder)
 		}
 		b.WriteString("\n" + Where(c) + "\n")
 		for _, q := range c.Quote {
