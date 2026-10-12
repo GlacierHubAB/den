@@ -331,3 +331,19 @@ func TestWorktreeBaseIsTheCommitTheWorktreeWasMadeFrom(t *testing.T) {
 		}
 	}
 }
+
+// The cleanup question names the ignored files git deletes with the
+// worktree.
+func TestCleanupQuestionNamesIgnoredFiles(t *testing.T) {
+	main, wt, _ := wtRepo(t)
+	os.WriteFile(filepath.Join(wt, ".gitignore"), []byte(".env\n"), 0o644)
+	gitRun(t, wt, "add", ".gitignore")
+	gitRun(t, wt, "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "Ignore .env")
+	os.WriteFile(filepath.Join(wt, ".env"), []byte("TOKEN=x\n"), 0o644)
+	m := worktreeModel(t, main, wt)
+	m = run(t, m, "/cleanup")
+	it := m.inboxSelected()
+	if it == nil || it.Kind != inbox.Cleanup || !strings.Contains(strings.Join(it.Body, "\n"), "1 ignored file or folder will be deleted with it") || !strings.Contains(strings.Join(it.Body, "\n"), ".env") {
+		t.Fatalf("item = %+v flash=%q", it, m.flash)
+	}
+}
