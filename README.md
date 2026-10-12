@@ -796,7 +796,7 @@ project picked on Overview.
   binary. A file shows under an agent only if it owns a line in it (next item),
   so files the agent never touched stay out of its Review. A file whose name
   has control characters is listed by its cleaned name, which may not be its
-  real one, and its content is not shown.
+  real one, and its content is not shown, here or in the agent's Tail.
 - **Per agent, per line.** Each agent gets the files in which it owns at least
   one changed line, with its own added and removed counts. A line belongs to
   the newest agent edit that added (or removed) exactly that text. Lines no
@@ -948,7 +948,9 @@ Limits today: Linux hosts and Claude Code agents only (no macOS, no Codex);
 Den cannot spawn agents on a host, missions cannot use remote agents, and the
 orchestrator lists them but cannot message or close them; `Enter` and `/open`
 cannot raise a terminal on another machine, they print `ssh -t <target>`;
-changes to `remotes.toml` are picked up when Den restarts. Every string a host
+a lowered policy in `remotes.toml` applies within seconds, and a raised one or a
+new target on `/remote connect`, but adding or removing a host is picked up
+when Den restarts. Every string a host
 sends is sanitised before Den shows it (see
 [Text from outside Den](#text-from-outside-den)).
 

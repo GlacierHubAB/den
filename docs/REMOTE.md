@@ -94,7 +94,9 @@ without it, `default_policy` in `remotes.toml` applies.
 
 In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
-host now. `disable`, `enable` and `remove` take effect when Den restarts.
+host now, under `remotes.toml` as it is then, a raise or new target included
+(see [remotes.toml](#remotestoml)). `disable`, `enable` and `remove` take
+effect when Den restarts.
 
 Addressing a remote agent: `@Name@devbox text` messages it, `/close Name@devbox`
 closes it, and from a script `den send name@devbox "text"`. A bare `@Name` or
@@ -120,7 +122,21 @@ enabled = true
 A label is lower-case letters, digits and `-`, and `local` is taken. A target
 that starts with `-` is refused. Den reads the file when it starts. A file that
 does not parse connects no host, and `/remote` says why. There is no command to
-change a host's policy: edit `policy` and restart Den.
+change a host's policy: edit `policy`. Den reads the file again every two
+seconds and before each connection, and applies what trusts a host less at
+once: a lower `policy` or `labels = false`. The host is shown under it straight
+away, so content a lowered policy no longer allows disappears, and it
+reconnects under it. A raise does not apply because the file changed, since
+anything that can write the file, an agent with a shell included, could ask
+for one: `observe` to `approve`, `approve` to `full`, `labels = true`, and
+another `target` or `den_path`, which could point the host at any machine. A
+raise applies when you run `/remote connect devbox` in Den, or when Den
+starts; until then `/remote` shows what the file asks for ("remotes.toml asks
+for full; /remote connect devbox to apply"). A new `target` or `den_path` also
+ends the link to the old one at once, and Den makes no connection for the host
+until you run `/remote connect` ("remotes.toml points devbox at user@other;
+/remote connect devbox to apply"). Adding, removing, disabling or enabling a host still takes a
+restart of Den; a file that does not parse keeps the settings in use.
 `policy` and `default_policy` take `observe` or `approve`.
 They also take `full`.
 
@@ -324,7 +340,8 @@ locally. While it waits, the row says "reading its diff on devbox…", and a
 failure shows its reason. If none of the changes in the checkout are the
 agent's, Review says so and shows nothing. A diff over 200 KB, 300 files or
 2000 lines in a file is cut and says what was left out. A file whose name has
-control characters is listed by its cleaned name, without its content.
+control characters is listed by its cleaned name, without its content; its
+content never leaves the host, in the agent's Tail either.
 
 When the host goes offline its diffs disappear ("devbox is offline"); they are
 read again when it is back. Below `full` the agent is greyed with "diff on

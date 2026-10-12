@@ -40,7 +40,7 @@ var fullAllowed = []string{
 	// MetaEntry
 	"age_ms", "kind", "text", "tool", "code", "output", "changes",
 	// MetaChange, MetaHunk
-	"path", "created", "deleted", "hunks", "old_start", "new_start", "lines",
+	"path", "created", "deleted", "unsafe", "hunks", "old_start", "new_start", "lines",
 }
 
 // metaForbidden are names a content field would plausibly carry.

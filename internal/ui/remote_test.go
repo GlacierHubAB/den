@@ -34,6 +34,7 @@ type fakeFeed struct {
 	agents    []fleet.Agent
 	ch        chan remote.Update
 	reconnect []string
+	connect   []string
 	// What Send and CloseAgent got, and what they answer.
 	sent      []string // "host/session: text"
 	closed    []string // "host/session force"
@@ -53,6 +54,7 @@ func (f *fakeFeed) Updates() <-chan remote.Update { return f.ch }
 func (f *fakeFeed) Hosts() []remote.HostStatus    { return f.hosts }
 func (f *fakeFeed) Agents() []fleet.Agent         { return f.agents }
 func (f *fakeFeed) Reconnect(label string)        { f.reconnect = append(f.reconnect, label) }
+func (f *fakeFeed) Connect(label string)          { f.connect = append(f.connect, label) }
 func (f *fakeFeed) Close()                        {}
 func (f *fakeFeed) Actionable(string) error       { return f.actErr }
 func (f *fakeFeed) Flag(label, what string) {
@@ -410,20 +412,23 @@ func TestRosterTagsRemoteAgents(t *testing.T) {
 
 func TestRemoteCommand(t *testing.T) {
 	m, feed, _ := remoteModel(t)
+	feed.hosts[0].Pending = "remotes.toml asks for full; /remote connect devbox to apply"
+	m.syncRemote()
 	mm, _ := m.command("/remote")
 	got := mm.(Model)
 	out := strings.Join(strings.Fields(frame(&got)), " ")
-	for _, want := range []string{"Remote hosts", "devbox ssh devbox live", "gpu ssh user@gpu offline", "reason the session ended", "policy observe"} {
+	for _, want := range []string{"Remote hosts", "devbox ssh devbox live", "gpu ssh user@gpu offline", "reason the session ended", "policy observe", "remotes.toml asks for full; /remote connect devbox to apply"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("listing lacks %q:\n%s", want, frame(&got))
 		}
 	}
+	// /remote connect is the human's: it applies a raise remotes.toml asks for.
 	mm, _ = got.command("/remote connect gpu")
-	if len(feed.reconnect) != 1 || feed.reconnect[0] != "gpu" {
-		t.Errorf("reconnect = %v", feed.reconnect)
+	if len(feed.connect) != 1 || feed.connect[0] != "gpu" || len(feed.reconnect) != 0 {
+		t.Errorf("connect = %v, reconnect = %v", feed.connect, feed.reconnect)
 	}
-	if _, _ = mm.(Model).command("/remote connect nowhere"); len(feed.reconnect) != 1 {
-		t.Errorf("an unknown host was reconnected")
+	if _, _ = mm.(Model).command("/remote connect nowhere"); len(feed.connect) != 1 {
+		t.Errorf("an unknown host was connected")
 	}
 	// Esc goes back to the details.
 	back, _ := got.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

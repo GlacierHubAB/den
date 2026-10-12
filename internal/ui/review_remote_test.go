@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/remote"
@@ -104,7 +105,16 @@ func TestReviewRemoteUnderFull(t *testing.T) {
 		}
 	}
 
-	// Merging or removing its worktree stays on this machine.
+	// Merging or removing its worktree stays on this machine, and the help
+	// line does not offer it.
+	if h := ansi.Strip(m.hints(400)); strings.Contains(h, "/merge") || strings.Contains(h, "/cleanup") || !strings.Contains(h, "/send") {
+		t.Errorf("hints on a remote worktree: %q", h)
+	}
+	local := *m
+	local.rev.works = []work{{SessionID: dupSession, Root: "/home/user/den", Repo: "den · feature", Worktree: true, Branch: "feature", Ahead: 2}}
+	if h := ansi.Strip(local.hints(400)); !strings.Contains(h, "/merge ask to merge feature") || !strings.Contains(h, "/cleanup") {
+		t.Errorf("hints on a local worktree: %q", h)
+	}
 	for _, run := range []func([]string) (tea.Model, tea.Cmd){m.mergeCommand, m.cleanupCommand} {
 		mm, _ := run(nil)
 		if got := mm.(Model).flash; !strings.Contains(got, "on devbox") || !strings.Contains(got, "this machine only") {
@@ -321,6 +331,148 @@ func TestDiffBackoffGrowsAndIsCapped(t *testing.T) {
 	}
 }
 
+// An agent whose diff keeps failing is asked less and less often, as a
+// real host's 20 s rounds go by, while another agent is read every round;
+// one good read puts it back in every round.
+func TestReviewRemoteBackoffGrowsWhileTheDiffKeepsFailing(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	good := "44444444-2222-4333-8444-555555555555"
+	feed.agents = append(feed.agents, remoteAgent("devbox", good, "Zesty Otter", fleet.Idle, 0))
+	feed.diffErrs = map[string]error{dupSession: errors.New("git found no branch to compare its work with")}
+	feed.diff = remoteDiff()
+	start := time.Now()
+	now := start
+	reviewNow = func() time.Time { return now }
+	t.Cleanup(func() { reviewNow = time.Now })
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = ""
+	round := func() (failing, working bool) {
+		feed.diffs = nil
+		runReview(m, m.loadRemoteReviews())
+		for _, d := range feed.diffs {
+			failing = failing || d == "devbox/"+dupSession
+			working = working || d == "devbox/"+good
+		}
+		return failing, working
+	}
+	var asked []time.Duration
+	for at := time.Duration(0); at <= 3*time.Minute; at += 20 * time.Second {
+		now = start.Add(at)
+		failing, working := round()
+		if !working {
+			t.Fatalf("at %v the working agent was not read", at)
+		}
+		if failing {
+			asked = append(asked, at)
+		}
+	}
+	// Backoffs of 15 s, 30 s, 1 min and 2 min: asked at 0, 20 s, 1 min and 2 min.
+	want := []time.Duration{0, 20 * time.Second, time.Minute, 2 * time.Minute}
+	if fmt.Sprint(asked) != fmt.Sprint(want) {
+		t.Errorf("the failing agent was asked at %v, want %v", asked, want)
+	}
+
+	// Once its diff reads, it is read every round again.
+	delete(feed.diffErrs, dupSession)
+	now = start.Add(5 * time.Minute)
+	if failing, _ := round(); !failing {
+		t.Fatal("not asked after its backoff")
+	}
+	now = now.Add(20 * time.Second)
+	if failing, _ := round(); !failing {
+		t.Errorf("not read in the next round after a good read: fails %d", m.rev.remote[dupSession].fails)
+	}
+}
+
+// After a reconnect, an agent whose diff has not been read again says it
+// is being read, never that it has no changes, and the snapshot that lists
+// it again gets it read in that round rather than the next.
+func TestRemoteReconnectSaysReadingUntilTheDiffIsRead(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	feed.diff = &remote.Diff{Root: "/home/user/den", Repo: "den"} // no changes
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = ""
+	runReview(m, m.loadRemoteReviews())
+	agent := func() fleet.Agent {
+		for _, a := range m.agents {
+			if a.Host == "devbox" {
+				return a
+			}
+		}
+		t.Fatal("no devbox agent")
+		return fleet.Agent{}
+	}
+	if got := m.remoteNote(agent()); got != "no changes on devbox" {
+		t.Fatalf("read: %q", got)
+	}
+	update := func(kind remote.UpdateKind) {
+		runReview(m, m.handleRemote(remoteMsg{ok: true, u: remote.Update{Kind: kind, Host: "devbox"}}))
+		m.refresh()
+	}
+
+	feed.setState("devbox", remote.Offline)
+	update(remote.HostChanged)
+	// Back, its hello in before the snapshot that lists the agents again.
+	feed.agents[0].Stale = true
+	feed.setState("devbox", remote.Live)
+	feed.diffs = nil
+	update(remote.HostChanged)
+	if len(feed.diffs) > 0 {
+		t.Fatalf("asked before the agents were listed: %v", feed.diffs)
+	}
+	if got := m.remoteNote(agent()); got != "reading its diff on devbox…" {
+		t.Errorf("after the reconnect: %q", got)
+	}
+	feed.agents[0].Stale = false
+	update(remote.FleetChanged)
+	if len(feed.diffs) != 1 {
+		t.Errorf("not read when listed again: %v", feed.diffs)
+	}
+	if got := m.remoteNote(agent()); got != "no changes on devbox" {
+		t.Errorf("read again: %q", got)
+	}
+}
+
+// A remote agent with no work listed is named once: under its own project,
+// its repository on its host, or with all projects; never under a project
+// of this machine or another repository on its host.
+func TestRemoteAgentsWithoutWorkAreListedUnderTheirOwnProject(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	api := remoteAgent("devbox", "55555555-2222-4333-8444-555555555555", "Brisk Heron", fleet.Idle, 0)
+	api.Git.Repo = "api"
+	feed.agents = append(feed.agents, api)
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	names := func(cur string) string {
+		m.proj.cur = cur
+		var got []string
+		for _, l := range m.remoteWorkLines(60) {
+			if l := strings.TrimSpace(ansi.Strip(l)); strings.Contains(l, " @") {
+				got = append(got, l)
+			}
+		}
+		return strings.Join(got, ", ")
+	}
+	for cur, want := range map[string]string{
+		"":             "Mossy Lemur @devbox, Brisk Heron @devbox, Mossy Lemur @gpu, Snug Capybara @gpu",
+		"den @devbox":  "Mossy Lemur @devbox",
+		"api @devbox":  "Brisk Heron @devbox",
+		"den @gpu":     "Mossy Lemur @gpu, Snug Capybara @gpu",
+		"/home/user/x": "",
+	} {
+		if got := names(cur); got != want {
+			t.Errorf("project %q lists %q, want %q", cur, got, want)
+		}
+	}
+}
+
 // A remote file whose name has control characters keeps that mark, so
 // Review says its content is not shown.
 func TestRemoteUnsafeNameIsMarked(t *testing.T) {
@@ -342,6 +494,19 @@ func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
 	remoteDraft := review.Comment{ID: "r1", Root: "/home/user/den @devbox", Host: "devbox", Path: "main.go", Side: "new", Start: 2, End: 2,
 		Quote: []string{"+SECRET-remote-line"}, Body: "rename it", SessionID: dupSession + "@devbox", Created: time.Now()}
 	m.rev.comments = append(m.rev.comments, remoteDraft)
+	feed.setState("devbox", remote.Offline)
+	m.syncRemote()
+	if out := ansi.Strip(m.notesPane(60, 30)); !strings.Contains(out, "devbox is offline · kept until it is back") || strings.Contains(out, "orchestrator") || strings.Contains(out, "socket") {
+		t.Errorf("drafts column while devbox is offline:\n%s", out)
+	}
+
+	feed.setState("devbox", remote.AttachedElsewhere)
+	feed.actErr = errors.New(remote.ElsewhereNote("devbox")) // as the Manager says then
+	m.syncRemote()
+	if out := ansi.Strip(m.notesPane(60, 30)); !strings.Contains(out, "devbox takes no sends here · kept") {
+		t.Errorf("drafts column while devbox is attached elsewhere:\n%s", out)
+	}
+	feed.actErr = nil
 	feed.setState("devbox", remote.Offline)
 	m.syncRemote()
 

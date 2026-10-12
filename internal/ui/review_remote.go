@@ -152,15 +152,16 @@ func (m *Model) applyRemoteReview(msg reviewRemoteMsg) tea.Cmd {
 		m.mergeReview()
 		return nil
 	}
-	rr.fails, rr.retry = 0, time.Time{}
 	switch {
 	case msg.err != nil:
 		rr.err, rr.works = msg.err.Error(), nil
 		rr.fails++
 		rr.retry = rr.at.Add(backoff(rr.fails))
 	case msg.diff != nil && msg.diff.Unowned:
+		rr.fails, rr.retry = 0, time.Time{}
 		rr.err, rr.works = "none of the changes in its checkout on "+rr.host+" match what it wrote, so they stay there", nil
 	default:
+		rr.fails, rr.retry = 0, time.Time{}
 		rr.err, rr.works = "", workFromDiff(msg.key, rr.host, msg.diff)
 	}
 	m.mergeReview()
@@ -235,7 +236,9 @@ func (m Model) remoteNote(a fleet.Agent) string {
 	}
 	rr := m.rev.remote[a.Session.SessionID]
 	switch {
-	case rr == nil || (rr.loading && rr.at.IsZero()):
+	case rr == nil || (rr.at.IsZero() && rr.err == ""):
+		// Not read since its host came back: never "no changes" before
+		// its diff has been read.
 		return "reading its diff on " + a.Host + "…"
 	case rr.err != "":
 		return rr.err

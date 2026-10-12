@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/remote"
+	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -1156,7 +1157,7 @@ func (m Model) hints(w int) string {
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:
 		items = [][2]string{{"← →", "panes"}, {"↑ ↓", "line"}, {"⇧↑ ⇧↓ drag", "range"}, {"type Enter", "comment"}, {"Enter", "empty: edit comment"}, {"/delete", ""}, {"/send [name|orchestrator]", "send drafts"}, {"Tab", "view"}, {"^C", "quit"}}
-		if w := m.curWork(); w != nil && w.Worktree {
+		if w := m.curWork(); w != nil && w.Worktree && w.Host == "" { // remote worktrees are merged on their host
 			items = append(items[:7:7], [2]string{"/merge", "ask to merge " + w.Branch}, [2]string{"/cleanup", "remove its worktree"}, items[7], items[8])
 		}
 	case m.tab == tabOrch:
@@ -1271,13 +1272,15 @@ func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, 
 				added, removed := c.Counts()
 				what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
 				switch {
+				case c.Hidden():
+					what = shortPath(c.Path, a.Session.CWD) + ": " + review.UnsafeNote
 				case c.Deleted:
 					what = "Deleted " + shortPath(c.Path, a.Session.CWD)
 				case c.Created:
 					what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
 				}
 				out = append(out, "  "+s.muted.Render("⎿ ")+s.dim.Render(what))
-				if c.Deleted {
+				if c.Deleted || c.Hidden() {
 					continue
 				}
 				for _, l := range m.diffLines(c.Hunks, textW-4) {

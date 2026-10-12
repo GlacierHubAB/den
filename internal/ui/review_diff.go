@@ -309,11 +309,12 @@ func (m Model) workPane(w, h int) string {
 
 // remoteWorkLines lists, greyed out under the work list, the remote agents
 // with no work listed: why their diff stays on their host (its policy is
-// not full, or it is offline), or that it is being read.
+// not full, or it is offline), or that it is being read. Each is listed
+// once: under its own project (its repository on its host), or with all
+// projects.
 func (m Model) remoteWorkLines(w int) []string {
 	s := m.st
 	var out []string
-	host := projectHost(m.proj.cur)
 	listed := map[string]bool{}
 	for _, wk := range m.rev.all {
 		if wk.Host != "" {
@@ -321,7 +322,10 @@ func (m Model) remoteWorkLines(w int) []string {
 		}
 	}
 	for _, a := range m.agents {
-		if a.Host == "" || a.Status == fleet.Gone || (host != "" && a.Host != host) || listed[a.Session.SessionID] {
+		if a.Host == "" || a.Status == fleet.Gone || listed[a.Session.SessionID] {
+			continue
+		}
+		if m.proj.cur != "" && (!a.HasGit || remoteProject(a.Host, a.Git.Repo) != m.proj.cur) {
 			continue
 		}
 		if len(out) == 0 {
@@ -736,8 +740,13 @@ func (m Model) notesPane(w, h int) string {
 		_, live := m.reviewRecipient(sid)
 		state := ""
 		a, found := m.agentFor(sid)
+		host := m.groupHost(reviewGroup{sessionID: sid, comments: cs})
 		switch {
 		case sid == "":
+		case host != "" && !live:
+			// Drafts on a remote agent's work wait for its host; they
+			// never go to the orchestrator.
+			state = m.remoteDraftsState(host)
 		case !found || a.Status == fleet.Gone:
 			state = "session ended"
 		case !live:
@@ -749,7 +758,7 @@ func (m Model) notesPane(w, h int) string {
 		default:
 			state = "live"
 		}
-		if !live && nd > 0 {
+		if !live && nd > 0 && host == "" {
 			state = strings.TrimPrefix(state+" · /send orchestrator hands these on", " · ")
 		}
 		if state != "" {

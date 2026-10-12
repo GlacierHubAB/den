@@ -52,6 +52,7 @@ type HostStatus struct {
 	Flags    []string  // what the host sent that Den dropped: unknown types or fields, flooding
 	Dropped  int       // events Den dropped from the host since it started (gate)
 	Hint     string    // what the human can do, for needs attention and version mismatch
+	Pending  string    // a raise remotes.toml asks for that waits for /remote connect, and how to apply it
 }
 
 // UpdateKind says what an Update carries.
@@ -113,6 +114,22 @@ type Options struct {
 	CloseWait   time.Duration // how long Close waits for it; default 15 s
 	DiffWait    time.Duration // how long Diff waits for it; default 30 s
 	Now         func() time.Time
+
+	// Reload reads remotes.toml again (Den passes Load). What lowers trust
+	// in a host (a lower policy, labels off) then applies before each
+	// connection, on Reconnect and, with Watch, within Watch of the file
+	// changing: the host is shown under it at once and its session
+	// restarts, so a lowered policy never waits for a restart of Den. A
+	// raise (a higher policy, labels on, another target or den_path, which
+	// could point the host at any machine) only applies on Connect, the
+	// human's /remote connect, or when Den starts: anything that can write
+	// the file could ask for one. Until then the host's status says it is
+	// Pending, and a host whose target or den_path changed has its link
+	// ended and makes no other. Adding, removing or
+	// disabling a host still takes a restart. Nil keeps the Config
+	// NewManager was given.
+	Reload func() (Config, error)
+	Watch  time.Duration // how often Reload is polled; 0 polls never
 }
 
 func (o *Options) defaults() {
@@ -251,6 +268,9 @@ type Manager struct {
 }
 
 type hostState struct {
+	host      Host // as remotes.toml says now (Options.Reload)
+	held      bool // remotes.toml names another target or den_path: no connection until Connect
+	restart   chan struct{}
 	status    HostStatus
 	known     Known
 	reconnect chan struct{}
@@ -276,6 +296,8 @@ func NewManager(cfg Config, o Options) *Manager {
 			st = k.State
 		}
 		m.state[h.Label] = &hostState{
+			host:      h,
+			restart:   make(chan struct{}, 1),
 			known:     k,
 			reconnect: make(chan struct{}, 1),
 			answered:  newAnsweredIDs(),
@@ -297,6 +319,119 @@ func (m *Manager) Start() {
 			m.loop(h)
 		}()
 	}
+	if m.o.Reload != nil && m.o.Watch > 0 {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			t := time.NewTicker(m.o.Watch)
+			defer t.Stop()
+			for {
+				select {
+				case <-m.ctx.Done():
+					return
+				case <-t.C:
+					m.reload("")
+				}
+			}
+		}()
+	}
+}
+
+// reload applies remotes.toml as it is now to the hosts Den runs (see
+// Options.Reload): what lowers trust in a host at once, a raise only for
+// the host raise names. A host whose settings changed has its agents
+// re-marked under them at once, which drops content the new policy does
+// not allow, and its session restarts to ask the host for the new
+// policy. A file that does not read keeps the settings in use.
+func (m *Manager) reload(raise string) {
+	if m.o.Reload == nil {
+		return
+	}
+	cfg, err := m.o.Reload()
+	if err != nil {
+		return
+	}
+	now := map[string]Host{}
+	for _, h := range cfg.Enabled() {
+		now[h.Label] = h
+	}
+	var ups []Update
+	m.mu.Lock()
+	for _, h := range m.hosts {
+		st, want := m.state[h.Label], now[h.Label]
+		if want.Label == "" {
+			continue // removed or disabled: that takes a restart
+		}
+		old, asked := st.host, want
+		pending, held := "", false
+		if h.Label != raise {
+			// Another target or den_path could point the host at any
+			// machine: a raise too. The old link ends at once, and no
+			// new one is made until the human says so.
+			want.Policy, want.Labels = Min(old.Policy, asked.Policy), old.Labels && asked.Labels
+			want.Target, want.DenPath = old.Target, old.DenPath
+			var asks []string
+			if asked.Policy.rank() > want.Policy.rank() {
+				asks = append(asks, "asks for "+string(asked.Policy))
+			}
+			if asked.Labels && !want.Labels {
+				asks = append(asks, "turns labels on")
+			}
+			if asked.Target != old.Target {
+				asks, held = append(asks, "points "+h.Label+" at "+sanitize.Label(asked.Target, 80)), true
+			}
+			if asked.DenPath != old.DenPath {
+				asks, held = append(asks, "sets "+h.Label+"'s den_path to "+sanitize.Label(asked.DenPath, 80)), true
+			}
+			if len(asks) > 0 {
+				pending = "remotes.toml " + strings.Join(asks, " and ") + "; /remote connect " + h.Label + " to apply"
+			}
+		}
+		changed := want.Policy != old.Policy || want.Labels != old.Labels || want.Target != old.Target || want.DenPath != old.DenPath || held != st.held
+		if !changed && pending == st.status.Pending {
+			continue
+		}
+		st.status.Pending = pending
+		if changed {
+			st.held = held
+			st.host = want
+			st.status.Policy, st.status.Target = want.Policy, want.Target
+			select {
+			case st.restart <- struct{}{}:
+			default:
+			}
+			select {
+			case st.reconnect <- struct{}{}:
+			default:
+			}
+		}
+		ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(want)})
+	}
+	m.mu.Unlock()
+	for _, u := range ups {
+		m.send(u)
+	}
+}
+
+// isHeld says remotes.toml names another target or den_path for the host
+// than the one the human connected: nothing connects until Connect.
+func (m *Manager) isHeld(label string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].held
+}
+
+func (m *Manager) pending(label string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].status.Pending
+}
+
+// hostNow is h as remotes.toml says now.
+func (m *Manager) hostNow(label string) Host {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].host
 }
 
 // Close ends every session and waits for them. Updates is closed after;
@@ -346,6 +481,7 @@ func (m *Manager) Agents() []fleet.Agent {
 
 func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 	st := m.state[h.Label]
+	h = st.host // what remotes.toml allows now, whichever session asks
 	out := make([]fleet.Agent, 0, len(st.known.Agents))
 	for _, meta := range st.known.Agents {
 		meta, _ = recheck(meta, h, st.known.Policy)
@@ -357,14 +493,23 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 }
 
 // Reconnect retries a host now, also one that needs attention or has a
-// version mismatch (after the human fixed it).
-func (m *Manager) Reconnect(label string) {
+// version mismatch (after the human fixed it). It reads remotes.toml
+// again first: a live host whose settings now trust it less reconnects
+// under them. A raise waits for Connect.
+func (m *Manager) Reconnect(label string) { m.retry(label, "") }
+
+// Connect is the human's /remote connect: Reconnect, applying what
+// remotes.toml says for the host now, a raise too.
+func (m *Manager) Connect(label string) { m.retry(label, label) }
+
+func (m *Manager) retry(label, raise string) {
 	m.mu.Lock()
 	st, ok := m.state[label]
 	m.mu.Unlock()
 	if !ok {
 		return
 	}
+	m.reload(raise)
 	select {
 	case st.reconnect <- struct{}{}:
 	default:
@@ -484,6 +629,23 @@ func (m *Manager) loop(h Host) {
 	delay := m.o.Backoff
 	st := m.state[h.Label]
 	for {
+		// Each connection goes out under remotes.toml as it is now, but
+		// for a raise, which waits for Connect.
+		m.reload("")
+		select {
+		case <-st.restart: // the session this asked to end is over
+		default:
+		}
+		if m.isHeld(h.Label) {
+			m.setState(h, Offline, m.pending(h.Label))
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-st.reconnect: // Connect lifts it; Reconnect finds it held still
+			}
+			continue
+		}
+		h = m.hostNow(h.Label)
 		// A host taken offline for an unread backlog waits for the reader.
 		for m.waiting(h.Label) > m.o.MaxBacklog/2 {
 			select {
@@ -592,6 +754,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 		m.state[h.Label].gate = g
 	}
 	live, applied := false, Policy("")
+	restart := m.state[h.Label].restart
 	var lk *link
 	defer func() {
 		// The session is over: no action can start, and the ones waiting are
@@ -614,6 +777,8 @@ func (m *Manager) session(h Host) (State, string, bool) {
 		select {
 		case <-m.ctx.Done():
 			return end(Offline, "Den stopped")
+		case <-restart:
+			return end(Offline, "remotes.toml changed; reconnecting under it")
 		case <-heartbeat.C:
 			if live {
 				m.mu.Lock()

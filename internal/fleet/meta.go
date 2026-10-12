@@ -90,6 +90,7 @@ type MetaChange struct {
 	Path    string     `json:"path"`
 	Created bool       `json:"created,omitempty"`
 	Deleted bool       `json:"deleted,omitempty"`
+	Unsafe  bool       `json:"unsafe,omitempty"` // the real name has control characters: no hunks
 	Hunks   []MetaHunk `json:"hunks,omitempty"`
 }
 
@@ -218,8 +219,11 @@ func metaEntry(e transcript.Entry, now time.Time) MetaEntry {
 		m.Age = max(0, now.Sub(e.At).Milliseconds())
 	}
 	for _, c := range e.Changes[:min(len(e.Changes), FullChanges)] {
-		mc := MetaChange{Path: capBytes(sanitize.Line(c.Path), FullCWDMax), Created: c.Created, Deleted: c.Deleted}
+		mc := MetaChange{Path: capBytes(sanitize.Line(c.Path), FullCWDMax), Created: c.Created, Deleted: c.Deleted, Unsafe: c.Hidden()}
 		left := FullHunkLines
+		if mc.Unsafe {
+			left = 0 // the name only, as Review sends it
+		}
 		for _, h := range c.Hunks {
 			if left <= 0 {
 				break
@@ -303,8 +307,11 @@ func (a *Agent) fromFull(f *MetaFull, received time.Time) {
 			te.At = received.Add(-time.Duration(e.Age) * time.Millisecond)
 		}
 		for _, c := range e.Changes[:min(len(e.Changes), FullChanges)] {
-			fc := transcript.FileChange{Path: capBytes(sanitize.Line(c.Path), FullCWDMax), Created: c.Created, Deleted: c.Deleted}
+			fc := transcript.FileChange{Path: capBytes(sanitize.Line(c.Path), FullCWDMax), Created: c.Created, Deleted: c.Deleted, Unsafe: c.Unsafe}
 			left := FullHunkLines
+			if fc.Unsafe {
+				left = 0 // whatever a host sends for it
+			}
 			for _, h := range c.Hunks {
 				if left <= 0 {
 					break
