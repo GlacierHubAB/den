@@ -796,7 +796,7 @@ project picked on Overview.
   binary. A file shows under an agent only if it owns a line in it (next item),
   so files the agent never touched stay out of its Review. A file whose name
   has control characters is listed by its cleaned name, which may not be its
-  real one, and its content is not shown.
+  real one, and its content is not shown, here or in the agent's Tail.
 - **Per agent, per line.** Each agent gets the files in which it owns at least
   one changed line, with its own added and removed counts. A line belongs to
   the newest agent edit that added (or removed) exactly that text. Lines no

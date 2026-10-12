@@ -324,7 +324,8 @@ locally. While it waits, the row says "reading its diff on devbox…", and a
 failure shows its reason. If none of the changes in the checkout are the
 agent's, Review says so and shows nothing. A diff over 200 KB, 300 files or
 2000 lines in a file is cut and says what was left out. A file whose name has
-control characters is listed by its cleaned name, without its content.
+control characters is listed by its cleaned name, without its content; its
+content never leaves the host, in the agent's Tail either.
 
 When the host goes offline its diffs disappear ("devbox is offline"); they are
 read again when it is back. Below `full` the agent is greyed with "diff on

@@ -87,7 +87,14 @@ type FileChange struct {
 	// printing changed it: what a change is matched against files by,
 	// never shown.
 	Raw string `json:"-"`
+	// Unsafe marks a change a host sent for such a file: by its cleaned
+	// name only, with no content.
+	Unsafe bool `json:"-"`
 }
+
+// Hidden says the file's name has control characters, so its content is
+// not shown (or sent to Den) as Review does not show it either.
+func (c FileChange) Hidden() bool { return c.Raw != "" || c.Unsafe }
 
 // Real is the path the change was made to, to match it against files.
 func (c FileChange) Real() string {

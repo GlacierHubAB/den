@@ -11,6 +11,14 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/discover"
+	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // unsafeName is a file name with an escape sequence and a bidi override.
@@ -90,5 +98,24 @@ func TestReviewListsAFileWithAnUnsafeNameWithoutItsContent(t *testing.T) {
 	}
 	if strings.Contains(plain, "click") {
 		t.Errorf("the content of the file with the unsafe name is shown:\n%s", ansi.Strip(out))
+	}
+}
+
+// Tail shows a file whose name has control characters by its cleaned name,
+// without its content, whether the agent is here or on a host.
+func TestTailShowsAFileWithAnUnsafeNameWithoutItsContent(t *testing.T) {
+	m := Model{st: newStyles(theme.Deepharness), width: 120, height: 40, cfg: config.Defaults()}
+	raw := "/home/user/proj/evil\x1b[31mname\u202e.txt"
+	content := []transcript.Hunk{{NewStart: 1, Lines: []string{"+SECRET-tail-content"}}}
+	for _, c := range []transcript.FileChange{
+		{Path: sanitize.Code(raw), Raw: raw, Created: true, Hunks: content}, // this machine's
+		{Path: "/home/user/proj/evilname.txt", Unsafe: true, Created: true}, // a host's
+	} {
+		tail := []transcript.Entry{{At: time.Now(), Kind: "tool", Tool: "Write", Code: c.Path, Changes: []transcript.FileChange{c}}}
+		a := fleet.Agent{Session: discover.Session{CWD: "/home/user/proj"}, Tail: tail}
+		out := ansi.Strip(strings.Join(m.activityLines(tail, a, 100, true), "\n"))
+		if strings.Contains(out, "SECRET") || !strings.Contains(out, "evilname.txt: "+review.UnsafeNote) {
+			t.Errorf("tail:\n%s", out)
+		}
 	}
 }

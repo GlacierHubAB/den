@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/remote"
+	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -1271,13 +1272,15 @@ func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, 
 				added, removed := c.Counts()
 				what := fmt.Sprintf("Updated %s (+%d -%d)", shortPath(c.Path, a.Session.CWD), added, removed)
 				switch {
+				case c.Hidden():
+					what = shortPath(c.Path, a.Session.CWD) + ": " + review.UnsafeNote
 				case c.Deleted:
 					what = "Deleted " + shortPath(c.Path, a.Session.CWD)
 				case c.Created:
 					what = fmt.Sprintf("Wrote %s (%d lines)", shortPath(c.Path, a.Session.CWD), added)
 				}
 				out = append(out, "  "+s.muted.Render("⎿ ")+s.dim.Render(what))
-				if c.Deleted {
+				if c.Deleted || c.Hidden() {
 					continue
 				}
 				for _, l := range m.diffLines(c.Hunks, textW-4) {
