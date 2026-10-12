@@ -145,7 +145,7 @@ func (m *Manager) linkFor(host, verb string) (*link, error) {
 		switch s {
 		case Connecting:
 			return nil, fmt.Errorf("%s is connecting; %s", host, nothing)
-		case NeedsAttention, VersionMismatch:
+		case NeedsAttention, VersionMismatch, Disabled:
 			return nil, fmt.Errorf("%s is %s; %s", host, strings.ReplaceAll(string(s), "_", " "), nothing)
 		}
 		return nil, fmt.Errorf("%s is offline; %s", host, nothing)

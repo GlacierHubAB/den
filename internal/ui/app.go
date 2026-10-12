@@ -462,7 +462,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now())}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}

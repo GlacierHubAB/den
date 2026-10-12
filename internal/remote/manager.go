@@ -50,6 +50,7 @@ type HostStatus struct {
 	LastSeen time.Time // local time of the last message from the host
 	Agents   int       // in the last snapshot
 	Flags    []string  // what the host sent that Den dropped: unknown types or fields, flooding
+	Dropped  int       // events Den dropped from the host since it started (gate)
 	Hint     string    // what the human can do, for needs attention and version mismatch
 }
 
@@ -90,24 +91,28 @@ type Dialer func(ctx context.Context, h Host) (*Conn, error)
 
 // Options tune a Manager; the zero value is what Den uses.
 type Options struct {
-	Version    string     // this den's version, sent in the request
-	Prices     cost.Table // prices remote tokens; default the built-in table, Den passes cost.NewTable(config.Prices())
-	StateDir   string     // default StateDir()
-	EventsPath string     // where remote events are appended; default events.Path()
-	NoEventLog bool       // do not append remote events (config events.log = false)
-	Dial       Dialer     // default ssh through DefaultSSH
-	Backoff    time.Duration
-	MaxBackoff time.Duration
-	Healthy    time.Duration // a session live this long resets the backoff
-	MaxBacklog int           // events waiting for the reader before a host counts as flooding; default 10000
-	MaxRate    int           // messages a second a host may send before it counts as flooding; default MaxRate
-	Controller string        // this machine's controller id; default LoadController(StateDir)
-	PingEvery  time.Duration // how often a live session pings serve; default PingEvery
-	Retake     time.Duration // a host attached elsewhere is asked again this often; default 1 min
-	SendWait   time.Duration // how long Send waits for the host's result; default 10 s
-	CloseWait  time.Duration // how long Close waits for it; default 15 s
-	DiffWait   time.Duration // how long Diff waits for it; default 30 s
-	Now        func() time.Time
+	Version     string     // this den's version, sent in the request
+	Prices      cost.Table // prices remote tokens; default the built-in table, Den passes cost.NewTable(config.Prices())
+	StateDir    string     // default StateDir()
+	EventsPath  string     // where remote events are appended; default events.Path()
+	NoEventLog  bool       // do not append remote events (config events.log = false)
+	Dial        Dialer     // default ssh through DefaultSSH
+	Backoff     time.Duration
+	MaxBackoff  time.Duration
+	Healthy     time.Duration // a session live this long resets the backoff
+	MaxBacklog  int           // events waiting for the reader before a host counts as flooding; default 10000
+	MaxRate     int           // messages a second a host may send before it counts as flooding; default MaxRate
+	EventRate   int           // events a second Den logs and shows from one host after EventBurst; default EventRate
+	EventBurst  int           // events Den takes from one host at once; default EventBurst
+	FloodDrops  int           // events dropped within FloodWindow that disable a host until Reconnect; default FloodDrops
+	FloodWindow time.Duration // default FloodWindow
+	Controller  string        // this machine's controller id; default LoadController(StateDir)
+	PingEvery   time.Duration // how often a live session pings serve; default PingEvery
+	Retake      time.Duration // a host attached elsewhere is asked again this often; default 1 min
+	SendWait    time.Duration // how long Send waits for the host's result; default 10 s
+	CloseWait   time.Duration // how long Close waits for it; default 15 s
+	DiffWait    time.Duration // how long Diff waits for it; default 30 s
+	Now         func() time.Time
 }
 
 func (o *Options) defaults() {
@@ -134,6 +139,18 @@ func (o *Options) defaults() {
 	}
 	if o.MaxRate == 0 {
 		o.MaxRate = MaxRate
+	}
+	if o.EventRate == 0 {
+		o.EventRate = EventRate
+	}
+	if o.EventBurst == 0 {
+		o.EventBurst = EventBurst
+	}
+	if o.FloodDrops == 0 {
+		o.FloodDrops = FloodDrops
+	}
+	if o.FloodWindow == 0 {
+		o.FloodWindow = FloodWindow
 	}
 	if o.MaxBacklog == 0 {
 		o.MaxBacklog = 10000
@@ -238,6 +255,7 @@ type hostState struct {
 	known     Known
 	reconnect chan struct{}
 	link      *link // the live session's way to carry actions, nil without one
+	gate      *gate // which of its events Den takes; used by its session only
 }
 
 // NewManager prepares sessions for cfg's enabled hosts, starting from what
@@ -253,7 +271,7 @@ func NewManager(cfg Config, o Options) *Manager {
 		k, _ := LoadKnown(o.StateDir, h.Label)
 		k.Label = h.Label
 		st := Offline
-		if k.State != "" && k.State != Live && k.State != Connecting && k.State != AttachedElsewhere {
+		if k.State != "" && k.State != Live && k.State != Connecting && k.State != AttachedElsewhere && k.State != Disabled {
 			st = k.State
 		}
 		m.state[h.Label] = &hostState{
@@ -433,6 +451,8 @@ func (m *Manager) setState(h Host, s State, reason string) {
 			st.status.Hint = AttentionHint(h.Target)
 		case VersionMismatch:
 			st.status.Hint = fmt.Sprintf("install a den that speaks proto %d on the host: den remote install %s", Proto, h.Label)
+		case Disabled:
+			st.status.Hint = "find out why it floods, then /remote connect " + h.Label
 		}
 	}
 	st.known.State, st.known.Reason, st.known.Since = s, reason, st.status.Since
@@ -564,6 +584,11 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	defer ping.Stop()
 	var retake <-chan time.Time
 	rc := rateCap{max: m.o.MaxRate}
+	g := m.state[h.Label].gate
+	if g == nil {
+		g = newGate(m.o, m.o.Now())
+		m.state[h.Label].gate = g
+	}
 	live, applied := false, Policy("")
 	var lk *link
 	defer func() {
@@ -665,6 +690,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			}
 			m.mu.Unlock()
 			live = true
+			g.begin(in.at)
 			if a := hm.Attached; a != nil {
 				// Another Den controls this host's held requests; ask again
 				// now and then, so this one takes over once it leaves.
@@ -689,6 +715,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				agents = append(agents, cleanMeta(a))
 			}
 			st.known.Agents, st.known.Received, st.known.Heartbeat = agents, in.at, in.at
+			g.snapshot()
 			st.status.Agents, st.status.LastSeen = len(agents), in.at
 			if !sm.RemoteNow.IsZero() {
 				st.status.Offset = sm.RemoteNow.Sub(in.at)
@@ -719,13 +746,31 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue // already have it
 			}
 			ev.Time = ev.Time.Add(-st.status.Offset).UTC().Truncate(time.Millisecond)
+			st.known.Cursor = em.Cursor
+			st.status.LastSeen = in.at
+			v, why := g.check(ev, st.known.Agents, in.at)
+			if v == drop {
+				// Past it, but not worth a write each: the cursor is saved
+				// with the next event Den keeps, a heartbeat or the end.
+				st.status.Dropped++
+				m.mu.Unlock()
+				m.flag(h, why)
+				if g.dropped(in.at) {
+					why := fmt.Sprintf("flooding: %d events dropped in %s; disabled until /remote connect %s", m.o.FloodDrops, strings.TrimSuffix(m.o.FloodWindow.String(), "0s"), h.Label)
+					m.flag(h, "flooding: disabled")
+					g.forgive() // for when the human connects it again
+					return end(Disabled, why)
+				}
+				continue
+			}
 			if !m.o.NoEventLog {
 				events.Append(m.o.EventsPath, ev)
 			}
-			st.known.Cursor = em.Cursor
-			st.status.LastSeen = in.at
 			saveKnown(m.o.StateDir, st.known)
 			m.mu.Unlock()
+			if v == logOnly {
+				continue
+			}
 			m.send(Update{Kind: EventArrived, Host: h.Label, Event: ev})
 			if m.waiting(h.Label) > m.o.MaxBacklog {
 				// Stop reading rather than drop: the rest waits on the host,

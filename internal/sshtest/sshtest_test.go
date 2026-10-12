@@ -386,3 +386,23 @@ func TestNotInProductionBinary(t *testing.T) {
 		t.Fatal("cmd/den depends on internal/sshtest")
 	}
 }
+
+// A lab that never got its directory has an empty pids path; its cleanup
+// must not match, and delete, the files of the directory the test runs in.
+func TestKillPidFilesWithoutALabDeletesNothing(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	for _, name := range []string{"ssh.go", "keep.txt"} {
+		if err := os.WriteFile(name, []byte("1 2\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, glob := range []string{"*", filepath.Join("", "*"), "sshd-b.*"} {
+		killPidFiles(glob, true)
+	}
+	for _, name := range []string{"ssh.go", "keep.txt"} {
+		if _, err := os.Stat(name); err != nil {
+			t.Errorf("%s was deleted: %v", name, err)
+		}
+	}
+}

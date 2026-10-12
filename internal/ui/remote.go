@@ -233,6 +233,11 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 					delete(m.att.lastHook, k)
 				}
 			}
+			for k := range m.att.noted {
+				if _, host := splitKey(k); host == u.Host {
+					delete(m.att.noted, k)
+				}
+			}
 		}
 	case remote.EventArrived:
 		cmd = m.remoteEvent(u.Event)
@@ -271,7 +276,7 @@ func (m *Model) remoteEvent(ev events.Event) tea.Cmd {
 		}
 	}
 	cmds := []tea.Cmd{m.attendItem(key, it)}
-	if ev.Kind != events.NeedsYou || it != nil {
+	if (ev.Kind != events.NeedsYou || it != nil) && m.att.hosts.allowOn(ev.Host, time.Now()) {
 		cmds = append(cmds, m.runOn(ev))
 	}
 	return tea.Batch(cmds...)
@@ -465,7 +470,7 @@ func (m Model) remoteLines(w int) []string {
 		switch h.State {
 		case remote.Live:
 			st = s.ok
-		case remote.NeedsAttention, remote.VersionMismatch:
+		case remote.NeedsAttention, remote.VersionMismatch, remote.Disabled:
 			st = s.attn
 		case remote.Offline:
 			st = s.muted
@@ -502,6 +507,7 @@ func (m Model) remoteLines(w int) []string {
 			kv("reason", h.Reason)
 		}
 		kv("hint", h.Hint)
+		kv("dropped", m.droppedText(h))
 		for _, f := range h.Flags {
 			out = append(out, "    "+s.attn.Render("dropped: ")+s.dim.Render(f))
 		}
@@ -588,7 +594,7 @@ func (m Model) hostRows(label string, w int) []string {
 	}
 	st := s.muted
 	switch h.State {
-	case remote.NeedsAttention, remote.VersionMismatch:
+	case remote.NeedsAttention, remote.VersionMismatch, remote.Disabled:
 		st = s.attn
 	case remote.Connecting:
 		st = s.dim
@@ -679,6 +685,8 @@ func hostNow(label string, s remote.State) string {
 		return label + " has a den that does not match this one"
 	case remote.AttachedElsewhere:
 		return remote.ElsewhereNote(label)
+	case remote.Disabled:
+		return label + " is disabled for flooding"
 	}
 	return label + ": " + strings.ReplaceAll(string(s), "_", " ")
 }

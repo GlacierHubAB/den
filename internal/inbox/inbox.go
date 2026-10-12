@@ -105,6 +105,7 @@ type Item struct {
 	Answers   map[string]string
 	Step      int
 	req       *bridge.Request
+	fromHost  bool // made by a remote host's event stream: counts towards its caps
 }
 
 // Answerable reports whether y/n/a act on this item.
@@ -146,6 +147,7 @@ type Store struct {
 	seq     int
 	asks    bool      // hold AskUserQuestion permission requests to be answered here
 	reoffer time.Time // when the item a request offered again replaces arrived
+	remote  remoteCaps
 }
 
 // New returns an empty store.
