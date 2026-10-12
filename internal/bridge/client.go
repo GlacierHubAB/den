@@ -3,14 +3,13 @@ package bridge
 import (
 	"bufio"
 	"encoding/json"
-	"net"
 	"time"
 )
 
 // Send posts an envelope and does not wait beyond the acknowledgement.
-// It returns false when Den is not running.
+// It returns false when no Den of this user is running.
 func Send(path string, env Envelope) bool {
-	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	conn, err := Dial(path, 500*time.Millisecond)
 	if err != nil {
 		return false
 	}
@@ -26,9 +25,10 @@ func Send(path string, env Envelope) bool {
 }
 
 // Ask posts a PermissionRequest and waits up to wait for Den's decision.
-// ok is false when Den is not running or did not answer in time.
+// ok is false when no Den of this user is running or it did not answer in
+// time.
 func Ask(path string, env Envelope, wait time.Duration) (d Decision, ok bool) {
-	conn, err := net.DialTimeout("unix", path, 500*time.Millisecond)
+	conn, err := Dial(path, 500*time.Millisecond)
 	if err != nil {
 		return Decision{}, false
 	}

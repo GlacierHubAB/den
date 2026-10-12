@@ -928,7 +928,10 @@ Mission templates are in `templates.json` beside it (see Templates).
 `DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`,
 `DEN_HOOK_LOG=off`, `DEN_RESTORE=off` and `DEN_NOTIFY=off` win over the file.
 `DEN_SOCKET` moves the socket the hooks talk to (default
-`$XDG_RUNTIME_DIR/den.sock`).
+`$XDG_RUNTIME_DIR/den.sock`; without `XDG_RUNTIME_DIR`, `den.sock` in
+`$TMPDIR/den-<uid>/`, a directory Den makes with mode 0700 and refuses to use
+if it is a symlink, another user's, or open to others). Den and the hooks only
+talk to processes of the same user on that socket.
 
 ## Files Den writes
 
