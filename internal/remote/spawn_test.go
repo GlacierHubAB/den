@@ -280,7 +280,7 @@ func TestSpawnGuardsOnServe(t *testing.T) {
 		if r.OK || !strings.Contains(r.Error, want) {
 			t.Errorf("%s: %+v, want an error with %q", name, r, want)
 		}
-		sv.stop()
+		sv.end()
 	}
 	ok := func() SpawnCmd { return spawnCmd("g", "api", dir, "do it") }
 	refuse("observe", Observe, spawnPolicy(), nil, ok(), "observe")
@@ -419,7 +419,7 @@ func TestSpawnBriefIsRemovedAfterTheFirstTurnAndReported(t *testing.T) {
 	if !sshtest.WaitFor(10*time.Second, func() bool { sv.drain(); _, err := os.Stat(brief); return err != nil }) {
 		t.Fatal("the brief stayed after the first turn")
 	}
-	sv.stop()
+	sv.end()
 	// A later serve of the same Den reports the spawn: started, brief read.
 	_, hello := h.serve(t, Approve, spawnPolicy(), nil)
 	var got *SpawnState
@@ -716,5 +716,17 @@ func TestSpawnRefusesAnOldClaudeWithItsVersion(t *testing.T) {
 	c.Check = true
 	if r := sv.spawn(c); r.OK || !strings.Contains(r.Error, "2.1.200") || !strings.Contains(r.Error, MinClaudeSpawn) {
 		t.Errorf("result = %+v", r)
+	}
+}
+
+// end stops serve and waits until it has exited, so the next serve of the
+// test gets the host's socket.
+func (sv *served) end() {
+	sv.stop()
+	sv.in.Close()
+	select {
+	case <-sv.errc:
+	case <-time.After(10 * time.Second):
+		sv.t.Fatal("serve did not exit")
 	}
 }

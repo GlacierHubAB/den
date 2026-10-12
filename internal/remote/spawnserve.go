@@ -784,6 +784,7 @@ func (hs *hostSpawn) sweep() {
 				continue
 			}
 			if !e.Delivered && !e.Ended && !e.Expired {
+				before := e
 				s, found := byID[e.SessionID]
 				switch {
 				case age > briefTTL:
@@ -800,7 +801,7 @@ func (hs *hostSpawn) sweep() {
 				if e.Delivered || e.Ended || e.Expired {
 					gone = append(gone, e.SessionID)
 				}
-				changed = true
+				changed = changed || e != before
 			}
 			out = append(out, e)
 		}
@@ -918,19 +919,20 @@ func (a *actions) spawnCmd(ctx context.Context, typ string, line []byte) error {
 			reply(hs.cleanup(ctx, cc))
 			return
 		}
-		if !sc.Check {
-			defer hs.busy.Unlock()
-		}
+		var r Result
 		p, code, why := hs.resolve(ctx, sc)
-		if why != "" {
-			reply(Result{Error: why, Code: code, Dir: p.dir})
-			return
+		switch {
+		case why != "":
+			r = Result{Error: why, Code: code, Dir: p.dir}
+		case sc.Check:
+			r = Result{OK: true, Route: p.route, TmuxName: sc.TmuxName, Dir: p.dir, Untrusted: p.untr, Warning: p.warn}
+		default:
+			r = hs.start(ctx, p)
 		}
-		if sc.Check {
-			reply(Result{OK: true, Route: p.route, TmuxName: sc.TmuxName, Dir: p.dir, Untrusted: p.untr, Warning: p.warn})
-			return
+		if !sc.Check {
+			hs.busy.Unlock() // before the result: Den may send the next spawn at once
 		}
-		reply(hs.start(ctx, p))
+		reply(r)
 	}()
 	return nil
 }
