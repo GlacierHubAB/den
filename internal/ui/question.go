@@ -12,6 +12,9 @@ import (
 // human typed (hooks.answer_questions). A call with several questions takes
 // them one at a time; the agent hears back once all are answered.
 func (m Model) answerQuestion(it *inbox.Item, text string) (tea.Model, tea.Cmd) {
+	if why := m.readGate(it); why != "" {
+		return m.say(why, true) // the typed text stays on the line
+	}
 	done, ok := m.store.AnswerQuestion(it, text)
 	if !ok {
 		return m.say(questionHint(it), true)

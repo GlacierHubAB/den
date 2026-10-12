@@ -672,193 +672,17 @@ func (m Model) inboxPane(w, h int) string {
 	// item ^Y and ^N act on: found by its id, never by a row number.
 	bound, cur := m.inboxSelected(), -1
 	var blocks [][]string
-	const avatarW = 8
 	for i, it := range items {
 		selected := active && it == bound
 		if selected {
 			cur = i
 		}
-		fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
-		stripe := muted.Render("▏")
-		kindStyle := muted
-		switch {
-		case it.Answerable():
-			stripe, kindStyle = attn.Render("▌"), attn
-		case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
-			stripe, kindStyle = attn.Render("▏"), attn
-		case it.Kind == inbox.Done:
-			stripe, kindStyle = ok.Render("▏"), ok
-			if !it.Seen {
-				stripe = ok.Render("▌")
-			}
-		case it.Kind == inbox.Failed && it.State != inbox.Resolved:
-			stripe, kindStyle = err.Render("▌"), err
-		case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
-			stripe, kindStyle = attn.Render("▏"), attn
-		case it.Kind == inbox.Sent:
-			switch {
-			case strings.HasPrefix(it.Resolved, "failed"):
-				stripe, kindStyle = err.Render("▏"), err
-			case it.State == inbox.Resolved:
-				stripe, kindStyle = ok.Render("▏"), dim
-			default:
-				stripe, kindStyle = attn.Render("▏"), attn
-			}
-		}
-		if it.Unread {
-			stripe = bright.Render("▌")
-		}
-		sp := fg.Render(" ")
-		color := m.colorFor(itemKey(it))
-		name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(itemKey(it)))
-		if host := hostOf(itemKey(it)); host != "" {
-			name += muted.Render(" @" + host)
-		}
-		role := ""
-		if it.Role != "" {
-			role = sp + s.chip(color).Render(strings.ToUpper(it.Role))
-		}
-		head := name + role + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
-
-		textW := w - 4 - avatarW - 1
-		var text []string
-		text = append(text, head)
-		if via := m.viaLine(itemKey(it)); via != "" {
-			text = append(text, ansi.Truncate(via, textW, "…"))
-		}
-		if twin := m.twinNote(itemKey(it)); twin != "" {
-			text = append(text, attn.Render(ansi.Truncate(twin, textW, "…")))
-		}
-		body := fg
-		if it.State == inbox.Resolved || it.Kind >= inbox.Done {
-			body = dim
-		}
-		// Headline: for a finished turn, what the agent was working on; for
-		// everything else, what is being asked. Then the one-line gist.
-		switch {
-		case it.Kind == inbox.Done && it.Task != "":
-			text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
-			text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
-		default:
-			title := it.Title
-			if it.Kind == inbox.Idle {
-				title = m.idleTitle(itemKey(it), title)
-			}
-			lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
-			if len(lines) > 2 {
-				lines = lines[:2]
-				lines[1] = ansi.Truncate(lines[1], textW-2, "…")
-			}
-			for _, l := range lines {
-				text = append(text, body.Render(l))
-			}
-		}
-		// An open request shows the whole thing being decided, wrapped;
-		// history keeps one line of it.
-		open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks())
-		if open && it.Intent != "" {
-			for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
-				text = append(text, fg.Render(l))
-			}
-		}
-		bodyLines := it.Body
-		if !open && len(bodyLines) > 1 {
-			bodyLines = bodyLines[:1]
-		}
-		for _, l := range bodyLines {
-			if open {
-				text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(itemKey(it))).st.code)...)
-				continue
-			}
-			text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
-		}
-		for j, o := range it.Options {
-			text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
-		}
-		key := func(k, label string) string {
-			if label == "" {
-				return bright.Render(k)
-			}
-			return bright.Render(k) + dim.Render(" "+label)
-		}
-		switch {
-		case it.Kind == inbox.Sent:
-			text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
-		case it.Answerable() && !selected:
-			why := "waiting"
-			if it.At.After(m.inboxAt) {
-				why = "new request"
-			}
-			text = append(text, attn.Render(why)+dim.Render(" · select it to answer (↑ ↓)"))
-		case it.Answerable():
-			acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
-			if it.Kind == inbox.Plan {
-				acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
-			}
-			if it.Kind == inbox.Close {
-				acts = key("^Y", "close them") + sp + sp + key("^N", "keep them")
-			}
-			if it.Kind == inbox.Skills {
-				acts = key("^Y", "install them") + sp + sp + key("^N", "decline")
-			}
-			if it.Kind == inbox.Budget {
-				acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
-			}
-			if it.Kind == inbox.Restore {
-				acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
-			}
-			if it.Kind == inbox.Merge {
-				acts = key("^Y", "merge it") + sp + sp + key("^N", "not now")
-			}
-			if it.Kind == inbox.Cleanup {
-				acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
-			}
-			if it.Kind == inbox.Install {
-				acts = key("^Y", "install it") + sp + sp + key("^N", "decline")
-			}
-			if it.Kind == inbox.Message {
-				acts = key("^Y", "send it") + sp + sp + key("^N", "do not send")
-			}
-			if it.AsksInDen() {
-				acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
-			}
-			text = append(text, acts)
-		case it.State == inbox.InTerminal:
-			why := "answer in the terminal"
-			if host := hostOf(itemKey(it)); host != "" {
-				why = "answer it in the terminal on " + host
-				if h, ok := m.hostStatus(host); ok && h.State == remote.AttachedElsewhere {
-					// That Den may hold it for an answer: not only the terminal's.
-					why = "another Den controls " + host + ": answer it there or in the terminal"
-				}
-			}
-			if it.Resolved != "" {
-				why = it.Resolved + " · " + why
-			}
-			text = append(text, dim.Render(why)+sp+sp+key("/open", ""))
-		case it.Kind == inbox.Done:
-			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
-		case it.State == inbox.Resolved:
-			text = append(text, muted.Render(it.Resolved))
-		default:
-			text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
-		}
-		// Avatar on the left, 8 columns by 4 rows; the text runs beside it.
-		avatar := m.smallCritter(itemKey(it), selected)
-		n := max(len(text), len(avatar))
-		rows := make([]string, 0, n+1)
-		for r := 0; r < n; r++ {
-			left := fg.Render(strings.Repeat(" ", avatarW))
-			if r < len(avatar) {
-				left = avatar[r]
-			}
-			right := ""
-			if r < len(text) {
-				right = text[r]
-			}
-			rows = append(rows, fill(stripe+sp+left+sp+right, w, fg))
-		}
-		blocks = append(blocks, append(rows, ""))
+		blocks = append(blocks, append(m.inboxBlock(it, selected, w), ""))
+	}
+	// A selected item taller than the pane is all the pane shows, scrolled
+	// under a marker; ^Y waits until it was read to its end (inbox_body.go).
+	if h > 0 && active && cur >= 0 && len(blocks[cur])-1 > h {
+		return strings.Join(m.bodyWindow(blocks[cur][:len(blocks[cur])-1], h, w), "\n")
 	}
 	// Keep the selected item in view: drop whole blocks from the top until
 	// the selection fits in h rows.
@@ -880,6 +704,197 @@ func (m Model) inboxPane(w, h int) string {
 		lines = append(lines, bl...)
 	}
 	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
+// inboxAvatarW is the width of the critter beside an inbox item.
+const inboxAvatarW = 8
+
+// inboxBlock is one inbox item as the Inbox pane draws it, w wide, without
+// the blank row that follows it.
+func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
+	s := m.st
+	const avatarW = inboxAvatarW
+	fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
+	stripe := muted.Render("▏")
+	kindStyle := muted
+	switch {
+	case it.Answerable():
+		stripe, kindStyle = attn.Render("▌"), attn
+	case it.State == inbox.InTerminal && it.Kind <= inbox.Question:
+		stripe, kindStyle = attn.Render("▏"), attn
+	case it.Kind == inbox.Done:
+		stripe, kindStyle = ok.Render("▏"), ok
+		if !it.Seen {
+			stripe = ok.Render("▌")
+		}
+	case it.Kind == inbox.Failed && it.State != inbox.Resolved:
+		stripe, kindStyle = err.Render("▌"), err
+	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
+		stripe, kindStyle = attn.Render("▏"), attn
+	case it.Kind == inbox.Sent:
+		switch {
+		case strings.HasPrefix(it.Resolved, "failed"):
+			stripe, kindStyle = err.Render("▏"), err
+		case it.State == inbox.Resolved:
+			stripe, kindStyle = ok.Render("▏"), dim
+		default:
+			stripe, kindStyle = attn.Render("▏"), attn
+		}
+	}
+	if it.Unread {
+		stripe = bright.Render("▌")
+	}
+	sp := fg.Render(" ")
+	color := m.colorFor(itemKey(it))
+	name := fg.Foreground(lipgloss.Color(color)).Bold(true).Render(m.nameFor(itemKey(it)))
+	if host := hostOf(itemKey(it)); host != "" {
+		name += muted.Render(" @" + host)
+	}
+	role := ""
+	if it.Role != "" {
+		role = sp + s.chip(color).Render(strings.ToUpper(it.Role))
+	}
+	head := name + role + sp + sp + kindStyle.Render(strings.ToUpper(it.Kind.String())) + sp + sp + muted.Render(humanAge(time.Since(it.At)))
+
+	textW := w - 4 - avatarW - 1
+	var text []string
+	text = append(text, head)
+	if via := m.viaLine(itemKey(it)); via != "" {
+		text = append(text, ansi.Truncate(via, textW, "…"))
+	}
+	if twin := m.twinNote(itemKey(it)); twin != "" {
+		text = append(text, attn.Render(ansi.Truncate(twin, textW, "…")))
+	}
+	body := fg
+	if it.State == inbox.Resolved || it.Kind >= inbox.Done {
+		body = dim
+	}
+	// Headline: for a finished turn, what the agent was working on; for
+	// everything else, what is being asked. Then the one-line gist.
+	switch {
+	case it.Kind == inbox.Done && it.Task != "":
+		text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
+		text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
+	default:
+		title := it.Title
+		if it.Kind == inbox.Idle {
+			title = m.idleTitle(itemKey(it), title)
+		}
+		lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
+		if len(lines) > 2 {
+			lines = lines[:2]
+			lines[1] = ansi.Truncate(lines[1], textW-2, "…")
+		}
+		for _, l := range lines {
+			text = append(text, body.Render(l))
+		}
+	}
+	// An open request shows the whole thing being decided, wrapped;
+	// history keeps one line of it.
+	open := it.State != inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks())
+	if open && it.Intent != "" {
+		for _, l := range strings.Split(ansi.Wrap(it.Intent, textW, ""), "\n") {
+			text = append(text, fg.Render(l))
+		}
+	}
+	bodyLines := it.Body
+	if !open && len(bodyLines) > 1 {
+		bodyLines = bodyLines[:1]
+	}
+	for _, l := range bodyLines {
+		if open {
+			text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(itemKey(it))).st.code)...)
+			continue
+		}
+		text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
+	}
+	for j, o := range it.Options {
+		text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
+	}
+	key := func(k, label string) string {
+		if label == "" {
+			return bright.Render(k)
+		}
+		return bright.Render(k) + dim.Render(" "+label)
+	}
+	switch {
+	case it.Kind == inbox.Sent:
+		text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
+	case it.Answerable() && !selected:
+		why := "waiting"
+		if it.At.After(m.inboxAt) {
+			why = "new request"
+		}
+		text = append(text, attn.Render(why)+dim.Render(" · select it to answer (↑ ↓)"))
+	case it.Answerable():
+		acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
+		if it.Kind == inbox.Plan {
+			acts = key("^Y", "approve") + sp + sp + key("^N", "ask for changes") + sp + sp + key("/open", "read it in the terminal")
+		}
+		if it.Kind == inbox.Close {
+			acts = key("^Y", "close them") + sp + sp + key("^N", "keep them")
+		}
+		if it.Kind == inbox.Skills {
+			acts = key("^Y", "install them") + sp + sp + key("^N", "decline")
+		}
+		if it.Kind == inbox.Budget {
+			acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
+		}
+		if it.Kind == inbox.Restore {
+			acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
+		}
+		if it.Kind == inbox.Merge {
+			acts = key("^Y", "merge it") + sp + sp + key("^N", "not now")
+		}
+		if it.Kind == inbox.Cleanup {
+			acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
+		}
+		if it.Kind == inbox.Install {
+			acts = key("^Y", "install it") + sp + sp + key("^N", "decline")
+		}
+		if it.Kind == inbox.Message {
+			acts = key("^Y", "send it") + sp + sp + key("^N", "do not send")
+		}
+		if it.AsksInDen() {
+			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
+		}
+		text = append(text, acts)
+	case it.State == inbox.InTerminal:
+		why := "answer in the terminal"
+		if host := hostOf(itemKey(it)); host != "" {
+			why = "answer it in the terminal on " + host
+			if h, ok := m.hostStatus(host); ok && h.State == remote.AttachedElsewhere {
+				// That Den may hold it for an answer: not only the terminal's.
+				why = "another Den controls " + host + ": answer it there or in the terminal"
+			}
+		}
+		if it.Resolved != "" {
+			why = it.Resolved + " · " + why
+		}
+		text = append(text, dim.Render(why)+sp+sp+key("/open", ""))
+	case it.Kind == inbox.Done:
+		text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
+	case it.State == inbox.Resolved:
+		text = append(text, muted.Render(it.Resolved))
+	default:
+		text = append(text, key("/open", "")+sp+sp+key("/dismiss", ""))
+	}
+	// Avatar on the left, 8 columns by 4 rows; the text runs beside it.
+	avatar := m.smallCritter(itemKey(it), selected)
+	n := max(len(text), len(avatar))
+	rows := make([]string, 0, n+1)
+	for r := 0; r < n; r++ {
+		left := fg.Render(strings.Repeat(" ", avatarW))
+		if r < len(avatar) {
+			left = avatar[r]
+		}
+		right := ""
+		if r < len(text) {
+			right = text[r]
+		}
+		rows = append(rows, fill(stripe+sp+left+sp+right, w, fg))
+	}
+	return rows
 }
 
 func (m Model) detailPane(w, h int) string {

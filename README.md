@@ -226,7 +226,11 @@ terminal, `/dismiss` clears an item, and `/unread` keeps the selected item
 counted as new until you open or dismiss it (`/unread` again marks it read).
 Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest
 `inbox.history`, 100 by default, come back on restart). The request shows the
-whole command or edit the permission is about.
+whole command or edit the permission is about. A request taller than the pane
+scrolls inside it (`↑` `↓`, `PgUp` `PgDn`) under a marker that says how many
+lines are left, and `Ctrl+Y`, `/always` or a typed answer waits until you have
+scrolled to its end; from another view, such a request is answered only once
+it was read in the Inbox. `Ctrl+N` never waits.
 
 Claude Code shows its own dialog in the agent's terminal at once, beside
 Den's hold, so a request can always be answered there too; whichever answers
