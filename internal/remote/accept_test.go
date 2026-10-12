@@ -26,7 +26,10 @@ import (
 	"github.com/GlacierHubAB/den/internal/sshtest"
 )
 
-func TestMain(m *testing.M) { os.Exit(sshtest.Main(m)) }
+func TestMain(m *testing.M) {
+	remote.ShortenCloserWaitsForTests()
+	os.Exit(sshtest.Main(m))
+}
 
 const (
 	idA = sshtest.SessionA

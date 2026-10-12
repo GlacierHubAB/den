@@ -104,6 +104,8 @@ type Options struct {
 	Controller string        // this machine's controller id; default LoadController(StateDir)
 	PingEvery  time.Duration // how often a live session pings serve; default PingEvery
 	Retake     time.Duration // a host attached elsewhere is asked again this often; default 1 min
+	SendWait   time.Duration // how long Send waits for the host's result; default 10 s
+	CloseWait  time.Duration // how long Close waits for it; default 15 s
 	Now        func() time.Time
 }
 
@@ -143,6 +145,12 @@ func (o *Options) defaults() {
 	}
 	if o.Retake == 0 {
 		o.Retake = time.Minute
+	}
+	if o.SendWait == 0 {
+		o.SendWait = defaultSendWait
+	}
+	if o.CloseWait == 0 {
+		o.CloseWait = defaultCloseWait
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -225,6 +233,7 @@ type hostState struct {
 	status    HostStatus
 	known     Known
 	reconnect chan struct{}
+	link      *link // the live session's way to carry actions, nil without one
 }
 
 // NewManager prepares sessions for cfg's enabled hosts, starting from what
@@ -551,6 +560,19 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	var retake <-chan time.Time
 	rc := rateCap{max: m.o.MaxRate}
 	live, applied := false, Policy("")
+	var lk *link
+	defer func() {
+		// The session is over: no action can start, and the ones waiting are
+		// told the link ended.
+		m.mu.Lock()
+		if st := m.state[h.Label]; st.link == lk {
+			st.link = nil
+		}
+		m.mu.Unlock()
+		if lk != nil {
+			lk.end(h.Label)
+		}
+	}()
 	end := func(s State, r string) (State, string, bool) {
 		conn.Kill()
 		return s, r, live
@@ -623,6 +645,8 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			}
 			m.mu.Lock()
 			st := m.state[h.Label]
+			st.link = newLink(write, applied)
+			lk = st.link
 			st.status.Applied = applied
 			st.status.Hostname = sanitize.Label(hm.Hostname, 64)
 			st.status.Den = sanitize.Label(hm.Den, 40)
@@ -721,6 +745,16 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue
 			}
 			m.send(Update{Kind: HeldArrived, Host: h.Label, Request: r})
+		case TypeResult:
+			var r Result
+			if json.Unmarshal(in.line, &r) != nil || lk == nil {
+				m.flag(h, "a malformed result")
+				continue
+			}
+			r.Error = sanitize.Label(r.Error, 160)
+			if !lk.resolve(r) {
+				m.flag(h, "a result for a request that is not open")
+			}
 		case TypeGone:
 			var g Gone
 			if json.Unmarshal(in.line, &g) != nil {

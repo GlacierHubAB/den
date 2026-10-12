@@ -19,7 +19,7 @@ import (
 // fails this test until it is added here, which is the moment to check it
 // is metadata under the observe policy (docs/REMOTE.md).
 var metaAllowed = []string{
-	"index", "session", "status", "name", "peer", "role", "task", "model", "claude", "repo", "branch",
+	"index", "session", "status", "name", "peer", "role", "task", "model", "claude", "repo", "branch", "dirty",
 	"status_age_ms", "started_age_ms", "last_active_ms",
 	"context_tokens", "context_window", "has_usage", "usage_from_badge",
 	"limits", "tokens", "subagent_tokens", "reported_usd", "reported_unpriced",

@@ -46,6 +46,9 @@ type Session struct {
 	h    *seedDir
 	opts SessionOpts
 	proc *exec.Cmd
+	// reaped is closed once the dummy process has exited and been waited
+	// for: a zombie would still answer kill(pid, 0) as alive.
+	reaped chan struct{}
 }
 
 // seedDir is a fake ~/.claude that sessions are written into: a remote's or
@@ -86,7 +89,8 @@ func (h *seedDir) add(o SessionOpts) *Session {
 	cmd.Env = append(os.Environ(), "DEN_SSHTEST="+h.lab.Dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	must(t, cmd.Start())
-	s := &Session{ID: o.ID, PID: cmd.Process.Pid, h: h, opts: o, proc: cmd}
+	s := &Session{ID: o.ID, PID: cmd.Process.Pid, h: h, opts: o, proc: cmd, reaped: make(chan struct{})}
+	go func() { cmd.Wait(); close(s.reaped) }()
 	h.sessions = append(h.sessions, s)
 	s.File = filepath.Join(h.claudeDir, "sessions", fmt.Sprintf("%d.json", s.PID))
 	s.writeFile(o.Status)
@@ -106,7 +110,7 @@ func (s *Session) writeFile(status string) {
 		"pid": s.PID, "sessionId": s.ID, "cwd": s.opts.CWD, "startedAt": now - 60_000,
 		"version": "2.1.289", "kind": "interactive", "entrypoint": "cli", "name": s.opts.Name,
 		"status": status, "updatedAt": now, "statusUpdatedAt": now,
-		"messagingSocketPath": filepath.Join(s.h.runtimeDir, fmt.Sprintf("msg-%d.sock", s.PID)),
+		"messagingSocketPath": s.Socket(),
 		"peerFeatures":        []string{},
 	})
 	tmp := s.File + ".tmp"
@@ -173,8 +177,24 @@ func (s *Session) Stop() {
 		return
 	}
 	syscall.Kill(-s.proc.Process.Pid, syscall.SIGKILL)
-	s.proc.Wait()
+	<-s.reaped
 	s.proc = nil
+}
+
+// Exited reports whether the dummy process is gone (something killed it).
+func (s *Session) Exited() bool {
+	select {
+	case <-s.reaped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Socket is the messagingSocketPath the session file names: a test that
+// listens there stands in for Claude Code's inbox socket.
+func (s *Session) Socket() string {
+	return filepath.Join(s.h.runtimeDir, fmt.Sprintf("msg-%d.sock", s.PID))
 }
 
 // Remove stops the process and deletes the session file, a clean exit.

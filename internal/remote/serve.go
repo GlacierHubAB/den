@@ -15,6 +15,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/events"
@@ -39,6 +40,9 @@ type ServeOptions struct {
 	Questions     *bool                         // relay AskUserQuestion; default the host's hooks.answer_questions
 	Silence       time.Duration                 // relaying, no word from Den this long lets every held request go; default 60 s
 	Log           func(string)                  // what the relay did, metadata only; default remote-serve.log in the state dir
+	CloseOps      closer.Ops                    // how close signals; default closer.System
+	CloseSelf     closer.Self                   // what a close must leave alone; default this process and its ancestors
+	DirtyTTL      time.Duration                 // how long a checkout's dirty flag is trusted; default 20 s
 }
 
 func (o *ServeOptions) defaults() {
@@ -81,6 +85,15 @@ func (o *ServeOptions) defaults() {
 	}
 	if o.Silence == 0 {
 		o.Silence = 4 * PingEvery
+	}
+	if o.CloseOps == nil {
+		o.CloseOps = closer.System{}
+	}
+	if o.CloseSelf.PID == 0 {
+		o.CloseSelf = closer.DenSelf("", "")
+	}
+	if o.DirtyTTL == 0 {
+		o.DirtyTTL = 20 * time.Second
 	}
 	if o.Log == nil {
 		o.Log = serveLog(filepath.Join(filepath.Dir(o.EventsPath), "remote-serve.log"))
@@ -127,8 +140,10 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 // request from in, then writes hello, snapshots and events to out until in
 // reaches EOF, out fails, the watchdog sees the session gone, or ctx ends.
 // Under approve it also owns den-remote.sock and relays held permission
-// requests (relay.go); then decisions and pings are all it reads. It never
-// executes anything it reads. Errors are also sent as an error message when
+// requests (relay.go), and takes send and close (actions.go); decisions,
+// pings and those two are all it reads. It never executes anything it
+// reads: send posts to a session's socket, close signals a process it found
+// in the host's own session files. Errors are also sent as an error message when
 // out still works.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) error {
 	o.defaults()
@@ -203,6 +218,21 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	if rl != nil {
 		defer rl.close()
 	}
+	acts := newActions(policy.rank() >= Approve.rank(), o, func(v any) error { return writeMsg(out, v) })
+	defer func() {
+		cancel() // an action in flight stops waiting
+		acts.wait()
+	}()
+	var dirty *dirtyCache
+	dirtyc := make(chan struct{}, 1)
+	if acts.allowed {
+		dirty = newDirtyCache(o.DirtyTTL, func() {
+			select {
+			case dirtyc <- struct{}{}:
+			default:
+			}
+		})
+	}
 
 	tail := events.Follow(o.EventsPath, req.Cursor)
 	defer tail.Close()
@@ -225,7 +255,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 		now := time.Now()
 		s := Snapshot{Type: TypeSnapshot, RemoteNow: now.Add(o.Skew).UTC(), Agents: make([]fleet.Meta, 0, len(agents))}
 		for i, a := range agents {
-			s.Agents = append(s.Agents, a.Meta(i, now, req.Labels))
+			m := a.Meta(i, now, req.Labels)
+			if dirty != nil {
+				m.Dirty = dirty.get(a.Session.CWD)
+			}
+			s.Agents = append(s.Agents, m)
 		}
 		return writeMsg(out, s)
 	}
@@ -268,7 +302,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 				writeMsg(out, Error{Type: TypeError, Code: "request", Message: "more than 100 messages a second from Den"})
 				return fmt.Errorf("Den sent more than 100 messages a second")
 			}
-			if err := fromDenMsg(line, rl, o.Log); err != nil {
+			if err := fromDenMsg(ctx, line, rl, acts, o.Log); err != nil {
 				writeMsg(out, Error{Type: TypeError, Code: "request", Message: err.Error()})
 				return err
 			}
@@ -277,6 +311,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 				return fmt.Errorf("the ssh session is gone")
 			}
 		case <-changed:
+			err = snapAgain(o, snap)
+		case <-dirtyc:
 			err = snapAgain(o, snap)
 		case <-every.C:
 			err = snapAgain(o, snap)
@@ -303,16 +339,20 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 }
 
 // fromDenMsg handles one message from Den after its request: a decision
-// for the relay, or a ping. Anything else is refused: the session ends with
-// an error (code request). A decision with nothing relayed in this session
-// is dropped and logged, as a decision for an id that is not open is.
-func fromDenMsg(line []byte, rl *relay, log func(string)) error {
+// for the relay, a ping, or a send or close for the actions. Anything else
+// is refused: the session ends with an error (code request). A decision
+// with nothing relayed in this session is dropped and logged, as a decision
+// for an id that is not open is. A send or close under observe is answered
+// with a failed result and nothing happens.
+func fromDenMsg(ctx context.Context, line []byte, rl *relay, acts *actions, log func(string)) error {
 	typ, unknown, err := peekIn(line, allowedIn)
 	switch {
 	case err != nil:
 		return fmt.Errorf("a message from Den that is not JSON")
-	case len(unknown) > 0 || (typ != TypePing && typ != TypeDecision):
-		return fmt.Errorf("proto 1 takes only decision and ping after hello, not %s", sanitize.Label(typ, 40))
+	case len(unknown) > 0 || allowedIn[typ] == nil:
+		return fmt.Errorf("proto 1 takes only decision, ping, send and close after hello, not %s", sanitize.Label(typ, 40))
+	case typ == TypeSend || typ == TypeClose:
+		return acts.handle(ctx, typ, line)
 	case typ == TypeDecision:
 		var d Decision
 		if json.Unmarshal(line, &d) != nil {
