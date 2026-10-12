@@ -109,7 +109,29 @@ func checkMeta(a fleet.Meta) (_ fleet.Meta, why []string, ok bool) {
 	if checkAges(&a) {
 		why = append(why, "implausible ages")
 	}
+	if a.Peer != "" && !PeerName(a.Peer) {
+		a.Peer = ""
+		why = append(why, "a session name Den does not accept")
+	}
 	return a, why, true
+}
+
+// PeerName reports whether s is a session (peer) name as Claude Code makes
+// them ("user-aa", "user-bb"): 1 to 64 lower-case letters, digits and -.
+// A host chooses its agents' session names, and they go into the
+// orchestrator's prompt and messages, so nothing else gets through; an
+// agent with any other name shows none. Its critter name is always made
+// here, from its session id.
+func PeerName(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+			return false
+		}
+	}
+	return true
 }
 
 // checkAges makes each age that is neither unknown (-1) nor within maxAge

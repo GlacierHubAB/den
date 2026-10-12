@@ -493,7 +493,9 @@ on this machine.
   letters, digits and `. _ : -`, at most 128 characters, and at most 32 per
   agent; tokens under any other are dropped and flagged. An agent's age
   (since it started, changed status or was last active) below zero or over a
-  year becomes unknown and is flagged, and shows as `?`. An event dated in the
+  year becomes unknown and is flagged, and shows as `?`. A session name may
+  hold only lower-case letters, digits and `-`, at most 64; any other is
+  dropped and flagged (the agent's critter name is always made here). An event dated in the
   future or over a year ago is dropped and flagged, and counts towards
   flooding. A clock more than a year off is flagged and its times taken as
   they are.
