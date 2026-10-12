@@ -277,7 +277,7 @@ func (m Model) notifyCmd(sessionID, what string) tea.Cmd {
 	}
 	if host := hostOf(sessionID); host != "" {
 		// No remote window to focus: the notice says where the agent is,
-		// and a click does nothing more.
+		// and offers no click (hostNotes posts it inert).
 		n.Summary = m.nameFor(sessionID) + " on " + host + " " + what
 		return m.att.hosts.note(host, sessionID, needsYou(what), n, send, time.Now())
 	}

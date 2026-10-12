@@ -35,6 +35,9 @@ type Note struct {
 	Summary string // "Mossy Lemur needs your permission"
 	Body    string // optional second line, same rules as Summary
 	Urgent  bool   // critical urgency: stays until dismissed on most servers
+	// Inert: a click has nothing to do (an agent on another machine has no
+	// window here), so the note offers no action and Send does not wait.
+	Inert bool
 }
 
 // Available reports whether notify-send is on the PATH.
@@ -44,8 +47,13 @@ func Available() bool {
 }
 
 // Send shows the note with a "default" action and blocks until it is
-// clicked, closed or expires. It reports whether it was clicked.
+// clicked, closed or expires. It reports whether it was clicked. An Inert
+// note is posted as Post does and is never clicked.
 func Send(n Note) bool {
+	if n.Inert {
+		Post(n)
+		return false
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), MaxWait)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, Command, args(n, true)...)
