@@ -30,6 +30,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/tree"
 	"github.com/GlacierHubAB/den/internal/ui"
 )
@@ -126,16 +127,15 @@ func list(asJSON bool) {
 				agents[i].TeamCost = &t
 			}
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(agents)
+		out, _ := json.MarshalIndent(agents, "", "  ")
+		os.Stdout.Write(append(sanitize.JSON(out), '\n'))
 		return
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "STATUS\tNAME\tROLE\tTASK\tWHERE\tWINDOW\tPID\tSESSION")
 	for _, a := range agents {
 		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
-			a.Status, since(a.Since()), a.Name, a.Labels.Role, trunc(a.Task(), 48), a.Where(), a.Place(), a.Session.PID, a.Session.SessionID[:8])
+			a.Status, since(a.Since()), a.Name, a.Labels.Role, trunc(a.Task(), 48), a.Where(), a.Place(), a.Session.PID, sanitize.Line(a.Session.SessionID[:8]))
 	}
 	tw.Flush()
 }
@@ -167,7 +167,7 @@ func focus(who string) {
 	if err != nil {
 		fail("den: %v", err)
 	}
-	fmt.Printf("focused %s: %s\n", a.Name, note)
+	fmt.Printf("focused %s: %s\n", a.Name, sanitize.Line(note))
 }
 
 func since(d time.Duration) string {

@@ -28,6 +28,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/worktree"
 )
 
@@ -204,7 +205,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	}
 	title := "den"
 	if res.Name != "" {
-		title = "den · " + res.Name
+		// PeerName keeps names to safe characters; sanitised again since a
+		// title is shown by the terminal and the window manager.
+		title = sanitize.Line("den · " + res.Name)
 	}
 	started := time.Now()
 	if err := Launch(dir, title, command, env); err != nil {

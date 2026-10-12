@@ -8,12 +8,13 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/gitsafe"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -41,9 +42,8 @@ const untrackedLimit = 1 << 20
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	// The repository's own config must not run programs while Den looks at
-	// it: no filesystem monitor hook, no external diff or text conversion.
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+	// it (gitsafe), and diff runs with no external diff or text conversion.
+	cmd := gitsafe.Command(ctx, dir, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -135,7 +135,7 @@ func BaseAt(ctx context.Context, dir, commit string) (string, bool) {
 }
 
 func emptyTree(ctx context.Context, dir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "hash-object", "-t", "tree", "--stdin")
+	cmd := gitsafe.Command(ctx, dir, "hash-object", "-t", "tree", "--stdin")
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
@@ -189,7 +189,7 @@ func untracked(root, rel string) File {
 	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	h := transcript.Hunk{OldStart: 0, NewStart: 1, Lines: make([]string, len(lines))}
 	for i, l := range lines {
-		h.Lines[i] = "+" + l
+		h.Lines[i] = "+" + sanitize.Code(l)
 	}
 	f.Hunks = []transcript.Hunk{h}
 	return f
@@ -243,7 +243,10 @@ func ParseUnified(text string) []File {
 			cur.Hunks = append(cur.Hunks, transcript.Hunk{OldStart: old, NewStart: nw})
 			hunk = &cur.Hunks[len(cur.Hunks)-1]
 		case hunk != nil && line != "" && strings.ContainsRune(" +-", rune(line[0])):
-			hunk.Lines = append(hunk.Lines, line)
+			// Sanitised before it is highlighted or shown: the code is
+			// whatever the agent wrote. Paths stay raw, Den reads files by
+			// them; Review sanitises them where it shows them.
+			hunk.Lines = append(hunk.Lines, sanitize.Code(line))
 			// Appending may move the backing array; keep hunk pointing at it.
 			hunk = &cur.Hunks[len(cur.Hunks)-1]
 		}

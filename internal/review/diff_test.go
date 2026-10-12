@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe/gitsafetest"
 )
 
 const unified = `diff --git a/cmd/list.go b/cmd/list.go
@@ -205,5 +207,37 @@ func TestBaseOnDefaultBranchUsesSessionStart(t *testing.T) {
 	files, _ = Diff(ctx, repo, base)
 	if len(files) != 1 || !files[0].Created {
 		t.Errorf("early: files = %+v", files)
+	}
+}
+
+func TestParseUnifiedSanitisesLines(t *testing.T) {
+	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,2 +1,2 @@\n ctx\r\n-old\x1b]52;c;AAAA\x07\n+new\x1b[2J\u202e\tend\n"
+	files := ParseUnified(diff)
+	if len(files) != 1 || len(files[0].Hunks) != 1 {
+		t.Fatalf("files = %+v", files)
+	}
+	want := []string{" ctx ", "-old", "+new\tend"}
+	if got := files[0].Hunks[0].Lines; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("lines = %q, want %q", got, want)
+	}
+}
+
+// A repository's config cannot make Diff run a program: no fsmonitor hook,
+// filter driver, text conversion or external diff.
+func TestDiffRunsNothingTheRepoNames(t *testing.T) {
+	repo, marks := gitsafetest.Hostile(t)
+	base, err := Base(context.Background(), repo, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := Diff(context.Background(), repo, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Errorf("files = %+v", files)
+	}
+	if ents, _ := os.ReadDir(marks); len(ents) > 0 {
+		t.Errorf("the repository made git run %s", ents[0].Name())
 	}
 }

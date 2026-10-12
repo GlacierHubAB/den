@@ -3,6 +3,9 @@ package closer
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -226,5 +229,36 @@ func TestGuardRulesAndIdleParsing(t *testing.T) {
 	}
 	if back := LoadGuard(path); len(back.Names) != 2 || len(back.Paths) != 1 || back.Flagged[0].Note != "issue pending" {
 		t.Errorf("round trip = %+v", back)
+	}
+}
+
+// A repo's own config must not make the dirty check run anything: a
+// core.fsmonitor script that writes a marker is never started.
+func TestCheckoutDoesNotRunFsmonitor(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	repo := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "RAN")
+	hook := filepath.Join(t.TempDir(), "hook.sh")
+	os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755)
+	for _, args := range [][]string{{"init", "-q"}, {"config", "core.fsmonitor", hook}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Skipf("git %v: %v %s", args, err, out)
+		}
+	}
+	os.WriteFile(filepath.Join(repo, "f.txt"), []byte("x"), 0o644)
+	// Prove the hook would run without the guard, so the test can fail.
+	exec.Command("git", "-C", repo, "status", "--porcelain").Run()
+	if _, err := os.Stat(marker); err != nil {
+		t.Skip("this git does not run core.fsmonitor scripts; nothing to guard")
+	}
+	os.Remove(marker)
+	paths, ok := Checkout(context.Background(), repo)
+	if !ok || len(paths) != 1 {
+		t.Fatalf("paths %v ok %v", paths, ok)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("the dirty check ran the repo's core.fsmonitor script")
 	}
 }

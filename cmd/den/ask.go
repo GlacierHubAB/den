@@ -10,6 +10,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -50,7 +51,7 @@ func ask(args []string) {
 		case orch.ToolUse:
 			if in, ok := orch.ParseSendMessage(ev.Input); ok {
 				fan[ev.ToolUseID] = in.To
-				fmt.Printf("→ %s · %s\n", in.To, firstN(in.Message, 100))
+				fmt.Printf("→ %s · %s\n", sanitize.Line(in.To), firstN(sanitize.Text(in.Message), 100))
 			} else {
 				fan[ev.ToolUseID] = ev.Tool
 				fmt.Println(orch.Describe(ev.Tool, ev.Input))

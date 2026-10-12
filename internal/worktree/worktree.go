@@ -17,18 +17,24 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe"
 )
 
 // git runs git in dir. The repository's own config must not run programs
 // while Den only looks, so reads use no filesystem monitor and take no
 // optional locks.
 func git(ctx context.Context, dir string, args ...string) (string, error) {
-	return run(ctx, dir, []string{"GIT_OPTIONAL_LOCKS=0", "LC_ALL=C"}, args...)
+	return output(gitsafe.Command(ctx, dir, args...), args)
 }
 
 func run(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
 	cmd.Env = append(os.Environ(), env...)
+	return output(cmd, args)
+}
+
+func output(cmd *exec.Cmd, args []string) (string, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {

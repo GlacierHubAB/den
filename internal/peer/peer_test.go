@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSendWritesOneJSONLine(t *testing.T) {
@@ -49,4 +51,47 @@ func TestSendWritesOneJSONLine(t *testing.T) {
 	if err := Send("", "x"); err == nil {
 		t.Error("expected an error for no socket")
 	}
+}
+
+// A path that is a symlink is refused, even to a socket of ours: the text
+// must not be steerable to another service. Errors do not name the path.
+func TestSendRefusesLinksAndOtherFiles(t *testing.T) {
+	dir := t.TempDir()
+	real := filepath.Join(dir, "SECRET-real.sock")
+	ln, err := net.Listen("unix", real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan string, 1)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			line, _ := bufio.NewReader(c).ReadString('\n')
+			c.Close()
+			got <- line
+		}
+	}()
+	link := filepath.Join(dir, "SECRET-link.sock")
+	os.Symlink(real, link)
+	file := filepath.Join(dir, "SECRET-file")
+	os.WriteFile(file, []byte("x"), 0o600)
+	for name, p := range map[string]string{"symlink": link, "regular file": file, "missing": filepath.Join(dir, "SECRET-none")} {
+		err := Send(p, "hi")
+		if err == nil || strings.Contains(err.Error(), "SECRET") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+	select {
+	case l := <-got:
+		t.Errorf("a refused send reached the socket: %q", l)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if err := Send(real, "hi"); err != nil {
+		t.Errorf("a plain socket of ours: %v", err)
+	}
+	<-got
 }

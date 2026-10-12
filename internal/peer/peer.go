@@ -15,7 +15,10 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/bridge"
 )
 
 // Header introduces every message Den relays.
@@ -28,18 +31,38 @@ func Compose(text string) string {
 
 // Send posts text to the socket. It returns an error when the session has no
 // socket, the socket is gone, or the write fails.
+//
+// The path comes from a session file, which only vouches for itself, so it
+// is not trusted: it must be a socket itself (a symlink is refused, whatever
+// it points at, so the text cannot be steered to the ssh agent or another
+// service) owned by the caller, and the process that answers must run as the
+// caller too. The errors never carry the path.
 func Send(socketPath, text string) error {
 	if socketPath == "" {
 		return errors.New("this session has no inbox socket (Claude Code 2.1.224+ binds one)")
 	}
-	if _, err := os.Stat(socketPath); err != nil {
-		return fmt.Errorf("inbox socket is gone: %s", socketPath)
+	fi, err := os.Lstat(socketPath)
+	if err != nil {
+		return errors.New("inbox socket is gone")
+	}
+	if fi.Mode()&os.ModeType != os.ModeSocket {
+		return errors.New("inbox socket is not a plain socket (a link or another kind of file); refusing")
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+		return errors.New("inbox socket is not owned by you; refusing")
 	}
 	conn, err := net.DialTimeout("unix", socketPath, time.Second)
 	if err != nil {
-		return fmt.Errorf("connect: %w", err)
+		var op *net.OpError
+		if errors.As(err, &op) && op.Err != nil {
+			err = op.Err // the net error names the path
+		}
+		return fmt.Errorf("connect: %v", err)
 	}
 	defer conn.Close()
+	if uid, err := bridge.PeerUID(conn); err != nil || uid != os.Getuid() {
+		return errors.New("inbox socket is served by another user; refusing")
+	}
 	line, err := json.Marshal(map[string]any{
 		"type":    "user",
 		"message": map[string]any{"role": "user", "content": Compose(text)},

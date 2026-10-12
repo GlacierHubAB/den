@@ -7,6 +7,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // TimedChange is a file change together with when it landed and the tool
@@ -134,7 +136,7 @@ func (cl *changeLog) consume(line []byte) {
 				continue
 			}
 			for _, c := range r.changes(name) {
-				cl.changes = append(cl.changes, TimedChange{At: at, Tool: name, FileChange: c})
+				cl.changes = append(cl.changes, TimedChange{At: at, Tool: sanitize.Line(name), FileChange: c})
 			}
 		}
 	}

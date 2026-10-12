@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // ProjectsDir is where Claude Code keeps per-project transcripts.
@@ -55,12 +57,12 @@ func Read(path string) Facts {
 				Title string `json:"aiTitle"`
 			}
 			if json.Unmarshal(line, &rec) == nil {
-				f.Title = rec.Title
+				f.Title = sanitize.Line(rec.Title)
 			}
 		}
 		if f.Model == "" && bytes.Contains(line, []byte(`"type":"assistant"`)) {
 			if m := modelRe.FindSubmatch(line); m != nil {
-				f.Model = string(m[1])
+				f.Model = sanitize.Line(string(m[1]))
 			}
 		}
 		return f.Title != "" && f.Model != ""
