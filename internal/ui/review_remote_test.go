@@ -320,3 +320,12 @@ func TestDiffBackoffGrowsAndIsCapped(t *testing.T) {
 		}
 	}
 }
+
+// A remote file whose name has control characters keeps that mark, so
+// Review says its content is not shown.
+func TestRemoteUnsafeNameIsMarked(t *testing.T) {
+	ws := workFromDiff("s@devbox", "devbox", &remote.Diff{Root: "/home/user/den", Files: []remote.DiffFile{{Path: "evilname.txt", Created: true, Unsafe: true}}})
+	if len(ws) != 1 || len(ws[0].Files) != 1 || !ws[0].Files[0].Unsafe || len(ws[0].Files[0].Hunks) > 0 {
+		t.Errorf("works = %+v", ws)
+	}
+}

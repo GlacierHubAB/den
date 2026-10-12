@@ -198,7 +198,7 @@ func workFromDiff(key, host string, d *remote.Diff) []work {
 		w.Repo += " · " + d.Branch
 	}
 	for _, df := range d.Files {
-		f := review.File{Path: df.Path, OldPath: df.OldPath, Created: df.Created, Deleted: df.Deleted, Binary: df.Binary}
+		f := review.File{Path: df.Path, OldPath: df.OldPath, Created: df.Created, Deleted: df.Deleted, Binary: df.Binary, Unsafe: df.Unsafe}
 		for _, h := range df.Hunks {
 			f.Hunks = append(f.Hunks, transcript.Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: h.Lines})
 			own := make([]string, len(h.Lines))
