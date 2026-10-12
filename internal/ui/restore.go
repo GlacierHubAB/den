@@ -299,8 +299,8 @@ func (m Model) restoreLines(a roster.Agent) (lines []string, usd float64, priced
 	if a.Role != "" {
 		head = append(head, a.Role)
 	}
-	if a.Model != "" {
-		head = append(head, transcript.PrettyModel(a.Model))
+	if model := reopenModel(a); model != "" {
+		head = append(head, transcript.PrettyModel(model))
 	}
 	head = append(head, sanitize.Line(shortPath(a.CWD, "")))
 	var more []string
@@ -319,7 +319,7 @@ func (m Model) restoreLines(a roster.Agent) (lines []string, usd float64, priced
 		more = append(more, "last seen "+humanAge(restoreNow().Sub(a.LastSeen))+" ago")
 	}
 	if u, ok := transcript.ReadUsage(transcript.Path(a.SessionID)); ok {
-		model := a.Model
+		model := reopenModel(a)
 		if model == "" {
 			model = u.Model
 		}
@@ -399,13 +399,23 @@ func (m Model) decideRestore(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 // restoreRequests are the spawn requests that reopen the plan's agents:
 // the same name, model, skills folder and, for agents Den started, Den's
 // tools, so each comes back as it was.
+// reopenModel is the model an agent is reopened with: the one its session
+// runs outside plan mode, which may run another model, as its transcript
+// records it; else the model the roster last saw it use.
+func reopenModel(a roster.Agent) string {
+	if model := transcript.DefaultModel(transcript.Path(a.SessionID)); model != "" {
+		return model
+	}
+	return a.Model
+}
+
 func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 	exe, _ := os.Executable()
 	var out []spawn.Request
 	for _, a := range plan.agents {
 		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name}
-		if strings.HasPrefix(a.Model, "claude-") {
-			req.Model = a.Model
+		if model := reopenModel(a); strings.HasPrefix(model, "claude-") {
+			req.Model = model
 		}
 		if a.SkillsDir != "" {
 			if _, err := os.Stat(a.SkillsDir); err == nil {
