@@ -520,6 +520,10 @@ func (m Model) remoteCommand(args []string) (tea.Model, tea.Cmd) {
 		}
 		// A raise remotes.toml asks for applies only once the human has
 		// been shown exactly what it is, and repeated the command.
+		if h.Pending != "" && !strings.Contains(h.Pending, "/remote connect "+label+" to apply") {
+			// A raise Den cannot show whole, and so never applies.
+			return m.say(h.Pending+". /remote retry "+label+" connects as it is.", true)
+		}
 		key := label + "\x00" + h.Pending
 		if h.Pending != "" && m.remote.confirm != key {
 			m.remote.confirm = key

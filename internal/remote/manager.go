@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -412,16 +413,34 @@ func (m *Manager) reload(raise, seen string) {
 		if asked.Labels && !want.Labels {
 			asks = append(asks, "turns labels on")
 		}
+		// A new target or den_path is shown whole, so the raise the
+		// human applies is the one they read; one that cannot be shown
+		// whole never applies.
+		whole := true
+		shown := func(what, v string) string {
+			switch {
+			case len(v) > maxRaiseShown:
+				whole = false
+				return fmt.Sprintf("a %s longer than %d characters, which Den does not apply; edit remotes.toml", what, maxRaiseShown)
+			case sanitize.Line(v) != v || strings.ContainsFunc(v, func(r rune) bool { return unicode.Is(unicode.Cf, r) }):
+				whole = false
+				return "a " + what + " with characters Den cannot show, which it does not apply; edit remotes.toml"
+			}
+			return v
+		}
 		if asked.Target != old.Target {
-			asks, held = append(asks, "points "+h.Label+" at "+sanitize.Label(asked.Target, 80)), true
+			asks, held = append(asks, "points "+h.Label+" at "+shown("target", asked.Target)), true
 		}
 		if asked.DenPath != old.DenPath {
-			asks, held = append(asks, "sets "+h.Label+"'s den_path to "+sanitize.Label(asked.DenPath, 80)), true
+			asks, held = append(asks, "sets "+h.Label+"'s den_path to "+shown("den_path", asked.DenPath)), true
 		}
 		if len(asks) > 0 {
-			pending = "remotes.toml " + strings.Join(asks, " and ") + "; /remote connect " + h.Label + " to apply"
+			pending = "remotes.toml " + strings.Join(asks, " and ")
+			if whole {
+				pending += "; /remote connect " + h.Label + " to apply"
+			}
 		}
-		if h.Label == raise && pending == seen {
+		if h.Label == raise && pending == seen && whole {
 			// The human's /remote connect, having been shown exactly this
 			// raise (or none): it applies. One the file asks for since
 			// they looked stays pending.
@@ -445,6 +464,9 @@ func (m *Manager) reload(raise, seen string) {
 		m.send(u)
 	}
 }
+
+// maxRaiseShown is the longest target or den_path a raise shows, whole.
+const maxRaiseShown = 256
 
 // kick ends the host's session, if it has one, and wakes its loop to
 // apply what changed. Called with m.mu held.

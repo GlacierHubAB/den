@@ -136,7 +136,9 @@ raise applies when you run `/remote connect devbox` in Den, or when Den
 starts; until then `/remote` shows what the file asks for ("remotes.toml asks
 for full; /remote connect devbox to apply"). The first `/remote connect devbox`
 shows the raise and applies nothing; the same command again applies exactly
-that raise, and a raise the file asks for in between is shown first in turn. A new `target` or `den_path` also
+that raise, and a raise the file asks for in between is shown first in turn.
+A new target or den_path is shown whole; one longer than 256 characters, or
+with characters Den cannot show, is never applied: edit `remotes.toml`. A new `target` or `den_path` also
 ends the link to the old one at once, and Den makes no connection for the host
 until you run `/remote connect` ("remotes.toml points devbox at user@other;
 /remote connect devbox to apply"). Disabling or removing a host trusts it

@@ -830,6 +830,16 @@ func TestRemoteConnectShowsARaiseFirst(t *testing.T) {
 	if len(feed.connect) != 2 || len(feed.reconnect) != 1 {
 		t.Errorf("retry: connect %v reconnect %v", feed.connect, feed.reconnect)
 	}
+	// A raise Den cannot show whole is never offered, however often asked.
+	feed.hosts[0].Pending = "remotes.toml points devbox at a target longer than 256 characters, which Den does not apply; edit remotes.toml"
+	got.syncRemote()
+	for range 2 {
+		mm, _ = got.command("/remote connect devbox")
+		got = mm.(Model)
+	}
+	if len(feed.connect) != 2 || !strings.Contains(got.flash, "edit remotes.toml. /remote retry devbox connects as it is.") {
+		t.Errorf("an unappliable raise: connect %v, flash %q", feed.connect, got.flash)
+	}
 }
 
 // What a host reports about its agents reaches the orchestrator's prompt

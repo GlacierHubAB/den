@@ -2,6 +2,7 @@ package remote
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestReloadLowersAtOnceAndRaisesOnConnect(t *testing.T) {
 	// Another target or den_path is a raise too: held, the name cleaned.
 	set(Host{Target: "user@other\x1b[2J", Policy: Approve})
 	m.reload("", "")
-	if h, s := got(); h.Target != "b" || !m.isHeld("b") || s.Target != "b" || s.Pending != "remotes.toml points b at user@other; /remote connect b to apply" {
+	if h, s := got(); h.Target != "b" || !m.isHeld("b") || s.Target != "b" || s.Pending != "remotes.toml points b at a target with characters Den cannot show, which it does not apply; edit remotes.toml" {
 		t.Errorf("a new target: %+v held %v %q", h, m.isHeld("b"), s.Pending)
 	}
 	set(Host{Target: "b", DenPath: "/tmp/den", Policy: Approve})
@@ -69,6 +70,35 @@ func TestReloadLowersAtOnceAndRaisesOnConnect(t *testing.T) {
 	if h, _ := got(); h.Policy != Observe || h.Target != "b" {
 		t.Errorf("Connect with no raise shown applied one: %+v", h)
 	}
+	// A target that cannot be shown whole (too long, or with characters
+	// sanitising would drop) never applies: two such targets could read
+	// alike.
+	for _, long := range []string{"user@" + strings.Repeat("a", 300), "user@oth\u200ber"} {
+		set(Host{Target: long, Policy: Observe})
+		m.reload("", "")
+		shown := m.Hosts()[0].Pending
+		if !strings.Contains(shown, "which it does not apply; edit remotes.toml") && !strings.Contains(shown, "which Den does not apply; edit remotes.toml") {
+			t.Errorf("pending %q", shown)
+		}
+		m.reload("b", shown)
+		if h, _ := got(); h.Target == long {
+			t.Errorf("a target not shown whole applied: %q", shown)
+		}
+	}
+	// Two targets alike but for their end are shown whole: the raise
+	// shown for one never applies the other.
+	prefix := "user@" + strings.Repeat("h", 74)
+	set(Host{Target: prefix + "-one", Policy: Observe})
+	m.reload("", "")
+	seenOne := m.Hosts()[0].Pending
+	set(Host{Target: prefix + "-two", Policy: Observe})
+	m.reload("b", seenOne)
+	if h, s := got(); h.Target != "b" || !strings.Contains(s.Pending, prefix+"-two;") {
+		t.Errorf("a raise shown for %s applied %s: %+v %q", prefix+"-one", prefix+"-two", h, s.Pending)
+	}
+	set(Host{Target: "user@other", Policy: Full, Labels: true})
+	m.reload("", "")
+	seen = m.Hosts()[0].Pending
 	m.reload("b", seen)
 	if h, s := got(); h.Policy != Full || !h.Labels || h.Target != "user@other" || m.isHeld("b") || s.Policy != Full || s.Pending != "" {
 		t.Errorf("Connect did not apply the raise: %+v %q", h, s.Pending)
