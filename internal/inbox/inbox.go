@@ -5,6 +5,7 @@ package inbox
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -259,6 +260,13 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		s.resolveSession(in.SessionID, "answered in terminal", func(it *Item) bool {
 			return it.Kind == Question || (it.Kind <= Plan && it.State == InTerminal)
 		})
+		// The call Den still holds ran: its dialog was answered in the
+		// terminal first. A PermissionRequest carries no tool_use_id, so the
+		// call is matched by tool and input; other calls of the turn run
+		// beside a held one.
+		s.resolveSession(in.SessionID, "answered in terminal", func(it *Item) bool {
+			return it.Kind <= Plan && it.State == Waiting && it.req != nil && it.req.Input.ToolName == in.ToolName && sameJSON(it.req.Input.ToolInput, in.ToolInput)
+		})
 		delete(s.streak, in.SessionID)
 		s.resolveSession(in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
 		return nil
@@ -454,19 +462,37 @@ func (s *Store) AnswerQuestion(it *Item, typed string) (done, ok bool) {
 	return true, true
 }
 
-// LetGo hands held questions whose hook stopped waiting back to the
-// terminal: Claude Code ended the hook because the dialog was dismissed
-// there, or Den's wait ran out. It reports whether any changed.
-func (s *Store) LetGo() bool {
+// LetGo stops holding requests whose hook stopped waiting, so none stays
+// answerable in Den. Claude Code shows its own dialog at once, beside the
+// held hook, and ends the hook when that dialog is answered or dismissed:
+// a hook gone before wait (hooks.permission_wait) ran out means the
+// terminal settled it, and the item closes. One gone at the end of the
+// wait (or with wait unknown, 0) gave up itself; the dialog is still up
+// and the item says to answer it in the terminal. It reports whether any
+// changed.
+func (s *Store) LetGo(wait time.Duration) bool {
 	changed := false
 	for _, it := range s.items {
-		if it.Kind == Question && it.State == Waiting && it.req != nil && it.req.HungUp() {
-			it.State, it.Resolved = InTerminal, "no longer held"
-			changed = true
+		if it.Kind > Question || it.State != Waiting || it.req == nil || !it.req.HungUp() {
+			continue
 		}
+		if wait > 0 && time.Since(it.At) < wait-letGoSlack {
+			it.State, it.Resolved = Resolved, ClosedInTerminal
+		} else {
+			it.State, it.Resolved = InTerminal, "no longer held"
+		}
+		changed = true
 	}
 	return changed
 }
+
+// ClosedInTerminal is how a held request ends when its dialog was answered
+// or dismissed in the terminal first.
+const ClosedInTerminal = "answered or dismissed in the terminal"
+
+// letGoSlack is how close to the end of Den's wait a hook may hang up and
+// still count as giving up itself rather than being ended by Claude Code.
+const letGoSlack = 5 * time.Second
 
 // AddStalled adds a Stalled notice for a session that has been working
 // with no hook event for quiet. Any hook event from it resolves the notice.
@@ -526,6 +552,9 @@ const CannotApprovePlan = "Den cannot approve this plan: answer it in the termin
 func (s *Store) Answer(it *Item, verb string) bool {
 	if !it.Answerable() || it.DenAsks() || it.Kind == Question {
 		return false // Den's own questions are carried out by Den, an agent's question takes an answer
+	}
+	if it.req.HungUp() {
+		return false // nobody waits for the answer; LetGo says what became of it
 	}
 	if it.Kind == Plan && verb != "deny" {
 		if _, ok := bridge.PlanApproval(it.req.Input.ToolInput); !ok {
@@ -999,4 +1028,14 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// sameJSON reports whether two JSON texts hold the same value, whatever
+// their key order and spacing.
+func sameJSON(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
 }

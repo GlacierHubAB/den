@@ -137,11 +137,11 @@ func TestQuestionHookHungUp(t *testing.T) {
 	store := New()
 	store.AnswerQuestions(true)
 	it, r := ask(store)
-	if store.LetGo() {
+	if store.LetGo(0) {
 		t.Error("let go of a question still held")
 	}
 	bridge.TestHangUp(r) // the dialog was dismissed, or the wait ran out
-	if !store.LetGo() || it.State != InTerminal || it.AsksInDen() {
+	if !store.LetGo(0) || it.State != InTerminal || it.AsksInDen() {
 		t.Errorf("after hang-up: %+v", it)
 	}
 	if _, ok := store.AnswerQuestion(it, "1"); ok {
@@ -177,7 +177,7 @@ func TestNewQuestionSupersedesAReleasedOne(t *testing.T) {
 	store.AnswerQuestions(true)
 	old, r := ask(store)
 	bridge.TestHangUp(r)
-	store.LetGo()
+	store.LetGo(0)
 	it, _ := ask(store)
 	if it == old || !it.AsksInDen() || old.State != Resolved || store.Waiting() != 1 {
 		t.Errorf("old %+v, new %+v, waiting %d", old, it, store.Waiting())
