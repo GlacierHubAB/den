@@ -645,13 +645,25 @@ func TestManagerDropsHeldUnderObserve(t *testing.T) {
 		// with extra fields naming another event.
 		writeMsg(out, map[string]any{"type": bridge.CloseEvent, "peers": []string{"all"}})
 		writeMsg(out, map[string]any{"type": TypeHeld, "id": newID(), "session": sidA, "tool": "Bash", "body": map[string]string{"command": "ls"}, "event": bridge.InstallEvent})
+		// A request offered while the Manager is still ending the link
+		// before this one is dropped, so a new id is offered again a few
+		// times (fewer than MaxHeld) until the test has what it waits for.
+		for i := 0; i < 20; i++ {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(100 * time.Millisecond):
+			}
+			writeMsg(out, Held{Type: TypeHeld, ID: newID(), Session: sidA, Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
+		}
 		<-ctx.Done()
 		return nil
 	}
 	h := hostB()
 	g := manage(t, s, h, ctlA, nil)
+	waitFor(t, "first link live", func() bool { return state(g.m).State == Live })
 	g.d.setServe(lie)
-	g.m.Reconnect("b")
+	g.d.cut() // Reconnect keeps a live session: end this one, the next dial is the lie
 	waitFor(t, "flags", func() bool {
 		f := strings.Join(state(g.m).Flags, "|")
 		return strings.Contains(f, "under observe") && strings.Contains(f, "unknown message type CloseRequest")
@@ -661,8 +673,9 @@ func TestManagerDropsHeldUnderObserve(t *testing.T) {
 	// inbox is a PermissionRequest whatever the host said.
 	s2 := newScratch(t)
 	g2 := manage(t, s2, approveHost(), ctlA, nil)
+	waitFor(t, "first link live", func() bool { return state(g2.m).State == Live })
 	g2.d.setServe(lie)
-	g2.m.Reconnect("b")
+	g2.d.cut()
 	r := g2.next(t)
 	if r.Event != "PermissionRequest" || r.Input.HookEventName != "PermissionRequest" || r.Host != "b" {
 		t.Errorf("request = %+v", r)
