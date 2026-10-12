@@ -66,7 +66,8 @@ func New(kind, sessionID string) Event {
 
 // FromHook maps a hook event to a stream event, picking metadata fields by
 // name. ok is false for hooks the stream leaves out (PostToolUse, a
-// permission prompt the PermissionRequest already reported, and so on).
+// permission prompt or an AskUserQuestion permission request whose wait
+// was already reported, and so on). One wait is one needs_you.
 func FromHook(in bridge.HookInput) (ev Event, ok bool) {
 	if in.SessionID == "" {
 		return Event{}, false
@@ -86,6 +87,11 @@ func FromHook(in bridge.HookInput) (ev Event, ok bool) {
 	case "PostToolUseFailure":
 		ev.Kind, ev.Tool = ToolFailed, in.ToolName
 	case "PermissionRequest":
+		if in.ToolName == "AskUserQuestion" {
+			// Its PreToolUse reported this wait as a question about 60 ms
+			// earlier; a second needs_you would show the question twice.
+			return Event{}, false
+		}
 		ev.Kind, ev.Request, ev.Tool = NeedsYou, "permission", in.ToolName
 		if in.ToolName == "ExitPlanMode" {
 			ev.Request, ev.Tool = "plan", ""
