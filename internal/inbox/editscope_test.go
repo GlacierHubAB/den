@@ -38,15 +38,29 @@ func TestEditInScope(t *testing.T) {
 			t.Errorf("%q: allowed", p)
 		}
 	}
-	// A cwd of the home directory: what is sensitive stays out.
-	for _, p := range []string{"~/.ssh/authorized_keys", "/home/user/.SSH/config", "/home/user/.claude/settings.json", "/home/user/.config/den/remotes.toml",
-		"/home/user/.local/state/den/x", "/home/user/.bashrc", "/home/user/.profile", "/home/user/.bash_profile", "/home/user/.zprofile", "/home/user/.config/fish/config.fish"} {
-		if EditInScope(p, home, home) {
-			t.Errorf("cwd home, %q: allowed", p)
+	// A cwd of the home directory, or above it, takes no edit rule: every
+	// start-up and config file of the user is under it.
+	for _, dir := range []string{home, "/home", "/"} {
+		for _, p := range []string{"/home/user/notes.txt", "/home/user/proj/main.go"} {
+			if EditInScope(p, dir, home) {
+				t.Errorf("cwd %q, %q: allowed", dir, p)
+			}
 		}
 	}
-	if !EditInScope("/home/user/notes.txt", home, home) {
-		t.Error("cwd home, a plain file: refused")
+	// Under ~/.config and ~/.local everything is sensitive, and so are
+	// files that run code wherever they are (the security review's list).
+	for _, cwd := range []string{"/home/user/.config", "/home/user/.config/nvim", "/home/user/.local", "/home/user/proj"} {
+		for _, p := range []string{".config/git/config", ".local/bin/git", ".config/hypr/hyprland.conf", ".config/systemd/user/x.service",
+			".config/autostart/x.desktop", ".config/environment.d/x.conf", ".config/uwsm/env", ".config/nvim/init.lua", ".local/share/x"} {
+			if EditInScope("/home/user/"+p, cwd, home) {
+				t.Errorf("cwd %q, ~/%s: allowed", cwd, p)
+			}
+		}
+	}
+	for _, name := range []string{".gitconfig", ".npmrc", ".netrc", ".tmux.conf", ".vimrc", ".pam_environment", ".xprofile", ".xinitrc", ".xsession", ".XSESSIONRC"} {
+		if EditInScope("/home/user/proj/"+name, cwd, home) {
+			t.Errorf("%s: allowed", name)
+		}
 	}
 }
 
