@@ -11,6 +11,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/question"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Kind is what an item asks of you.
@@ -198,6 +199,14 @@ func (s *Store) SessionNeedsYou(sessionID string) bool {
 // Apply folds a hook request into the store. It returns the item it created,
 // if any. Permission requests matching an "always" rule are answered here.
 func (s *Store) Apply(r *bridge.Request) *Item {
+	it := s.apply(r)
+	if it != nil {
+		it.clean()
+	}
+	return it
+}
+
+func (s *Store) apply(r *bridge.Request) *Item {
 	in := r.Input
 	// Any sign of life ends a stall.
 	s.resolveSession(in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
@@ -264,7 +273,7 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 		title := fmt.Sprintf("%d tool calls failed in a row", n)
 		for _, it := range s.items {
 			if it.SessionID == in.SessionID && it.Kind == Failed && it.Tool != "" && it.State != Resolved {
-				it.Title, it.Tool = title, in.ToolName
+				it.Title, it.Tool = title, sanitize.Line(in.ToolName)
 				return nil
 			}
 		}
@@ -389,6 +398,26 @@ func (it *Item) describeStep() {
 	for _, done := range it.Questions[:it.Step] {
 		it.Body = append(it.Body, "✓ "+done.Text+" → "+it.Answers[done.Text])
 	}
+	it.clean()
+}
+
+// clean sanitises what an item shows, all of which can come from an agent:
+// the tool name, title, intent, body, options and trailer, and the role and
+// task. A body line stays one line. The questions keep the agent's own text,
+// because the answers go back keyed by it; describeStep shows them cleaned.
+func (it *Item) clean() {
+	it.Tool = sanitize.Line(it.Tool)
+	it.Title = sanitize.Line(it.Title)
+	it.Intent = sanitize.Line(it.Intent)
+	it.Resolved = sanitize.Line(it.Resolved)
+	it.Role = sanitize.Line(it.Role)
+	it.Task = sanitize.Line(it.Task)
+	for i, l := range it.Body {
+		it.Body[i] = sanitize.Code(l)
+	}
+	for i, o := range it.Options {
+		it.Options[i] = sanitize.Line(o)
+	}
 }
 
 // AnswerQuestion takes the human's answer to the question being asked now:
@@ -415,6 +444,7 @@ func (s *Store) AnswerQuestion(it *Item, typed string) (done, ok bool) {
 		answers[k] = v
 	}
 	it.Body = append(it.Body, "✓ "+q.Text+" → "+a)
+	it.clean()
 	it.req.Reply(bridge.Decision{Behavior: "allow", Answers: answers})
 	it.State, it.Resolved = Resolved, "answered in den"
 	return true, true
@@ -475,7 +505,7 @@ func (s *Store) Sent(sessionID, text, status string) *Item {
 
 // SetStatus updates a notice's trailer, marking it resolved when final.
 func (s *Store) SetStatus(it *Item, status string, final bool) {
-	it.Resolved = status
+	it.Resolved = sanitize.Line(status)
 	if final {
 		it.State = Resolved
 		it.At = time.Now()
@@ -549,7 +579,7 @@ func (s *Store) AddCleanup(sessionID, title string, body []string) *Item {
 // Settle resolves a Close or Skills item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
-	it.State, it.Resolved = Resolved, outcome
+	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
 	if it.req == nil {
 		return
 	}
@@ -678,6 +708,7 @@ func (s *Store) Restore(items []*Item) {
 		s.seq++
 		it.ID = fmt.Sprintf("h%d", s.seq)
 		it.Seen = true
+		it.clean() // written by an older Den, or edited on disk
 		if it.Kind == 0 {
 			it.Kind = Done
 		}
@@ -687,6 +718,7 @@ func (s *Store) Restore(items []*Item) {
 }
 
 func (s *Store) add(it *Item) *Item {
+	it.clean()
 	s.seq++
 	it.ID = fmt.Sprintf("i%d", s.seq)
 	if it.At.IsZero() {
@@ -755,9 +787,11 @@ const bodyLimit = 40
 func describeTool(tool string, input json.RawMessage) (title, intent string, body []string) {
 	var in map[string]any
 	json.Unmarshal(input, &in)
+	// Sanitised before it is split into lines, so a carriage return
+	// starts a line of its own rather than overwriting one.
 	str := func(k string) string {
 		if v, ok := in[k].(string); ok {
-			return v
+			return sanitize.Text(v)
 		}
 		return ""
 	}
@@ -870,7 +904,7 @@ func planExcerpt(input json.RawMessage) []string {
 		Plan string `json:"plan"`
 	}
 	json.Unmarshal(input, &in)
-	return limitLines(in.Plan, bodyLimit)
+	return limitLines(sanitize.Text(in.Plan), bodyLimit)
 }
 
 // diffLines shows an edit as removed lines then added lines, the whole
@@ -890,7 +924,7 @@ func diffLines(oldS, newS string) []string {
 // Summarize turns an assistant reply into one plain sentence for a notice:
 // no code blocks, no markdown furniture, cut at the first sentence end.
 func Summarize(text string) string {
-	text = strings.TrimSpace(text)
+	text = strings.TrimSpace(sanitize.Text(text))
 	if text == "" {
 		return "Turn finished."
 	}

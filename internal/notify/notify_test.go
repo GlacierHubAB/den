@@ -64,3 +64,28 @@ func TestPostHasNoAction(t *testing.T) {
 		t.Errorf("args = %q", s)
 	}
 }
+
+func TestArgsAreSanitised(t *testing.T) {
+	n := Note{Summary: "Mossy\x1b]0;pwned\x07 Lemur\x1b[2J needs you\u202e", Body: "line\r\nnext\x1b]52;c;AAAA\x07"}
+	got := args(n, false)
+	want := []string{"--app-name=Den", "--urgency=normal", "--", "Mossy Lemur needs you", "line next"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+}
+
+// TestBodyMarkupIsEscaped checks, at the stand-in notify-send, that a body
+// cannot carry markup (a link, an image, bold) while the summary, plain text
+// by the spec, arrives as written.
+func TestBodyMarkupIsEscaped(t *testing.T) {
+	argsFile := fake(t, "")
+	Post(Note{Summary: "Mossy Lemur on devbox <needs> you & more", Body: `<a href="http://example.invalid">click</a> <img src="x"/> <b>a & b</b> &amp;`})
+	raw, _ := os.ReadFile(argsFile)
+	got := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	want := []string{"--app-name=Den", "--urgency=normal", "--",
+		"Mossy Lemur on devbox <needs> you & more",
+		`&lt;a href="http://example.invalid"&gt;click&lt;/a&gt; &lt;img src="x"/&gt; &lt;b&gt;a &amp; b&lt;/b&gt; &amp;amp;`}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+}

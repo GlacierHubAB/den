@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Command is the notify-send binary; tests point it at a stand-in.
@@ -75,6 +77,12 @@ func Post(n Note) {
 	exec.CommandContext(ctx, Command, args(n, false)...).Run()
 }
 
+// markup escapes text for a notification body, which the freedesktop spec
+// lets a server read as markup (<b>, <a href>, <img>): a name, role or task
+// must show as written, never as a link or an image. The summary is plain
+// text by the spec and stays as it is.
+var markup = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace
+
 func args(n Note, action bool) []string {
 	urgency := "normal"
 	if n.Urgent {
@@ -84,10 +92,12 @@ func args(n Note, action bool) []string {
 	if action {
 		a = append(a, "--action=default=Open", "--wait")
 	}
-	// "--" so a summary can never be read as an option.
-	a = append(a, "--", n.Summary)
-	if n.Body != "" {
-		a = append(a, n.Body)
+	// "--" so a summary can never be read as an option. Sanitised as a
+	// last line of defence: an agent's name or words must not carry escape
+	// sequences into the notification server or its log.
+	a = append(a, "--", sanitize.Line(n.Summary))
+	if body := sanitize.Line(n.Body); body != "" {
+		a = append(a, markup(body))
 	}
 	return a
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Usage is the context the last assistant turn consumed.
@@ -138,9 +140,25 @@ type rawHunk struct {
 func hunks(raw []rawHunk) []Hunk {
 	out := make([]Hunk, 0, len(raw))
 	for _, h := range raw {
-		out = append(out, Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: h.Lines})
+		out = append(out, Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: diffLines(h.Lines)})
 	}
 	return out
+}
+
+// diffLines makes each hunk line safe to print, one line each.
+func diffLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = sanitize.Code(l)
+	}
+	return out
+}
+
+// filePath makes a changed file's path safe to print. A path with control
+// characters, bidi controls or invalid UTF-8 in it loses them, which only
+// ever matters for showing it.
+func filePath(p string) string {
+	return sanitize.Code(p)
 }
 
 // changes turns a result into the files it changed.
@@ -148,7 +166,7 @@ func (r toolResult) changes(tool string) []FileChange {
 	switch tool {
 	case "Edit", "MultiEdit", "NotebookEdit":
 		if r.FilePath != "" && len(r.StructuredPatch) > 0 {
-			return []FileChange{{Path: r.FilePath, Hunks: hunks(r.StructuredPatch)}}
+			return []FileChange{{Path: filePath(r.FilePath), Hunks: hunks(r.StructuredPatch)}}
 		}
 	case "Write":
 		if r.FilePath == "" {
@@ -157,16 +175,16 @@ func (r toolResult) changes(tool string) []FileChange {
 		if r.Type == "create" || len(r.StructuredPatch) == 0 {
 			// A new file: every line is an addition.
 			var lines []string
-			for _, l := range strings.Split(strings.TrimRight(r.Content, "\n"), "\n") {
+			for _, l := range strings.Split(strings.TrimRight(sanitize.Text(r.Content), "\n"), "\n") {
 				lines = append(lines, "+"+l)
 			}
-			return []FileChange{{Path: r.FilePath, Created: true, Hunks: []Hunk{{OldStart: 0, NewStart: 1, Lines: lines}}}}
+			return []FileChange{{Path: filePath(r.FilePath), Created: true, Hunks: []Hunk{{OldStart: 0, NewStart: 1, Lines: lines}}}}
 		}
-		return []FileChange{{Path: r.FilePath, Hunks: hunks(r.StructuredPatch)}}
+		return []FileChange{{Path: filePath(r.FilePath), Hunks: hunks(r.StructuredPatch)}}
 	case "Bash":
 		var out []FileChange
 		for _, f := range r.BashEditDiff.Files {
-			out = append(out, FileChange{Path: f.FilePath, Hunks: hunks(f.Hunks), Created: f.Created, Deleted: f.Deleted})
+			out = append(out, FileChange{Path: filePath(f.FilePath), Hunks: hunks(f.Hunks), Created: f.Created, Deleted: f.Deleted})
 		}
 		return out
 	}
@@ -255,7 +273,7 @@ func Turn(path string, from, to time.Time, n int) []Entry {
 					}
 				case "tool_use":
 					desc, code := ToolBrief(b.Input)
-					e := stamp(Entry{Kind: "tool", Tool: b.Name, Text: desc, Code: code})
+					e := stamp(Entry{Kind: "tool", Tool: sanitize.Line(b.Name), Text: desc, Code: code})
 					if r, ok := results[b.ID]; ok {
 						e.Changes = r.changes(b.Name)
 						if out := strings.TrimSpace(r.Stdout); out != "" {
@@ -294,11 +312,12 @@ func cleanPrompt(s string) string {
 
 // excerpt keeps the first n non-empty lines of s and the paragraph breaks
 // between them (runs of blank lines collapse to one), marking a cut with an
-// ellipsis.
+// ellipsis. It sanitises s first: everything a transcript entry shows passes
+// through here or firstLine.
 func excerpt(s string, n int) string {
 	var out []string
 	kept := 0
-	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
+	for _, l := range strings.Split(strings.TrimSpace(sanitize.Text(s)), "\n") {
 		l = strings.TrimRight(l, " \t")
 		if strings.TrimSpace(l) == "" {
 			if len(out) > 0 && out[len(out)-1] != "" {
@@ -317,7 +336,7 @@ func excerpt(s string, n int) string {
 }
 
 func firstLine(s string) string {
-	s = strings.TrimSpace(s)
+	s = strings.TrimSpace(sanitize.Text(s))
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // OnTimeout bounds an [on] command. It is killed after that.
@@ -72,5 +74,5 @@ func logOn(ev Event, err error) {
 	if len(sid) > 8 {
 		sid = sid[:8]
 	}
-	fmt.Fprintf(f, "%s %-18s %s [on] command failed: %v\n", time.Now().Format("2006-01-02 15:04:05"), "on."+ev.Kind, sid, err)
+	fmt.Fprintf(f, "%s %-18s %s [on] command failed: %v\n", time.Now().Format("2006-01-02 15:04:05"), sanitize.Line("on."+ev.Kind), sanitize.Line(sid), sanitize.Line(fmt.Sprint(err)))
 }

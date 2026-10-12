@@ -287,3 +287,24 @@ func TestRunStartsAnAgentInItsOwnWorktree(t *testing.T) {
 		t.Errorf("plain: %v %v", err, gotCmd)
 	}
 }
+
+// TestTitleIsSanitised: a name carrying an OSC 0 title sequence, as a
+// model could pass to spawn_agent, never reaches the terminal's title.
+func TestTitleIsSanitised(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
+	SessionWait = 0
+	var gotTitle string
+	Launch = func(d, title string, command, env []string) error { gotTitle = title; return nil }
+	t.Cleanup(func() { Launch = launch })
+
+	if _, err := Run(t.Context(), Request{Dir: dir, Agent: true, Name: "x\x1b]0;pwned\x07\u202e", Brief: "Fix."}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(gotTitle, "\x1b\x07\u202e") || strings.Contains(gotTitle, ";") {
+		t.Errorf("title = %q", gotTitle)
+	}
+}

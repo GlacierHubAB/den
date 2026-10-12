@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -51,6 +52,11 @@ func (m Model) View() tea.View {
 	if m.sel.active {
 		content = strings.Join(m.highlightSelection(strings.Split(content, "\n")), "\n")
 	}
+	// Outside text is sanitised where it comes in; this keeps Den's own
+	// colours and drops any other sequence that got past that, so nothing
+	// but styling reaches the terminal (the renderer passes SGR and OSC 8
+	// hyperlinks through as they are).
+	content = sanitize.Styled(content)
 	v := tea.NewView(content)
 	v.AltScreen = true
 	if m.tab == tabReview || m.tab == tabOrch || m.tab == tabOverview {
@@ -820,7 +826,7 @@ func (m Model) detailPane(w, h int) string {
 	if sub != "" {
 		sub += " · "
 	}
-	sub += a.Session.ShortCWD()
+	sub += sanitize.Line(a.Session.ShortCWD())
 	head = append(head, s.dim.Render(ansi.Truncate(sub, textW, "…")))
 	if textW == w-4 {
 		for _, l := range head {
@@ -901,7 +907,7 @@ func (m Model) detailPane(w, h int) string {
 	}
 	kv("where", a.Where())
 	if a.HasGit {
-		kv("cwd", a.Session.ShortCWD())
+		kv("cwd", sanitize.Line(a.Session.ShortCWD()))
 	}
 	kv("window", a.Place())
 	if a.Title != "" {
@@ -909,7 +915,7 @@ func (m Model) detailPane(w, h int) string {
 	}
 	kv("started", humanAge(time.Since(a.Session.Started()))+" ago")
 	kv("pid", fmt.Sprintf("%d · claude %s", a.Session.PID, a.Session.Version))
-	kv("session", a.Session.SessionID[:8]+" · "+a.Session.Name)
+	kv("session", sanitize.Line(a.Session.SessionID[:8]+" · "+a.Session.Name))
 	if len(a.Tail) > 0 {
 		b.WriteString("\n")
 		line(s.muted.Render("recent"))

@@ -207,3 +207,15 @@ func TestBaseOnDefaultBranchUsesSessionStart(t *testing.T) {
 		t.Errorf("early: files = %+v", files)
 	}
 }
+
+func TestParseUnifiedSanitisesLines(t *testing.T) {
+	diff := "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,2 +1,2 @@\n ctx\r\n-old\x1b]52;c;AAAA\x07\n+new\x1b[2J\u202e\tend\n"
+	files := ParseUnified(diff)
+	if len(files) != 1 || len(files[0].Hunks) != 1 {
+		t.Fatalf("files = %+v", files)
+	}
+	want := []string{" ctx ", "-old", "+new\tend"}
+	if got := files[0].Hunks[0].Lines; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("lines = %q, want %q", got, want)
+	}
+}

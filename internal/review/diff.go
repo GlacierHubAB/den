@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -189,7 +190,7 @@ func untracked(root, rel string) File {
 	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
 	h := transcript.Hunk{OldStart: 0, NewStart: 1, Lines: make([]string, len(lines))}
 	for i, l := range lines {
-		h.Lines[i] = "+" + l
+		h.Lines[i] = "+" + sanitize.Code(l)
 	}
 	f.Hunks = []transcript.Hunk{h}
 	return f
@@ -243,7 +244,10 @@ func ParseUnified(text string) []File {
 			cur.Hunks = append(cur.Hunks, transcript.Hunk{OldStart: old, NewStart: nw})
 			hunk = &cur.Hunks[len(cur.Hunks)-1]
 		case hunk != nil && line != "" && strings.ContainsRune(" +-", rune(line[0])):
-			hunk.Lines = append(hunk.Lines, line)
+			// Sanitised before it is highlighted or shown: the code is
+			// whatever the agent wrote. Paths stay raw, Den reads files by
+			// them; Review sanitises them where it shows them.
+			hunk.Lines = append(hunk.Lines, sanitize.Code(line))
 			// Appending may move the backing array; keep hunk pointing at it.
 			hunk = &cur.Hunks[len(cur.Hunks)-1]
 		}
