@@ -465,7 +465,12 @@ on this machine.
   60 new ones a minute. Its desktop notifications are one at once, then at
   most one every 30 seconds ("devbox: 5 agents need you"), and no more than 6 a
   minute for all hosts; its `[on]` commands run at most 30 times a minute.
-  `/remote` shows what was dropped.
+  A host's held requests have a budget of their own: 32 at once, then one a
+  second, and at most 60 new inbox items a minute and 64 kept; the rest go to
+  their terminal there. A request withdrawn within a second of being offered
+  counts as a drop, so a host churning requests is disabled like a flooding
+  one, and a request a host let go is pruned from the inbox like an answered
+  one. `/remote` shows what was dropped.
 - **Metadata by default, checked twice.** The host filters before sending; Den
   filters again on arrival.
 - **Everything from a host is sanitised.** Escape sequences, control

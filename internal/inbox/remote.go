@@ -130,18 +130,53 @@ func (s *Store) AddStalledOn(host, sessionID string, quiet time.Duration) *Item 
 
 // Caps on what a host's events may put in the inbox. A host chooses its
 // events, so without them it could fill the inbox (and history.jsonl)
-// faster than anyone can read. Requests a host holds for an answer are
-// capped where they arrive (MaxHeld) and do not count here.
+// faster than anyone can read. Requests a host holds for an answer have
+// caps of their own (heldFits), besides MaxHeld where they arrive.
 const (
 	MaxRemoteOpen    = 32 // open items from one host's events
 	MaxRemoteOpenAll = 128
 	MaxRemoteNew     = 60 // new items, finished turns included, from one host a minute
+	// MaxRemoteHeld caps the items of one host's held requests that are
+	// still waiting or in its terminal, and MaxRemoteHeldNew how many it
+	// may add a minute.
+	MaxRemoteHeld    = 64
+	MaxRemoteHeldNew = 60
 )
 
 type remoteCaps struct {
 	window  map[string]time.Time // host -> when its minute began
 	added   map[string]int       // host -> items added in that minute
 	dropped map[string]int       // host -> items not added for a cap
+	heldAt  map[string]time.Time // host -> when its held requests' minute began
+	held    map[string]int       // host -> held requests added in that minute
+}
+
+// heldFits reports whether a held request from host may become an item,
+// and counts it if so; one that may not goes to its terminal there.
+func (s *Store) heldFits(host string) bool {
+	c := &s.remote
+	if c.held == nil {
+		c.heldAt, c.held = map[string]time.Time{}, map[string]int{}
+	}
+	if c.dropped == nil {
+		c.dropped = map[string]int{}
+	}
+	now := time.Now()
+	if now.Sub(c.heldAt[host]) >= time.Minute {
+		c.heldAt[host], c.held[host] = now, 0
+	}
+	open := 0
+	for _, o := range s.items {
+		if o.Host == host && o.req != nil && o.State != Resolved {
+			open++
+		}
+	}
+	if c.held[host] >= MaxRemoteHeldNew || open >= MaxRemoteHeld {
+		c.dropped[host]++
+		return false
+	}
+	c.held[host]++
+	return true
 }
 
 // addRemote adds an item made by a host's event, unless a cap is reached;

@@ -24,6 +24,17 @@ const (
 	// FloodWindow before it disables the host until /remote connect.
 	FloodDrops  = 2000
 	FloodWindow = time.Minute
+	// HeldRate is how many held requests a second a host may offer after
+	// its first HeldBurst: a human answers far fewer.
+	HeldRate = 1
+	// HeldBurst is how many held requests a host may offer at once, as
+	// many as one serve holds open.
+	HeldBurst = MaxHeld
+	// QuickGone is how soon after it was offered a held request may be
+	// withdrawn before the gone counts as a drop towards FloodDrops: no
+	// human answers in a terminal that fast, a host churning held and gone
+	// pairs does.
+	QuickGone = time.Second
 )
 
 // Disabled is a host Den stopped for flooding: not retried until the human
@@ -58,11 +69,28 @@ type gate struct {
 	floodWin    time.Duration
 	window      time.Time
 	inWindow    int
+	// The held requests' own bucket, carried over like the events'.
+	heldRate, heldBurst float64
+	heldTokens          float64
+	heldLast            time.Time
 }
 
 func newGate(o Options, now time.Time) *gate {
 	return &gate{rate: float64(o.EventRate), burst: float64(o.EventBurst), tokens: float64(o.EventBurst), last: now, start: now,
-		announced: map[string]int{}, floodMax: o.FloodDrops, floodWin: o.FloodWindow, window: now}
+		announced: map[string]int{}, floodMax: o.FloodDrops, floodWin: o.FloodWindow, window: now,
+		heldRate: float64(o.HeldRate), heldBurst: float64(o.HeldBurst), heldTokens: float64(o.HeldBurst), heldLast: now}
+}
+
+// held reports whether a held request offered at now fits the host's
+// held-request bucket, and takes it from the bucket if so.
+func (g *gate) held(now time.Time) bool {
+	g.heldTokens = min(g.heldBurst, g.heldTokens+now.Sub(g.heldLast).Seconds()*g.heldRate)
+	g.heldLast = now
+	if g.heldTokens < 1 {
+		return false
+	}
+	g.heldTokens--
+	return true
 }
 
 // begin starts a session whose hello arrived at now: what came before is
@@ -129,13 +157,20 @@ func (g *gate) listed(session string, agents []fleet.Meta) bool {
 // the flood threshold. A drop during the backfill counts a tenth: a host
 // that was away a long time sends a lot of history at once.
 func (g *gate) dropped(now time.Time) bool {
+	if g.live {
+		return g.count(now, 10)
+	}
+	return g.count(now, 1)
+}
+
+// droppedHeld is dropped for a held request or its gone: never backfill,
+// so it always counts whole.
+func (g *gate) droppedHeld(now time.Time) bool { return g.count(now, 10) }
+
+func (g *gate) count(now time.Time, n int) bool {
 	if now.Sub(g.window) >= g.floodWin {
 		g.window, g.inWindow = now, 0
 	}
-	if g.live {
-		g.inWindow += 10
-	} else {
-		g.inWindow++
-	}
+	g.inWindow += n
 	return g.inWindow >= 10*g.floodMax
 }

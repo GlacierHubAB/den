@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -107,6 +108,8 @@ type Options struct {
 	EventBurst  int           // events Den takes from one host at once; default EventBurst
 	FloodDrops  int           // events dropped within FloodWindow that disable a host until Reconnect; default FloodDrops
 	FloodWindow time.Duration // default FloodWindow
+	HeldRate    int           // held requests a second Den takes from one host after HeldBurst; default HeldRate
+	HeldBurst   int           // held requests Den takes from one host at once; default HeldBurst
 	Controller  string        // this machine's controller id; default LoadController(StateDir)
 	PingEvery   time.Duration // how often a live session pings serve; default PingEvery
 	Retake      time.Duration // a host attached elsewhere is asked again this often; default 1 min
@@ -165,6 +168,12 @@ func (o *Options) defaults() {
 	}
 	if o.FloodDrops == 0 {
 		o.FloodDrops = FloodDrops
+	}
+	if o.HeldRate == 0 {
+		o.HeldRate = HeldRate
+	}
+	if o.HeldBurst == 0 {
+		o.HeldBurst = HeldBurst
 	}
 	if o.FloodWindow == 0 {
 		o.FloodWindow = FloodWindow
@@ -763,6 +772,27 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	// fire); after unlistedSnapshots more without it, and parkGrace, it
 	// goes back to its terminal with no decision, and the host is flagged.
 	var parked []parkedHeld
+	// offered is when each held id still open arrived, to tell a gone that
+	// follows at once (QuickGone) from one a human caused.
+	offered := map[string]time.Time{}
+	// heldDrop counts a held request or a gone Den did not take as a drop
+	// towards FloodDrops, like an event's, and reports whether the host is
+	// now flooding.
+	heldDrop := func(now time.Time, why string) bool {
+		m.mu.Lock()
+		m.state[h.Label].status.Dropped++
+		m.mu.Unlock()
+		m.flag(h, why)
+		if !g.droppedHeld(now) {
+			return false
+		}
+		m.flag(h, "flooding: disabled")
+		g.forgive() // for when the human connects it again
+		return true
+	}
+	heldFlood := func() string {
+		return fmt.Sprintf("flooding: held requests over Den's limit; disabled until /remote connect %s", h.Label)
+	}
 	listed := func(session string) bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -1026,6 +1056,17 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, why)
 				continue
 			}
+			if !g.held(in.at) {
+				held.refuse(hm)
+				if heldDrop(in.at, "more held requests than Den takes from one host") {
+					return end(Disabled, heldFlood())
+				}
+				continue
+			}
+			if len(offered) >= 4*MaxHeld {
+				maps.DeleteFunc(offered, func(_ string, at time.Time) bool { return in.at.Sub(at) >= QuickGone })
+			}
+			offered[hm.ID] = in.at
 			if listed(hm.Session) {
 				offer(hm)
 				continue
@@ -1062,6 +1103,11 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue
 			}
 			parked = slices.DeleteFunc(parked, func(p parkedHeld) bool { return p.hm.ID == g.ID })
+			at, ok := offered[g.ID]
+			delete(offered, g.ID)
+			if ok && in.at.Sub(at) < QuickGone && heldDrop(in.at, "held requests withdrawn as soon as offered") {
+				return end(Disabled, heldFlood())
+			}
 			if r := held.gone(g.ID); r != nil {
 				m.send(Update{Kind: HeldReleased, Host: h.Label, Request: r})
 			}
