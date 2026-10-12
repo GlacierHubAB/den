@@ -244,3 +244,79 @@ func TestRemoteContentStaysOutOfTheRosterAndOffline(t *testing.T) {
 		}
 	}
 }
+
+// Agents whose diff fails never keep a host's slots from the others: each
+// round reads every agent once, the one read longest ago first, and a
+// failing agent waits out a growing backoff, still showing its error.
+func TestReviewRemoteFailingDiffsDoNotStarveTheOthers(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	bad := "33333333-2222-4333-8444-555555555555"
+	good := "44444444-2222-4333-8444-555555555555"
+	// The failing agents come first in the fleet.
+	feed.agents[0].Name = "Agent One"
+	feed.agents = append(feed.agents, remoteAgent("devbox", bad, "Agent Two", fleet.Idle, 0), remoteAgent("devbox", good, "Zesty Otter", fleet.Idle, 0))
+	fail := errors.New("git found no branch to compare its work with")
+	feed.diffErrs = map[string]error{dupSession: fail, bad: fail}
+	feed.diff = remoteDiff()
+	now := time.Now()
+	reviewNow = func() time.Time { return now }
+	t.Cleanup(func() { reviewNow = time.Now })
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = ""
+	asked := func(sid string) int {
+		n := 0
+		for _, d := range feed.diffs {
+			if d == "devbox/"+sid {
+				n++
+			}
+		}
+		return n
+	}
+	failing := map[string]int{}
+	for round := 1; round <= 6; round++ {
+		feed.diffs = nil
+		cmd := m.loadRemoteReviews()
+		loading := 0
+		for _, rr := range m.rev.remote {
+			if rr.loading {
+				loading++
+			}
+		}
+		if loading > remote.MaxDiffs {
+			t.Fatalf("round %d: %d diffs asked at once", round, loading)
+		}
+		runReview(m, cmd)
+		if asked(good) != 1 {
+			t.Fatalf("round %d: the working agent's diff was not read again (asked %v)", round, feed.diffs)
+		}
+		for _, sid := range []string{dupSession, bad} {
+			failing[sid] += asked(sid)
+		}
+		now = now.Add(5 * time.Second)
+	}
+	// Asked at 0 s, again at 15 s (backoff 15 s), then not before 45 s.
+	if failing[dupSession] != 2 || failing[bad] != 2 {
+		t.Errorf("failing agents asked %v times in 25 s", failing)
+	}
+	if !strings.Contains(frame(m), "func run") {
+		t.Errorf("Review lacks the working agent's diff:\n%s", frame(m))
+	}
+	for _, a := range m.agents {
+		if a.Host == "devbox" && a.Name != "Zesty Otter" {
+			if note := m.remoteNote(a); note != fail.Error() {
+				t.Errorf("%s in backoff says %q", a.Name, note)
+			}
+		}
+	}
+}
+
+func TestDiffBackoffGrowsAndIsCapped(t *testing.T) {
+	for fails, want := range map[int]time.Duration{1: 15 * time.Second, 2: 30 * time.Second, 3: time.Minute, 5: 4 * time.Minute, 6: 5 * time.Minute, 40: 5 * time.Minute} {
+		if got := backoff(fails); got != want {
+			t.Errorf("backoff(%d) = %v, want %v", fails, got, want)
+		}
+	}
+}

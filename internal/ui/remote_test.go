@@ -41,9 +41,10 @@ type fakeFeed struct {
 	closeErr  error
 	closeKill bool
 	// What Diff got, and what it answers.
-	diffs   []string // "host/session"
-	diff    *remote.Diff
-	diffErr error
+	diffs    []string // "host/session"
+	diff     *remote.Diff
+	diffErr  error
+	diffErrs map[string]error // by session, before diffErr
 }
 
 func (f *fakeFeed) Start()                        {}
@@ -63,6 +64,9 @@ func (f *fakeFeed) CloseAgent(host, sid string, force bool) (bool, error) {
 }
 func (f *fakeFeed) Diff(host, sid string) (*remote.Diff, error) {
 	f.diffs = append(f.diffs, host+"/"+sid)
+	if err := f.diffErrs[sid]; err != nil {
+		return nil, err
+	}
 	return f.diff, f.diffErr
 }
 func (f *fakeFeed) setState(label string, s remote.State) {

@@ -67,6 +67,7 @@ type reviewState struct {
 	all      []work                   // local and remote
 	local    []work                   // as the last local load found them
 	remote   map[string]*remoteReview // by agent key
+	round    int                      // the remote read in progress; each agent is asked once in it
 	cur      int
 	fileCur  int
 	scroll   int // diff rows scrolled off the top
