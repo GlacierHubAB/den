@@ -82,21 +82,28 @@ func TestPeerUIDIsThisUser(t *testing.T) {
 }
 
 func TestNoClientTalksToAnotherUsersSocket(t *testing.T) {
-	path := filepath.Join(shortDir(t), "den.sock")
-	got := squatter(t, path)
+	dir := shortDir(t)
+	local, remote := filepath.Join(dir, "den.sock"), filepath.Join(dir, "den-remote.sock")
+	gotLocal, gotRemote := squatter(t, local), squatter(t, remote)
 	foreignPeers(t)
 	env := Envelope{Event: "PermissionRequest", SessionID: "s1", Payload: []byte(`{"prompt":"SECRET"}`)}
-	if Send(path, env) {
+	if Send(local, env) {
 		t.Error("Send delivered to another user's socket")
 	}
-	if _, ok := Ask(path, env, time.Second); ok {
+	if _, err := Call(local, env, time.Second); !errors.Is(err, ErrNoDen) {
+		t.Errorf("Call: %v", err)
+	}
+	if _, ok := Ask(local, env, time.Second); ok {
 		t.Error("Ask took an answer from another user's socket")
 	}
-	if _, err := Dial(path, time.Second); !errors.Is(err, ErrForeign) {
+	if d, ok := AskFirst(local, remote, env, time.Second); ok || d.Behavior != "" {
+		t.Errorf("AskFirst took %+v from a squatter", d)
+	}
+	if _, err := Dial(local, time.Second); !errors.Is(err, ErrForeign) {
 		t.Errorf("Dial: %v", err)
 	}
 	time.Sleep(100 * time.Millisecond)
-	if len(got) > 0 {
+	if len(gotLocal)+len(gotRemote) > 0 {
 		t.Error("a squatter was sent a request")
 	}
 }
