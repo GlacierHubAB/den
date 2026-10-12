@@ -154,7 +154,11 @@ host to keep them back.
 
 - **Fleet.** A remote agent has an `@devbox` chip after its name and the same
   role, task, branch and context figures as a local one. Its critter name is
-  computed here from its session id; a host cannot choose it. The details pane
+  computed here from its session id; a host cannot choose it. Two agents with
+  the same session id (here and on a host, or on two hosts) get the same name,
+  as their badges show it; Den keeps the names and says "same session id as
+  Mossy Lemur @gpu" on both rows, their details and their inbox items, and
+  flags each host involved in `/remote`. The details pane
   adds the host, the link, the policy, the host's Claude Code version, and the
   clock offset when it is over 2 seconds (ages are always the host's own,
   never compared with this machine's clock). `Enter` and `/open` cannot raise

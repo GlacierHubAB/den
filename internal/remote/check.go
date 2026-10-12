@@ -142,3 +142,14 @@ func plausible(maps ...map[string]transcript.Tokens) bool {
 	}
 	return true
 }
+
+// Flag marks a host for something Den noticed beyond a single message,
+// such as two hosts sending the same session id. It shows in /remote with
+// the host's other flags.
+func (m *Manager) Flag(label, what string) {
+	for _, h := range m.hosts {
+		if h.Label == label {
+			m.flag(h, what)
+		}
+	}
+}

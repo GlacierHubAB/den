@@ -56,6 +56,8 @@ type remoteFeed interface {
 	// Diff reads a remote agent's work on its host for Review,
 	// under the full policy only.
 	Diff(host, sessionID string) (*remote.Diff, error)
+	// Flag marks a host for something the views noticed (twins).
+	Flag(label, what string)
 }
 
 // remoteState is the remote hosts as the views show them.
@@ -64,6 +66,7 @@ type remoteState struct {
 	hosts   []remote.HostStatus     // in remotes.toml order
 	agents  []fleet.Agent           // keyed (see above)
 	last    map[string]fleet.Status // a stale agent's last known status, by key
+	twins   map[string]string       // agent key → the other agent with the same session id (findTwins)
 	loadErr error                   // remotes.toml could not be read: no host is connected
 	listing bool                    // /remote: the hosts show in place of the details pane
 	pump    *remotePump             // drains the feed once Init starts it
@@ -371,6 +374,54 @@ func eventFor(kind, key string) events.Event {
 	return ev
 }
 
+// findTwins notes every agent whose session id another agent here or on
+// another host also has. Session ids are random UUIDs, so two agents never
+// share one by chance: one was copied (a session resumed from another
+// machine's files) or a host lies. The critter name comes from the session
+// id, as the badge on the host computes it, so twins look alike but for
+// the host chip. Den keeps the names as the hosts show them, and instead
+// says on both rows and their inbox items which agent shares the id, and
+// flags each remote host involved.
+func (m *Model) findTwins() {
+	m.remote.twins = nil
+	if !m.remoteOn() {
+		return
+	}
+	bySID := map[string][]fleet.Agent{}
+	for _, a := range m.agents {
+		sid, _ := splitKey(a.Session.SessionID)
+		bySID[sid] = append(bySID[sid], a)
+	}
+	flagged := false
+	for _, group := range bySID {
+		if len(group) < 2 {
+			continue
+		}
+		for i, a := range group {
+			o := group[(i+1)%len(group)]
+			other := o.Name + " here"
+			if o.Host != "" {
+				other = o.Name + " @" + o.Host
+			}
+			if m.remote.twins == nil {
+				m.remote.twins = map[string]string{}
+			}
+			m.remote.twins[a.Session.SessionID] = "same session id as " + other
+			if a.Host != "" {
+				m.remote.feed.Flag(a.Host, "an agent with the same session id as "+other)
+				flagged = true
+			}
+		}
+	}
+	if flagged {
+		m.remote.hosts = m.remote.feed.Hosts()
+	}
+}
+
+// twinNote is "same session id as Brave Otter @c" for an agent or item
+// key that shares its session id, "" otherwise.
+func (m Model) twinNote(key string) string { return m.remote.twins[key] }
+
 // hostChip is " @devbox" after a remote agent's name, nothing for a local one.
 func hostChip(a fleet.Agent) string {
 	if a.Host == "" {
@@ -652,6 +703,9 @@ func (m Model) remoteDetail(a fleet.Agent) [][2]string {
 		policy += " requested · " + string(h.Applied) + " applied"
 	}
 	rows := [][2]string{{"host", host + " · ssh " + h.Target}, {"link", link}, {"policy", policy}}
+	if twin := m.twinNote(a.Session.SessionID); twin != "" {
+		rows = append(rows, [2]string{"warning", twin})
+	}
 	if off := h.Offset; off > 2*time.Second || off < -2*time.Second {
 		rows = append(rows, [2]string{"clock", offsetText(off)})
 	}

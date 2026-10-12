@@ -382,6 +382,7 @@ func (m *Model) refresh() {
 		m.agents = append(m.agents, a)
 	}
 	m.agents = append(m.agents, m.remote.agents...)
+	m.findTwins()
 	for i := range m.agents {
 		a := &m.agents[i]
 		if sid, host := splitKey(a.Session.SessionID); a.Status != fleet.Gone && !a.Stale && m.store.NeedsYouOn(host, sid) {

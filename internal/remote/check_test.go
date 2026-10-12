@@ -227,3 +227,14 @@ func TestModelKeysAreRestricted(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerFlag(t *testing.T) {
+	s := newScratch(t)
+	m := s.manager(&pipeDialer{}, hostB())
+	defer m.Close()
+	m.Flag("b", "an agent with the same session id as Mossy Lemur here")
+	m.Flag("nope", "x")
+	if !hasFlag(m, "same session id") || len(state(m).Flags) != 1 {
+		t.Errorf("flags %q", state(m).Flags)
+	}
+}
