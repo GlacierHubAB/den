@@ -948,7 +948,8 @@ Limits today: Linux hosts and Claude Code agents only (no macOS, no Codex);
 Den cannot spawn agents on a host, missions cannot use remote agents, and the
 orchestrator lists them but cannot message or close them; `Enter` and `/open`
 cannot raise a terminal on another machine, they print `ssh -t <target>`;
-changes to `remotes.toml` are picked up when Den restarts. Every string a host
+a host's changed policy applies within seconds, but adding or removing a host in
+`remotes.toml` is picked up when Den restarts. Every string a host
 sends is sanitised before Den shows it (see
 [Text from outside Den](#text-from-outside-den)).
 

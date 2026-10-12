@@ -110,6 +110,8 @@ func (m *Model) openRemote(cfg config.Config) {
 		Version:    Version,
 		Prices:     cost.NewTable(config.Prices()),
 		NoEventLog: !cfg.Events.Log,
+		Reload:     remote.Load, // a changed policy applies without a restart
+		Watch:      2 * time.Second,
 	})
 	m.remote.pump = newPump()
 	m.syncRemote()

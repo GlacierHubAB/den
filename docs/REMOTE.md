@@ -94,7 +94,8 @@ without it, `default_policy` in `remotes.toml` applies.
 
 In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
-host now. `disable`, `enable` and `remove` take effect when Den restarts.
+host now, under `remotes.toml` as it is then. `disable`, `enable` and `remove`
+take effect when Den restarts.
 
 Addressing a remote agent: `@Name@devbox text` messages it, `/close Name@devbox`
 closes it, and from a script `den send name@devbox "text"`. A bare `@Name` or
@@ -120,7 +121,12 @@ enabled = true
 A label is lower-case letters, digits and `-`, and `local` is taken. A target
 that starts with `-` is refused. Den reads the file when it starts. A file that
 does not parse connects no host, and `/remote` says why. There is no command to
-change a host's policy: edit `policy` and restart Den.
+change a host's policy: edit `policy`. Den reads the file again every two
+seconds, before each connection and on `/remote connect`. A host whose
+`policy`, `labels`, `target` or `den_path` changed is shown under the new
+settings at once, so content a lowered policy no longer allows disappears, and
+it reconnects under them. Adding, removing, disabling or enabling a host still
+takes a restart of Den; a file that does not parse keeps the settings in use.
 `policy` and `default_policy` take `observe` or `approve`.
 They also take `full`.
 

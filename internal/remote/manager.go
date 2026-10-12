@@ -113,6 +113,16 @@ type Options struct {
 	CloseWait   time.Duration // how long Close waits for it; default 15 s
 	DiffWait    time.Duration // how long Diff waits for it; default 30 s
 	Now         func() time.Time
+
+	// Reload reads remotes.toml again (Den passes Load). A host's policy,
+	// labels, target and den_path then apply before each connection, on
+	// Reconnect, and, with Watch, within Watch of the file changing: a
+	// host whose settings changed is shown under them at once and its
+	// session restarts, so a lowered policy never waits for a restart of
+	// Den. Adding, removing or disabling a host still takes one. Nil
+	// keeps the Config NewManager was given.
+	Reload func() (Config, error)
+	Watch  time.Duration // how often Reload is polled; 0 polls never
 }
 
 func (o *Options) defaults() {
@@ -251,6 +261,8 @@ type Manager struct {
 }
 
 type hostState struct {
+	host      Host // as remotes.toml says now (Options.Reload)
+	restart   chan struct{}
 	status    HostStatus
 	known     Known
 	reconnect chan struct{}
@@ -276,6 +288,8 @@ func NewManager(cfg Config, o Options) *Manager {
 			st = k.State
 		}
 		m.state[h.Label] = &hostState{
+			host:      h,
+			restart:   make(chan struct{}, 1),
 			known:     k,
 			reconnect: make(chan struct{}, 1),
 			answered:  newAnsweredIDs(),
@@ -297,6 +311,75 @@ func (m *Manager) Start() {
 			m.loop(h)
 		}()
 	}
+	if m.o.Reload != nil && m.o.Watch > 0 {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			t := time.NewTicker(m.o.Watch)
+			defer t.Stop()
+			for {
+				select {
+				case <-m.ctx.Done():
+					return
+				case <-t.C:
+					m.reload()
+				}
+			}
+		}()
+	}
+}
+
+// reload applies remotes.toml as it is now to the hosts Den runs (see
+// Options.Reload). A host whose settings changed has its agents re-marked
+// under them at once, which drops content the new policy does not allow,
+// and its session restarts to ask the host for the new policy. A file
+// that does not read keeps the settings in use.
+func (m *Manager) reload() {
+	if m.o.Reload == nil {
+		return
+	}
+	cfg, err := m.o.Reload()
+	if err != nil {
+		return
+	}
+	now := map[string]Host{}
+	for _, h := range cfg.Enabled() {
+		now[h.Label] = h
+	}
+	var changed []Update
+	m.mu.Lock()
+	for _, h := range m.hosts {
+		st, nh := m.state[h.Label], now[h.Label]
+		if nh.Label == "" {
+			continue // removed or disabled: that takes a restart
+		}
+		old := st.host
+		if nh.Policy == old.Policy && nh.Labels == old.Labels && nh.Target == old.Target && nh.DenPath == old.DenPath {
+			continue
+		}
+		st.host = nh
+		st.status.Policy, st.status.Target = nh.Policy, nh.Target
+		changed = append(changed, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(nh)})
+		select {
+		case st.restart <- struct{}{}:
+		default:
+		}
+		select {
+		case st.reconnect <- struct{}{}:
+		default:
+		}
+	}
+	m.mu.Unlock()
+	for _, u := range changed {
+		m.send(u)
+	}
+}
+
+// hostNow is h as remotes.toml says now.
+func (m *Manager) hostNow(label string) Host {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].host
 }
 
 // Close ends every session and waits for them. Updates is closed after;
@@ -346,6 +429,7 @@ func (m *Manager) Agents() []fleet.Agent {
 
 func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 	st := m.state[h.Label]
+	h = st.host // what remotes.toml allows now, whichever session asks
 	out := make([]fleet.Agent, 0, len(st.known.Agents))
 	for _, meta := range st.known.Agents {
 		meta, _ = recheck(meta, h, st.known.Policy)
@@ -357,7 +441,8 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 }
 
 // Reconnect retries a host now, also one that needs attention or has a
-// version mismatch (after the human fixed it).
+// version mismatch (after the human fixed it). It reads remotes.toml
+// again first: a live host whose settings changed reconnects under them.
 func (m *Manager) Reconnect(label string) {
 	m.mu.Lock()
 	st, ok := m.state[label]
@@ -365,6 +450,7 @@ func (m *Manager) Reconnect(label string) {
 	if !ok {
 		return
 	}
+	m.reload()
 	select {
 	case st.reconnect <- struct{}{}:
 	default:
@@ -484,6 +570,13 @@ func (m *Manager) loop(h Host) {
 	delay := m.o.Backoff
 	st := m.state[h.Label]
 	for {
+		// Each connection goes out under remotes.toml as it is now.
+		m.reload()
+		select {
+		case <-st.restart: // the session this asked to end is over
+		default:
+		}
+		h = m.hostNow(h.Label)
 		// A host taken offline for an unread backlog waits for the reader.
 		for m.waiting(h.Label) > m.o.MaxBacklog/2 {
 			select {
@@ -592,6 +685,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 		m.state[h.Label].gate = g
 	}
 	live, applied := false, Policy("")
+	restart := m.state[h.Label].restart
 	var lk *link
 	defer func() {
 		// The session is over: no action can start, and the ones waiting are
@@ -614,6 +708,8 @@ func (m *Manager) session(h Host) (State, string, bool) {
 		select {
 		case <-m.ctx.Done():
 			return end(Offline, "Den stopped")
+		case <-restart:
+			return end(Offline, "remotes.toml changed; reconnecting under it")
 		case <-heartbeat.C:
 			if live {
 				m.mu.Lock()
