@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe/gitsafetest"
 )
 
 var ctx = context.Background()
@@ -337,3 +339,127 @@ func TestCleanupReleasesOnlyADeadLock(t *testing.T) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+func marks(t *testing.T, dir string) []string {
+	t.Helper()
+	ents, _ := os.ReadDir(dir)
+	var out []string
+	for _, e := range ents {
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+// A merge that needs a merge driver the repository's config names is
+// refused, and checking it runs nothing; plain git would run the driver.
+func TestPlanRefusesARepositoryWithItsOwnMergeDriver(t *testing.T) {
+	main, wt := repo(t)
+	marked := t.TempDir()
+	commit(t, wt, "app.txt", "ONE\ntwo\nthree\n", "Change the first line")
+	commit(t, main, "app.txt", "one\ntwo\nTHREE\n", "Change the last line")
+	sh(t, main, "config", "merge.evil.driver", "touch "+filepath.Join(marked, "merge-driver")+"; git merge-file %A %O %B")
+	write(t, filepath.Join(main, ".git", "info", "attributes"), "*.txt merge=evil\n")
+	_, err := Plan(ctx, wt)
+	if why, ok := IsRefusal(err); !ok || !strings.Contains(why, "merge driver (evil)") || !strings.Contains(why, "merge it yourself") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := marks(t, marked); len(got) > 0 {
+		t.Fatalf("planning ran %v", got)
+	}
+	// The driver is live: plain git runs it.
+	sh(t, main, "merge-tree", "--write-tree", "main", "worktree-mossy")
+	if got := marks(t, marked); len(got) == 0 {
+		t.Error("the driver never ran under plain git")
+	}
+}
+
+// Merging, by fast-forward or with a merge commit, and removing the
+// worktree run none of the repository's hooks, and sign nothing.
+func TestMergeAndCleanupRunNoHook(t *testing.T) {
+	for _, ff := range []bool{true, false} {
+		name := "merge-commit"
+		if ff {
+			name = "fast-forward"
+		}
+		t.Run(name, func(t *testing.T) {
+			main, wt := repo(t)
+			marked := t.TempDir()
+			commit(t, wt, "feature.txt", "x\n", "Add the feature")
+			if !ff {
+				commit(t, main, "other.txt", "o\n", "Main moves on")
+			}
+			gitsafetest.Hooks(t, filepath.Join(main, ".git", "hooks"), marked)
+			gitsafetest.Signer(t, main, marked)
+			p, err := Plan(ctx, wt)
+			if err != nil || p.FastForward != ff {
+				t.Fatalf("plan = %+v err=%v", p, err)
+			}
+			if err := Merge(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			if parents := strings.Fields(sh(t, main, "rev-list", "--parents", "-n", "1", "HEAD")); (len(parents) == 3) == ff {
+				t.Errorf("parents of HEAD: %v", parents)
+			}
+			cp, err := CleanupPlanFor(ctx, wt, never)
+			if err != nil || !cp.Merged {
+				t.Fatalf("cleanup plan = %+v err=%v", cp, err)
+			}
+			if err := Cleanup(ctx, cp, never); err != nil {
+				t.Fatal(err)
+			}
+			if out := sh(t, main, "branch", "--list", "worktree-mossy"); out != "" {
+				t.Errorf("branch survived: %q", out)
+			}
+			if got := marks(t, marked); len(got) > 0 {
+				t.Errorf("the repository made git run %v", got)
+			}
+			// The hooks and the signer are live: plain git runs them (and
+			// fails, as the signer signs nothing).
+			exec.Command("git", "-C", main, "commit", "-q", "--allow-empty", "-m", "plain").Run()
+			got := strings.Join(marks(t, marked), " ")
+			for _, want := range []string{"hook-commit-msg", "signer"} {
+				if !strings.Contains(got, want) {
+					t.Errorf("%s never ran under plain git (ran: %s)", want, got)
+				}
+			}
+		})
+	}
+}
+
+// git deletes ignored files with a worktree, so the question names them,
+// and an ignored file it did not name means asking again.
+func TestCleanupNamesTheIgnoredFilesItDeletes(t *testing.T) {
+	_, wt := repo(t)
+	commit(t, wt, ".gitignore", ".env*\nbuild/\n", "Ignore local files")
+	write(t, filepath.Join(wt, ".env"), "TOKEN=x\n")
+	write(t, filepath.Join(wt, "build", "out.bin"), "b\n")
+	p, err := CleanupPlanFor(ctx, wt, never)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(p.Ignored, " ") != ".env build/" {
+		t.Errorf("ignored = %q", p.Ignored)
+	}
+	text := strings.Join(p.Describe(), "\n")
+	if !strings.Contains(text, "2 ignored files or folders will be deleted with it") || !strings.Contains(text, ".env, build/") {
+		t.Errorf("describe:\n%s", text)
+	}
+	write(t, filepath.Join(wt, "build", "more.bin"), "m\n") // inside a folder it named
+	write(t, filepath.Join(wt, ".env.local"), "x\n")
+	if err := Cleanup(ctx, p, never); !IsMoved(err) || !strings.Contains(err.Error(), ".env.local") {
+		t.Fatalf("a new ignored file: err = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, ".env")); err != nil {
+		t.Fatal("the worktree went without asking about .env.local")
+	}
+	p, err = CleanupPlanFor(ctx, wt, never)
+	if err != nil || len(p.Ignored) != 3 {
+		t.Fatalf("plan = %+v err=%v", p, err)
+	}
+	if err := Cleanup(ctx, p, never); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wt); err == nil {
+		t.Error("worktree still there")
+	}
+}

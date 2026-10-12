@@ -860,6 +860,10 @@ it (else the usual base). Review offers two things for it, next to `/send`
   so the checkout is never left half-merged. If either branch moved since the
   question, it is dropped and `/merge` asks again. `Ctrl+N` drops it. Uncommitted
   changes in the worktree are not carried by a merge, and the question says so.
+  The repository's hooks do not run during the merge, and a merge commit Den
+  makes is not signed, even if you sign commits by default. If the branches need a
+  merge commit and the repository's git config names its own merge driver, Den
+  does not run it and asks you to merge yourself.
 - **`/cleanup`**: removing the worktree is a second, separate question, asked
   right after a successful merge and any time by `/cleanup`. It is refused while
   an agent is still running in the worktree, and while the worktree has any
@@ -867,7 +871,9 @@ it (else the usual base). Review offers two things for it, next to `/send`
   and never forces a removal. If git still holds the lock Claude Code took, Den
   releases it only when the process named in the lock has ended. `Ctrl+Y` removes
   the worktree and, only if its branch is merged into the main checkout's branch,
-  deletes the branch; an unmerged branch stays with its commits.
+  deletes the branch; an unmerged branch stays with its commits. Git deletes the
+  worktree's ignored files with it (a `.env`, build output), so the question
+  lists them, and asks again if new ones appear before `Ctrl+Y`.
 
 ## The agent badge
 
@@ -978,10 +984,12 @@ there, without its colours; Den's own colours are not affected.
   reads as a denial.
 - **Git reads of an agent's checkout run nothing the repository names.** Review,
   the uncommitted-changes check and worktree reads turn off fsmonitor, filter
-  drivers, external diff, textconv and lazy fetch, never look into submodules
-  (whose own config could name a filter), and do not inherit git's own
-  environment variables, so a repository's config cannot make Den run a
-  program.
+  drivers, merge drivers, external diff, textconv and lazy fetch, never look
+  into submodules (whose own config could name a filter), and do not inherit
+  git's own environment variables, so a repository's config cannot make Den
+  run a program. Merging and removing a worktree run none of the repository's
+  hooks or merge drivers either; filter drivers still run there, as a checkout
+  needs them (Git LFS is one).
 
 ## Configuration
 

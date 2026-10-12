@@ -1,8 +1,9 @@
-// Package gitsafe runs git to look at a checkout Den does not control: an
-// agent's, or one on a remote host that `den remote serve` reads for Den.
-// The repository's own config and attributes are written by whoever owns
-// the checkout, and several of git's settings name a program to run. A
-// read through this package runs none of them.
+// Package gitsafe runs git in a checkout Den does not control: an agent's,
+// or one on a remote host that `den remote serve` reads for Den. The
+// repository's own config and attributes are written by whoever owns the
+// checkout, and several of git's settings name a program to run. A read
+// through Command runs none of them; a change through Change runs none but
+// the filters a checkout needs.
 package gitsafe
 
 import (
@@ -21,26 +22,60 @@ import (
 //   - every filter driver the config names has its clean, smudge and process
 //     commands emptied and is not required (git diff and status run a clean
 //     filter on files whose stat changed);
+//   - every merge driver the config names is emptied (git merge-tree runs
+//     one on a file both sides changed);
 //   - no lazy fetch from a promisor remote (which would run ssh or a remote
 //     helper the config chose), no prompt, no optional locks.
 //
 // External diff and text conversion are off per command: callers pass
 // --no-ext-diff and --no-textconv to diff. Hooks never run on reads.
-// Commands that change the checkout on the human's request (merge, worktree
-// remove) do not use this: they need the repository's filters, such as LFS.
+// Commands that change the checkout on the human's request use Change.
 func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	// The overrides go in the environment, not as -c, whose key=value a
-	// driver name containing '=' would split in the wrong place.
 	// Submodules are not looked into: git would run there with the
 	// submodule's own config, whose filters are not emptied here.
 	over := [][2]string{{"core.fsmonitor", "false"}, {"diff.ignoreSubmodules", "all"},
 		{"submodule.recurse", "false"}, {"status.submoduleSummary", "false"}}
-	for _, d := range filterDrivers(ctx, dir) {
+	for _, d := range names(ctx, dir, `^filter\.`, "filter") {
 		for _, v := range []string{"clean", "smudge", "process"} {
 			over = append(over, [2]string{"filter." + d + "." + v, ""})
 		}
 		over = append(over, [2]string{"filter." + d + ".required", "false"})
 	}
+	return command(ctx, dir, append(over, noMergeDrivers(ctx, dir)...), args)
+}
+
+// Change is git with args, run in dir, for the commands that change a
+// checkout on the human's request: merge, worktree remove, branch -d. No
+// hook runs (core.hooksPath is /dev/null), and neither does the
+// filesystem monitor or a merge driver the config names, and git does not
+// recurse into a submodule, whose own config it would use. A merge commit is
+// not signed, since the config names the signing program too (gpg.program,
+// gpg.ssh.program, gpg.x509.program). Filter drivers do run: a checkout
+// needs them to write files, as Git LFS does. The environment is Command's.
+func Change(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	over := [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"commit.gpgSign", "false"},
+		{"submodule.recurse", "false"}}
+	return command(ctx, dir, append(over, noMergeDrivers(ctx, dir)...), args)
+}
+
+// MergeDrivers names the merge drivers the config of dir defines a program
+// for. A merge that needs one cannot be checked or made without running it.
+func MergeDrivers(ctx context.Context, dir string) []string {
+	return names(ctx, dir, `^merge\..+\.driver$`, "merge")
+}
+
+func noMergeDrivers(ctx context.Context, dir string) [][2]string {
+	var over [][2]string
+	for _, d := range MergeDrivers(ctx, dir) {
+		over = append(over, [2]string{"merge." + d + ".driver", ""})
+	}
+	return over
+}
+
+// command runs git with the config overrides over. They go in the
+// environment, not as -c, whose key=value a driver name containing '='
+// would split in the wrong place.
+func command(ctx context.Context, dir string, over [][2]string, args []string) *exec.Cmd {
 	env := append(environ(), "GIT_CONFIG_COUNT="+strconv.Itoa(len(over)))
 	for i, kv := range over {
 		n := strconv.Itoa(i)
@@ -66,10 +101,11 @@ func environ() []string {
 // Env is added to every git Command runs.
 var Env = []string{"GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C"}
 
-// filterDrivers names the filter drivers the config of dir defines, from
-// any config file git reads there. Reading config runs nothing.
-func filterDrivers(ctx context.Context, dir string) []string {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "config", "--null", "--name-only", "--get-regexp", `^filter\.`)
+// names lists the drivers of section (filter or merge) that the config of
+// dir has keys for matching re, from any config file git reads there.
+// Reading config runs nothing.
+func names(ctx context.Context, dir, re, section string) []string {
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "config", "--null", "--name-only", "--get-regexp", re)
 	cmd.Env = environ()
 	out, err := cmd.Output()
 	if err != nil {
@@ -78,8 +114,8 @@ func filterDrivers(ctx context.Context, dir string) []string {
 	seen := map[string]bool{}
 	var names []string
 	for _, key := range strings.Split(string(out), "\x00") {
-		// filter.<driver>.<var>; the driver may itself contain dots.
-		rest, ok := strings.CutPrefix(key, "filter.")
+		// <section>.<driver>.<var>; the driver may itself contain dots.
+		rest, ok := strings.CutPrefix(key, section+".")
 		i := strings.LastIndexByte(rest, '.')
 		if !ok || i <= 0 {
 			continue
