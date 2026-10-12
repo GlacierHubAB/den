@@ -277,7 +277,8 @@ On an `approve` host:
   From a script, `den send name@devbox "text"` goes through the running Den; it
   exits 1 when Den is not attached, and `--wait` is not supported for remote
   agents. `den send name@host` needs an exact name, a peer name or a unique
-  prefix on that host, and lists the candidates otherwise. The text goes down
+  prefix on that host; otherwise it lists the agents the prefix fits, or,
+  when none does, the agents on that host. The text goes down
   the ssh session to the agent's inbox on the host, never in an argument list.
   Typed in Den (`@Name@devbox text`), sending needs no confirmation, as for
   local agents. `den send name@devbox` can be run by any process on this
