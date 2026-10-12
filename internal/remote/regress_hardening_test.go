@@ -118,7 +118,7 @@ EOF
 // Absurd token counts and cost never show or add up, and model names with
 // escape sequences never reach local state.
 func TestRegressTokensAndModelKeysAreChecked(t *testing.T) {
-	evilKey := `model\u001b[31mRED\u001b[0m\u001b]0;PWNED-TITLE\u0007\u001b]52;c;UFdORUQ=\u0007‮exe.GNP NEXT\r\nCR\u0000NUL`
+	evilKey := `model\u001b[31mRED\u001b[0m\u001b]0;PWNED-TITLE\u0007\u001b]52;c;UFdORUQ=\u0007\u202eexe.GNP NEXT\r\nCR\u0000NUL`
 	g := stubWith(t, "observe", `
 cat <<'EOF'
 {"type":"snapshot","remote_now":"2026-10-12T12:00:00.000Z","agents":[{"index":0,"session":"`+idA+`","status":"idle","name":"Huge","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":1000000000000000,"context_window":1,"has_usage":true,"reported_usd":1e12,"tokens":{"claude-opus-5-5":{"input":7777777777777,"output":-5,"cache_creation":0,"cache_read":0},"`+evilKey+`":{"input":1,"output":1}}}]}
