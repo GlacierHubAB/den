@@ -105,7 +105,16 @@ func TestReviewRemoteUnderFull(t *testing.T) {
 		}
 	}
 
-	// Merging or removing its worktree stays on this machine.
+	// Merging or removing its worktree stays on this machine, and the help
+	// line does not offer it.
+	if h := ansi.Strip(m.hints(400)); strings.Contains(h, "/merge") || strings.Contains(h, "/cleanup") || !strings.Contains(h, "/send") {
+		t.Errorf("hints on a remote worktree: %q", h)
+	}
+	local := *m
+	local.rev.works = []work{{SessionID: dupSession, Root: "/home/user/den", Repo: "den · feature", Worktree: true, Branch: "feature", Ahead: 2}}
+	if h := ansi.Strip(local.hints(400)); !strings.Contains(h, "/merge ask to merge feature") || !strings.Contains(h, "/cleanup") {
+		t.Errorf("hints on a local worktree: %q", h)
+	}
 	for _, run := range []func([]string) (tea.Model, tea.Cmd){m.mergeCommand, m.cleanupCommand} {
 		mm, _ := run(nil)
 		if got := mm.(Model).flash; !strings.Contains(got, "on devbox") || !strings.Contains(got, "this machine only") {
