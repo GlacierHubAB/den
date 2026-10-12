@@ -54,3 +54,18 @@ func TestHeldRequestOtherCallRan(t *testing.T) {
 		t.Errorf("closed by another call's PostToolUse: %+v", it)
 	}
 }
+
+// The real PostToolUse of a plan carries an empty tool_input: it still
+// closes the plan the terminal approved first.
+func TestCapturedPlanAnsweredInTheTerminalFirst(t *testing.T) {
+	store := New()
+	r := capturedAs(t, "permissionrequest-exitplanmode", "")
+	it := store.Apply(r)
+	if it == nil || !it.Answerable() {
+		t.Fatalf("plan = %+v", it)
+	}
+	store.Apply(capturedAs(t, "posttooluse-exitplanmode-after-hook-allow-updatedinput", r.Input.SessionID))
+	if it.State != Resolved || it.Answerable() || store.Answer(it, "allow") {
+		t.Errorf("after the plan ran: %+v", it)
+	}
+}

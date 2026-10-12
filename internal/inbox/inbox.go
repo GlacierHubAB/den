@@ -286,9 +286,10 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		// The call Den still holds ran: its dialog was answered in the
 		// terminal first. A PermissionRequest carries no tool_use_id, so the
 		// call is matched by tool and input; other calls of the turn run
-		// beside a held one.
+		// beside a held one. A plan's PostToolUse comes with an empty input
+		// (the plan is in its response), and a session has one plan open.
 		s.resolveSession(host, in.SessionID, "answered in terminal", func(it *Item) bool {
-			return it.Kind <= Plan && it.State == Waiting && it.req != nil && it.req.Input.ToolName == in.ToolName && sameJSON(it.req.Input.ToolInput, in.ToolInput)
+			return it.Kind <= Plan && it.State == Waiting && it.req != nil && it.req.Input.ToolName == in.ToolName && (it.Kind == Plan || sameJSON(it.req.Input.ToolInput, in.ToolInput))
 		})
 		delete(s.streak, agentKey(host, in.SessionID))
 		s.resolveSession(host, in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
