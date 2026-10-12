@@ -144,6 +144,10 @@
 // turns ages into local times from when the message arrived, so it never
 // compares clocks across machines. A line over MaxLine, or more than
 // MaxRate messages in a second, drops the host to offline as flooding.
+// Den takes an event only for a session the host's last snapshot lists or
+// a session_start announced, and only EventBurst at once, then EventRate a
+// second (gate.go); it drops the rest, and disables a host that makes it
+// drop FloodDrops within FloodWindow until the human reconnects it.
 package remote
 
 import (

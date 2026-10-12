@@ -25,12 +25,16 @@ type attention struct {
 	reminded map[string]bool        // item id → its reminder went out
 	send     func(notify.Note) bool // notify.Send; tests record instead
 	looking  func(sessionID string) bool
+	hosts    *hostNotes // remote notifications and [on] runs, coalesced and capped
 }
 
 // ready fills the maps of a zero attention, as a Model built without New has.
 func (a *attention) ready() {
 	if a.lastHook == nil {
 		a.lastHook, a.noted, a.reminded = map[string]time.Time{}, map[string]string{}, map[string]bool{}
+	}
+	if a.hosts == nil {
+		a.hosts = newHostNotes()
 	}
 	if a.since.IsZero() {
 		a.since = time.Now()
@@ -44,6 +48,7 @@ func newAttention() attention {
 		noted:    map[string]string{},
 		reminded: map[string]bool{},
 		send:     notify.Send,
+		hosts:    newHostNotes(),
 	}
 }
 
@@ -274,10 +279,7 @@ func (m Model) notifyCmd(sessionID, what string) tea.Cmd {
 		// No remote window to focus: the notice says where the agent is,
 		// and a click does nothing more.
 		n.Summary = m.nameFor(sessionID) + " on " + host + " " + what
-		return func() tea.Msg {
-			send(n)
-			return nil
-		}
+		return m.att.hosts.note(host, sessionID, needsYou(what), n, send, time.Now())
 	}
 	return func() tea.Msg {
 		if !send(n) {

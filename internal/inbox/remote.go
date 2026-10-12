@@ -27,7 +27,7 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		if it.At.IsZero() {
 			it.At = ev.Time
 		}
-		return s.add(it)
+		return s.addRemote(it)
 	}
 	// Any sign of life ends a stall, as a local hook does.
 	s.resolveSession(host, sid, "active again", func(it *Item) bool { return it.Kind == Stalled })
@@ -117,5 +117,55 @@ func (s *Store) AddStalledOn(host, sessionID string, quiet time.Duration) *Item 
 	if mins := int(quiet.Minutes()); mins == 1 {
 		unit = "minute"
 	}
-	return s.add(&Item{SessionID: sessionID, Host: host, Kind: Stalled, Title: fmt.Sprintf("Working with no sign of progress for %d %s on %s", int(quiet.Minutes()), unit, host)})
+	return s.addRemote(&Item{SessionID: sessionID, Host: host, Kind: Stalled, Title: fmt.Sprintf("Working with no sign of progress for %d %s on %s", int(quiet.Minutes()), unit, host)})
 }
+
+// Caps on what a host's events may put in the inbox. A host chooses its
+// events, so without them it could fill the inbox (and history.jsonl)
+// faster than anyone can read. Requests a host holds for an answer are
+// capped where they arrive (MaxHeld) and do not count here.
+const (
+	MaxRemoteOpen    = 32 // open items from one host's events
+	MaxRemoteOpenAll = 128
+	MaxRemoteNew     = 60 // new items, finished turns included, from one host a minute
+)
+
+type remoteCaps struct {
+	window  map[string]time.Time // host -> when its minute began
+	added   map[string]int       // host -> items added in that minute
+	dropped map[string]int       // host -> items not added for a cap
+}
+
+// addRemote adds an item made by a host's event, unless a cap is reached;
+// then it counts the drop and returns nil.
+func (s *Store) addRemote(it *Item) *Item {
+	c := &s.remote
+	if c.window == nil {
+		c.window, c.added, c.dropped = map[string]time.Time{}, map[string]int{}, map[string]int{}
+	}
+	now := time.Now()
+	if now.Sub(c.window[it.Host]) >= time.Minute {
+		c.window[it.Host], c.added[it.Host] = now, 0
+	}
+	open, all := 0, 0
+	for _, o := range s.items {
+		if o.fromHost && o.State != Resolved {
+			all++
+			if o.Host == it.Host {
+				open++
+			}
+		}
+	}
+	opens := it.State != Resolved
+	if c.added[it.Host] >= MaxRemoteNew || opens && (open >= MaxRemoteOpen || all >= MaxRemoteOpenAll) {
+		c.dropped[it.Host]++
+		return nil
+	}
+	c.added[it.Host]++
+	it.fromHost = true
+	return s.add(it)
+}
+
+// RemoteDropped is how many items a host's events would have added past
+// the caps since Den started.
+func (s *Store) RemoteDropped(host string) int { return s.remote.dropped[host] }

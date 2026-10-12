@@ -194,6 +194,7 @@ last known. They are never counted as working or needing you.
 | needs you | unknown or changed host key, or ssh cannot log in without a prompt | stops; run `ssh <target>`, then `/remote connect devbox` |
 | version mismatch | `den` is missing on the host, or too old for `remote serve` | stops; `den remote install devbox` |
 | live, controlled elsewhere | another Den holds the host's requests | shows the host's agents; answers and acts on nothing there; asks again every minute |
+| disabled | the host flooded Den with events (see Security model) | stops until `/remote connect devbox`, or until Den restarts |
 
 A link that goes silent is noticed in 45 to 60 seconds; a killed ssh at once.
 Events that happened while the link was down arrive once it is back, once each.
@@ -369,6 +370,10 @@ on this machine.
   agree.
 - **"devbox is offline; nothing was sent".** The host is not live. Nothing
   queues: send again when it is back.
+- **"disabled", "flooding".** The host sent far more events than its agents
+  could, or events for sessions it does not list: a broken or compromised
+  `den` there. Find out why on the host, then `/remote connect devbox`.
+  `/remote` shows how many events and inbox items Den dropped.
 
 ## Security model
 
@@ -391,6 +396,16 @@ on this machine.
   speaks a closed set of messages: an unknown type is dropped and the host
   flagged, and a line over 256 KB or more than 2000 messages a second drops it
   to offline as flooding. Den never runs anything a host sends.
+- **A host cannot flood you.** Den takes an event only for an agent the host
+  lists, or one whose start it just reported; events for any other session are
+  dropped. It takes 1000 events from a host at once, then 20 a second, and
+  drops the rest. A host that makes Den drop 2000 events within a minute is
+  disabled until you run `/remote connect devbox` (or restart Den). A host's
+  events open at most 32 inbox items (128 for all hosts together), and at most
+  60 new ones a minute. Its desktop notifications are one at once, then at
+  most one every 30 seconds ("devbox: 5 agents need you"), and no more than 6 a
+  minute for all hosts; its `[on]` commands run at most 30 times a minute.
+  `/remote` shows what was dropped.
 - **Metadata by default, checked twice.** The host filters before sending; Den
   filters again on arrival.
 - **Everything from a host is sanitised.** Escape sequences, control

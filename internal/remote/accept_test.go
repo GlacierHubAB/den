@@ -278,9 +278,16 @@ func TestAccept4OfflineAndBackfillOnce(t *testing.T) {
 	g.live()
 	g.wait("the agent", 5*time.Second, func() bool { return len(g.m.Agents()) == 1 })
 
-	// One event while live, then the link is cut (client killed, new
-	// connections refused so the offline state can be observed).
-	id := func(n int) string { return fmt.Sprintf("11111111-2222-4333-8444-55555555550%d", n) }
+	// One event while live, from the agent the host lists, then the link
+	// is cut (client killed, new connections refused so the offline state
+	// can be observed). Sessions 2 and 3 are not listed: their events are
+	// backfill, logged but never shown.
+	id := func(n int) string {
+		if n == 1 {
+			return idA
+		}
+		return fmt.Sprintf("11111111-2222-4333-8444-55555555550%d", n)
+	}
 	g.r.Hook("UserPromptSubmit", map[string]any{"session_id": id(1), "prompt": "x"})
 	g.wait("event 1", 5*time.Second, func() bool { return len(g.localEvents()) == 1 })
 

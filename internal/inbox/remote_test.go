@@ -1,6 +1,7 @@
 package inbox
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/events"
@@ -63,5 +64,40 @@ func TestApplyRemoteTurnEvents(t *testing.T) {
 	st := s.AddStalledOn("devbox", remoteSID, 0)
 	if st == nil || st.Host != "devbox" || s.AddStalledOn("devbox", remoteSID, 0) != nil {
 		t.Errorf("stalled = %+v", st)
+	}
+}
+
+// A host's events fill at most MaxRemoteOpen open items, all hosts
+// together MaxRemoteOpenAll, and the drops are counted per host.
+func TestApplyRemoteCaps(t *testing.T) {
+	s := New()
+	for h := range 6 {
+		host := fmt.Sprintf("h%d", h)
+		for i := range 40 {
+			ev := events.New(events.NeedsYou, fmt.Sprintf("11111111-2222-4333-8444-%012d", i))
+			ev.Request, ev.Host = "permission", host
+			s.ApplyRemote(ev)
+		}
+	}
+	open := map[string]int{}
+	all := 0
+	for _, it := range s.Items() {
+		if it.State != Resolved {
+			open[it.Host]++
+			all++
+		}
+	}
+	if all != MaxRemoteOpenAll || open["h0"] != MaxRemoteOpen || s.RemoteDropped("h0") != 40-MaxRemoteOpen {
+		t.Errorf("open %v (all %d), h0 dropped %d", open, all, s.RemoteDropped("h0"))
+	}
+	if s.RemoteDropped("h5") != 40 {
+		t.Errorf("h5 dropped %d, want all 40 past the total cap", s.RemoteDropped("h5"))
+	}
+	// Once the host's items are let go, it has room again.
+	s.ReleaseHost("h0", "link lost")
+	ev := events.New(events.Idle, "11111111-2222-4333-8444-000000000001")
+	ev.Host = "h0"
+	if s.ApplyRemote(ev) == nil {
+		t.Errorf("no room after the host was released")
 	}
 }
