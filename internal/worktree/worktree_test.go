@@ -41,6 +41,9 @@ func repo(t *testing.T) (main, wt string) {
 		main = r
 	}
 	sh(t, main, "init", "-q", "-b", "main")
+	// Den's own git calls carry no identity, and a CI runner has none.
+	sh(t, main, "config", "user.name", "Test")
+	sh(t, main, "config", "user.email", "t@example.com")
 	write(t, filepath.Join(main, "app.txt"), "one\ntwo\nthree\n")
 	sh(t, main, "add", ".")
 	sh(t, main, "commit", "-q", "-m", "first")
