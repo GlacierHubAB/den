@@ -1,0 +1,31 @@
+{
+ "cwd": "/work/proj",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PermissionRequest",
+ "permission_mode": "default",
+ "permission_suggestions": [],
+ "prompt_id": "22222222-3333-4444-8555-666666666666",
+ "session_id": "11111111-2222-4333-8444-555555555555",
+ "tool_input": {
+  "questions": [
+   {
+    "header": "Colour",
+    "options": [
+     {
+      "description": "The colour red",
+      "label": "Red"
+     },
+     {
+      "description": "The colour blue",
+      "label": "Blue"
+     }
+    ],
+    "question": "Which colour do you prefer?"
+   }
+  ]
+ },
+ "tool_name": "AskUserQuestion",
+ "transcript_path": "/work/.claude/projects/-work-proj/11111111-2222-4333-8444-555555555555.jsonl"
+}
