@@ -329,3 +329,49 @@ func TestRemoteUnsafeNameIsMarked(t *testing.T) {
 		t.Errorf("works = %+v", ws)
 	}
 }
+
+// Drafts on a remote agent's work quote its host's diff: they never go to
+// the orchestrator, and while the host is down they wait for it, said as
+// such, never as an ended session.
+func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	m.syncRemote()
+	m.tab = tabReview
+	m.rev.commentsPath = filepath.Join(t.TempDir(), "reviews.json")
+	remoteDraft := review.Comment{ID: "r1", Root: "/home/user/den @devbox", Host: "devbox", Path: "main.go", Side: "new", Start: 2, End: 2,
+		Quote: []string{"+SECRET-remote-line"}, Body: "rename it", SessionID: dupSession + "@devbox", Created: time.Now()}
+	m.rev.comments = append(m.rev.comments, remoteDraft)
+	feed.setState("devbox", remote.Offline)
+	m.syncRemote()
+
+	mm, _ := m.sendReview(nil) // the cmd is not run: nothing is started
+	*m = mm.(Model)
+	if !strings.Contains(m.flash, "until devbox is back") || strings.Contains(m.flash, "orchestrator") {
+		t.Errorf("/send: %q", m.flash)
+	}
+	mm, _ = m.sendReviewToOrchestrator()
+	*m = mm.(Model)
+	if !strings.Contains(m.flash, "until devbox is back") || strings.Contains(m.flash, "ended") {
+		t.Errorf("/send orchestrator: %q", m.flash)
+	}
+	if !m.rev.comments[0].Draft() || len(m.orch.pending) > 0 {
+		t.Fatalf("handed over: draft %v, pending %q", m.rev.comments[0].Draft(), m.orch.pending)
+	}
+
+	// With a draft for an ended local session too, only that one goes.
+	m.rev.comments = append(m.rev.comments, review.Comment{ID: "l1", Root: "/home/user/proj", Path: "a.go", Side: "new", Start: 1, End: 1,
+		Quote: []string{"+local line"}, Body: "local note", SessionID: "99999999-2222-4333-8444-555555555555", Created: time.Now()})
+	mm, _ = m.sendReviewToOrchestrator()
+	*m = mm.(Model)
+	prompt := strings.Join(m.orch.pending, "\n")
+	if !strings.Contains(prompt, "local note") || strings.Contains(prompt, "SECRET") || strings.Contains(prompt, "rename it") {
+		t.Errorf("orchestrator prompt: %q", prompt)
+	}
+	if !m.rev.comments[0].Draft() || m.rev.comments[1].Draft() {
+		t.Errorf("remote draft %v, local draft %v", m.rev.comments[0].Draft(), m.rev.comments[1].Draft())
+	}
+	if !strings.Contains(m.flash, "Handed 1 comment") || !strings.Contains(m.flash, "until devbox is back") {
+		t.Errorf("flash: %q", m.flash)
+	}
+}
