@@ -176,3 +176,43 @@ func TestRegressSameSessionIDOnTwoHostsIsCalledOut(t *testing.T) {
 		t.Errorf("/remote does not flag the hosts that share a session id:\n%s", f)
 	}
 }
+
+// A context size, window or usage percentage out of bounds is cleared before
+// it is shown or written down, and the host is flagged; plausible figures of
+// another agent on the same host are kept.
+func TestRegressContextAndUsageFiguresAreBounded(t *testing.T) {
+	g := stubWith(t, "observe", `
+cat <<'EOF'
+{"type":"snapshot","remote_now":"2026-10-12T12:00:00.000Z","agents":[{"index":0,"session":"`+idA+`","status":"idle","name":"Huge","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":8888888888888,"context_window":1,"has_usage":true,"limits":{"filled":987654,"five_hour":-40,"seven_day":4321,"usd":1e12}},{"index":1,"session":"`+idB+`","status":"idle","name":"Fine","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":150000,"context_window":1000000,"has_usage":true,"limits":{"filled":15,"five_hour":40,"seven_day":10,"usd":12.5}}]}
+EOF
+`)
+	g.start()
+	g.wait("both agents", 10*time.Second, func() bool { return len(g.m.Agents()) == 2 })
+	g.wait("a flag", 5*time.Second, func() bool { return g.flagged("implausible context or usage") })
+	time.Sleep(time.Second)
+	for _, a := range g.m.Agents() {
+		switch a.Session.SessionID {
+		case idA:
+			if a.Usage.Tokens > 10_000_000 || a.Usage.Window > 10_000_000 || a.Usage.Tokens < 0 {
+				t.Errorf("the huge agent's context %d / %d kept", a.Usage.Tokens, a.Usage.Window)
+			}
+			if l := a.Limits; (l.Filled != nil && (*l.Filled < 0 || *l.Filled > 100)) || (l.FiveHour != nil && (*l.FiveHour < 0 || *l.FiveHour > 100)) ||
+				(l.SevenDay != nil && (*l.SevenDay < 0 || *l.SevenDay > 100)) || (l.USD != nil && (*l.USD < 0 || *l.USD > 100_000)) {
+				t.Errorf("out-of-bounds limits kept: %+v", l)
+			}
+		case idB:
+			if a.Usage.Tokens != 150000 || a.Usage.Window != 1000000 {
+				t.Errorf("a plausible agent's context was changed: %d / %d", a.Usage.Tokens, a.Usage.Window)
+			}
+			if a.Limits.USD == nil || *a.Limits.USD != 12.5 {
+				t.Errorf("a plausible agent's spend was changed: %+v", a.Limits)
+			}
+		}
+	}
+	// Nothing out of bounds is written down.
+	for _, bad := range []string{"8888888888888", "987654", "4321"} {
+		if hits := g.l.Local.Grep(bad); len(hits) > 0 {
+			t.Errorf("%q was written to local state: %v", bad, hits)
+		}
+	}
+}
