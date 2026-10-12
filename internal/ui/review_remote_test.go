@@ -439,6 +439,40 @@ func TestRemoteReconnectSaysReadingUntilTheDiffIsRead(t *testing.T) {
 	}
 }
 
+// A remote agent with no work listed is named once: under its own project,
+// its repository on its host, or with all projects; never under a project
+// of this machine or another repository on its host.
+func TestRemoteAgentsWithoutWorkAreListedUnderTheirOwnProject(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	api := remoteAgent("devbox", "55555555-2222-4333-8444-555555555555", "Brisk Heron", fleet.Idle, 0)
+	api.Git.Repo = "api"
+	feed.agents = append(feed.agents, api)
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	names := func(cur string) string {
+		m.proj.cur = cur
+		var got []string
+		for _, l := range m.remoteWorkLines(60) {
+			if l := strings.TrimSpace(ansi.Strip(l)); strings.Contains(l, " @") {
+				got = append(got, l)
+			}
+		}
+		return strings.Join(got, ", ")
+	}
+	for cur, want := range map[string]string{
+		"":             "Mossy Lemur @devbox, Brisk Heron @devbox, Mossy Lemur @gpu, Snug Capybara @gpu",
+		"den @devbox":  "Mossy Lemur @devbox",
+		"api @devbox":  "Brisk Heron @devbox",
+		"den @gpu":     "Mossy Lemur @gpu, Snug Capybara @gpu",
+		"/home/user/x": "",
+	} {
+		if got := names(cur); got != want {
+			t.Errorf("project %q lists %q, want %q", cur, got, want)
+		}
+	}
+}
+
 // A remote file whose name has control characters keeps that mark, so
 // Review says its content is not shown.
 func TestRemoteUnsafeNameIsMarked(t *testing.T) {
