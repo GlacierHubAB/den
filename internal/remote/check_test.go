@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // hostileRun runs a Manager against a host under approve that says hello,
@@ -118,5 +121,67 @@ func TestLoadKnownChecksAgain(t *testing.T) {
 	k, ok := LoadKnown(dir, "b")
 	if !ok || len(k.Agents) != 1 || k.Agents[0].Session != sidA {
 		t.Errorf("loaded %v %+v", ok, k.Agents)
+	}
+}
+
+// A host's token counts are bounded: out of bounds (below zero, or more in
+// one session than maxSessionTokens), they are cleared and the host
+// flagged, so they are never shown or summed. A reported cost likewise.
+func TestImplausibleTokensAreNeverPriced(t *testing.T) {
+	const sidB, sidC = "11111111-2222-4333-8444-555555555556", "11111111-2222-4333-8444-555555555557"
+	model := "claude-opus-4-5-20251101"
+	huge, reported := 4_000_000_000_000.0, 4_000_000.0
+	m, _ := hostileRun(t, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{
+		{Session: sidA, Status: "idle", Tokens: map[string]transcript.Tokens{model: {Input: 1000, Output: 500}}},
+		{Session: sidB, Status: "idle", Tokens: map[string]transcript.Tokens{model: {Output: int64(huge)}}, Reported: &reported},
+		{Session: sidC, Status: "idle", Tokens: map[string]transcript.Tokens{model: {Input: 10}},
+			Sub: map[string]transcript.Tokens{model: {CacheRead: -5}}},
+	}})
+	got := map[string]cost.Summary{}
+	for _, a := range m.Agents() {
+		got[a.Session.SessionID] = a.Cost
+	}
+	if c := got[sidA]; c.Total() != 1500 || c.USD <= 0 {
+		t.Errorf("a plausible session lost its cost: %+v", c)
+	}
+	for _, sid := range []string{sidB, sidC} {
+		if c := got[sid]; c.Total() != 0 || c.USD != 0 || c.ReportedUSD != nil {
+			t.Errorf("%s: implausible figures were kept: %+v", sid[len(sid)-1:], c)
+		}
+	}
+	if !hasFlag(m, "implausible token counts") || !hasFlag(m, "implausible reported cost") {
+		t.Errorf("flags %q", state(m).Flags)
+	}
+}
+
+func TestPlausible(t *testing.T) {
+	tok := func(ts ...transcript.Tokens) map[string]transcript.Tokens {
+		m := map[string]transcript.Tokens{}
+		for i, t := range ts {
+			m[string(rune('a'+i))] = t
+		}
+		return m
+	}
+	half := int64(maxSessionTokens / 2)
+	for _, c := range []struct {
+		maps []map[string]transcript.Tokens
+		want bool
+	}{
+		{nil, true},
+		{[]map[string]transcript.Tokens{tok(transcript.Tokens{CacheRead: maxSessionTokens})}, true},
+		{[]map[string]transcript.Tokens{tok(transcript.Tokens{CacheRead: maxSessionTokens + 1})}, false},
+		{[]map[string]transcript.Tokens{tok(transcript.Tokens{Input: half}), tok(transcript.Tokens{Output: half + 1})}, false},
+		{[]map[string]transcript.Tokens{tok(transcript.Tokens{Input: math.MaxInt64}, transcript.Tokens{Input: math.MaxInt64})}, false},
+		{[]map[string]transcript.Tokens{tok(transcript.Tokens{Input: -1})}, false},
+	} {
+		if got := plausible(c.maps...); got != c.want {
+			t.Errorf("plausible(%v) = %v", c.maps, got)
+		}
+	}
+	for _, r := range []float64{math.NaN(), math.Inf(1), -1, maxReportedUSD + 1} {
+		a, why, ok := checkMeta(fleet.Meta{Session: sidA, Reported: &r})
+		if !ok || a.Reported != nil || len(why) != 1 {
+			t.Errorf("reported %v: kept %v, why %q", r, a.Reported, why)
+		}
 	}
 }

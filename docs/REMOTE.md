@@ -431,7 +431,9 @@ on this machine.
   sends, before it is shown, put in a notification or title, or logged.
 - **What a host sends is checked, not trusted.** Every session id must be a
   UUID; an agent, event or request with anything else is dropped and the host
-  flagged in `/remote`.
+  flagged in `/remote`. Token counts below zero or over ten billion for one
+  session, and a reported cost over $100,000, are cleared and flagged: that
+  agent shows no cost and adds nothing to the totals.
 - **A host cannot answer for you.** Decisions only go from Den to the host
   and are never read from it. Each is bound to a random request id and to a
   hash of the body you were shown, is valid once, and only while the request
