@@ -232,8 +232,9 @@ agent leaves plan mode for the mode it had before and starts on the plan;
 `Ctrl+N` sends it back to keep planning, with a note that you denied it from
 Den. Claude Code ignores a plain allow for a plan, so Den's hook answers with
 the plan's own call, which Claude Code 2.1.289 takes; a plan call Den cannot
-answer that way is left to the terminal and says so. `/always` approves later
-plans of that session the same way, never in a wider mode.
+answer that way is left to the terminal and says so. Plans are approved one
+at a time: `/always` does not answer a plan, as the dialog has no "always"
+for plans either.
 
 #### Answering an agent's questions
 

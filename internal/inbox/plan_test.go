@@ -24,14 +24,30 @@ func TestPlanDenCannotApprove(t *testing.T) {
 		t.Error("allowed a plan Den cannot approve")
 	}
 
-	// An always-allow for plans in this session does not approve it either.
-	ok := fixture(t, "permission-exitplanmode")
-	if it := store.Apply(ok); it == nil || !store.Answer(it, "always") {
-		t.Fatalf("plan with a plan = %+v", it)
+}
+
+// Plans are approved one at a time: /always does not answer one, and no
+// always-rule of the session, however it came about, approves a later plan.
+func TestPlanNeverAlwaysAllowed(t *testing.T) {
+	store := New()
+	r := fixture(t, "permission-exitplanmode")
+	it := store.Apply(r)
+	if store.Answer(it, "always") || !it.Answerable() {
+		t.Fatalf("/always answered a plan: %+v", it)
 	}
-	r = bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: "s1", Payload: payload})
-	if it := store.Apply(r); it == nil || it.State != InTerminal {
-		t.Errorf("always-allowed a plan Den cannot approve: %+v", it)
+	if _, ok := r.Decided(); ok {
+		t.Error("the hook got a decision")
+	}
+	if allowKey(bridge.PlanTool, r.Input.ToolInput) != "" {
+		t.Error("a plan has an always-rule key")
+	}
+	store.always[r.Input.SessionID] = map[string]bool{bridge.PlanTool: true, "": true}
+	r2 := fixture(t, "permission-exitplanmode")
+	if it := store.Apply(r2); it == nil || !it.Answerable() {
+		t.Errorf("a later plan was not held for the human: %+v", it)
+	}
+	if _, ok := r2.Decided(); ok {
+		t.Error("a later plan was answered by a rule")
 	}
 }
 

@@ -222,8 +222,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{})
 			return nil
 		}
-		_, approvable := bridge.PlanApproval(in.ToolInput)
-		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] && (in.ToolName != bridge.PlanTool || approvable) {
+		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
@@ -232,7 +231,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			it.Kind = Plan
 			it.Title = "Plan ready for review"
 			it.Body = planExcerpt(in.ToolInput)
-			if !approvable {
+			if _, ok := bridge.PlanApproval(in.ToolInput); !ok {
 				s.Release(it, CannotApprovePlan) // not held: the terminal is the only place to answer it
 			}
 		} else {
@@ -543,6 +542,11 @@ func (s *Store) SetStatus(it *Item, status string, final bool) {
 	}
 }
 
+// PlansOneAtATime is why /always does not answer a plan: a plan is what
+// the human reads each time, and Claude Code's own plan dialog has no
+// "always" either.
+const PlansOneAtATime = "plans are approved one at a time; ^Y approves this one"
+
 // CannotApprovePlan is why a plan Den cannot approve went back to its
 // terminal.
 const CannotApprovePlan = "Den cannot approve this plan: answer it in the terminal"
@@ -556,6 +560,9 @@ func (s *Store) Answer(it *Item, verb string) bool {
 	}
 	if it.req.HungUp() {
 		return false // nobody waits for the answer; LetGo says what became of it
+	}
+	if it.Kind == Plan && verb == "always" {
+		return false // PlansOneAtATime
 	}
 	if it.Kind == Plan && verb != "deny" {
 		if _, ok := bridge.PlanApproval(it.req.Input.ToolInput); !ok {
@@ -802,9 +809,10 @@ func (s *Store) resolveSession(sessionID, why string, match func(*Item) bool) {
 }
 
 // allowKey is the "always" rule key: tool plus the first two words of a
-// Bash command, or the tool name alone for everything else.
+// Bash command, or the tool name alone for everything else. A plan has
+// none: no rule ever approves one (PlansOneAtATime).
 func allowKey(tool string, input json.RawMessage) string {
-	if tool == "" {
+	if tool == "" || tool == bridge.PlanTool {
 		return ""
 	}
 	if tool == "Bash" {
