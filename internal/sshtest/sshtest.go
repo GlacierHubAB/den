@@ -376,6 +376,9 @@ const recordPID = `echo "$$ $(sed 's/.*) //' /proc/$$/stat | cut -d' ' -f20)"`
 // must still match.
 func killPidFiles(glob string, tree bool) int {
 	n := 0
+	if !filepath.IsAbs(glob) { // a lab that never got its directory would match the test package's own files
+		return 0
+	}
 	files, _ := filepath.Glob(glob)
 	for _, f := range files {
 		for _, pid := range recorded(f) {
