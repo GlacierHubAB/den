@@ -262,15 +262,15 @@ func remoteList(asJSON bool) {
 	}
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "LABEL\tTARGET\tPOLICY\tSTATE\tAGENTS\tLAST SEEN")
+	var reasons []string
 	for _, r := range rows {
-		state := r.State
+		state := listState(r.State)
 		switch {
 		case !r.Enabled:
 			state = "disabled"
-		case state == "":
-			state = "never connected"
-		case r.Reason != "":
-			state += " (" + r.Reason + ")"
+		case r.Reason != "" && remote.State(r.State) != remote.Live:
+			// A reason can be long: under the table, so it keeps its columns.
+			reasons = append(reasons, r.Label+": "+r.Reason)
 		}
 		seen := ""
 		if !r.LastSeen.IsZero() {
@@ -283,6 +283,26 @@ func remoteList(asJSON bool) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%s\n", r.Label, r.Target, policy, state, r.Agents, seen)
 	}
 	tw.Flush()
+	if len(reasons) > 0 {
+		fmt.Println()
+		for _, r := range reasons {
+			fmt.Println(r)
+		}
+	}
+}
+
+// listState is a host's state in den remote list's table, in words; -json
+// keeps the state names.
+func listState(state string) string {
+	switch remote.State(state) {
+	case "":
+		return "never connected"
+	case remote.NeedsAttention:
+		return "needs you"
+	case remote.AttachedElsewhere:
+		return "live, another Den controls it"
+	}
+	return strings.ReplaceAll(state, "_", " ")
 }
 
 // remoteInstall is `den remote install <label>`. Copying den to another

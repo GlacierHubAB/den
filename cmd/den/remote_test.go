@@ -62,3 +62,28 @@ func TestAskInstallWithoutDen(t *testing.T) {
 		t.Errorf("ok %v, printed %q", ok, out)
 	}
 }
+
+// den remote list says a host's state in words and puts a long reason
+// under the table, so the columns stay in line.
+func TestRemoteListStateInWords(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DEN_CONFIG", filepath.Join(dir, "config.toml"))
+	t.Setenv("XDG_STATE_HOME", dir)
+	os.WriteFile(filepath.Join(dir, "remotes.toml"), []byte("[hosts.devbox]\ntarget = \"devbox\"\npolicy = \"approve\"\n\n[hosts.gpu]\ntarget = \"gpu\"\n"), 0o600)
+	reason := remote.ElsewhereNote("devbox") + ", since it connected from another terminal of this machine"
+	os.MkdirAll(remote.StateDir(), 0o700)
+	known, _ := json.Marshal(remote.Known{Label: "devbox", State: remote.AttachedElsewhere, Reason: reason})
+	os.WriteFile(filepath.Join(remote.StateDir(), "devbox.json"), known, 0o600)
+
+	out := captureStdout(t, func() { remoteList(false) })
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 5 || strings.Contains(out, "attached_elsewhere") || strings.Contains(lines[1], reason) {
+		t.Fatalf("list:\n%s", out)
+	}
+	if !strings.Contains(lines[1], "live, another Den controls it") || !strings.Contains(lines[2], "never connected") || lines[4] != "devbox: "+reason {
+		t.Errorf("list:\n%s", out)
+	}
+	if col := strings.Index(lines[0], "AGENTS"); len(lines[1]) <= col || lines[1][col] != '0' {
+		t.Errorf("columns:\n%s", out)
+	}
+}
