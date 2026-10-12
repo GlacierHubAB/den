@@ -31,6 +31,7 @@ func TestFromHookCarriesMetadataOnly(t *testing.T) {
 	}{
 		{hook("SessionStart", map[string]any{"source": "startup"}), "session_start////startup"},
 		{hook("SessionEnd", map[string]any{"end_reason": "logout"}), "session_end////logout"},
+		{hook("SessionEnd", map[string]any{"reason": "prompt_input_exit"}), "session_end////prompt_input_exit"}, // what Claude Code 2.1.289 sends
 		{hook("UserPromptSubmit", map[string]any{"prompt": secret}), "turn_start////"},
 		{hook("Stop", map[string]any{"last_assistant_message": secret}), "done////"},
 		{hook("StopFailure", map[string]any{"error": "rate_limit", "last_assistant_message": secret}), "turn_failed///rate_limit/"},
