@@ -10,6 +10,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
 )
 
@@ -274,7 +275,6 @@ func addressedComments(open []review.Comment) []string {
 	return ids
 }
 
-// recipientName names a recipient for the drafts column and notes.
 // groupHost is the host of a draft group on a remote agent's work, "" for
 // this machine's.
 func (m Model) groupHost(g reviewGroup) string {
@@ -289,6 +289,18 @@ func (m Model) groupHost(g reviewGroup) string {
 	return ""
 }
 
+// remoteDraftsState says, in the drafts column, why drafts on a remote
+// agent's work cannot go now: they are kept until its host can take them.
+func (m Model) remoteDraftsState(host string) string {
+	if h, ok := m.hostStatus(host); ok && h.State == remote.Live && m.remote.feed != nil {
+		if m.remote.feed.Actionable(host) != nil {
+			return host + " takes no sends here · kept"
+		}
+	}
+	return host + " is offline · kept until it is back"
+}
+
+// recipientName names a recipient for the drafts column and notes.
 func (m Model) recipientName(sessionID string) string {
 	if sessionID == "" {
 		return "no agent"

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/remote"
@@ -400,6 +401,9 @@ func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
 	m.rev.comments = append(m.rev.comments, remoteDraft)
 	feed.setState("devbox", remote.Offline)
 	m.syncRemote()
+	if out := ansi.Strip(m.notesPane(60, 30)); !strings.Contains(out, "devbox is offline · kept until it is back") || strings.Contains(out, "orchestrator") || strings.Contains(out, "socket") {
+		t.Errorf("drafts column while devbox is offline:\n%s", out)
+	}
 
 	mm, _ := m.sendReview(nil) // the cmd is not run: nothing is started
 	*m = mm.(Model)
