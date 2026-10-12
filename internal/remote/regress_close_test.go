@@ -146,3 +146,84 @@ func TestRegressInstallReconnectsTheHost(t *testing.T) {
 		t.Errorf("the host is not live after the install:\n%s", f)
 	}
 }
+
+// A `den send name@host` from this machine is one inbox question with the
+// host, the agent, who asked and the full text. Nothing is sent before ^Y; ^N
+// sends nothing and the command says so.
+func TestRegressCLISendAsksFirst(t *testing.T) {
+	if testing.Short() || os.Getenv("DEN_SLOW_TESTS") != "1" {
+		t.Skip("types into the TUI in a private tmux: set DEN_SLOW_TESTS=1")
+	}
+	l := sshtest.New(t, "b")
+	l.Local.Apply()
+	l.Local.WriteConfig("[orchestrator]\nspawn = false\n")
+	l.Local.WriteRemotes(l.RemotesTOML("approve"))
+	s := l.Remote("b").SeedSession(sshtest.SessionOpts{ID: idA, Name: "alpha"})
+	in := listenInbox(t, s.SocketPath())
+	g := &rig{t: t, l: l}
+	tm := l.Local.StartTUI(200, 56, []string{"DEN_ORCHESTRATOR_SPAWN=off", "DEN_RESTORE=off"})
+	tm.WaitFor(30*time.Second, "1 agent")
+
+	type result struct {
+		out  string
+		code int
+	}
+	send := func(text string) <-chan result {
+		ch := make(chan result, 1)
+		go func() { o, c := g.den("send", "alpha@b", text); ch <- result{o, c} }()
+		return ch
+	}
+	// Declined.
+	ch := send("SECRET-ask-first declined")
+	tm.WaitFor(20*time.Second, "Send a message to")
+	tm.Type("/inbox")
+	tm.Keys("Enter")
+	f := tm.WaitFor(20*time.Second, "SECRET-ask-first declined")
+	t.Logf("--- question ---\n%s", sshtest.Squeeze(f))
+	if !strings.Contains(f, "on b") {
+		t.Errorf("the question does not name the host")
+	}
+	if txt, ok := in.text(1500 * time.Millisecond); ok {
+		t.Fatalf("delivered before the human answered: %q", txt)
+	}
+	tm.Keys("C-n")
+	time.Sleep(1200 * time.Millisecond)
+	tm.Keys("C-n")
+	select {
+	case r := <-ch:
+		t.Logf("declined -> exit %d: %s", r.code, strings.TrimSpace(r.out))
+		if r.code == 0 {
+			t.Errorf("a declined send exited 0: %s", r.out)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the declined send never ended")
+	}
+	if txt, ok := in.text(1500 * time.Millisecond); ok {
+		t.Errorf("a declined send was delivered: %q", txt)
+	}
+	// Allowed. ^Y on the overview answers the question waiting, not the
+	// declined one the inbox view still has selected.
+	tm.Type("/overview")
+	tm.Keys("Enter")
+	time.Sleep(500 * time.Millisecond)
+	ch = send("allowed text")
+	time.Sleep(time.Second)
+	for deadline := time.After(30 * time.Second); ; {
+		select {
+		case r := <-ch:
+			t.Logf("allowed -> exit %d: %s", r.code, strings.TrimSpace(r.out))
+			if r.code != 0 {
+				t.Errorf("an allowed send failed: %s", r.out)
+			}
+		case <-deadline:
+			t.Fatal("the allowed send never ended")
+		case <-time.After(1200 * time.Millisecond):
+			tm.Keys("C-y") // a request that just came up asks for it again
+			continue
+		}
+		break
+	}
+	if txt, ok := in.text(5 * time.Second); !ok || !strings.Contains(txt, "allowed text") {
+		t.Errorf("the allowed send did not arrive: %q %v", txt, ok)
+	}
+}
