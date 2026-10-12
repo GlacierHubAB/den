@@ -10,12 +10,14 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"github.com/GlacierHubAB/den/internal/gitenvtest"
 )
 
 // realEnv is the environment as the test process started, before Local.Apply
 // swaps HOME and friends for scratch values: go build must keep using the real
 // module and build caches, not fill a scratch home.
-var realEnv = os.Environ()
+var realEnv = gitenvtest.Without(os.Environ())
 
 // realHome is the human's home as the test process started, captured before
 // Local.Apply can change HOME. Isolation checks compare against it.
@@ -92,6 +94,7 @@ func sweepStale(base string) {
 // package's tests finish: func TestMain(m *testing.M) { os.Exit(sshtest.Main(m)) }.
 // Without it the build is swept by the next run once its pid is gone.
 func Main(m *testing.M) int {
+	gitenvtest.Scrub() // the labs and the tests' git start without an inherited GIT_DIR
 	code := m.Run()
 	if buildPath != "" {
 		os.RemoveAll(filepath.Dir(buildPath))
