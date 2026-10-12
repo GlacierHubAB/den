@@ -406,3 +406,51 @@ func TestKillPidFilesWithoutALabDeletesNothing(t *testing.T) {
 		}
 	}
 }
+
+// A test process that dies without running its cleanups (a test timeout, a
+// SIGKILL) leaves no lab behind: a watcher removes the directory and kills
+// the processes that name it.
+func TestOrphanedLabIsReaped(t *testing.T) {
+	if f := os.Getenv("DEN_REAPER_CHILD"); f != "" {
+		l := New(t, "b")
+		l.Remote("b").SeedSession(SessionOpts{ID: SessionA})
+		os.WriteFile(f, []byte(l.Dir), 0o600)
+		time.Sleep(time.Hour)
+		return
+	}
+	file := filepath.Join(t.TempDir(), "labdir")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestOrphanedLabIsReaped$", "-test.timeout=2m")
+	cmd.Env = append(os.Environ(), "DEN_REAPER_CHILD="+file)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	var dir string
+	if !WaitFor(60*time.Second, func() bool { b, _ := os.ReadFile(file); dir = string(b); return dir != "" }) {
+		cmd.Process.Kill()
+		t.Fatal("the child never made its lab")
+	}
+	if !strings.HasPrefix(dir, "/tmp/den-test-") {
+		cmd.Process.Kill()
+		t.Fatalf("lab dir %q", dir)
+	}
+	cmd.Process.Kill() // no cleanups run
+	cmd.Wait()
+	if !WaitFor(30*time.Second, func() bool { _, err := os.Stat(dir); return err != nil }) {
+		os.RemoveAll(dir)
+		t.Fatalf("the orphaned lab %s was not removed", dir)
+	}
+	WaitFor(5*time.Second, func() bool { return !namedByAProcess(dir) })
+	if namedByAProcess(dir) {
+		t.Errorf("a process that names %s is still running", dir)
+	}
+}
+
+func namedByAProcess(dir string) bool {
+	ents, _ := os.ReadDir("/proc")
+	for _, e := range ents {
+		if b, err := os.ReadFile("/proc/" + e.Name() + "/cmdline"); err == nil && strings.Contains(string(b), dir+"/") {
+			return true
+		}
+	}
+	return false
+}

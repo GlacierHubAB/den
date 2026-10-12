@@ -103,6 +103,7 @@ func New(t *testing.T, labels ...string) *Lab {
 		t.Fatalf("sshtest: %v", err)
 	}
 	l.Dir = dir
+	stopReaper := reapIfOrphaned(dir)
 	t.Cleanup(func() {
 		l.killAll()
 		for _, r := range l.Remotes {
@@ -121,6 +122,7 @@ func New(t *testing.T, labels ...string) *Lab {
 		for i := 0; i < 10 && os.RemoveAll(dir) != nil; i++ { // a dying process may still be writing
 			time.Sleep(100 * time.Millisecond)
 		}
+		stopReaper() // the cleanups ran: nothing to reap
 	})
 
 	l.Den = BuildDen(t)
@@ -469,4 +471,26 @@ func signalTreeIf(pid int, sig syscall.Signal, skip func(pid int) bool) {
 		}
 	}
 	kill(pid)
+}
+
+// reapIfOrphaned starts a detached watcher that cleans the lab up if the test
+// process dies without running its cleanups (a test timeout, a SIGKILL): it
+// kills every process whose command line names the lab directory (private
+// sshd, ssh clients, the stand-in sessions, the TUI's tmux server) and removes
+// the directory. The cleanup of a test that ends normally stops the watcher.
+func reapIfOrphaned(dir string) (stop func()) {
+	const script = `while kill -0 "$1" 2>/dev/null; do sleep 2; done
+[ -d "$2" ] || exit 0
+sleep 1
+for p in $(pgrep -f -- "$2/"); do [ "$p" != "$$" ] && kill -KILL "$p" 2>/dev/null; done
+rm -rf "$2"`
+	cmd := exec.Command("sh", "-c", script, "den-sshtest-reaper", strconv.Itoa(os.Getpid()), dir)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if cmd.Start() != nil {
+		return func() {}
+	}
+	return func() {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // its own session
+		cmd.Wait()
+	}
 }
