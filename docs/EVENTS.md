@@ -60,7 +60,7 @@ and, by kind:
 | `session_end` | a session ended (`SessionEnd`) | `reason`, when Claude Code gives one |
 | `turn_start` | a prompt was submitted (`UserPromptSubmit`) | |
 | `done` | a turn finished (`Stop`) | |
-| `needs_you` | a request started waiting on you (`PermissionRequest`, `AskUserQuestion`, an input notice) | `request`: `permission`, `plan` or `question`; `tool`: the tool name, for a permission |
+| `needs_you` | a request started waiting on you (`PermissionRequest`, `AskUserQuestion`, an input notice); one wait is one event, so a question is not reported again as a permission | `request`: `permission`, `plan` or `question`; `tool`: the tool name, for a permission |
 | `idle` | Claude Code's idle notice | |
 | `turn_failed` | a turn ended on an API error (`StopFailure`) | `error`: the error type, e.g. `rate_limit`, `overloaded`, `authentication_failed`, `unknown` |
 | `tool_failed` | a tool call failed (`PostToolUseFailure`) | `tool`: the tool name |
@@ -100,3 +100,31 @@ answer a permission or anything else. A failure is logged to `hooks.log`. Den
 runs `needs_you` only for a request that waits on you, not one it allowed by an
 earlier "always". `[on]` runs for every event of its kind; the tree-aware
 silencing of desktop notifications does not apply.
+
+## What Claude Code sends
+
+The stream is made from Claude Code's hook payloads. What Claude Code 2.1.289
+was seen to send, for anyone reading `hooks.log` or writing their own hooks:
+
+- Besides the documented fields, payloads carry `prompt_id` (the turn) and
+  `effort`; `SessionStart` and `UserPromptSubmit` carry `session_title`,
+  `PostToolUse` carries `duration_ms`, and `Stop` carries `background_tasks`
+  and `session_crons`. A `PermissionRequest` has no `tool_use_id`; the
+  `PreToolUse` and `PostToolUse` of the same call do.
+- Claude Code shows its own permission dialog at once, in parallel with the
+  `PermissionRequest` hook, not after the hook exits. While Den holds the
+  hook, the request can always be answered in the terminal; whichever answers
+  first counts, and Claude Code ends the hook when its dialog is answered or
+  dismissed.
+- A `Notification` of type `permission_prompt` follows a `PermissionRequest`
+  by about 6 seconds, while the hook still holds: it is the same wait, so it
+  makes no `needs_you` of its own. An `idle_prompt` follows a `Stop` by about
+  5 seconds.
+- `AskUserQuestion` fires `PreToolUse` and, about 60 ms later, a
+  `PermissionRequest`. The stream reports the question once, from the
+  `PreToolUse`.
+- A plan (`ExitPlanMode`) is approved by a `PermissionRequest` hook only with
+  an allow that carries the call's own `tool_input` as `updatedInput`; a bare
+  allow is ignored and the plan dialog stays open. The agent then leaves plan
+  mode for the mode it had before. A deny with a message sends the plan back,
+  the message as the tool's error, and the agent stays in plan mode.

@@ -24,7 +24,7 @@ type Config struct {
 		Recent int // activity entries in the details pane
 	}
 	Hooks struct {
-		PermissionWait  int  // seconds a held permission waits for your answer before Claude Code's own dialog
+		PermissionWait  int  // seconds a held permission waits for your answer in Den; Claude Code's own dialog is up all along
 		Log             bool // append every hook run to hooks.log
 		AnswerQuestions bool // answer an agent's AskUserQuestion from the inbox; undocumented Claude Code behaviour
 	}
@@ -268,7 +268,7 @@ history = 100               # finished turns kept as history
 recent = 20                 # activity entries shown in the details pane
 
 [hooks]
-permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
+permission_wait = 580       # seconds Den may hold a permission; the terminal dialog then answers alone
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
 answer_questions = false    # answer an agent's questions (AskUserQuestion) from the inbox; waits permission_wait
 
