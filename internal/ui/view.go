@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -825,6 +826,10 @@ func (m Model) inboxPane(w, h int) string {
 			why := "answer in the terminal"
 			if host := hostOf(itemKey(it)); host != "" {
 				why = "answer it in the terminal on " + host
+				if h, ok := m.hostStatus(host); ok && h.State == remote.AttachedElsewhere {
+					// That Den may hold it for an answer: not only the terminal's.
+					why = "another Den controls " + host + ": answer it there or in the terminal"
+				}
 			}
 			if it.Resolved != "" {
 				why = it.Resolved + " · " + why
