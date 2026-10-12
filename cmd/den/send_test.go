@@ -81,3 +81,27 @@ func TestSendViaDenWithoutDen(t *testing.T) {
 		t.Errorf("exit %d, err = %v", code, err)
 	}
 }
+
+// Den shows the human a den send's text through sanitize.Text and sends
+// what it showed, so text that sanitising would change (an escape
+// sequence with its payload, a control, bidi or invisible character) is
+// refused here, before Den is asked, with its own exit code.
+func TestSendViaDenRefusesTextDenCannotShow(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "none.sock") // never reached
+	for _, text := range []string{
+		"run the tests\x1b]0;and something else\x07",
+		"run the tests\x1b[8mhidden\x1b[0m",
+		"run the tests\u200b",
+		"run the tests\U000E0041\U000E0042",
+		"run \u202ethe tests",
+		"run the tests\r\nthen push",
+	} {
+		_, code, err := sendViaDen(sock, "mossy@devbox", text)
+		if err == nil || code != sendUnshowable || !strings.Contains(err.Error(), "nothing was sent") {
+			t.Errorf("%q: exit %d, %v", text, code, err)
+		}
+	}
+	if _, code, _ := sendViaDen(sock, "mossy@devbox", "run the tests\n\tthen push 🚀 ✔️"); code != sendNoDen {
+		t.Errorf("plain text refused: exit %d", code)
+	}
+}

@@ -306,7 +306,10 @@ On an `approve` host:
   stays open while the agent works through its turns; it is cancelled when
   the agent's session ends before you answer ("the request was cancelled: the
   session on devbox ended; nothing was sent") or the link to the host is lost. A message too large once
-  encoded says so, and the host refuses a messaging socket that is a symlink
+  encoded says so. The question shows the text exactly as it is sent, so
+  text Den would print otherwise (an escape sequence, a carriage return, a
+  control, bidi or invisible character) is refused before Den is asked,
+  and Den refuses it too. The host refuses a messaging socket that is a symlink
   or not the agent's own. A host that is offline gets nothing: "devbox is
   offline; nothing was sent". `den send name@host` exits with:
 
@@ -318,6 +321,7 @@ On an `approve` host:
   | 5 | the question was cancelled before you answered: the agent's session ended, or the link was lost |
   | 6 | no Den is running on this machine |
   | 7 | no answer from Den: whether it was sent is not known |
+  | 8 | the text has what Den would not show in its question: nothing was asked or sent |
 - **Closing.** `Ctrl+X`, `/close`, `/close Name@devbox` and `/close idle`
   include remote agents. The question names the host: "Close Mossy Lemur on
   devbox?", "on devbox · SIGTERM there, no window", and "! uncommitted changes
