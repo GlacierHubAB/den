@@ -78,7 +78,11 @@ type as `error` (for example `"authentication_failed"`), not the documented
 `error_type`; Den reads both.
 
 `den hook` reads the event from stdin and sends it as one JSON line to the
-socket (`$DEN_SOCKET`, else `$XDG_RUNTIME_DIR/den.sock`). For
+socket (`$DEN_SOCKET`, else `$XDG_RUNTIME_DIR/den.sock`, else `den.sock` in
+the private directory `$TMPDIR/den-<uid>/`; `internal/bridge/dial.go` checks
+that directory and, with `SO_PEERCRED`, that the other end of every
+connection is the same user). A panic in `den hook` exits 0 with no output,
+never Go's exit 2, which Claude Code would read as a denial. For
 `PermissionRequest` it waits, up to `hooks.permission_wait` seconds, for the
 TUI's decision and prints it for Claude Code; with no answer it prints nothing
 and Claude Code shows its own dialog. Events from subagents are ignored.
