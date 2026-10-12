@@ -96,6 +96,11 @@ type hostSpawn struct {
 	log        func(string)
 
 	busy sync.Mutex // one spawn at a time on a host
+	// kick asks serve for a snapshot now: a spawn or cleanup changed Den's
+	// tmux sessions. The agent's session file can be written before its
+	// tmux session is tagged, so the snapshot that file change brings may
+	// not list it yet.
+	kick chan struct{}
 
 	capOnce sync.Once
 	cap     SpawnCap
@@ -105,7 +110,8 @@ type hostSpawn struct {
 
 func newHostSpawn(req Request, full bool, o ServeOptions) *hostSpawn {
 	hs := &hostSpawn{policy: req.Spawn, controller: req.Controller, full: full, server: o.TmuxServer,
-		den: o.Executable, wait: o.SpawnWait, sessions: o.Sessions, stateDir: filepath.Dir(o.EventsPath), log: o.Log}
+		den: o.Executable, wait: o.SpawnWait, sessions: o.Sessions, stateDir: filepath.Dir(o.EventsPath), log: o.Log,
+		kick: make(chan struct{}, 1)}
 	switch {
 	case o.Owner != nil:
 		hs.owner = *o.Owner
@@ -892,7 +898,15 @@ func (a *actions) spawnCmd(ctx context.Context, typ string, line []byte) error {
 		} else {
 			a.log(fmt.Sprintf("%s %s refused: %s", typ, shortID(id), r.Error))
 		}
-		return a.up(r)
+		err := a.up(r)
+		// After the result, so Den has it first; a check changes nothing.
+		if hs := a.spawn; hs != nil && hs.kick != nil && !sc.Check {
+			select {
+			case hs.kick <- struct{}{}:
+			default:
+			}
+		}
+		return err
 	}
 	hs := a.spawn
 	if typ == TypeCleanup {

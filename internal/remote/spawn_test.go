@@ -750,3 +750,22 @@ func TestSpawnIsListedWhateverTheLocale(t *testing.T) {
 		t.Errorf("spawned = %+v", snap.Spawned)
 	}
 }
+
+// The agent's session file can be written before serve tags its tmux
+// session, so the snapshot that file change brings may not list it: serve
+// sends one more once the spawn is done, without waiting for the next
+// timed snapshot.
+func TestSpawnIsListedInASnapshotRightAfterItsResult(t *testing.T) {
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	sv, _ := h.serve(t, Approve, spawnPolicy(), func(o *ServeOptions) { o.Debounce, o.SnapshotEvery = time.Hour, time.Hour })
+	c := spawnCmd("k1", "api", dir, "fix it")
+	if r := sv.spawn(c); !r.OK {
+		t.Fatalf("spawn: %+v", r)
+	}
+	var snap Snapshot
+	json.Unmarshal(sv.next(TypeSnapshot), &snap)
+	if len(snap.Spawned) != 1 || snap.Spawned[0].TmuxName != c.TmuxName {
+		t.Errorf("spawned = %+v", snap.Spawned)
+	}
+}

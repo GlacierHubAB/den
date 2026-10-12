@@ -401,6 +401,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 			err = snapAgain(o, snap)
 		case <-dirtyc:
 			err = snapAgain(o, snap)
+		case <-acts.spawn.kick:
+			err = snapAgain(o, snap)
 		case <-every.C:
 			err = snapAgain(o, snap)
 		case <-poll.C:
