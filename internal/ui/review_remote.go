@@ -163,6 +163,11 @@ func (m *Model) applyRemoteReview(msg reviewRemoteMsg) tea.Cmd {
 	default:
 		rr.fails, rr.retry = 0, time.Time{}
 		rr.err, rr.works = "", workFromDiff(msg.key, rr.host, msg.diff)
+		if a, ok := m.agentFor(msg.key); ok {
+			for i := range rr.works {
+				rr.works[i].Last = lastChange(a.Tail)
+			}
+		}
 	}
 	m.mergeReview()
 	return m.loadRemote()
@@ -216,6 +221,19 @@ func workFromDiff(key, host string, d *remote.Diff) []work {
 		w.Files = append(w.Files, f)
 	}
 	return []work{w}
+}
+
+// lastChange is when the newest file change in an agent's tail was made,
+// zero when it holds none: a remote agent's work carries no time of its
+// own, and its tail (under full) is what the host sent of its transcript.
+func lastChange(tail []transcript.Entry) time.Time {
+	var last time.Time
+	for _, e := range tail {
+		if len(e.Changes) > 0 && e.At.After(last) {
+			last = e.At
+		}
+	}
+	return last
 }
 
 // remoteNote is what Review says of a remote agent with no diff to list:

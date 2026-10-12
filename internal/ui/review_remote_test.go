@@ -540,3 +540,34 @@ func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
 		t.Errorf("flash: %q", m.flash)
 	}
 }
+
+// A remote agent's row shows how long ago it last changed a file, as a
+// local row does, from the newest change in the tail its host sent.
+func TestReviewRemoteRowHasAnAge(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	for i := range feed.agents {
+		if feed.agents[i].Host == "devbox" && feed.agents[i].Session.SessionID == dupSession {
+			feed.agents[i].Tail = []transcript.Entry{
+				{Kind: "tool", Tool: "Edit", At: time.Now().Add(-7 * time.Minute), Changes: []transcript.FileChange{{Path: "main.go"}}},
+				{Kind: "text", Text: "Done.", At: time.Now().Add(-time.Minute)}, // no change: not the age
+			}
+		}
+	}
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = "den @devbox"
+	feed.diff = remoteDiff()
+	runReview(m, m.loadReview())
+	if len(m.rev.works) != 1 {
+		t.Fatalf("works = %+v", m.rev.works)
+	}
+	if last := m.rev.works[0].Last; time.Since(last) < 7*time.Minute || time.Since(last) > 8*time.Minute {
+		t.Errorf("last change = %v", last)
+	}
+	m.width = 300
+	if out := frame(m); !strings.Contains(out, "+2 −0 · 7m") {
+		t.Errorf("row lacks its age:\n%s", out)
+	}
+}
