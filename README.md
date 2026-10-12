@@ -10,7 +10,9 @@ streams everything that needs your answer into one inbox, and lets you talk to
 one agent with an `@mention` or to an orchestrator that speaks to all of them.
 It also draws who directs whom, keeps standing goals as missions, and shows what
 each agent changed as a diff you can comment on and send back to the agent,
-and adds up what the work cost.
+and adds up what the work cost. Over ssh it shows the agents on your other
+machines in the same Fleet, inbox and cost totals ([Remote agents](#remote-agents),
+[docs/REMOTE.md](docs/REMOTE.md)).
 
 Den is Linux software. It reads `/proc` and `~/.claude/sessions`, brings
 terminals to the front through Hyprland, and starts new ones through
@@ -28,7 +30,7 @@ Hyprland.
 - [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
 - [Review](#review) · [Worktrees in Review](#worktrees-in-review) · [The agent badge](#the-agent-badge)
-- [Text from outside Den](#text-from-outside-den)
+- [Remote agents](#remote-agents) · [Text from outside Den](#text-from-outside-den) · [docs/REMOTE.md](docs/REMOTE.md)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
 - [Troubleshooting](#troubleshooting) · [Den, Herdr and OpenRig](#den-herdr-and-openrig) · [Contributing](#contributing) · [License](#license)
 
@@ -105,6 +107,8 @@ Linux binaries are built.
   focus the agent works on omarchy-shell (Omarchy 4), mako and swaync, and
   through a middle click on dunst. Without `notify-send` nothing is shown and
   nothing else changes.
+- **`ssh` and `scp`** only for [remote hosts](#remote-agents); Den uses your
+  own ssh config and keys.
 - **Hooks** (`den install-hooks`) for the inbox, permission answers, history
   and the hierarchy. Without them Den still lists and messages agents.
 - **The agent-badge mod** (`den install-mods`) for roles, tasks and the 5-hour
@@ -174,6 +178,9 @@ den skills              the skills Den installed, for which project or agent, fr
 den skills catalogue    the vetted skills catalogue: repo, pinned commit, license, why
 den skills match "ui designer"          what the catalogue offers a role
 den skills remove frontend-design ~/code/site   remove what Den installed
+den remote add devbox   add a host to the Fleet over ssh (docs/REMOTE.md)
+den remote list [-json] the hosts, their policy, state and agents
+den remote status devbox   the read-only checks again; also: install, remove, disable, enable
 den install-mods        put the bundled agent-badge mod into ~/.claude/skills
 den mods                what ships in this binary and where it is loaded from
 den uninstall-mods      undo
@@ -269,8 +276,10 @@ Den sends a desktop notification (through `notify-send`) when a permission,
 plan or question starts waiting on you, and one reminder if it is still
 waiting after `notify.remind` minutes (10). A notification reads like "Mossy
 Lemur needs your permission": the agent's name and the kind of request, never
-the command, a path, a prompt or file text. Clicking it brings that agent's
-terminal to the front, as `den focus` does. That uses the notification's
+the command, a path, a prompt or file text; for an agent on a remote host,
+"Mossy Lemur on devbox needs your permission". Clicking it brings that agent's
+terminal to the front, as `den focus` does (for a remote agent it opens Den;
+there is no window here to raise). That uses the notification's
 default action: omarchy-shell (Omarchy 4), mako and swaync run it on a click,
 dunst on a middle click; on a server without actions the click does nothing.
 
@@ -295,7 +304,9 @@ The rest are off by default, each with its own switch under `[notify]`:
 
 `den hook` appends every event to `~/.local/state/den/events.jsonl`, one JSON
 object per line with a version field and metadata only (kind, session, agent
-name, time; never a command, prompt or file text). `den events -json` follows
+name, time; never a command, prompt or file text). While Den runs it also
+appends the events of [remote hosts](#remote-agents), each with a `host` field
+(the host's label; absent for this machine). `den events -json` follows
 it, `den wait <agent> --until idle|needs-you|done` blocks on it, and the `[on]`
 config section runs a command per event kind, for example to push to your
 phone. The stream and `den wait` work without Den running; the `stalled` and
@@ -341,6 +352,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
+| `/remote`, `/remote connect <label>` | list the remote hosts with their state; retry one now (see [Remote agents](#remote-agents)) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
 | `/map` | toggle the Fleet map |
 | `/orchestrator` `/orch` | open the orchestrator; `/orch new` starts a fresh session, `/orch restart` restarts it |
@@ -745,7 +757,10 @@ claude-opus-5-5 = "4, 20, 5, 0.2"
 The Fleet details pane shows an agent's tokens, subagents, estimate and, for an
 agent that directs others, the figures for its whole team. The Overview strip
 shows the fleet total: every session Den sees, plus what the orchestrator
-reports for itself. An open mission shows what it used, and each run its own:
+reports for itself. With remote hosts the strip adds a split by machine
+(`here $1.20 · devbox $0.40`) and `/remote` shows each host's own total. A
+remote host sends its tokens by model, never dollars; the estimate uses this
+machine's price table. An open mission shows what it used, and each run its own:
 the tokens of the agents its dispatches went to, and of everyone they direct,
 from the first dispatch until the run ended. A run's figure is kept in
 `missions.jsonl` when it ends. `den list -json` gains a `Cost` object on every
@@ -773,6 +788,10 @@ project picked on Overview.
   branch the base is where it left the default branch (origin's HEAD, else
   `main` or `master`); on the default branch itself it is the last commit
   before the session started, so work committed straight to main still shows.
+  Submodules are not looked into. Untracked files are read without following
+  symlinks, at most 1000 of them and 16 MB in all; the rest are listed as
+  binary. A file shows under an agent only if it owns a line in it (next item),
+  so files the agent never touched stay out of its Review.
 - **Per agent, per line.** Each agent gets the files in which it owns at least
   one changed line, with its own added and removed counts. A line belongs to
   the newest agent edit that added (or removed) exactly that text. Lines no
@@ -872,24 +891,71 @@ the choice in `~/.local/state/den/colors.json`; the badge (1.2.0+) reads that
 file so the critter in each terminal matches the one in Den. The same colour
 marks the agent in the Fleet, inbox, dispatch cards, the map and Review.
 
+## Remote agents
+
+Den can show the agents on other machines you reach over ssh in the same Fleet,
+Inbox and cost totals as the local ones. The full guide is
+[docs/REMOTE.md](docs/REMOTE.md); this is the summary.
+
+```
+den remote add devbox      # an ~/.ssh/config alias, or user@host
+ssh devbox                 # once, by hand, to record the host key
+den remote install devbox  # if the host has no den: asks in Den's inbox, ^Y copies it
+```
+
+Then start Den: the host's agents carry an `@devbox` chip, and `/remote` lists
+the hosts. Each host has a **policy** in `~/.config/den/remotes.toml`
+(`default_policy` sets it for new hosts):
+
+| Policy | What the host sends, and what you can do |
+| --- | --- |
+| `observe` (default) | Metadata only: status, names, role and task (not with `labels = false`), repository name and branch, context, tokens by model. You see the agents, get notified, and see the cost. |
+| `approve`, `full` | Not yet: this version applies `observe` to every host, whatever is set. |
+
+What runs where: Den starts one system `ssh` per host while it runs, and on the
+host that session runs `den remote serve --proto 1`, which exits when the
+session does. There is no daemon, no network listener and no socket on the host.
+Den uses your `~/.ssh/config` and keys, stores no secret, runs every
+connection with `BatchMode=yes` and `StrictHostKeyChecking=yes`, forwards
+nothing, and never answers an ssh prompt, so you run `ssh <target>` once by
+hand. Den never installs itself on a host without your `Ctrl+Y` on the plan in
+its inbox, and never installs hooks there: run `den install-hooks` on the
+host.
+
+An unreachable host is one row, "devbox · offline since 14:02 · 3 agents (last
+known)", its agents dimmed and never counted as working or needing you. A
+silent link is noticed in 45 to 60 seconds. `den list -json` carries a `Host`
+field (and `Stale` when the link is down), `den events -json` a `host` field,
+and `[on]` commands get `DEN_HOST`.
+
+Limits today: you answer a remote agent's requests in the terminal on the
+host, and Den cannot message, close or review a remote agent; Linux hosts and Claude Code agents only (no macOS, no Codex);
+Den cannot spawn agents on a host, missions cannot use remote agents, and the
+orchestrator lists them but cannot message or close them; `Enter` and `/open`
+cannot raise a terminal on another machine, they print `ssh -t <target>`;
+changes to `remotes.toml` are picked up when Den restarts. Every string a host
+sends is sanitised before Den shows it (see
+[Text from outside Den](#text-from-outside-den)).
+
 ## Text from outside Den
 
-Agents, transcripts, hook payloads and git give Den text it does not control.
-Printed raw, a command's output or an agent's name could carry terminal escape
-sequences that set your clipboard (OSC 52), clear the screen, retitle the
-window, plant a link or reorder what you read with bidirectional overrides. Den
-removes from all such text, before it is shown, put in a notification or window
-title, logged or printed by a command: escape sequences (CSI, OSC, DCS, APC and
-the like), other control characters except newline and tab, bidirectional
-overrides and invalid UTF-8. A carriage return becomes a newline. Ordinary
-Unicode, such as CJK, emoji and accents, stays. Notification bodies also escape
-markup, so a name cannot become a link or an image.
+Agents, transcripts, hook payloads, git and remote hosts give Den text it does
+not control. Printed raw, a command's output or an agent's name could carry
+terminal escape sequences that set your clipboard (OSC 52), clear the screen,
+retitle the window, plant a link or reorder what you read with bidirectional
+overrides. Den removes from all such text, local and remote alike, before it is
+shown, put in a notification or window title, logged or printed by a command:
+escape sequences (CSI, OSC, DCS, APC and the like), other control characters
+except newline and tab, bidirectional overrides and invalid UTF-8. A carriage
+return becomes a newline. Ordinary Unicode, such as CJK, emoji and accents,
+stays. Notification bodies also escape markup, so a name cannot become a link
+or an image.
 
 The change you will see: colour in a command's output (a test run, `git
 diff`'s own colouring in a Bash result) is no longer drawn in Den. The text is
 there, without its colours; Den's own colours are not affected.
 
-### Other safety changes
+### Other safety changes, for local agents too
 
 - **Den's socket.** With `XDG_RUNTIME_DIR` unset, `den.sock` is now
   `den-<uid>/den.sock` under `$TMPDIR`, a directory only you may use, checked at
@@ -902,7 +968,8 @@ there, without its colours; Den's own colours are not affected.
   reads as a denial.
 - **Git reads of an agent's checkout run nothing the repository names.** Review,
   the uncommitted-changes check and worktree reads turn off fsmonitor, filter
-  drivers, external diff, textconv and lazy fetch, and do not inherit git's own
+  drivers, external diff, textconv and lazy fetch, never look into submodules
+  (whose own config could name a filter), and do not inherit git's own
   environment variables, so a repository's config cannot make Den run a
   program.
 
@@ -958,7 +1025,9 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 # claude-opus-5-5 = "4, 20, 5, 0.2"
 ```
 
-Mission templates are in `templates.json` beside it (see Templates).
+Mission templates are in `templates.json` beside it (see Templates), and the
+hosts of [Remote agents](#remote-agents) in `remotes.toml` (`default_policy`,
+and per host `target`, `policy`, `labels`, `den_path`, `enabled`).
 
 `DEN_ORCHESTRATOR_MODEL`, `DEN_ORCHESTRATOR_SPAWN=off`, `DEN_PERMISSION_WAIT`,
 `DEN_HOOK_LOG=off`, `DEN_RESTORE=off` and `DEN_NOTIFY=off` win over the file.
@@ -987,9 +1056,11 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `overview.json` | the picked and pinned projects |
 | `reviews.json` | Review comments |
 | `colors.json` | the colour of each session |
+| `remote/<label>.json` | per remote host: its state, the agents it last reported (metadata only) and where its event stream was read up to; readable only by you |
 | `attachments/` | images pasted from the clipboard |
 
-Templates you save go to `~/.config/den/templates.json`, beside `config.toml`.
+Templates you save go to `~/.config/den/templates.json`, and the remote hosts
+you add to `~/.config/den/remotes.toml`, both beside `config.toml`.
 Den also edits `~/.claude/settings.json` (hooks, with a backup beside it) and
 `~/.claude/skills` (the badge mod), writes `<project>/.claude/skills` only
 for skills you approved for that project, and listens on a Unix socket in
@@ -1009,6 +1080,9 @@ under `~/.claude/projects/`; it does not write to those two.
   it matched, or why not.
 - **Spawn fails.** Install `xdg-terminal-exec` or set `$TERMINAL`; `claude`
   must be on `PATH`.
+- **A remote host shows "needs you" or "version mismatch".** See the table in
+  [Remote agents](#remote-agents); `den remote status <label>` repeats the checks
+  and says what to fix.
 - **Orchestrator costs.** It is a real Claude Code session; lower the cost with
   `model = "haiku"` or turn spawning off.
 
@@ -1061,12 +1135,17 @@ What Den does that is its own:
   pass), and your own saved from a mission; the orchestrator proposes and you
   confirm. (OpenRig also ships built-in teams and shareable bundles.)
 - **The agent badge:** a name, critter, role and task for each session.
+- **One Fleet across your machines,** over plain ssh with no daemon and no
+  listener: agents on other hosts, their requests and their cost beside the
+  local ones, metadata only by default. Read-only in this release. (Herdr
+  also connects machines.)
 
 Where the others go further: Herdr keeps agents running when you close the
 client or lose SSH. Den restores conversations, the tree and missions after a
 restart with one question, but it does not keep processes alive. Herdr also
-works across several machines, supports many agent CLIs and runs on macOS and
-Windows. OpenRig gives agent teams persistent roles,
+works across several machines with full control of the panes there, where Den's
+remote hosts are read-only for now; it supports many agent CLIs and runs on
+macOS and Windows. OpenRig gives agent teams persistent roles,
 addresses and a work queue, and runs Claude Code and Codex side by side.
 
 Den works with Herdr: it notices a Claude Code session running inside a Herdr

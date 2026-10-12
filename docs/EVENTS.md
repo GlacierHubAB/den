@@ -50,6 +50,7 @@ Every event has these fields:
 | `kind` | string | one of the kinds below |
 | `session` | string | the Claude Code session id |
 | `agent` | string | the agent's name as Den shows it, e.g. `Mossy Lemur` |
+| `host` | string | only on an event from a [remote host](REMOTE.md): the host's label. Absent for this machine. A running Den appends remote events to the stream with their time on this machine's clock |
 
 and, by kind:
 
@@ -89,7 +90,8 @@ turn_failed = "notify-send \"$DEN_AGENT stopped: $DEN_ERROR\""
 The command gets the event as one JSON line on stdin and as environment
 variables: `DEN_EVENT` (the kind), `DEN_EVENT_VERSION`, `DEN_SESSION`,
 `DEN_AGENT`, `DEN_TIME`, and when set `DEN_REQUEST`, `DEN_TOOL`, `DEN_ERROR`,
-`DEN_MINUTES` and `DEN_REASON`. Event values reach the command only through
+`DEN_MINUTES`, `DEN_REASON` and, for an event from a remote host, `DEN_HOST`
+(its label). The command runs on this machine. Event values reach the command only through
 these, never spliced into the command text.
 
 Commands run in the background, so a slow one never holds Den up, and are
