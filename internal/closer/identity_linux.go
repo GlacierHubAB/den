@@ -69,7 +69,9 @@ func checkClaude(pid int, started time.Time) error {
 	argv := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
 	name := strings.TrimSpace(string(comm))
 	if !isClaudeProc(name, exe, argv) {
-		return fmt.Errorf("pid %d is not Claude Code (it is %q); the session's process has ended and its pid was reused", pid, name)
+		// It may be a reused pid, or Claude Code under a name Den does not
+		// know; either way it is not certainly this session's: say only that.
+		return fmt.Errorf("pid %d is not Claude Code as far as Den can tell (it is %q), so it may not be this session's process; nothing was signalled", pid, name)
 	}
 	at, err := procStart(dir)
 	if err != nil {
