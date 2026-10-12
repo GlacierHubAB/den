@@ -22,7 +22,7 @@ func StateDir() string {
 }
 
 // Known is what Den last knew of one host, saved as <label>.json in
-// StateDir (mode 0600). It is metadata only: the fleet as fleet.Meta,
+// StateDir (mode 0600). On disk it is metadata only (saveKnown drops Full): the fleet as fleet.Meta,
 // already filtered by policy and sanitised, and where the host's event
 // stream was read up to.
 type Known struct {
@@ -69,6 +69,9 @@ func saveKnown(dir string, k Known) error {
 		return err
 	}
 	os.Chmod(dir, 0o700)
+	// Content under the full policy is for the running Den's views only:
+	// it is never written down.
+	k.Agents = metaOnly(k.Agents)
 	raw, err := json.Marshal(k)
 	if err != nil {
 		return err
@@ -90,7 +93,8 @@ func (k Known) agents(h Host, prices cost.Table, now time.Time) []fleet.Agent {
 	}
 	out := make([]fleet.Agent, 0, len(k.Agents))
 	for _, m := range k.Agents {
-		a := fleet.FromMeta(recheck(m, h), h.Label, k.Received, prices)
+		m, _ = recheck(m, h, k.Policy)
+		a := fleet.FromMeta(m, h.Label, k.Received, prices)
 		a.HostState, a.Stale = state, stale
 		out = append(out, a)
 	}
@@ -112,13 +116,26 @@ func LastKnown(cfg Config, prices cost.Table, now time.Time) []fleet.Agent {
 }
 
 // recheck is the local half of the policy filter: whatever the host sent,
-// keep only what its policy (and labels setting) in remotes.toml allows.
-// Meta holds only observe-level fields today, so this drops the labels
-// when they are withheld; a later slice that adds approve or full fields
-// clears them here unless the configured policy allows them.
-func recheck(m fleet.Meta, h Host) fleet.Meta {
+// keep only what its policy (and labels setting) in remotes.toml and the
+// policy the host said it applies both allow. The labels go when they are
+// withheld; the content of Full unless both policies are full, and dropped
+// then says the host sent what it should not have.
+func recheck(m fleet.Meta, h Host, applied Policy) (_ fleet.Meta, dropped bool) {
 	if !h.Labels {
 		m.Role, m.Task = "", ""
 	}
-	return m
+	if m.Full != nil && (h.Policy != Full || applied != Full) {
+		m.Full, dropped = nil, true
+	}
+	return m, dropped
+}
+
+// metaOnly is the agents without their Full content, for what is saved.
+func metaOnly(agents []fleet.Meta) []fleet.Meta {
+	out := make([]fleet.Meta, len(agents))
+	for i, a := range agents {
+		a.Full = nil
+		out[i] = a
+	}
+	return out
 }

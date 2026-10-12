@@ -183,7 +183,7 @@ func approveHost() Host {
 func TestRelayAllowAndDenyRoundTrip(t *testing.T) {
 	s := newScratch(t)
 	sv, hello := serveDirect(t, s, Request{Policy: Full, Controller: ctlA}, nil)
-	if hello.Policy != Approve || hello.Attached != nil {
+	if hello.Policy != Full || hello.Attached != nil {
 		t.Fatalf("hello = %+v", hello)
 	}
 	if st, err := os.Stat(s.sock); err != nil || st.Mode().Perm() != 0o600 || st.Mode()&os.ModeSocket == 0 {

@@ -125,7 +125,7 @@ func remoteAdd(args []string) {
 	}
 	fmt.Printf("Added %s (%s, policy %s) to %s. Den connects to it while it runs.\n", h.Label, h.Target, h.Policy, remote.Path())
 	if h.Policy == remote.Full {
-		fmt.Println("This Den applies full as approve for now: held requests can be answered here, transcripts and diffs stay on the host.")
+		fmt.Println("Policy full: its agents' recent activity, titles and diffs are read here for the details pane and Review; Den never writes them to disk.")
 	}
 	if needsDen {
 		fmt.Println()

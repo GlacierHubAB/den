@@ -266,7 +266,8 @@ func TestServeHandshakeCapsThePolicy(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { Serve(ctx, inR, outW, s.serveOptions()); outW.Close() }()
-	writeMsg(inW, Request{Type: TypeHello, Proto: 1, Policy: Full, Labels: true})
+	// A policy this build does not know is applied as observe, never more.
+	writeMsg(inW, Request{Type: TypeHello, Proto: 1, Policy: "everything", Labels: true})
 	lr := newLineReader(outR, MaxLine)
 	line, err := lr.next()
 	if err != nil {
@@ -274,7 +275,7 @@ func TestServeHandshakeCapsThePolicy(t *testing.T) {
 	}
 	var h Hello
 	json.Unmarshal(line, &h)
-	if h.Type != TypeHello || h.Proto != 1 || h.Policy != Approve || h.Den != "v0.2.0" || h.Claude != "2.1.300" {
+	if h.Type != TypeHello || h.Proto != 1 || h.Policy != Observe || h.Den != "v0.2.0" || h.Claude != "2.1.300" {
 		t.Errorf("hello = %s", line)
 	}
 	line, _ = lr.next()

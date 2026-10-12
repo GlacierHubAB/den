@@ -106,6 +106,10 @@ type Agent struct {
 	// Dirty is a remote agent's checkout having uncommitted changes, as its
 	// host last said; nil when unknown (and for local agents).
 	Dirty *bool `json:"Dirty,omitempty"`
+	// RemoteCWD is a remote agent's folder on its host, sent only under the
+	// full policy. It is a path on another machine: Den shows it and never
+	// reads it.
+	RemoteCWD string `json:",omitempty"`
 }
 
 // MarshalJSON adds StatusName, the status as a string, next to the integer
