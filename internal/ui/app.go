@@ -123,10 +123,12 @@ type Model struct {
 	srvErr     error
 	store      *inbox.Store
 	inboxCur   int
-	inboxSel   string      // id of the selected inbox item: the selection follows the item, never its place in the list
-	inboxLost  bool        // the selected item left the list: nothing is selected until the human picks one
-	inboxAt    time.Time   // when the human last chose an item: requests after it are new to them
-	shown      shownTarget // what ^Y and ^N act on now, and since when
+	inboxSel   string          // id of the selected inbox item: the selection follows the item, never its place in the list
+	inboxLost  bool            // the selected item left the list: nothing is selected until the human picks one
+	inboxAt    time.Time       // when the human last chose an item: requests after it are new to them
+	shown      shownTarget     // what ^Y and ^N act on now, and since when
+	bodyOff    int             // rows the selected inbox item is scrolled, when it is taller than the pane
+	bodyRead   map[string]bool // items whose whole body was scrolled through (inbox_body.go)
 	hooksReady bool
 	cfg        config.Config
 	chatLog    string // the orchestrator log on disk
@@ -700,8 +702,12 @@ func (m Model) inboxSelected() *inbox.Item {
 // selectInbox is the human selecting the item at i: it is in view and
 // chosen, so ^Y acts on it at once.
 func (m *Model) selectInbox(i int) {
+	old := m.inboxSel
 	m.inboxCur, m.inboxSel, m.inboxLost, m.inboxAt = i, "", false, time.Now()
 	if items := m.store.Items(); i >= 0 && i < len(items) {
+		if items[i].ID != old {
+			m.bodyOff = 0
+		}
 		m.inboxSel = items[i].ID
 		m.shown = shownTarget{id: m.inboxSel}
 	}
@@ -1061,6 +1067,9 @@ func (m *Model) move(delta int) {
 			m.orch.backToCard = false
 		}
 	case tabInbox:
+		if m.scrollBody(delta) {
+			return
+		}
 		m.selectInbox(clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1)))
 	case tabOverview:
 		if m.ov.open != "" || m.ov.proposal != "" {
@@ -1192,6 +1201,12 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
 	}
+	if m.tab != tabInbox && verb != "deny" && !m.detailShowsWhole(it) {
+		return m.showInInbox(it)
+	}
+	if why := m.readGate(it); why != "" && verb != "deny" {
+		return m.say(why, true)
+	}
 	if m.unsettled(it) {
 		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
@@ -1229,6 +1244,18 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
+	}
+	if verb == "always" {
+		if why := inbox.AlwaysRefusal(it); why != "" {
+			return m.say(why, true)
+		}
+		scope := inbox.AlwaysScope(it)
+		if !m.store.Answer(it, verb) {
+			m.refresh()
+			return m.say(m.nameFor(itemKey(it))+": "+it.Resolved, true)
+		}
+		m.refresh()
+		return m.say("Allowed for "+m.nameFor(itemKey(it))+", and from now on this session: "+scope, false)
 	}
 	if !m.store.Answer(it, verb) {
 		m.refresh()

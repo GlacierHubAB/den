@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,7 +76,21 @@ type Server struct {
 	path string
 	ln   net.Listener
 	out  chan *Request
+	held atomic.Int64 // connections waiting for a decision now
+	// A connection hands its request over holding sending; accept closes
+	// out only after done has released every one of them.
+	sending sync.RWMutex
+	done    chan struct{}
 }
+
+// MaxLine bounds the one line a connection sends. A hook payload carries a
+// tool call's input, which Claude Code itself keeps far below this.
+const MaxLine = 1 << 20
+
+// MaxHeld bounds the connections waiting for a decision at once. Past it a
+// request gets no decision, as when Den is not running: Claude Code's own
+// dialog answers it. A var for tests.
+var MaxHeld int64 = 256
 
 // ErrAlreadyRunning means another Den owns the socket.
 var ErrAlreadyRunning = errors.New("another den is already listening")
@@ -106,7 +122,7 @@ func Listen(path string) (*Server, error) {
 		return nil, err
 	}
 	os.Chmod(path, 0o600)
-	s := &Server{path: path, ln: ln, out: make(chan *Request, 64)}
+	s := &Server{path: path, ln: ln, out: make(chan *Request, 64), done: make(chan struct{})}
 	go s.accept()
 	return s, nil
 }
@@ -125,7 +141,10 @@ func (s *Server) accept() {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
+			close(s.done)
+			s.sending.Lock()
 			close(s.out)
+			s.sending.Unlock()
 			return
 		}
 		go s.serve(conn)
@@ -140,9 +159,12 @@ func (s *Server) serve(conn net.Conn) {
 		return
 	}
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	line, err := bufio.NewReader(io.LimitReader(conn, MaxLine+1)).ReadBytes('\n')
 	if err != nil && len(line) == 0 {
 		return
+	}
+	if len(line) > MaxLine {
+		return // too long to be a hook's: no decision
 	}
 	var env Envelope
 	if err := json.Unmarshal(line, &env); err != nil {
@@ -152,10 +174,17 @@ func (s *Server) serve(conn net.Conn) {
 	req := &Request{Envelope: env}
 	_ = json.Unmarshal(env.Payload, &req.Input)
 	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent {
+		if s.held.Add(1) > MaxHeld {
+			s.held.Add(-1)
+			return // too many waiting: no decision, fail open
+		}
+		defer s.held.Add(-1)
 		req.reply = make(chan Decision, 1)
 		req.gone = make(chan struct{})
 	}
-	s.out <- req
+	if !s.hand(req) {
+		return // Den is closing
+	}
 	if req.reply == nil {
 		conn.Write([]byte("{\"ok\":true}\n"))
 		return
@@ -173,6 +202,23 @@ func (s *Server) serve(conn net.Conn) {
 	b, _ := json.Marshal(d)
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	conn.Write(append(b, '\n'))
+}
+
+// hand passes req to Den, or reports false when the server is closing.
+func (s *Server) hand(req *Request) bool {
+	s.sending.RLock()
+	defer s.sending.RUnlock()
+	select {
+	case <-s.done:
+		return false
+	default:
+	}
+	select {
+	case s.out <- req:
+		return true
+	case <-s.done:
+		return false
+	}
 }
 
 // TestRequest builds a request that wants a reply, for tests of whoever

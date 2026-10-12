@@ -5,6 +5,9 @@ package inbox
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"sort"
@@ -241,7 +244,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{})
 			return nil
 		}
-		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[agentKey(host, in.SessionID)][key] {
+		if key := allowKey(in, host); key != "" && s.always[agentKey(host, in.SessionID)][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
@@ -630,7 +633,10 @@ func (s *Store) Answer(it *Item, verb string) bool {
 		it.req.Reply(bridge.Decision{Behavior: "allow"})
 		it.State, it.Resolved = Resolved, "allowed in den"
 	case "always":
-		if key := allowKey(it.Tool, it.req.Input.ToolInput); key != "" {
+		if AlwaysRefusal(it) != "" {
+			return false
+		}
+		if key := allowKey(it.req.Input, it.Host); key != "" {
 			k := agentKey(it.Host, it.SessionID)
 			if s.always[k] == nil {
 				s.always[k] = map[string]bool{}
@@ -920,28 +926,127 @@ func (it *Item) is(host, sessionID string) bool {
 // agentKey keys per-agent state by host and session.
 func agentKey(host, sessionID string) string { return host + "\x00" + sessionID }
 
-// allowKey is the "always" rule key: tool plus the first two words of a
-// Bash command, or the tool name alone for everything else. A plan has
-// none: no rule ever approves one (PlansOneAtATime).
-func allowKey(tool string, input json.RawMessage) string {
-	if tool == "" || tool == bridge.PlanTool {
+// shellOperators are what /always refuses in a command: each lets one
+// approved command carry another, or write where it was not shown to.
+var shellOperators = []string{";", "&", "|", "$(", "`", "<", ">", "\n", "\r"}
+
+// AlwaysRefusal says why /always cannot answer the item, "" when it can.
+// A command with shell operators, substitutions or redirections is
+// allowed once at a time, never always: the rule would allow exactly that
+// compound line, and an approval of it should be read each time.
+func AlwaysRefusal(it *Item) string {
+	switch {
+	case it.Kind == Plan:
+		return "plans are approved one at a time; ^Y approves this one"
+	case it.Kind != Permission || it.req == nil:
+		return "/always answers a permission only"
+	case editTools[it.Tool] != "" && it.Host != "":
+		return "edits on " + it.Host + " are approved one at a time"
+	case editTools[it.Tool] != "" && allowKey(it.req.Input, it.Host) == "":
+		return "/always covers edits inside the agent's working directory, never this file: ^Y allows it once"
+	case allowKey(it.req.Input, it.Host) == "":
+		return "/always cannot tell this call from others like it: ^Y allows it once"
+	case it.Tool != "Bash":
 		return ""
 	}
-	if tool == "Bash" {
+	var in struct {
+		Command string `json:"command"`
+	}
+	json.Unmarshal(it.req.Input.ToolInput, &in)
+	var found []string
+	for _, op := range shellOperators {
+		if strings.Contains(in.Command, op) {
+			found = append(found, strings.NewReplacer("\n", "a newline", "\r", "a carriage return").Replace(op))
+		}
+	}
+	if len(found) == 0 {
+		return ""
+	}
+	return "/always takes a single plain command, and this one has " + strings.Join(found, " ") + ": ^Y allows it once"
+}
+
+// allowKey is the "always" rule key: what a later call must match to be
+// allowed without asking. "" is no rule. For Bash, the command exactly as
+// it will run: a prefix such as "git status" would let "git status && curl
+// … | sh" by. For a file edit, the session's working directory, when the
+// file is inside it and not sensitive (editscope.go). For WebFetch, the
+// URL's host. A plan or a question has none.
+// Anything else is the tool by its full name (an MCP tool with its
+// server), as Claude Code's own "allow during this session" is: AlwaysScope
+// says so when the rule is made. host is where the agent runs, "" for this
+// machine: an edit on a host takes no rule, as its paths and symlinks
+// cannot be resolved here. The rule itself is kept per host and session.
+func allowKey(in bridge.HookInput, host string) string {
+	tool, input := in.ToolName, in.ToolInput
+	if field := editTools[tool]; field != "" {
+		if host != "" {
+			return ""
+		}
+		var args map[string]any
+		json.Unmarshal(input, &args)
+		path, _ := args[field].(string)
+		home, _ := os.UserHomeDir()
+		if !editRealInScope(path, in.CWD, home) {
+			return ""
+		}
+		return tool + ":under:" + filepath.Clean(in.CWD)
+	}
+	switch tool {
+	case "", "ExitPlanMode", question.Tool:
+		return ""
+	case "Bash":
 		var in struct {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(input, &in)
-		f := strings.Fields(in.Command)
-		if len(f) == 0 {
-			return "Bash"
+		if strings.TrimSpace(in.Command) == "" {
+			return ""
 		}
-		if len(f) > 2 {
-			f = f[:2]
+		return "Bash:" + in.Command
+	case "WebFetch":
+		if host := fetchHost(input); host != "" {
+			return "WebFetch:" + host
 		}
-		return "Bash:" + strings.Join(f, " ")
+		return ""
 	}
 	return tool
+}
+
+// fetchHost is the host a WebFetch call asks for, lower-cased, "" when its
+// URL has none.
+func fetchHost(input json.RawMessage) string {
+	var in struct {
+		URL string `json:"url"`
+	}
+	json.Unmarshal(input, &in)
+	u, err := url.Parse(strings.TrimSpace(in.URL))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+// AlwaysScope says what /always on the item allows from then on, for the
+// line that confirms it.
+func AlwaysScope(it *Item) string {
+	if it.req == nil {
+		return ""
+	}
+	key := allowKey(it.req.Input, it.Host)
+	switch {
+	case key == "":
+		return ""
+	case editTools[it.Tool] != "":
+		return "every " + it.Tool + " under " + sanitize.Line(filepath.Clean(it.req.Input.CWD)) + ", except sensitive files"
+	case it.Tool == "Bash":
+		return "this exact command, " + sanitize.Line(strings.TrimPrefix(key, "Bash:"))
+	case it.Tool == "WebFetch":
+		return "every WebFetch to " + sanitize.Line(strings.TrimPrefix(key, "WebFetch:"))
+	}
+	if server, name, ok := mcpTool(it.Tool); ok {
+		return "every " + name + " call on " + server
+	}
+	return "every " + it.Tool + " call, whatever it touches"
 }
 
 // bodyLimit caps how much of a diff, a file or a payload an item carries.

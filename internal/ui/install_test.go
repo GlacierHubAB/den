@@ -79,6 +79,8 @@ func TestInstallWaitsForYesThenRunsAndAnswersTheAsker(t *testing.T) {
 	if m.nameFor(it.SessionID) != "@devbox" {
 		t.Errorf("named %q", m.nameFor(it.SessionID))
 	}
+	m.tab = tabInbox
+	m.selectItem(installItem(m))
 	mm, cmd := m.answer("allow")
 	m = mm.(Model)
 	for _, msg := range runBatch(cmd) {
@@ -97,6 +99,8 @@ func TestInstallDeclinedOrFailedSaysSo(t *testing.T) {
 	m := closeModel(t)
 	req := installRequest("devbox")
 	ask(&m, req)
+	m.tab = tabInbox
+	m.selectItem(installItem(m))
 	mm, _ := m.answer("deny")
 	m = mm.(Model)
 	if d, _ := req.Decided(); d.Behavior != "deny" || len(*ran) != 0 {
@@ -104,6 +108,8 @@ func TestInstallDeclinedOrFailedSaysSo(t *testing.T) {
 	}
 	req = installRequest("devbox")
 	ask(&m, req)
+	m.tab = tabInbox
+	m.selectItem(installItem(m))
 	mm, cmd := m.answer("allow")
 	m = mm.(Model)
 	for _, msg := range runBatch(cmd) {
@@ -154,6 +160,8 @@ func installOn(t *testing.T, m *Model) *bridge.Request {
 	if installItem(*m) == nil {
 		t.Fatalf("no install question; flash %q", m.flash)
 	}
+	m.tab = tabInbox
+	m.selectItem(installItem(*m))
 	mm, cmd := m.answer("allow")
 	*m = mm.(Model)
 	for _, msg := range runBatch(cmd) {

@@ -219,12 +219,45 @@ With the hooks installed, each item is a permission, a plan review, a question
 or a finished turn; Den adds its own questions, to close agents, to install
 skills or to reopen agents after a restart. Waiting permissions and plans can
 be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one,
-`/always` allows it and the same tool again this session, `/open` focuses the
+`/always` allows it and the same again this session (see below), `/open` focuses the
 terminal, `/dismiss` clears an item, and `/unread` keeps the selected item
 counted as new until you open or dismiss it (`/unread` again marks it read).
 Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest
 `inbox.history`, 100 by default, come back on restart). The request shows the
-whole command or edit the permission is about.
+whole command or edit the permission is about. A request taller than the pane
+scrolls inside it (`↑` `↓`, `PgUp` `PgDn`) under a marker that says how many
+lines are left, and `Ctrl+Y`, `/always` or a typed answer waits until you have
+scrolled to its end. In another view, `Ctrl+Y` answers only a request that
+view shows whole, as the Fleet view's Details pane can; otherwise it opens the
+Inbox on that request to be read there first, and `Ctrl+Y` again answers it.
+`Ctrl+N` never waits.
+
+What `/always` allows from then on, for that agent's session only (an agent
+on a host is told apart by its host as well), kept in
+memory until Den exits (the line that confirms it says which):
+
+- a command: that exact command only. A command with shell operators,
+  substitutions, redirections or several lines (`;`, `&`, `|`, `$(`, a
+  backtick, `<`, `>`) takes no `/always`; `Ctrl+Y` allows it once.
+- a file edit (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`): edits by that
+  tool inside the agent's working directory, never outside it, never through
+  a symlink that leads out, and never of a file whose change runs code or
+  raises trust: anything under `~/.ssh`, `~/.config` or `~/.local`, a
+  `.claude` folder or `.git` (any repository), `.githooks`, `.gitattributes`,
+  `.gitmodules`, `.mcp.json`, `.gitconfig`, `.npmrc`, `.netrc`, `.tmux.conf`,
+  `.vimrc`, X session files (`.xprofile`, `.xinitrc` and the like),
+  `.pam_environment` or a shell start-up file (`.bashrc`, `.profile`,
+  `.zshrc` and the like). An agent working in your home directory, or above
+  it, gets no edit rule at all. Such an edit, or one outside, is asked about
+  as usual, and takes no `/always`. Inside the working
+  directory a rule does cover files other tools run later, such as `.envrc`,
+  `.vscode/`, a `Makefile` or `package.json`.
+  An agent on a remote host gets no edit rule at all: its paths and
+  symlinks cannot be checked from here, so each edit there is asked about.
+- `WebFetch`: fetches from the same host.
+- an MCP tool: that tool of that server, never the whole server.
+- any other tool: every call of that tool.
+- a plan or a question: nothing; each is answered on its own.
 
 Claude Code shows its own dialog in the agent's terminal at once, beside
 Den's hold, so a request can always be answered there too; whichever answers
@@ -993,7 +1026,11 @@ there, without its colours; Den's own colours are not affected.
 - **Den's socket.** With `XDG_RUNTIME_DIR` unset, `den.sock` is now
   `den-<uid>/den.sock` under `$TMPDIR`, a directory only you may use, checked at
   each use; it used to be `/tmp/den-<uid>.sock`. Every connection to it, in
-  either direction, checks that the peer is the same user. On a machine without
+  either direction, checks that the peer is the same user, and sends one line
+  of at most 1 MB; at most 256 requests wait for an answer at once. A request
+  past either limit gets no decision from Den, and Claude Code's own dialog
+  answers it. (`den hook` drops the tool input and output from an event Den
+  only follows when it would not fit.) On a machine without
   `XDG_RUNTIME_DIR`, reinstall `den` and run `den install-hooks` again so the
   hooks and Den agree on the path.
 - **A hook that crashes fails open.** `den hook` exits 0 with no decision, so

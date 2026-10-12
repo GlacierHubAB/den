@@ -108,6 +108,10 @@ func restoreItems(m Model) []*inbox.Item {
 // runRestore answers allow and feeds the run's result back.
 func runRestore(t *testing.T, m Model) Model {
 	t.Helper()
+	if it := restoreItems(m); len(it) > 0 {
+		m.tab = tabInbox
+		m.selectItem(it[0])
+	}
 	mm, cmd := m.answer("allow")
 	m = mm.(Model)
 	for _, msg := range runCmds(cmd) {
