@@ -77,7 +77,7 @@ func FromHook(in bridge.HookInput) (ev Event, ok bool) {
 	case "SessionStart":
 		ev.Kind, ev.Reason = SessionStart, in.Source
 	case "SessionEnd":
-		ev.Kind, ev.Reason = SessionEnd, in.EndReason
+		ev.Kind, ev.Reason = SessionEnd, in.SessionEndReason()
 	case "UserPromptSubmit":
 		ev.Kind = TurnStart
 	case "Stop":

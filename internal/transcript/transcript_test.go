@@ -36,3 +36,76 @@ func TestReadFindsLatestTitleAndModel(t *testing.T) {
 		t.Errorf("pretty haiku = %q", got)
 	}
 }
+
+// The model in use is the newest model attachment or real reply, in the
+// shapes Claude Code 2.1.289 writes: it switches models in and out of plan
+// mode with an attachment before the next reply, and makes up an assistant
+// record ("<synthetic>", isApiErrorMessage) for an API error or when
+// logged out, which names no model.
+func TestReadModelInUse(t *testing.T) {
+	const (
+		haikuStart = `{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-haiku-4-5-20251001","marketingName":"Haiku 4.5"},"text":"x"}}`
+		planModel  = `{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-sonnet-5-5"}}}`
+		planReply  = `{"parentUuid":"p","isSidechain":false,"type":"assistant","message":{"model":"claude-sonnet-5-5","id":"msg_1","role":"assistant","content":[{"type":"text","text":"plan"}]},"requestId":"req_1"}`
+		exitModel  = `{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-haiku-4-5-20251001"}}}`
+		haikuReply = `{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","id":"msg_2","role":"assistant","content":[]}}`
+		synthetic  = `{"type":"assistant","error":"authentication_failed","isApiErrorMessage":true,"message":{"model":"<synthetic>","id":"942f1410-8e27-43d1-ba40-b568d31284f6","role":"assistant","content":[{"type":"text","text":"Not logged in"}]}}`
+		toolText   = `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"{\"type\":\"attachment\",\"attachment\":{\"type\":\"model\",\"identity\":{\"modelId\":\"claude-opus-5-5\"}}}"}]}}`
+	)
+	for name, c := range map[string]struct {
+		lines []string
+		want  string
+	}{
+		"started, before any reply": {[]string{haikuStart}, "claude-haiku-4-5-20251001"},
+		"a plan-mode reply":         {[]string{haikuStart, planModel, planReply}, "claude-sonnet-5-5"},
+		"plan approved, no reply":   {[]string{haikuStart, planModel, planReply, exitModel}, "claude-haiku-4-5-20251001"},
+		"after a haiku reply":       {[]string{haikuStart, planModel, planReply, exitModel, haikuReply}, "claude-haiku-4-5-20251001"},
+		"an API error after":        {[]string{haikuStart, haikuReply, synthetic}, "claude-haiku-4-5-20251001"},
+		"logged out":                {[]string{synthetic}, ""},
+		"an attachment as text":     {[]string{haikuReply, toolText}, "claude-haiku-4-5-20251001"},
+	} {
+		p := filepath.Join(t.TempDir(), "s.jsonl")
+		os.WriteFile(p, []byte(strings.Join(c.lines, "\n")+"\n"), 0o600)
+		if got := Read(p).Model; got != c.want {
+			t.Errorf("%s: model %q, want %q", name, got, c.want)
+		}
+	}
+}
+
+// The model a session runs outside plan mode, for restoring it, in the
+// order Claude Code 2.1.289 writes it: a model attachment, then plan_mode
+// (entering) or plan_mode_exit (leaving).
+func TestDefaultModel(t *testing.T) {
+	const (
+		sonnetAtt = `{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-sonnet-5-5"}}}`
+		haikuAtt  = `{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-haiku-4-5-20251001"}}}`
+		planIn    = `{"type":"attachment","attachment":{"type":"plan_mode","reminderType":"full"}}`
+		planOut   = `{"type":"attachment","attachment":{"type":"plan_mode_exit"}}`
+		sonnet    = `{"type":"assistant","message":{"model":"claude-sonnet-5-5","role":"assistant","content":[]}}`
+		haiku     = `{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","role":"assistant","content":[]}}`
+		prompt    = `{"type":"user","origin":{"kind":"human"},"message":{"role":"user","content":"go on"}}`
+		synthetic = `{"type":"assistant","isApiErrorMessage":true,"message":{"model":"<synthetic>","role":"assistant","content":[]}}`
+	)
+	for name, c := range map[string]struct {
+		lines []string
+		want  string
+	}{
+		"never in plan mode":                    {[]string{haikuAtt, prompt, haiku, haiku}, "claude-haiku-4-5-20251001"},
+		"closed in plan mode after haiku turns": {[]string{haikuAtt, prompt, haiku, prompt, sonnetAtt, planIn, sonnet, sonnet}, "claude-haiku-4-5-20251001"},
+		"planned, approved, haiku since":        {[]string{prompt, sonnetAtt, planIn, sonnet, haikuAtt, planOut, haiku, haiku}, "claude-haiku-4-5-20251001"},
+		"approved, no reply yet":                {[]string{prompt, sonnetAtt, planIn, sonnet, haikuAtt, planOut}, "claude-haiku-4-5-20251001"},
+		"in and out twice, in plan mode now":    {[]string{prompt, sonnetAtt, planIn, sonnet, haikuAtt, planOut, haiku, prompt, sonnetAtt, planIn, sonnet}, "claude-haiku-4-5-20251001"},
+		"in plan mode, an API error since":      {[]string{haikuAtt, haiku, sonnetAtt, planIn, sonnet, synthetic}, "claude-haiku-4-5-20251001"},
+		"started in plan mode: not recorded":    {[]string{prompt, sonnetAtt, planIn, sonnet, prompt, sonnet}, ""},
+		"plan mode on the same model":           {[]string{haikuAtt, haiku, planIn, haiku}, "claude-haiku-4-5-20251001"},
+	} {
+		p := filepath.Join(t.TempDir(), "s.jsonl")
+		os.WriteFile(p, []byte(strings.Join(c.lines, "\n")+"\n"), 0o600)
+		if got := DefaultModel(p); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+	if DefaultModel("") != "" || DefaultModel(filepath.Join(t.TempDir(), "none.jsonl")) != "" {
+		t.Error("no transcript: a model")
+	}
+}

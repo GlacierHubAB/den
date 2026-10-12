@@ -68,12 +68,14 @@ func TestIsClaudeProc(t *testing.T) {
 }
 
 // A sessions file whose pid now belongs to a live process that is not
-// Claude Code (a reused pid) is refused, and the process is not signalled.
+// Claude Code is refused, and the process is not signalled. The refusal
+// says no more than Den knows: the process lives, so it does not claim the
+// session ended or the pid was reused.
 func TestCloseRefusesAPidThatIsNotClaude(t *testing.T) {
 	cmd, done := child(t, "sleep")
 	tg := Target{SessionID: "s1", Name: "Mossy Lemur", PID: cmd.Process.Pid, Status: "idle", Started: time.Now()}
 	res := Run(context.Background(), Plan{Targets: []Target{tg}, Force: true}, Self{}, System{})
-	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "not Claude Code") || res[0].Ended {
+	if res[0].Err == nil || !strings.Contains(res[0].Err.Error(), "not Claude Code") || strings.Contains(res[0].Err.Error(), "reused") || strings.Contains(res[0].Err.Error(), "has ended") || res[0].Ended {
 		t.Errorf("result %+v", res[0])
 	}
 	if !running(done) {
