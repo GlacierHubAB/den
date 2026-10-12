@@ -219,8 +219,10 @@ Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest
 whole command or edit the permission is about. A request taller than the pane
 scrolls inside it (`↑` `↓`, `PgUp` `PgDn`) under a marker that says how many
 lines are left, and `Ctrl+Y`, `/always` or a typed answer waits until you have
-scrolled to its end; from another view, such a request is answered only once
-it was read in the Inbox. `Ctrl+N` never waits.
+scrolled to its end. In another view, `Ctrl+Y` answers only a request that
+view shows whole, as the Fleet view's Details pane can; otherwise it opens the
+Inbox on that request to be read there first, and `Ctrl+Y` again answers it.
+`Ctrl+N` never waits.
 
 What `/always` allows from then on, for that agent's session only, kept in
 memory until Den exits (the line that confirms it says which):
