@@ -21,7 +21,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
-// State is where a host's link stands (docs/REMOTE-DESIGN.md §4.4).
+// State is where a host's link stands (docs/REMOTE.md).
 type State string
 
 const (

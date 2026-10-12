@@ -1,5 +1,5 @@
 // Package remote connects Den to agents on other machines over the
-// system ssh (docs/REMOTE-DESIGN.md, architecture D).
+// system ssh (docs/REMOTE.md).
 //
 // While Den runs, it keeps one ssh session per enabled host in
 // remotes.toml. The session runs `den remote serve --proto 1` on the host,

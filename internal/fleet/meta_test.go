@@ -17,7 +17,7 @@ import (
 
 // metaAllowed is every JSON field Meta may carry. Adding a field to Meta
 // fails this test until it is added here, which is the moment to check it
-// is metadata under the observe policy (docs/REMOTE-DESIGN.md §3.3).
+// is metadata under the observe policy (docs/REMOTE.md).
 var metaAllowed = []string{
 	"index", "session", "status", "name", "peer", "role", "task", "model", "claude", "repo", "branch",
 	"status_age_ms", "started_age_ms", "last_active_ms",

@@ -15,8 +15,8 @@ import (
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
-// Installing den on a remote host is one inbox question (decision 3 in
-// docs/REMOTE-DESIGN.md). `den remote install` asks over den.sock; Den
+// Installing den on a remote host is one inbox question (see
+// docs/REMOTE.md). `den remote install` asks over den.sock; Den
 // makes the plan itself, shows it in full, and copies the binary only on
 // ^Y. A background connection never installs.
 

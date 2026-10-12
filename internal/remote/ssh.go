@@ -77,7 +77,7 @@ func ensurePrivateDir(dir string) error {
 	return nil
 }
 
-// options are passed on every ssh and scp run (docs/REMOTE-DESIGN.md §3.2).
+// options are passed on every ssh and scp run (docs/REMOTE.md).
 func (s SSH) options() []string {
 	opts := []string{
 		"-o", "BatchMode=yes", // never prompt: a background connection has nobody to ask

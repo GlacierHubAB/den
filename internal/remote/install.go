@@ -19,10 +19,10 @@ import (
 // ReleaseURL is where release binaries and their SHA256SUMS are published.
 const ReleaseURL = "https://github.com/GlacierHubAB/den/releases"
 
-// Plan is what installing den on a host would do (docs/REMOTE-DESIGN.md
-// §3.6, decision 3). Text is shown to the human exactly as it is, and only
-// their yes (Ctrl+Y in the inbox, or the CLI's prompt) runs Install. A
-// background connection never installs.
+// Plan is what installing den on a host would do (docs/REMOTE.md). Text is
+// shown to the human exactly as it is, and only their yes (Ctrl+Y in the
+// inbox, or the CLI's prompt) runs Install. A background connection never
+// installs.
 type Plan struct {
 	Host    Host
 	Probe   Probe

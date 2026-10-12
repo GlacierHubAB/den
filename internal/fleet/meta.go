@@ -15,11 +15,10 @@ import (
 const LabelMax = 80
 
 // Meta is the metadata-only projection of an Agent: what may leave the
-// machine under a remote host's observe policy (docs/REMOTE-DESIGN.md
-// §3.3). It holds no prompt, reply, command, tool input, file path, cwd,
-// transcript or socket path, title or Tail. A field added here crosses
-// the wire to every remote Den, so TestMetaFieldsAreAllowlisted names each
-// one; keep it that way.
+// machine under a remote host's observe policy (docs/REMOTE.md). It holds no
+// prompt, reply, command, tool input, file path, cwd, transcript or socket
+// path, title or Tail. A field added here crosses the wire to every remote
+// Den, so TestMetaFieldsAreAllowlisted names each one; keep it that way.
 //
 // Times are ages measured on the host that made the projection, so the
 // receiving side never compares clocks across machines. Dollars are not

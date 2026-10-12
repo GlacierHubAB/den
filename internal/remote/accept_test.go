@@ -1,6 +1,6 @@
 package remote_test
 
-// The slice 1 acceptance tests of docs/REMOTE-DESIGN.md §5, run for real: the
+// The acceptance tests for remote hosts, run for real: the
 // Manager under test talks to a private sshd (internal/sshtest) as the ssh
 // ProxyCommand, with scratch keys, homes and sockets, no network and no
 // listening port, and the remote runs the den built from this tree.

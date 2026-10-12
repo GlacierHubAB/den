@@ -20,7 +20,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/remote"
 )
 
-// Remote hosts (docs/REMOTE-DESIGN.md, slice 1): agents on the hosts in
+// Remote hosts (docs/REMOTE.md): agents on the hosts in
 // remotes.toml join the fleet, read-only. Den shows them and their
 // requests, and says where to answer; it never answers, sends to, closes
 // or focuses a remote agent.

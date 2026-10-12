@@ -61,7 +61,7 @@ type SkillsInput struct {
 
 // InstallEvent is not a hook either: `den remote install` (and `den
 // remote add`) send it to ask the human, in Den's inbox, to copy this den
-// to a remote host (docs/REMOTE-DESIGN.md §3.6, decision 3), and wait for
+// to a remote host (docs/REMOTE.md), and wait for
 // the outcome. Den makes the plan itself and carries it out only on ^Y.
 //
 // It is only ever read from the local den.sock. A remote host's messages

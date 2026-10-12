@@ -14,7 +14,7 @@ import (
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/noremote_*.golden")
 
-// TestNoRemotesViewUnchanged is acceptance test 8 of docs/REMOTE-DESIGN.md:
+// TestNoRemotesViewUnchanged is remote acceptance test 8:
 // with no remote host configured, the frames are what they were before
 // remote support. The goldens were rendered by this same test on the code
 // before it; only the clock and ages are masked, since they move.

@@ -14,7 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 )
 
-// Policy is how much a remote host may send (docs/REMOTE-DESIGN.md §3.3).
+// Policy is how much a remote host may send (docs/REMOTE.md).
 type Policy string
 
 const (
