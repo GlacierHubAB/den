@@ -175,6 +175,13 @@ func (m Model) roster() []orch.RosterAgent {
 		if last, stale := m.lastKnown(a); stale {
 			r.Status = "host offline, last known " + last.String()
 		}
+		if a.Host != "" {
+			// A remote agent's title, files and recent activity cross only
+			// for the human's own views under full: they never go into the
+			// orchestrator's prompt, which Claude Code writes to disk, or
+			// steer a local agent.
+			r.Task, r.Title, r.Files, r.Recent = a.Labels.Task, "", nil, nil
+		}
 		for _, it := range m.store.Items() {
 			if itemKey(it) == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
 				line := it.Kind.String() + ": " + it.Title

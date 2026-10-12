@@ -976,15 +976,25 @@ func (m Model) detailPane(w, h int) string {
 		kv(r[0], r[1])
 	}
 	if a.Host != "" {
-		// A remote agent carries metadata only: no folder, window, pid or
-		// recent activity crosses the link.
+		// A remote agent carries metadata only, unless its host's policy is
+		// full: then its folder on the host, its title and its recent
+		// activity cross too. Never a window or a pid.
 		kv("where", a.Where())
 		for _, r := range m.remoteDetail(a) {
 			kv(r[0], r[1])
 		}
+		kv("cwd", a.RemoteCWD)
+		kv("title", a.Title)
 		kv("started", humanAge(time.Since(a.Session.Started()))+" ago")
 		sid, _ := splitKey(a.Session.SessionID)
 		kv("session", sanitize.Line(sid[:min(8, len(sid))]+" · "+a.Session.Name))
+		if len(a.Tail) > 0 {
+			b.WriteString("\n")
+			line(s.muted.Render("recent"))
+			for _, l := range m.activityLines(a.Tail, a, w-4, true) {
+				line(l)
+			}
+		}
 		b.WriteString("\n")
 		line(s.key.Render("Enter") + s.keyLabel.Render(" how to reach it: ssh -t "+m.hostTarget(a.Host)))
 		lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")

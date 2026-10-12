@@ -270,7 +270,7 @@ func (m Model) workPane(w, h int) string {
 		}
 		name, task, color, gone := "unknown session", "", s.pal.Muted, false
 		if a, found := m.agentFor(wk.SessionID); found {
-			name, task, color, gone = a.Name, a.Task(), m.agentColor(a), a.Status == fleet.Gone
+			name, task, color, gone = a.Name+hostChip(a), a.Task(), m.agentColor(a), a.Status == fleet.Gone
 		}
 		stripe := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
 		nameS := lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Bold(true)
@@ -293,6 +293,9 @@ func (m Model) workPane(w, h int) string {
 		if gone {
 			meta += dim.Render(" · ") + errS.Render("✕ gone")
 		}
+		if wk.Cut != "" {
+			meta += dim.Render(" · ") + attn.Render("cut")
+		}
 		lines = append(lines,
 			fill(bar+nameS.Render(" "+ansi.Truncate(name, w-3, "…")), w, pad),
 			fill(bar+fg.Render(" "+ansi.Truncate(task, w-3, "…")), w, pad),
@@ -304,37 +307,42 @@ func (m Model) workPane(w, h int) string {
 	return strings.Join(lines[start:min(len(lines), start+h)], "\n")
 }
 
-// remoteWorkLines lists remote agents greyed out under the work list:
-// their diffs stay on their host until a policy lets them travel.
+// remoteWorkLines lists, greyed out under the work list, the remote agents
+// with no work listed: why their diff stays on their host (its policy is
+// not full, or it is offline), or that it is being read.
 func (m Model) remoteWorkLines(w int) []string {
 	s := m.st
 	var out []string
 	host := projectHost(m.proj.cur)
-	for _, a := range m.agents {
-		if a.Host == "" || a.Status == fleet.Gone || (host != "" && a.Host != host) {
-			continue
+	listed := map[string]bool{}
+	for _, wk := range m.rev.all {
+		if wk.Host != "" {
+			listed[wk.SessionID] = true
 		}
-		policy := "observe"
-		if h, ok := m.hostStatus(a.Host); ok && h.Applied != "" {
-			policy = string(h.Applied)
-		} else if ok && h.Policy != "" {
-			policy = string(h.Policy)
+	}
+	for _, a := range m.agents {
+		if a.Host == "" || a.Status == fleet.Gone || (host != "" && a.Host != host) || listed[a.Session.SessionID] {
+			continue
 		}
 		if len(out) == 0 {
 			out = append(out, "")
 		}
-		out = append(out,
-			s.muted.Render(" "+ansi.Truncate(a.Name+hostChip(a), w-2, "…")),
-			s.muted.Render(" "+ansi.Truncate("diff on "+a.Host+", policy "+policy, w-2, "…")),
-		)
+		out = append(out, s.muted.Render(" "+ansi.Truncate(a.Name+hostChip(a), w-2, "…")))
+		for _, l := range strings.Split(ansi.Wrap(m.remoteNote(a), max(10, w-2), ""), "\n") {
+			out = append(out, s.muted.Render(" "+l))
+		}
 	}
 	return out
 }
 
 // fileRows lists, for each row of the Files pane, the file it shows, or -1
-// for a folder heading.
+// for a folder heading or a note.
 func fileRows(wk *work) []int {
 	var rows []int
+	// A remote work's note comes first (filesPane draws it).
+	if wk.Cut != "" {
+		rows = append(rows, -1)
+	}
 	lastDir := "\x00"
 	for i, f := range wk.Files {
 		dir := filepath.Dir(f.Path)
@@ -354,6 +362,9 @@ func (m Model) filesPane(w, h int) string {
 		return ""
 	}
 	var lines []string
+	if wk.Cut != "" {
+		lines = append(lines, s.attn.Render(" "+ansi.Truncate(wk.Cut, w-2, "…")))
+	}
 	selLine := 0
 	for _, i := range fileRows(wk) {
 		if i < 0 {
@@ -854,6 +865,7 @@ func (m *Model) addComment(body string) error {
 	c := review.Comment{
 		ID:        strconv.FormatInt(time.Now().UnixNano(), 36),
 		Root:      wk.Root,
+		Host:      wk.Host,
 		Path:      f.Path,
 		Side:      end.side,
 		Start:     start,
@@ -922,8 +934,17 @@ func (m *Model) dropEdit() tea.Cmd {
 	return m.clear()
 }
 
+// saveComments writes the comments on this machine's work. A comment on a
+// remote agent's work quotes lines of a diff that crossed from its host
+// under full, so it is kept for this run only, never written down.
 func (m *Model) saveComments() error {
-	return review.SaveComments(m.rev.commentsPath, m.rev.comments)
+	local := make([]review.Comment, 0, len(m.rev.comments))
+	for _, c := range m.rev.comments {
+		if c.Host == "" {
+			local = append(local, c)
+		}
+	}
+	return review.SaveComments(m.rev.commentsPath, local)
 }
 
 // ---- mouse ----

@@ -384,7 +384,7 @@ func (m *Model) filterReview() {
 	if m.rev.all == nil {
 		return
 	}
-	m.applyReview(reviewLoadedMsg{works: m.rev.all, errs: m.rev.errs, note: m.rev.note})
+	m.mergeReview()
 }
 
 // remoteProject is the root, and the name, of a repository on a remote
