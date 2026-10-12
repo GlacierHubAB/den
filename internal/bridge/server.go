@@ -64,6 +64,10 @@ type Server struct {
 	ln   net.Listener
 	out  chan *Request
 	held atomic.Int64 // connections waiting for a decision now
+	// A connection hands its request over holding sending; accept closes
+	// out only after done has released every one of them.
+	sending sync.RWMutex
+	done    chan struct{}
 }
 
 // MaxLine bounds the one line a connection sends. A hook payload carries a
@@ -105,7 +109,7 @@ func Listen(path string) (*Server, error) {
 		return nil, err
 	}
 	os.Chmod(path, 0o600)
-	s := &Server{path: path, ln: ln, out: make(chan *Request, 64)}
+	s := &Server{path: path, ln: ln, out: make(chan *Request, 64), done: make(chan struct{})}
 	go s.accept()
 	return s, nil
 }
@@ -124,7 +128,10 @@ func (s *Server) accept() {
 	for {
 		conn, err := s.ln.Accept()
 		if err != nil {
+			close(s.done)
+			s.sending.Lock()
 			close(s.out)
+			s.sending.Unlock()
 			return
 		}
 		go s.serve(conn)
@@ -162,7 +169,9 @@ func (s *Server) serve(conn net.Conn) {
 		req.reply = make(chan Decision, 1)
 		req.gone = make(chan struct{})
 	}
-	s.out <- req
+	if !s.hand(req) {
+		return // Den is closing
+	}
 	if req.reply == nil {
 		conn.Write([]byte("{\"ok\":true}\n"))
 		return
@@ -180,6 +189,23 @@ func (s *Server) serve(conn net.Conn) {
 	b, _ := json.Marshal(d)
 	conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
 	conn.Write(append(b, '\n'))
+}
+
+// hand passes req to Den, or reports false when the server is closing.
+func (s *Server) hand(req *Request) bool {
+	s.sending.RLock()
+	defer s.sending.RUnlock()
+	select {
+	case <-s.done:
+		return false
+	default:
+	}
+	select {
+	case s.out <- req:
+		return true
+	case <-s.done:
+		return false
+	}
 }
 
 // TestRequest builds a request that wants a reply, for tests of whoever
