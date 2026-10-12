@@ -107,11 +107,7 @@ func (m *Model) rememberWt(it *inbox.Item, o wtOffer) {
 // answers that question and not another one waiting elsewhere.
 func (m *Model) showQuestion(it *inbox.Item) {
 	m.refresh()
-	for i, o := range m.store.Items() {
-		if o == it {
-			m.inboxCur = i
-		}
-	}
+	m.selectItem(it)
 	m.tab = tabInbox
 }
 

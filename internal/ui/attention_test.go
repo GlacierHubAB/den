@@ -185,7 +185,7 @@ func TestUnreadCommand(t *testing.T) {
 	runAll(m.handleRequest(req("Stop", "maple-owl", map[string]any{"last_assistant_message": "Finished."})))
 	m.tab = tabInbox
 	m.store.MarkSeen()
-	m.inboxCur = len(m.store.Items()) - 1
+	m.selectInbox(len(m.store.Items()) - 1)
 	next, _ := m.command("/unread")
 	mm := next.(Model)
 	if mm.store.Unseen() != 1 || !strings.Contains(mm.flash, "Kept unread") {

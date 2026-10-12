@@ -121,6 +121,9 @@ type Model struct {
 	srvErr     error
 	store      *inbox.Store
 	inboxCur   int
+	inboxSel   string      // id of the selected inbox item: the selection follows the item, never its place in the list
+	inboxLost  bool        // the selected item left the list: nothing is selected until the human picks one
+	shown      shownTarget // what ^Y and ^N act on now, and since when
 	hooksReady bool
 	cfg        config.Config
 	chatLog    string // the orchestrator log on disk
@@ -407,8 +410,9 @@ func (m *Model) refresh() {
 			m.cursor = i
 		}
 	}
-	if n := len(m.store.Items()); m.inboxCur >= n {
-		m.inboxCur = max(0, n-1)
+	m.followSelection()
+	if t := m.answerTarget(); t != nil && t.ID != m.shown.id {
+		m.shown = shownTarget{id: t.ID, since: answerNow()}
 	}
 }
 
@@ -663,13 +667,83 @@ func (m Model) topAnswerable() *inbox.Item {
 	return nil
 }
 
+// inboxSelected is the selected inbox item, found by its id: when the list
+// changes under the human (items arrive, resolve and reorder), ^Y and ^N
+// still act on the item they selected, or on nothing.
 func (m Model) inboxSelected() *inbox.Item {
 	items := m.store.Items()
+	if m.inboxSel != "" {
+		for _, it := range items {
+			if it.ID == m.inboxSel {
+				return it
+			}
+		}
+		return nil
+	}
 	if m.inboxCur < 0 || m.inboxCur >= len(items) {
 		return nil
 	}
 	return items[m.inboxCur]
 }
+
+// selectInbox is the human selecting the item at i: it is in view and
+// chosen, so ^Y acts on it at once.
+func (m *Model) selectInbox(i int) {
+	m.inboxCur, m.inboxSel, m.inboxLost = i, "", false
+	if items := m.store.Items(); i >= 0 && i < len(items) {
+		m.inboxSel = items[i].ID
+		m.shown = shownTarget{id: m.inboxSel}
+	}
+}
+
+// selectItem selects it in the inbox.
+func (m *Model) selectItem(it *inbox.Item) {
+	for i, o := range m.store.Items() {
+		if o == it {
+			m.selectInbox(i)
+		}
+	}
+}
+
+// followSelection keeps the cursor on the selected item as the list
+// changes. When that item leaves the list nothing is selected: the cursor
+// never lands on another request by itself. With nothing selected yet, the
+// highlighted row becomes the selection.
+func (m *Model) followSelection() {
+	items := m.store.Items()
+	if m.inboxSel != "" {
+		for i, it := range items {
+			if it.ID == m.inboxSel {
+				m.inboxCur = i
+				return
+			}
+		}
+		m.inboxSel, m.inboxCur, m.inboxLost = "", -1, true
+		return
+	}
+	if m.inboxCur >= len(items) {
+		m.inboxCur = max(0, len(items)-1)
+	}
+	if m.inboxCur >= 0 && m.inboxCur < len(items) {
+		m.inboxSel = items[m.inboxCur].ID
+	}
+}
+
+// shownTarget is the item ^Y and ^N would act on, and when it became that
+// item without the human choosing it (zero when they chose it).
+type shownTarget struct {
+	id    string
+	since time.Time
+}
+
+// answerSettle is how long an item must have been what ^Y acts on before
+// ^Y acts on it, when it got there by itself (it arrived, or the one before
+// it was answered elsewhere): a keypress meant for the item that was on
+// screen never answers the one that just took its place. Tests set it to 0.
+var answerSettle = 700 * time.Millisecond
+
+// answerNow is the clock for answerSettle; tests pin it.
+var answerNow = time.Now
 
 func (m Model) inboxActive() bool { return m.tab == tabInbox }
 
@@ -911,7 +985,7 @@ func (m *Model) move(delta int) {
 			m.orch.backToCard = false
 		}
 	case tabInbox:
-		m.inboxCur = clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1))
+		m.selectInbox(clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1)))
 	case tabOverview:
 		if m.ov.open != "" || m.ov.proposal != "" {
 			m.ov.scroll = max(0, m.ov.scroll-delta)
@@ -981,13 +1055,14 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 	}
 }
 
-// answer applies allow, deny or always to the selected inbox item, or to the
-// top waiting one from any other view.
-func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
-	it := m.topAnswerable()
+// answerTarget is the item ^Y and ^N act on: the selected inbox item, the
+// focused card's (or what it directs), or the top waiting one from any
+// other view.
+func (m Model) answerTarget() *inbox.Item {
 	if m.tab == tabInbox {
-		it = m.inboxSelected()
+		return m.inboxSelected()
 	}
+	it := m.topAnswerable()
 	if d := m.focusedCard(); d != nil && m.tab == tabOrch {
 		// The card's own session first, then whatever it directs, so the
 		// "needs you · via <child>" state can be answered from here.
@@ -1002,6 +1077,21 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 			if it != nil {
 				break
 			}
+		}
+	}
+	return it
+}
+
+// answer applies allow, deny or always to the item answerTarget names, only
+// while it is still open and has not just taken another's place.
+func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
+	it := m.answerTarget()
+	if m.tab == tabInbox {
+		switch {
+		case it == nil && m.inboxLost:
+			return m.say("The item you selected is gone; select one to answer.", true)
+		case it != nil && it.State == inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks()):
+			return m.say("That request was answered; select one to answer.", true)
 		}
 	}
 	if it != nil && hostOf(itemKey(it)) != "" && !it.Answerable() {
@@ -1020,6 +1110,10 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
+	}
+	if it.ID == m.shown.id && !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
+		m.shown.since = time.Time{}
+		return m.say("A new request just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press again to answer it.", true)
 	}
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
@@ -1101,7 +1195,11 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.guardCommand(strings.ToLower(fields[0]), fields[1:])
 	case "/dismiss", "/x":
 		if it := m.inboxSelected(); it != nil && m.tab == tabInbox {
+			// The row that takes its place is highlighted but not chosen:
+			// ^Y waits until it has been on screen a moment.
+			cur := m.inboxCur
 			m.store.Dismiss(it)
+			m.inboxCur, m.inboxSel = cur, ""
 			m.refresh()
 			return m, nil
 		}
