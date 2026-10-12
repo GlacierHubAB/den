@@ -117,3 +117,27 @@ func SocketPath() string {
 	}
 	return filepath.Join(FallbackDir(), "den.sock")
 }
+
+// PlanTool is the tool Claude Code asks with when a plan is ready
+// (permission mode plan).
+const PlanTool = "ExitPlanMode"
+
+// PlanApproval is the updatedInput a PermissionRequest hook's allow must
+// carry to approve a plan: the call's own tool_input, unchanged. ok is
+// false when the input is not a JSON object with a plan in it; Den then
+// cannot approve the plan and leaves it to the terminal.
+//
+// Claude Code 2.1.289 ignores a bare allow for a tool that needs the
+// user's interaction (ExitPlanMode, AskUserQuestion) and keeps its dialog
+// open; an allow with updatedInput is taken, and ExitPlanMode then leaves
+// plan mode itself. A deny needs nothing more than its message.
+func PlanApproval(input json.RawMessage) (updated map[string]json.RawMessage, ok bool) {
+	if json.Unmarshal(input, &updated) != nil || updated == nil {
+		return nil, false
+	}
+	var plan string
+	if json.Unmarshal(updated["plan"], &plan) != nil || plan == "" {
+		return nil, false
+	}
+	return updated, true
+}

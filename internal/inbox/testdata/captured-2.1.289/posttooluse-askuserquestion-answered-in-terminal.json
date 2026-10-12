@@ -1,0 +1,65 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000005",
+  "transcript_path": "/home/user/.claude/projects/-home-user-proj-real/00000000-0000-4000-8000-000000000005.jsonl",
+  "cwd": "/home/user/proj/real",
+  "prompt_id": "00000000-0000-4000-8000-000000000006",
+  "permission_mode": "plan",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "AskUserQuestion",
+  "tool_input": {
+    "questions": [
+      {
+        "question": "The plan already includes a shell check that pC.txt exists and contains exactly `x`. What kind of tests do you want added?",
+        "header": "Tests",
+        "options": [
+          {
+            "label": "Keep shell check",
+            "description": "Keep the one-line shell check as the test and approve the plan as it stands."
+          },
+          {
+            "label": "Test script file",
+            "description": "Add a small script, such as test_pC.sh, to the repo that checks pC.txt, and run it."
+          },
+          {
+            "label": "Test framework",
+            "description": "Add a test in the project's test framework. I'd first look for how tests are set up here."
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "answers": {
+      "The plan already includes a shell check that pC.txt exists and contains exactly `x`. What kind of tests do you want added?": "Keep shell check"
+    },
+    "annotations": {}
+  },
+  "tool_response": {
+    "questions": [
+      {
+        "question": "The plan already includes a shell check that pC.txt exists and contains exactly `x`. What kind of tests do you want added?",
+        "header": "Tests",
+        "options": [
+          {
+            "label": "Keep shell check",
+            "description": "Keep the one-line shell check as the test and approve the plan as it stands."
+          },
+          {
+            "label": "Test script file",
+            "description": "Add a small script, such as test_pC.sh, to the repo that checks pC.txt, and run it."
+          },
+          {
+            "label": "Test framework",
+            "description": "Add a test in the project's test framework. I'd first look for how tests are set up here."
+          }
+        ],
+        "multiSelect": false
+      }
+    ],
+    "answers": {
+      "The plan already includes a shell check that pC.txt exists and contains exactly `x`. What kind of tests do you want added?": "Keep shell check"
+    },
+    "annotations": {}
+  },
+  "tool_use_id": "toolu_016DtPD8T5b2ZuiSRRd9AUqP",
+  "duration_ms": 0
+}

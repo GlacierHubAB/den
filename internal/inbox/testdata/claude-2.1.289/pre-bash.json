@@ -1,0 +1,17 @@
+{
+ "cwd": "/work/proj",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PreToolUse",
+ "permission_mode": "default",
+ "prompt_id": "22222222-3333-4444-8555-666666666666",
+ "session_id": "11111111-2222-4333-8444-555555555555",
+ "tool_input": {
+  "command": "touch check.txt",
+  "description": "Create a file named check.txt"
+ },
+ "tool_name": "Bash",
+ "tool_use_id": "toolu_bash1",
+ "transcript_path": "/work/.claude/projects/-work-proj/11111111-2222-4333-8444-555555555555.jsonl"
+}

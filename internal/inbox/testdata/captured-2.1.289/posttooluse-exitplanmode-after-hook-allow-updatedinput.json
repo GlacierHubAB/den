@@ -1,0 +1,17 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000009",
+  "transcript_path": "/home/user/.claude/projects/-home-user-proj-real/00000000-0000-4000-8000-000000000009.jsonl",
+  "cwd": "/home/user/proj/real",
+  "prompt_id": "00000000-0000-4000-8000-000000000010",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "ExitPlanMode",
+  "tool_input": {},
+  "tool_response": {
+    "plan": "# Plan: create pA.txt\n\n## Context\nThe user wants a file `pA.txt` containing the word `x`.\n\n## Step\n1. Create `/home/user/proj/real/pA.txt` with the content `x`.\n\n## Verification\nRead `pA.txt` and confirm it contains `x`.\n",
+    "isAgent": false,
+    "filePath": "/home/user/.claude/plans/plan-create-the-file-bright-moth.md"
+  },
+  "tool_use_id": "toolu_01TCXpJc8YDERGsmo36jkX3B",
+  "duration_ms": 4
+}

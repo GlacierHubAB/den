@@ -1,0 +1,14 @@
+{
+ "cwd": "/work/proj",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "SessionStart",
+ "model": "claude-haiku-4-5-20251001",
+ "permission_mode": "default",
+ "prompt_id": "22222222-3333-4444-8555-666666666666",
+ "session_id": "11111111-2222-4333-8444-555555555555",
+ "session_title": "Fix the build",
+ "source": "startup",
+ "transcript_path": "/work/.claude/projects/-work-proj/11111111-2222-4333-8444-555555555555.jsonl"
+}

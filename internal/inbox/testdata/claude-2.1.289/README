@@ -1,0 +1,8 @@
+Hook payloads shaped like Claude Code 2.1.289 sends them: the key sets
+(prompt_id, permission_mode, effort, permission_suggestions, tool_use_id,
+duration_ms, session_title, background_tasks, session_crons,
+stop_hook_active) and the tool inputs of ExitPlanMode, AskUserQuestion and
+Bash are copied from captures of a real session; every value is neutral
+(ids, paths, text). Real timing: a Notification permission_prompt follows a
+PermissionRequest by about 6 s while the hook still holds, and an idle_prompt
+follows a Stop by about 5 s.

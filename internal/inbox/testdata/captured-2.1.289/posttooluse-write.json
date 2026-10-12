@@ -1,0 +1,23 @@
+{
+  "session_id": "00000000-0000-4000-8000-000000000009",
+  "transcript_path": "/home/user/.claude/projects/-home-user-proj-real/00000000-0000-4000-8000-000000000009.jsonl",
+  "cwd": "/home/user/proj/real",
+  "prompt_id": "00000000-0000-4000-8000-000000000010",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "/home/user/proj/real/pA.txt",
+    "content": "x"
+  },
+  "tool_response": {
+    "type": "create",
+    "filePath": "/home/user/proj/real/pA.txt",
+    "content": "x",
+    "structuredPatch": [],
+    "originalFile": null,
+    "userModified": false
+  },
+  "tool_use_id": "toolu_018Fp2DuNMfeBovdbBmnQ1rt",
+  "duration_ms": 41
+}
