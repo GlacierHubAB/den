@@ -257,7 +257,11 @@ func (m Model) tabs(w int) string {
 
 func (m Model) panes(w, h int) string {
 	if m.tab == tabInbox {
-		return m.box("Inbox", m.inboxPane(w-2, h-2), w, h, true)
+		title := "Inbox"
+		if n := m.inboxWaiting(); n > 0 {
+			title += fmt.Sprintf(" · %d waiting, not selected", n)
+		}
+		return m.box(title, m.inboxPane(w-2, h-2), w, h, true)
 	}
 	if m.tab == tabOrch {
 		return m.box("Orchestrator", m.orchPane(w-2, h-2), w, h, true)
@@ -591,6 +595,14 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, s.bright.Render(fmt.Sprint(j+1))+" "+s.fg.Render(ansi.Truncate(o, w-2, "…")))
 	}
 	key := func(k, label string) string { return s.key.Render(k) + s.keyLabel.Render(" "+label) }
+	if t := m.answerTarget(); it.Answerable() && t != it {
+		// ^Y and ^N act on another request here: no keys on this one.
+		note := "waiting · select it in the Inbox to answer"
+		if t != nil {
+			note = "waiting · ^Y and ^N answer " + m.nameFor(itemKey(t)) + "'s request first; select this one in the Inbox"
+		}
+		return append(out, s.dim.Render(note))
+	}
 	switch {
 	case it.AsksInDen():
 		out = append(out, key(optionKeys(it), "or your own answer, Enter (Inbox)")+"  "+key("^N", "answer in the terminal")+"  "+key("/open", "terminal"))
@@ -654,10 +666,16 @@ func (m Model) inboxPane(w, h int) string {
 		return strings.Join(lines, "\n")
 	}
 	active := m.inboxActive()
+	// The row drawn as selected, and the only one with answer keys, is the
+	// item ^Y and ^N act on: found by its id, never by a row number.
+	bound, cur := m.inboxSelected(), -1
 	var blocks [][]string
 	const avatarW = 8
 	for i, it := range items {
-		selected := active && i == m.inboxCur
+		selected := active && it == bound
+		if selected {
+			cur = i
+		}
 		fg, dim, muted, bright, ok, attn, err, _ := m.rowStyles(selected)
 		stripe := muted.Render("▏")
 		kindStyle := muted
@@ -764,6 +782,12 @@ func (m Model) inboxPane(w, h int) string {
 		switch {
 		case it.Kind == inbox.Sent:
 			text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
+		case it.Answerable() && !selected:
+			why := "waiting"
+			if it.At.After(m.inboxAt) {
+				why = "new request"
+			}
+			text = append(text, attn.Render(why)+dim.Render(" · select it to answer (↑ ↓)"))
 		case it.Answerable():
 			acts := key("^Y", "allow") + sp + sp + key("/always", "this session") + sp + sp + key("^N", "deny") + sp + sp + key("/open", "terminal")
 			if it.Kind == inbox.Plan {
@@ -833,8 +857,7 @@ func (m Model) inboxPane(w, h int) string {
 	// Keep the selected item in view: drop whole blocks from the top until
 	// the selection fits in h rows.
 	start := 0
-	if h > 0 && active {
-		cur := clamp(m.inboxCur, 0, len(blocks)-1)
+	if h > 0 && active && cur >= 0 {
 		for start < cur {
 			used := 0
 			for _, bl := range blocks[start : cur+1] {

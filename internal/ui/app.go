@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"fmt"
 	"maps"
 	"path/filepath"
 	"sort"
@@ -124,6 +125,7 @@ type Model struct {
 	inboxCur   int
 	inboxSel   string      // id of the selected inbox item: the selection follows the item, never its place in the list
 	inboxLost  bool        // the selected item left the list: nothing is selected until the human picks one
+	inboxAt    time.Time   // when the human last chose an item: requests after it are new to them
 	shown      shownTarget // what ^Y and ^N act on now, and since when
 	hooksReady bool
 	cfg        config.Config
@@ -693,10 +695,45 @@ func (m Model) inboxSelected() *inbox.Item {
 // selectInbox is the human selecting the item at i: it is in view and
 // chosen, so ^Y acts on it at once.
 func (m *Model) selectInbox(i int) {
-	m.inboxCur, m.inboxSel, m.inboxLost = i, "", false
+	m.inboxCur, m.inboxSel, m.inboxLost, m.inboxAt = i, "", false, time.Now()
 	if items := m.store.Items(); i >= 0 && i < len(items) {
 		m.inboxSel = items[i].ID
 		m.shown = shownTarget{id: m.inboxSel}
+	}
+}
+
+// questionWaiting reports whether a question waits for its answer in Den.
+func (m Model) questionWaiting() bool {
+	for _, it := range m.store.Items() {
+		if it.AsksInDen() {
+			return true
+		}
+	}
+	return false
+}
+
+// inboxWaiting counts the requests waiting on the human that ^Y and ^N do
+// not act on: each must be selected before it can be answered.
+func (m Model) inboxWaiting() int {
+	bound, n := m.inboxSelected(), 0
+	for _, it := range m.store.Items() {
+		if it.Answerable() && it != bound {
+			n++
+		}
+	}
+	return n
+}
+
+// unboundNote is what the Inbox shows for a waiting request ^Y and ^N do
+// not act on, and what a refused answer adds when one is waiting.
+func (m Model) unboundNote() string {
+	switch n := m.inboxWaiting(); n {
+	case 0:
+		return ""
+	case 1:
+		return "a request is waiting: select it to answer (↑ ↓)"
+	default:
+		return fmt.Sprint(n) + " requests are waiting: select one to answer (↑ ↓)"
 	}
 }
 
@@ -733,11 +770,33 @@ func (m *Model) followSelection() {
 	}
 }
 
+// refusedNote is a refused answer: what happened, then what is waiting.
+func refusedNote(what, waiting string) string {
+	if waiting == "" {
+		return what
+	}
+	return what + " " + strings.ToUpper(waiting[:1]) + waiting[1:] + "."
+}
+
 // shownTarget is the item ^Y and ^N would act on, and when it became that
 // item without the human choosing it (zero when they chose it).
 type shownTarget struct {
 	id    string
 	since time.Time
+}
+
+// unsettled reports whether it only just became what ^Y, ^N and Enter act
+// on without the human choosing it, or got there before any render showed
+// it: that first key is held, and the next one acts.
+func (m *Model) unsettled(it *inbox.Item) bool {
+	if it.ID != m.shown.id {
+		m.shown = shownTarget{id: it.ID, since: answerNow()}
+	}
+	if !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
+		m.shown.since = time.Time{}
+		return true
+	}
+	return false
 }
 
 // answerSettle is how long an item must have been what ^Y acts on before
@@ -942,9 +1001,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
-		if it := m.inboxSelected(); m.tab == tabInbox && it != nil && it.AsksInDen() {
-			if text := strings.TrimSpace(m.input.Value()); text != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") {
+		if text := strings.TrimSpace(m.input.Value()); m.tab == tabInbox && text != "" && !strings.HasPrefix(text, "/") && !strings.HasPrefix(text, "@") {
+			// Text typed while a question is shown answers the selected
+			// question or nothing: it never goes on to the orchestrator.
+			if it := m.inboxSelected(); it != nil && it.AsksInDen() {
+				if m.unsettled(it) {
+					return m.say("A new question just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press Enter again to answer it.", true)
+				}
 				return m.answerQuestion(it, text)
+			}
+			if m.questionWaiting() {
+				return m.say("Nothing was sent: the item you selected is not a waiting question. Select the question to answer it (↑ ↓), or start with @Name to message an agent.", true)
 			}
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
@@ -1093,9 +1160,13 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if m.tab == tabInbox {
 		switch {
 		case it == nil && m.inboxLost:
-			return m.say("The item you selected is gone; select one to answer.", true)
+			return m.say(refusedNote("The item you selected is gone; nothing was answered.", m.unboundNote()), true)
 		case it != nil && it.State == inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks()):
-			return m.say("That request was answered; select one to answer.", true)
+			return m.say(refusedNote("The request you selected was already answered; nothing was sent.", m.unboundNote()), true)
+		case it != nil && hostOf(itemKey(it)) == "" && !it.Answerable() && (it.Kind <= inbox.Question || it.DenAsks()) && m.inboxWaiting() > 0:
+			return m.say(refusedNote("The request you selected can only be answered in its terminal (/open); nothing was sent.", m.unboundNote()), true)
+		case (it == nil || !it.Answerable() && hostOf(itemKey(it)) == "") && m.inboxWaiting() > 0:
+			return m.say(refusedNote("The item you selected is not a request; nothing was answered.", m.unboundNote()), true)
 		}
 	}
 	if it != nil && hostOf(itemKey(it)) != "" && !it.Answerable() {
@@ -1115,8 +1186,7 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
 	}
-	if it.ID == m.shown.id && !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
-		m.shown.since = time.Time{}
+	if m.unsettled(it) {
 		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
 	if it.Kind == inbox.Question {
