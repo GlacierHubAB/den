@@ -500,6 +500,16 @@ func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
 		t.Errorf("drafts column while devbox is offline:\n%s", out)
 	}
 
+	feed.setState("devbox", remote.AttachedElsewhere)
+	feed.actErr = errors.New(remote.ElsewhereNote("devbox")) // as the Manager says then
+	m.syncRemote()
+	if out := ansi.Strip(m.notesPane(60, 30)); !strings.Contains(out, "devbox takes no sends here · kept") {
+		t.Errorf("drafts column while devbox is attached elsewhere:\n%s", out)
+	}
+	feed.actErr = nil
+	feed.setState("devbox", remote.Offline)
+	m.syncRemote()
+
 	mm, _ := m.sendReview(nil) // the cmd is not run: nothing is started
 	*m = mm.(Model)
 	if !strings.Contains(m.flash, "until devbox is back") || strings.Contains(m.flash, "orchestrator") {

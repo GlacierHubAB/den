@@ -10,7 +10,6 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
-	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
 )
 
@@ -292,10 +291,8 @@ func (m Model) groupHost(g reviewGroup) string {
 // remoteDraftsState says, in the drafts column, why drafts on a remote
 // agent's work cannot go now: they are kept until its host can take them.
 func (m Model) remoteDraftsState(host string) string {
-	if h, ok := m.hostStatus(host); ok && h.State == remote.Live && m.remote.feed != nil {
-		if m.remote.feed.Actionable(host) != nil {
-			return host + " takes no sends here · kept"
-		}
+	if h, ok := m.hostStatus(host); ok && linked(h.State) {
+		return host + " takes no sends here · kept" // observe, or attached elsewhere
 	}
 	return host + " is offline · kept until it is back"
 }
