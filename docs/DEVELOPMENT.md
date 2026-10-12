@@ -129,11 +129,22 @@ without a terminal. `internal/spawn/live_test.go` is behind the `live` build tag
 opens a real terminal with a real Claude Code session; run it by hand only
 (`go test -tags live -run TestLiveSpawn -v ./internal/spawn`).
 
-## Releases
+## CI and releases
 
-`make release` builds static `linux/amd64` and `linux/arm64` binaries and
-`SHA256SUMS` into `dist/`, with the version from `git describe --tags`.
-`.github/workflows/ci.yml` runs `make test` on pushes to `main` and on pull
-requests; `.github/workflows/release.yml` runs `make test` and `make release`
-when a `v*` tag is pushed and attaches `den_linux_amd64`, `den_linux_arm64` and
-`SHA256SUMS` to a GitHub release. Only the maintainers tag releases.
+`.github/workflows/ci.yml` runs on pull requests into `dev` and `main`, on
+pushes to them and weekly: `gofmt`, `go mod tidy -diff`, the
+`THIRD_PARTY_LICENSES` check, `actionlint`, `make test TESTFLAGS=-race` on the
+release Go and the newest Go (with no global git config and no module proxy,
+so tests must set their own git identity and need no network), `make build`,
+`govulncheck` and `gitleaks`. Its last job, `ci-passed`, is the check branch
+protection requires.
+
+`make release` builds static `linux/amd64` and `linux/arm64` binaries,
+`THIRD_PARTY_LICENSES` and `SHA256SUMS` into `dist/`, with the version from
+`git describe --tags` unless `VERSION=` is given.
+`.github/workflows/release.yml` runs when a `v*` tag is pushed: it checks the
+tag is an annotated semver tag on `main`, runs the CI workflow, builds with
+`make release VERSION=<tag>`, and publishes the four files with a build
+provenance attestation. The branch model and the release steps are in
+[RELEASING.md](RELEASING.md); the repository settings behind them in
+[GITHUB-SETUP.md](GITHUB-SETUP.md). Only the maintainers tag releases.
