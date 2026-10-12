@@ -80,9 +80,21 @@ type Entry struct {
 
 // FileChange is one file an Edit, Write or Bash call changed.
 type FileChange struct {
-	Path             string
+	Path             string // safe to print
 	Hunks            []Hunk
 	Created, Deleted bool
+	// Raw is the path as the transcript gave it, when cleaning Path for
+	// printing changed it: what a change is matched against files by,
+	// never shown.
+	Raw string `json:"-"`
+}
+
+// Real is the path the change was made to, to match it against files.
+func (c FileChange) Real() string {
+	if c.Raw != "" {
+		return c.Raw
+	}
+	return c.Path
 }
 
 // Hunk is one changed region of a file.
@@ -155,10 +167,18 @@ func diffLines(lines []string) []string {
 }
 
 // filePath makes a changed file's path safe to print. A path with control
-// characters, bidi controls or invalid UTF-8 in it loses them, which only
-// ever matters for showing it.
+// characters, bidi controls or invalid UTF-8 in it loses them; rawPath
+// keeps the path it was, to match.
 func filePath(p string) string {
 	return sanitize.Code(p)
+}
+
+// rawPath is p when filePath changes it, "" otherwise.
+func rawPath(p string) string {
+	if filePath(p) == p {
+		return ""
+	}
+	return p
 }
 
 // changes turns a result into the files it changed.
@@ -166,7 +186,7 @@ func (r toolResult) changes(tool string) []FileChange {
 	switch tool {
 	case "Edit", "MultiEdit", "NotebookEdit":
 		if r.FilePath != "" && len(r.StructuredPatch) > 0 {
-			return []FileChange{{Path: filePath(r.FilePath), Hunks: hunks(r.StructuredPatch)}}
+			return []FileChange{{Path: filePath(r.FilePath), Raw: rawPath(r.FilePath), Hunks: hunks(r.StructuredPatch)}}
 		}
 	case "Write":
 		if r.FilePath == "" {
@@ -178,13 +198,13 @@ func (r toolResult) changes(tool string) []FileChange {
 			for _, l := range strings.Split(strings.TrimRight(sanitize.Text(r.Content), "\n"), "\n") {
 				lines = append(lines, "+"+l)
 			}
-			return []FileChange{{Path: filePath(r.FilePath), Created: true, Hunks: []Hunk{{OldStart: 0, NewStart: 1, Lines: lines}}}}
+			return []FileChange{{Path: filePath(r.FilePath), Raw: rawPath(r.FilePath), Created: true, Hunks: []Hunk{{OldStart: 0, NewStart: 1, Lines: lines}}}}
 		}
-		return []FileChange{{Path: filePath(r.FilePath), Hunks: hunks(r.StructuredPatch)}}
+		return []FileChange{{Path: filePath(r.FilePath), Raw: rawPath(r.FilePath), Hunks: hunks(r.StructuredPatch)}}
 	case "Bash":
 		var out []FileChange
 		for _, f := range r.BashEditDiff.Files {
-			out = append(out, FileChange{Path: filePath(f.FilePath), Hunks: hunks(f.Hunks), Created: f.Created, Deleted: f.Deleted})
+			out = append(out, FileChange{Path: filePath(f.FilePath), Raw: rawPath(f.FilePath), Hunks: hunks(f.Hunks), Created: f.Created, Deleted: f.Deleted})
 		}
 		return out
 	}

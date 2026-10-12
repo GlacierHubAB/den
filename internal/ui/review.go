@@ -194,10 +194,10 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 		mem := member{reviewInput: a, changes: transcript.Changes(a.Path, a.Started)}
 		changed += len(mem.changes)
 		for _, c := range mem.changes {
-			if !filepath.IsAbs(c.Path) {
+			if !filepath.IsAbs(c.Real()) {
 				continue
 			}
-			if root := lookup(filepath.Dir(c.Path)); root != "" {
+			if root := lookup(filepath.Dir(c.Real())); root != "" {
 				join(root, mem)
 			} else {
 				outside++
