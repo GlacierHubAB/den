@@ -637,9 +637,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			m.mu.Unlock()
 			live = true
 			if a := hm.Attached; a != nil {
-				// Another Den answers this host's held requests; ask again
+				// Another Den controls this host's held requests; ask again
 				// now and then, so this one takes over once it leaves.
-				m.setState(h, AttachedElsewhere, attachedReason(a, m.o.Now()))
+				m.setState(h, AttachedElsewhere, attachedReason(h.Label, a, m.o.Now()))
 				retake = time.After(m.o.Retake)
 			} else {
 				m.setState(h, Live, sanitize.Label(hm.Note, 160))
@@ -744,16 +744,16 @@ func (m *Manager) statusQuiet(h Host) HostStatus {
 }
 
 // attachedReason says which Den's serve holds a host.
-func attachedReason(a *Attached, now time.Time) string {
-	r := "another Den answers its requests"
+func attachedReason(label string, a *Attached, now time.Time) string {
+	r := ElsewhereNote(label)
 	if a.Pid > 0 {
-		r += fmt.Sprintf(" (serve pid %d on the host", a.Pid)
+		r += fmt.Sprintf(" (its serve is pid %d on the host", a.Pid)
 		if !a.Since.IsZero() {
-			r += fmt.Sprintf(", for %s", now.Sub(a.Since).Round(time.Second))
+			r += fmt.Sprintf(", attached for %s", now.Sub(a.Since).Round(time.Second))
 		}
 		r += ")"
 	}
-	return r + "; this Den observes"
+	return r
 }
 
 // cleanMeta sanitises every string a host sent in a projection.

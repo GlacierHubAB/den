@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
-	"github.com/GlacierHubAB/den/internal/question"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -111,50 +110,6 @@ func (s *heldSet) releaseAll() []*bridge.Request {
 // line, nothing sanitising would change.
 func plainField(s string) bool {
 	return s != "" && len(s) <= 80 && sanitize.Line(s) == s
-}
-
-// checkBody is the local half of the body filter: a held body may carry
-// only what heldBody lets through for its tool, as sanitised strings.
-func checkBody(tool string, body json.RawMessage) bool {
-	if len(body) > MaxLine {
-		return false
-	}
-	var m map[string]any
-	if json.Unmarshal(body, &m) != nil || m == nil {
-		return false
-	}
-	if tool == question.Tool {
-		qs, ok := question.Parse(body)
-		if !ok || len(qs) > maxQuestions || len(m) != 1 {
-			return false
-		}
-		for _, q := range qs {
-			if sanitize.Text(q.Text) != q.Text || len(q.Options) > maxOptions {
-				return false
-			}
-			for _, o := range q.Options {
-				if sanitize.Line(o.Label) != o.Label || sanitize.Text(o.Description) != o.Description {
-					return false
-				}
-			}
-		}
-		return true
-	}
-	fields, known := heldFields[tool]
-	if !known {
-		return len(body) <= argsMax && cleanArgs(m, 0) != nil
-	}
-	for k, v := range m {
-		str, isStr := v.(string)
-		ok := false
-		for _, f := range fields {
-			ok = ok || f.key == k
-		}
-		if !ok || !isStr || sanitize.Text(str) != str {
-			return false
-		}
-	}
-	return true
 }
 
 // ControllerPath is where this machine's Den keeps its controller id.

@@ -531,6 +531,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleRequest folds a hook event into the inbox and decides whether a
 // permission request is held for Den or released to the terminal.
 func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
+	if r.Host != "" {
+		// Never local: a remote host's request takes remoteHeld's path, so
+		// it cannot reach the close, skills or install questions, the
+		// orchestrator's rules, or the timers, cards and [on] commands
+		// keyed by a bare session id. Anything but a permission request
+		// is refused outright.
+		if r.Event != "PermissionRequest" {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: a remote host may only relay permission requests"})
+			return nil
+		}
+		return m.remoteHeld(r.Host, r)
+	}
 	if r.Event == bridge.CloseEvent {
 		m.handleCloseRequest(r)
 		return nil
@@ -976,7 +988,14 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		if it.State == inbox.Resolved {
 			return m.say("That request on "+host+" is no longer waiting.", true)
 		}
-		return m.say(m.nameFor(itemKey(it))+" runs on "+host+": answer it in the terminal there (ssh -t "+m.hostTarget(host)+"). Den only shows remote requests for now.", true)
+		msg := m.nameFor(itemKey(it)) + " runs on " + host + ": answer it in the terminal there (ssh -t " + m.hostTarget(host) + ")"
+		if h, ok := m.hostStatus(host); ok && h.State == remote.AttachedElsewhere {
+			msg += "; " + remote.ElsewhereNote(host)
+		} else if ok && !answersHere(h) {
+			msg += "; " + remote.ObserveNote(host)
+		}
+		msg += "."
+		return m.say(msg, true)
 	}
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)

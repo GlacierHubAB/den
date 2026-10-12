@@ -53,6 +53,18 @@ func Min(a, b Policy) Policy {
 	return b
 }
 
+// ObserveNote is what Den says when it may not act on a host or answer
+// its requests because the host is set to observe, and how to change that.
+func ObserveNote(host string) string {
+	return fmt.Sprintf("%s is set to observe; to act on it or answer its requests here, set policy = \"approve\" for it in remotes.toml", host)
+}
+
+// ElsewhereNote is what Den says about a host another Den controls: this
+// one sees it, live, but acts on nothing and answers nothing there.
+func ElsewhereNote(host string) string {
+	return fmt.Sprintf("another Den controls %s, this one only observes it", host)
+}
+
 // Supported is the most this build of `den remote serve` applies: approve,
 // which relays held requests. full applies as approve for now: Tail and
 // diffs stay on the host.
