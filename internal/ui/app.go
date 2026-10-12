@@ -1203,6 +1203,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		}
 		return m.say(questionHint(it), true)
 	}
+	if it.Kind == inbox.Plan && verb == "always" {
+		return m.say(inbox.PlansOneAtATime, true)
+	}
 	if it.Kind == inbox.Close {
 		return m.decideClose(it, verb)
 	}
