@@ -730,8 +730,11 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			m.mu.Unlock()
 			live = true
 			g.begin(in.at)
-			for _, n := range m.reconcile(h, hm.Spawns) {
-				m.send(Update{Kind: SpawnNotice, Host: h.Label, Note: sanitize.Label(n, 300)})
+			if hm.Spawn != nil {
+				// A host whose den knows spawn says what became of ours.
+				for _, n := range m.reconcile(h, hm.Spawns) {
+					m.send(Update{Kind: SpawnNotice, Host: h.Label, Note: sanitize.Label(n, 300)})
+				}
 			}
 			if a := hm.Attached; a != nil {
 				// Another Den controls this host's held requests; ask again

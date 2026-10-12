@@ -298,10 +298,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	if acts.spawn.active() {
 		c := acts.spawn.capability()
 		hello.Spawn = &c
-		if acts.allowed {
-			acts.spawn.sweep()
-			hello.Spawns = acts.spawn.report()
-		}
+		// Always this controller's own: also while another serve of the
+		// same Den still holds the host, so a spawn the link lost is never
+		// taken for one that did not start.
+		acts.spawn.sweep()
+		hello.Spawns = acts.spawn.report()
 	}
 	if err := writeMsg(out, hello); err != nil {
 		return err
