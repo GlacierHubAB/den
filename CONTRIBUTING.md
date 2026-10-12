@@ -75,9 +75,9 @@ Work happens on short-lived branches. `dev` is where changes land; `main` holds
 what has been released, and every release is a tag on `main`.
 
 ```
-feature/<topic>  ──PR, squash──▶  dev  ──PR, merge commit──▶  main  ──tag vX.Y.Z──▶  release
+feature/<topic>  ──PR, squash──▶  dev  ──release/vX.Y.Z, PR, merge commit──▶  main  ──tag vX.Y.Z──▶  release
 fix/<topic>      ──PR, squash──▶  dev
-hotfix/<topic>   ──PR, squash──▶  main, then the same fix into dev
+hotfix/<topic>   ──PR, merge commit──▶  main, then the same fix into dev by cherry-pick
 ```
 
 - Branch from `dev`: `git switch -c feature/review-filter origin/dev`. Name the
@@ -95,7 +95,8 @@ hotfix/<topic>   ──PR, squash──▶  main, then the same fix into dev
   land faster.
 - Do not include generated binaries (`den`, `dist/`) or personal paths.
 
-Only maintainers merge. A pull request from `dev` into `main` is a release
+Only maintainers merge. A pull request from a `release/…` branch (cut from
+`dev`) into `main` is a release
 and follows [docs/RELEASING.md](docs/RELEASING.md); a hotfix is the one other
 way into `main`. Nobody pushes to `dev` or `main` directly, force-pushes them
 or deletes them, and only maintainers create `v*` tags.

@@ -112,9 +112,9 @@ JSON
 ## 4. Ruleset for `main`
 
 The same, except merge commits only and no linear-history rule (release merges
-are merge commits). "Require branches to be up to date" stays off: after a
-hotfix, `dev` does not contain `main`'s merge commit, and updating `dev` from
-`main` would need a merge commit on `dev`, which its ruleset refuses.
+are merge commits). "Require branches to be up to date" stays off: releases
+come from a `release/vX.Y.Z` branch that already has `main` merged in (see
+RELEASING.md), and `dev` itself never takes a merge commit from `main`.
 
 ```
 gh api -X POST "repos/$R/rulesets" --input - <<'JSON'
@@ -191,7 +191,19 @@ gh api "repos/$R/immutable-releases"
 ```
 
 and open Settings → Rules → Rulesets once to see that the tag-creation
-ruleset's bypass list shows "Repository admin".
+ruleset's bypass list shows "Repository admin":
+
+```
+gh api "repos/$R/rulesets/<id of 'release tags by admins only'>" --jq .bypass_actors
+```
+
+This repository is owned by a user account, not an organisation; that GitHub
+honours a repository-role bypass there has not been tested. If the list comes
+back empty or the next real `git push origin vX.Y.Z` is refused with a
+ruleset error, set that ruleset's enforcement to `disabled` (Settings → Rules,
+or `gh api -X PUT "repos/$R/rulesets/<id>" -f enforcement=disabled`) and rely
+on the immutability ruleset alone. Do not test it with a throwaway tag: the
+immutability ruleset means a pushed `v*` tag can never be deleted.
 
 ## 6. Actions settings
 

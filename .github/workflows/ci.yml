@@ -20,7 +20,7 @@ permissions: {}
 # dev and main gets its own run. github.workflow is the caller's name when the
 # release workflow calls this one, so the two never share a group.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:

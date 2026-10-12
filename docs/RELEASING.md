@@ -9,7 +9,8 @@ rules for branches and pull requests are in [CONTRIBUTING.md](../CONTRIBUTING.md
 | --- | --- | --- |
 | `feature/…`, `fix/…`, `docs/…`, `ci/…` | one change in progress | commits from its author |
 | `dev` | everything merged and not yet released | pull requests, squash-merged |
-| `main` | the released code; every commit a tag points at is here | release pull requests from `dev`, and hotfixes, with a merge commit |
+| `main` | the released code; every commit a tag points at is here | release pull requests from `release/…` branches, and hotfixes, with a merge commit |
+| `release/vX.Y.Z` | one release on its way from `dev` into `main` | cut from `dev`, with `main` merged in |
 | `hotfix/…` | an urgent fix for the released code, branched from `main` | commits from its author |
 
 `dev` and `main` are protected: changes only by pull request, the `ci-passed`
@@ -58,15 +59,26 @@ There is no CHANGELOG file; the releases page is the changelog.
    what the code does, and `THIRD_PARTY_LICENSES` is current (CI fails
    otherwise).
 
-2. **Open the release pull request** from `dev` into `main`:
+2. **Open the release pull request** from a release branch cut from `dev`.
+   The branch also takes in `main`, so a hotfix released since the last
+   release is merged here, where conflicts can be resolved, and never needs a
+   merge commit on `dev`. GitHub deletes the release branch after the merge;
+   `dev` is untouched.
 
    ```
-   gh pr create --repo GlacierHubAB/den --base main --head dev \
+   git fetch origin
+   git switch -c release/v0.4.0 origin/dev
+   git merge --no-ff origin/main     # "Already up to date" unless there was a hotfix
+   make test
+   git push -u origin release/v0.4.0
+   gh pr create --repo GlacierHubAB/den --base main --head release/v0.4.0 \
      --title "Release v0.4.0" --body-file notes-v0.4.0.md
    ```
 
    The body is the draft of the tag message. Read the diff once more as a
-   whole; this is the last look before users get it.
+   whole; this is the last look before users get it. A fix found now goes
+   into `dev` by pull request first, then into the release branch with
+   `git merge origin/dev`.
 
 3. **Merge it with a merge commit** once `ci-passed` is green (the only method
    `main` allows):
