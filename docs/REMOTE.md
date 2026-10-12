@@ -261,8 +261,11 @@ observes it".
 The socket is in `$XDG_RUNTIME_DIR`, else in `den-<uid>/` under `$TMPDIR` (a
 directory only that user may use, checked); `DEN_REMOTE_SOCKET` moves it. It is
 mode 0600 and `serve` refuses a connection from another user. `serve` keeps a
-metadata-only log of what it did with requests, never a command or text, in
-`remote-serve.log` in the state directory on the host.
+metadata-only log of what was out of the ordinary, never a command or text, in
+`remote-serve.log` in the state directory on the host: connections and
+envelopes it refused, requests it let go to their terminal, decisions it
+dropped, held requests handed over between sessions, and how each send and
+close ended. A request held and answered as usual leaves no line.
 
 ## Sending and closing
 

@@ -41,7 +41,7 @@ type ServeOptions struct {
 	Socket        string                        // den-remote.sock; default bridge.RemoteSocketPath, its private fallback dir made 0700
 	Questions     *bool                         // relay AskUserQuestion; default the host's hooks.answer_questions
 	Silence       time.Duration                 // no word from Den this long ends serve, letting every held request go; default 60 s
-	Log           func(string)                  // what the relay did, metadata only; default remote-serve.log in the state dir
+	Log           func(string)                  // what was out of the ordinary, metadata only; default remote-serve.log in the state dir
 	CloseOps      closer.Ops                    // how close signals; default closer.System
 	CloseSelf     closer.Self                   // what a close must leave alone; default this process and its ancestors
 	DirtyTTL      time.Duration                 // how long a checkout's dirty flag is trusted; default 20 s
