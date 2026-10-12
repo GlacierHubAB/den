@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/critter"
 )
@@ -41,6 +42,22 @@ func Load(path string) map[string]string {
 	}
 	_ = json.Unmarshal(raw, &out)
 	return out
+}
+
+// Stamp tells one version of the record on disk from another: its size and
+// modification time, zero when there is no file.
+type Stamp struct {
+	Size    int64
+	ModTime time.Time
+}
+
+// StampOf is the stamp of the record at path now.
+func StampOf(path string) Stamp {
+	st, err := os.Stat(path)
+	if err != nil {
+		return Stamp{}
+	}
+	return Stamp{Size: st.Size(), ModTime: st.ModTime()}
 }
 
 // Save writes the record atomically.

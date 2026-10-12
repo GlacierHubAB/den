@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -129,6 +130,7 @@ type Model struct {
 	nextImage   int
 	kitty       bool
 	colors      map[string]string // session id → body colour, unique while hues last
+	colorStamp  colors.Stamp      // the record on disk as Den last wrote or read it
 
 	input    textarea.Model
 	complIdx int
@@ -316,14 +318,19 @@ func (m Model) agentFor(sessionID string) (fleet.Agent, bool) {
 
 // assignColors gives every live agent a body colour through the shared
 // record, so the badge in each terminal shows the same one. The record is
-// read once and rewritten only when the fleet changes.
+// read once; Den's copy is what it shows, so it is written when the fleet
+// changes and whenever the file on disk is no longer the one Den wrote (a
+// test run or a second Den replaced it), else every badge would fall back
+// to its own pick while Den showed another colour.
 func (m *Model) assignColors() {
 	hues := m.st.pal.Bodies
 	if len(hues) == 0 {
 		return
 	}
+	path := colors.Path()
 	if m.colors == nil {
-		m.colors = colors.Load(colors.Path())
+		m.colors = colors.Load(path)
+		m.colorStamp = colors.StampOf(path)
 	}
 	var live []colors.Agent
 	for _, a := range m.agents {
@@ -335,7 +342,12 @@ func (m *Model) assignColors() {
 	next, changed := colors.Assign(m.colors, live, hues)
 	if changed {
 		m.colors = next
-		_ = colors.Save(colors.Path(), next) // best effort: the UI works without the file
+	}
+	if changed || colors.StampOf(path) != m.colorStamp {
+		if changed || !maps.Equal(colors.Load(path), next) {
+			_ = colors.Save(path, next) // best effort: the UI works without the file
+		}
+		m.colorStamp = colors.StampOf(path)
 	}
 }
 

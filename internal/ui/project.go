@@ -213,6 +213,7 @@ func rootsAt(a fleet.Agent, now time.Time) []string {
 func (m *Model) buildProjects() {
 	byRoot := map[string]*project{}
 	m.proj.loose = 0
+	byCard := m.cardMissions()
 	for _, a := range m.agents {
 		if a.Status == fleet.Gone {
 			continue
@@ -234,6 +235,12 @@ func (m *Model) buildProjects() {
 			continue
 		}
 		roots := rootsOf(a)
+		// An agent serving a live mission works for that mission's project
+		// too, even from a checkout of its own (a scratch clone, a landing
+		// copy) that is listed apart.
+		if root := m.missionProject(a.Session.SessionID, byCard); root != "" && !slices.Contains(roots, root) {
+			roots = append(roots, root)
+		}
 		if len(roots) == 0 {
 			m.proj.loose++
 		}
@@ -288,6 +295,23 @@ func (m *Model) buildProjects() {
 			m.proj.cur = list[0].Root
 		}
 	}
+}
+
+// missionProject is the local project of the live mission the agent
+// serves, "" for none.
+func (m Model) missionProject(id string, byCard map[string]string) string {
+	if m.missions == nil {
+		return ""
+	}
+	mid := m.missionVia(id, byCard)
+	if mid == "" {
+		return ""
+	}
+	ms := m.missions.Get(mid)
+	if ms == nil || !ms.Live() || ms.Project == "" || projectHost(ms.Project) != "" {
+		return ""
+	}
+	return ms.Project
 }
 
 func (m Model) projectByRoot(root string) (project, bool) {
