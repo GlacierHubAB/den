@@ -421,6 +421,26 @@ func (r *Remote) Freeze() int { return r.signalSSHD(syscall.SIGSTOP) }
 // Thaw continues what Freeze stopped.
 func (r *Remote) Thaw() int { return r.signalSSHD(syscall.SIGCONT) }
 
+// HalfOpen stops this host's private sshd processes (SIGSTOP) but leaves
+// the commands they run, such as den remote serve, running: after KillSSH
+// the remote end of the link is half-open. serve hears no EOF and keeps
+// its held hooks, as on a network path that died without a reset. Thaw
+// continues the sshd processes.
+func (r *Remote) HalfOpen() int {
+	n := 0
+	files, _ := filepath.Glob(filepath.Join(r.lab.pids, "sshd-"+r.Label+".*"))
+	for _, f := range files {
+		for _, pid := range recorded(f) {
+			signalTreeIf(pid, syscall.SIGSTOP, func(p int) bool {
+				comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", p))
+				return strings.TrimSpace(string(comm)) == "den"
+			})
+			n++
+		}
+	}
+	return n
+}
+
 func (r *Remote) signalSSHD(sig syscall.Signal) int {
 	n := 0
 	files, _ := filepath.Glob(filepath.Join(r.lab.pids, "sshd-"+r.Label+".*"))

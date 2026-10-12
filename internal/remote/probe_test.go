@@ -91,3 +91,12 @@ func TestClassifyKilledSSH(t *testing.T) {
 		t.Errorf("exit 2: %q", r)
 	}
 }
+
+func TestHandshakeOnlyObserves(t *testing.T) {
+	for _, p := range []Policy{Observe, Approve, Full} {
+		r := handshakeRequest(Host{Label: "b", Target: "b", Policy: p, Labels: true})
+		if r.Policy != Observe || r.Controller != "" || r.Type != TypeHello || r.Proto != Proto {
+			t.Errorf("policy %s: request %+v", p, r)
+		}
+	}
+}

@@ -107,7 +107,7 @@ func (s SSH) Handshake(ctx context.Context, h Host) (Hello, error) {
 		conn.Kill()
 		conn.Wait()
 	}()
-	if err := writeMsg(conn.In, Request{Type: TypeHello, Proto: Proto, Policy: h.Policy, Labels: h.Labels}); err != nil {
+	if err := writeMsg(conn.In, handshakeRequest(h)); err != nil {
 		return Hello{}, conn.Wait()
 	}
 	line, err := newLineReader(conn.Out, MaxLine).next()
@@ -126,6 +126,14 @@ func (s SSH) Handshake(ctx context.Context, h Host) (Hello, error) {
 	}
 	hm.Hostname, hm.Den, hm.Claude = sanitize.Label(hm.Hostname, 64), sanitize.Label(hm.Den, 40), sanitize.Label(hm.Claude, 40)
 	return hm, nil
+}
+
+// handshakeRequest is a check's request: observe, whatever the host's
+// policy, and no controller, so a check never opens den-remote.sock on the
+// host (hooks that fired meanwhile would be held by a session that cannot
+// answer them) and never takes held requests over from the Den attached.
+func handshakeRequest(h Host) Request {
+	return Request{Type: TypeHello, Proto: Proto, Policy: Observe, Labels: h.Labels}
 }
 
 // Advice is what the human can do about what a probe found, one line

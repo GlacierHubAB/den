@@ -78,14 +78,14 @@ func saveKnown(dir string, k Known) error {
 
 // Attached reports whether a running Den holds the host live now.
 func (k Known) Attached(now time.Time) bool {
-	return k.State == Live && now.Sub(k.Heartbeat) < 3*HeartbeatEvery
+	return (k.State == Live || k.State == AttachedElsewhere) && now.Sub(k.Heartbeat) < 3*HeartbeatEvery
 }
 
 // Agents rebuilds the saved fleet with Host set, HostState and Stale
 // saying how current it is. labels false drops role and task again.
 func (k Known) agents(h Host, prices cost.Table, now time.Time) []fleet.Agent {
 	state, stale := string(k.State), !k.Attached(now)
-	if k.State == Live && stale {
+	if (k.State == Live || k.State == AttachedElsewhere) && stale {
 		state = "detached" // saved as live, but no Den is attached now
 	}
 	out := make([]fleet.Agent, 0, len(k.Agents))

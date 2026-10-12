@@ -53,9 +53,10 @@ func Min(a, b Policy) Policy {
 	return b
 }
 
-// Supported is the most this build of `den remote serve` applies: slice 1
-// is read-only, so observe, whatever is configured or requested.
-const Supported = Observe
+// Supported is the most this build of `den remote serve` applies: approve,
+// which relays held requests. full applies as approve for now: Tail and
+// diffs stay on the host.
+const Supported = Approve
 
 // Host is one [hosts.<label>] table of remotes.toml.
 type Host struct {
