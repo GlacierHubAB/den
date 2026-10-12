@@ -145,6 +145,8 @@ func (a *actions) send(sid, text string) Result {
 		switch {
 		case strings.HasPrefix(msg, "inbox socket is gone"):
 			return Result{Error: "its inbox socket is gone"}
+		case strings.HasPrefix(msg, "inbox socket is not"), strings.HasPrefix(msg, "inbox socket is served"):
+			return Result{Error: msg} // path-free by construction
 		case strings.HasPrefix(msg, "connect"):
 			return Result{Error: "could not connect to its inbox socket"}
 		}
@@ -155,14 +157,18 @@ func (a *actions) send(sid, text string) Result {
 
 // close ends the session's process under the closer's rules: not Den's own
 // process or an ancestor of it, not a working agent without force, SIGTERM
-// and a wait, SIGKILL only with force. A host has no desktop window to
-// close.
+// and a wait, SIGKILL only with force. The closer first checks the pid is
+// still this session's Claude Code and holds it by a pidfd (closer.System).
+// A host has no desktop window to close.
 func (a *actions) close(ctx context.Context, sid string, force bool) Result {
 	ag, why := a.resolve(sid)
 	if why != "" {
 		return Result{Error: why}
 	}
 	t := closer.Target{SessionID: ag.Session.SessionID, Name: ag.Name, Peer: ag.Session.Name, PID: ag.Session.PID}
+	if ag.Session.StartedAt > 0 {
+		t.Started = ag.Session.Started() // the closer checks the pid is still this session's Claude Code
+	}
 	switch ag.Status {
 	case fleet.Working:
 		t.Status = "working"
@@ -181,7 +187,9 @@ func (a *actions) close(ctx context.Context, sid string, force bool) Result {
 	r := res[0]
 	switch {
 	case r.Err != nil:
-		return Result{Error: "could not signal it: " + r.Err.Error()}
+		// The closer says what it refused or could not do: not Claude
+		// Code, a newer process on that pid, no pidfd, a wait cut short.
+		return Result{Error: r.Err.Error()}
 	case !r.Ended && force:
 		return Result{Error: "still running after SIGKILL"}
 	case !r.Ended:

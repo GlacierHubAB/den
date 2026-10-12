@@ -481,8 +481,10 @@ func TestAccept7ClockSkew(t *testing.T) {
 	}
 	a := g.m.Agents()[0]
 	now := time.Now()
-	if d := now.Sub(a.Session.Started()) - time.Minute; d < -5*time.Second || d > 5*time.Second {
-		t.Errorf("started %v ago, want about 1m (the session file was written 1 minute back)", now.Sub(a.Session.Started()))
+	// The session started when its process did, just now on the remote's
+	// own clock; across the +10m skew a wrong age would be about 10m off.
+	if d := now.Sub(a.Session.Started()); d < -5*time.Second || d > 15*time.Second {
+		t.Errorf("started %v ago, want a few seconds (the session's process started when the test began)", d)
 	}
 	if since := now.Sub(a.Session.StatusChanged()); since < -time.Second || since > 10*time.Second {
 		t.Errorf("status changed %v ago: ages must come from the remote's own clock, not across the skew", since)

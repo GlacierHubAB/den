@@ -37,8 +37,11 @@ func SecretOpts() SessionOpts {
 	}
 }
 
-// Session is a fake session backed by a live dummy process (sleep) so that
-// kill(pid, 0) says it is alive, like discover expects.
+// Session is a fake session backed by a live dummy process so that kill(pid,
+// 0) says it is alive, like discover expects. The process is sleep run under
+// the name "claude", and the session's startedAt is when it started, so the
+// closer's check that a pid is still the session's Claude Code passes for it
+// as it does for a real session.
 type Session struct {
 	ID   string
 	PID  int
@@ -46,6 +49,8 @@ type Session struct {
 	h    *seedDir
 	opts SessionOpts
 	proc *exec.Cmd
+	// started is the session's startedAt: when its process started, in ms.
+	started int64
 	// reaped is closed once the dummy process has exited and been waited
 	// for: a zombie would still answer kill(pid, 0) as alive.
 	reaped chan struct{}
@@ -85,11 +90,11 @@ func (h *seedDir) add(o SessionOpts) *Session {
 	if o.Status == "" {
 		o.Status = "idle"
 	}
-	cmd := exec.Command("sleep", "3600")
+	cmd := exec.Command(h.lab.claudeStandIn(), "3600")
 	cmd.Env = append(os.Environ(), "DEN_SSHTEST="+h.lab.Dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	must(t, cmd.Start())
-	s := &Session{ID: o.ID, PID: cmd.Process.Pid, h: h, opts: o, proc: cmd, reaped: make(chan struct{})}
+	s := &Session{ID: o.ID, PID: cmd.Process.Pid, h: h, opts: o, proc: cmd, reaped: make(chan struct{}), started: time.Now().UnixMilli()}
 	go func() { cmd.Wait(); close(s.reaped) }()
 	h.sessions = append(h.sessions, s)
 	s.File = filepath.Join(h.claudeDir, "sessions", fmt.Sprintf("%d.json", s.PID))
@@ -107,7 +112,7 @@ func (h *seedDir) add(o SessionOpts) *Session {
 func (s *Session) writeFile(status string) {
 	now := time.Now().UnixMilli()
 	b, _ := json.Marshal(map[string]any{
-		"pid": s.PID, "sessionId": s.ID, "cwd": s.opts.CWD, "startedAt": now - 60_000,
+		"pid": s.PID, "sessionId": s.ID, "cwd": s.opts.CWD, "startedAt": s.started,
 		"version": "2.1.289", "kind": "interactive", "entrypoint": "cli", "name": s.opts.Name,
 		"status": status, "updatedAt": now, "statusUpdatedAt": now,
 		"messagingSocketPath": s.Socket(),
@@ -207,4 +212,20 @@ func (h *seedDir) stop() {
 	for _, s := range h.sessions {
 		s.Stop()
 	}
+}
+
+// claudeStandIn is sleep under the name claude (a symlink in the lab), so a
+// dummy session process has the comm a native Claude Code install has.
+func (l *Lab) claudeStandIn() string {
+	p := filepath.Join(l.Dir, "bin", "claude")
+	if _, err := os.Lstat(p); err == nil {
+		return p
+	}
+	sleep, err := exec.LookPath("sleep")
+	must(l.t, err)
+	must(l.t, os.MkdirAll(filepath.Dir(p), 0o755))
+	if err := os.Symlink(sleep, p); err != nil && !os.IsExist(err) {
+		l.t.Fatalf("sshtest: %v", err)
+	}
+	return p
 }

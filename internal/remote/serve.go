@@ -45,15 +45,18 @@ type ServeOptions struct {
 	DirtyTTL      time.Duration                 // how long a checkout's dirty flag is trusted; default 20 s
 }
 
+// noTail sets fleet.Recent to 0 once per process for serve.
+var noTail sync.Once
+
 func (o *ServeOptions) defaults() {
 	if o.EventsPath == "" {
 		o.EventsPath = events.Path()
 	}
 	if o.Snapshot == nil {
-		o.Snapshot = func() ([]fleet.Agent, error) {
-			fleet.Recent = 0 // never read what is never sent
-			return fleet.Snapshot()
-		}
+		// Never read what is never sent. Set once, before any snapshot runs:
+		// actions read the fleet from goroutines of their own.
+		noTail.Do(func() { fleet.Recent = 0 })
+		o.Snapshot = fleet.Snapshot
 	}
 	if o.Watch == nil {
 		o.Watch = []string{discover.Dir(), badge.StoreDir()}

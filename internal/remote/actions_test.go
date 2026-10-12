@@ -625,3 +625,24 @@ func TestManagerSendTooLargeOnceEncodedIsNotOffline(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// A session file whose socket path is a symlink to another service's socket
+// does not get the text written there.
+func TestServeSendFollowsNoSymlinkToAForeignSocket(t *testing.T) {
+	s := newScratch(t)
+	foreign := newInboxSock(t)
+	link := filepath.Join(shortDir(t), "SECRET-link.sock")
+	os.Symlink(foreign.path, link)
+	s.hostSession(t, 1, sidA, os.Getpid(), "idle", link)
+	sv := actHost(t, s, Approve, newFakeProcs())
+	sv.send("l", sidA, "text for the claude session")
+	r := sv.result("l")
+	if r.OK || strings.Contains(r.Error, "SECRET") || !strings.Contains(r.Error, "refus") {
+		t.Errorf("result = %+v", r)
+	}
+	select {
+	case line := <-foreign.lines:
+		t.Errorf("the text reached the foreign socket: %q", line)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
