@@ -19,8 +19,9 @@ import (
 var editTools = map[string]string{"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
 
 // sensitiveUnderHome are directories under the home directory no edit rule
-// reaches, lower case.
-var sensitiveUnderHome = []string{".ssh", ".config/den", ".local/state/den", ".config/fish"}
+// reaches, lower case: keys, and the whole of ~/.config and ~/.local, where
+// a desktop, a shell, git, systemd and a PATH (~/.local/bin) read what runs.
+var sensitiveUnderHome = []string{".ssh", ".config", ".local"}
 
 // sensitiveParts are path parts, lower case, that make a path sensitive
 // wherever they are: Claude Code's settings, hooks and commands, user and
@@ -33,6 +34,8 @@ var sensitiveNames = map[string]bool{
 	".bashrc": true, ".bash_profile": true, ".bash_login": true, ".bash_logout": true, ".profile": true,
 	".zshrc": true, ".zshenv": true, ".zprofile": true, ".zlogin": true, ".zlogout": true,
 	".gitattributes": true, ".gitmodules": true, ".mcp.json": true,
+	".gitconfig": true, ".npmrc": true, ".netrc": true, ".tmux.conf": true, ".vimrc": true,
+	".pam_environment": true, ".xprofile": true, ".xinitrc": true, ".xsession": true, ".xsessionrc": true,
 }
 
 // EditInScope reports whether an always-rule for edits in the session
@@ -40,9 +43,9 @@ var sensitiveNames = map[string]bool{
 // directory is home. It is lexical: a relative path is taken from cwd, a
 // leading ~ from home, and the result is cleaned; a ".." part refuses. The
 // path must lie strictly under cwd and not be sensitive, which wins over
-// the scope (a cwd of home does not open ~/.ssh). Den checks a local
-// agent's edits with symlinks resolved as well (editRealInScope); a
-// host's agents are checked against their own cwd and home.
+// the scope; a cwd that is home or above it takes no rule at all. Den
+// checks a local agent's edits with symlinks resolved as well
+// (editRealInScope); a host's agents against their own cwd and home.
 func EditInScope(path, cwd, home string) bool {
 	p, ok := editPath(path, cwd, home)
 	if !ok {
@@ -50,6 +53,11 @@ func EditInScope(path, cwd, home string) bool {
 	}
 	dir := filepath.Clean(cwd)
 	if !filepath.IsAbs(dir) || dir == "/" || !strings.HasPrefix(p, dir+"/") {
+		return false
+	}
+	// A session in the home directory, or above it, has every start-up and
+	// config file of the user under its cwd: no edit rule there.
+	if h := filepath.Clean(home); filepath.IsAbs(h) && (h == dir || strings.HasPrefix(h, dir+"/")) {
 		return false
 	}
 	return !sensitivePath(p, home)

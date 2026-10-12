@@ -233,11 +233,14 @@ memory until Den exits (the line that confirms it says which):
 - a file edit (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`): edits by that
   tool inside the agent's working directory, never outside it, never through
   a symlink that leads out, and never of a file whose change runs code or
-  raises trust: anything under `~/.ssh`, `~/.config/den`, `~/.local/state/den`,
-  `~/.config/fish`, a `.claude` folder or `.git` (any repository), `.githooks`,
-  `.gitattributes`, `.gitmodules`, `.mcp.json` or a shell start-up file
-  (`.bashrc`, `.profile`, `.zshrc` and the like). Such an edit, or one outside,
-  is asked about as usual, and takes no `/always`. Inside the working
+  raises trust: anything under `~/.ssh`, `~/.config` or `~/.local`, a
+  `.claude` folder or `.git` (any repository), `.githooks`, `.gitattributes`,
+  `.gitmodules`, `.mcp.json`, `.gitconfig`, `.npmrc`, `.netrc`, `.tmux.conf`,
+  `.vimrc`, X session files (`.xprofile`, `.xinitrc` and the like),
+  `.pam_environment` or a shell start-up file (`.bashrc`, `.profile`,
+  `.zshrc` and the like). An agent working in your home directory, or above
+  it, gets no edit rule at all. Such an edit, or one outside, is asked about
+  as usual, and takes no `/always`. Inside the working
   directory a rule does cover files other tools run later, such as `.envrc`,
   `.vscode/`, a `Makefile` or `package.json`.
 - `WebFetch`: fetches from the same host.
