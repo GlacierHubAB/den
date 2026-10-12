@@ -28,6 +28,7 @@ Hyprland.
 - [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
 - [Review](#review) · [Worktrees in Review](#worktrees-in-review) · [The agent badge](#the-agent-badge)
+- [Text from outside Den](#text-from-outside-den)
 - [Configuration](#configuration) · [Files Den writes](#files-den-writes)
 - [Troubleshooting](#troubleshooting) · [Den, Herdr and OpenRig](#den-herdr-and-openrig) · [Contributing](#contributing) · [License](#license)
 
@@ -870,6 +871,40 @@ Den gives every live session its own colour, oldest session first, and records
 the choice in `~/.local/state/den/colors.json`; the badge (1.2.0+) reads that
 file so the critter in each terminal matches the one in Den. The same colour
 marks the agent in the Fleet, inbox, dispatch cards, the map and Review.
+
+## Text from outside Den
+
+Agents, transcripts, hook payloads and git give Den text it does not control.
+Printed raw, a command's output or an agent's name could carry terminal escape
+sequences that set your clipboard (OSC 52), clear the screen, retitle the
+window, plant a link or reorder what you read with bidirectional overrides. Den
+removes from all such text, before it is shown, put in a notification or window
+title, logged or printed by a command: escape sequences (CSI, OSC, DCS, APC and
+the like), other control characters except newline and tab, bidirectional
+overrides and invalid UTF-8. A carriage return becomes a newline. Ordinary
+Unicode, such as CJK, emoji and accents, stays. Notification bodies also escape
+markup, so a name cannot become a link or an image.
+
+The change you will see: colour in a command's output (a test run, `git
+diff`'s own colouring in a Bash result) is no longer drawn in Den. The text is
+there, without its colours; Den's own colours are not affected.
+
+### Other safety changes
+
+- **Den's socket.** With `XDG_RUNTIME_DIR` unset, `den.sock` is now
+  `den-<uid>/den.sock` under `$TMPDIR`, a directory only you may use, checked at
+  each use; it used to be `/tmp/den-<uid>.sock`. Every connection to it, in
+  either direction, checks that the peer is the same user. On a machine without
+  `XDG_RUNTIME_DIR`, reinstall `den` and run `den install-hooks` again so the
+  hooks and Den agree on the path.
+- **A hook that crashes fails open.** `den hook` exits 0 with no decision, so
+  Claude Code asks in the terminal, instead of exiting 2, which Claude Code
+  reads as a denial.
+- **Git reads of an agent's checkout run nothing the repository names.** Review,
+  the uncommitted-changes check and worktree reads turn off fsmonitor, filter
+  drivers, external diff, textconv and lazy fetch, and do not inherit git's own
+  environment variables, so a repository's config cannot make Den run a
+  program.
 
 ## Configuration
 
