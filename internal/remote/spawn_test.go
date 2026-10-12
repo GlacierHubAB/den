@@ -703,3 +703,18 @@ func TestSpawnSaysWhenClaudeIsNotLoggedIn(t *testing.T) {
 		t.Errorf("result = %+v", r)
 	}
 }
+
+func TestSpawnRefusesAnOldClaudeWithItsVersion(t *testing.T) {
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	t.Setenv("FAKE_CLAUDE_VERSION", "2.1.200")
+	sv, hello := h.serve(t, Approve, spawnPolicy(), nil)
+	if hello.Spawn == nil || hello.Spawn.Claude != "2.1.200" {
+		t.Fatalf("hello spawn = %+v", hello.Spawn)
+	}
+	c := spawnCmd("v1", "api", dir, "x")
+	c.Check = true
+	if r := sv.spawn(c); r.OK || !strings.Contains(r.Error, "2.1.200") || !strings.Contains(r.Error, MinClaudeSpawn) {
+		t.Errorf("result = %+v", r)
+	}
+}

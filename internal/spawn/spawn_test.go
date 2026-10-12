@@ -308,3 +308,16 @@ func TestTitleIsSanitised(t *testing.T) {
 		t.Errorf("title = %q", gotTitle)
 	}
 }
+
+// Local spawn's command line is exactly what it was before remote hosts
+// could be spawned on: the brief is the last argument, after "--".
+func TestLocalSpawnCommandUnchanged(t *testing.T) {
+	req := Request{Brief: "Fix the login.", Orchestrator: "den-orchestrator", Model: "sonnet", Worktree: "fix", AddDirs: []string{"/s"}, Spawner: "/bin/den"}
+	got := Command(req, "api")
+	want := []string{"claude", "--name", "api", "--worktree", "fix", "--add-dir", "/s", "--model", "sonnet",
+		"--mcp-config", `{"mcpServers":{"den":{"args":["mcp"],"command":"/bin/den"}}}`, "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal", "--",
+		Prompt("Fix the login.", "den-orchestrator", "", true) + "\n\n" + worktreeNote("fix")}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("command\n got %q\nwant %q", got, want)
+	}
+}
