@@ -188,8 +188,18 @@ func TestAdvEnvelopeShapedMessages(t *testing.T) {
 	)
 	g.start()
 	g.live()
-	g.wait("flags", 10*time.Second, func() bool { return len(g.status().Flags) >= 5 })
-	for _, want := range []string{"CloseRequest", "SkillsRequest", "InstallRequest", "decision", "hello"} {
+	// Each unknown type can raise two flags, so wait for every one named
+	// rather than for a count.
+	wants := []string{"CloseRequest", "SkillsRequest", "InstallRequest", "decision", "hello"}
+	g.wait("flags", 10*time.Second, func() bool {
+		for _, want := range wants {
+			if !g.flagged(want) {
+				return false
+			}
+		}
+		return true
+	})
+	for _, want := range wants {
 		if !g.flagged(want) {
 			t.Errorf("not flagged: %q; flags %v", want, g.status().Flags)
 		}

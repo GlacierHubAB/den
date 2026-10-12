@@ -422,7 +422,11 @@ EOF
 `)
 		g.start()
 		g.wait("the agent", 10*time.Second, func() bool { return len(g.m.Agents()) == 1 })
-		g.wait("flags", 5*time.Second, func() bool { return len(g.status().Flags) >= 2 })
+		// The unknown type alone raises two flags; wait for both names.
+		g.wait("flags", 5*time.Second, func() bool {
+			flags := strings.Join(g.status().Flags, " | ")
+			return strings.Contains(flags, "exec") && strings.Contains(flags, "evil")
+		})
 		if st := g.status(); st.State != remote.Live {
 			t.Errorf("state = %s (%s): a single unknown message must not drop the host", st.State, st.Reason)
 		}
