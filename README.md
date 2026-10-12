@@ -945,9 +945,11 @@ field (and `Stale` when the link is down), `den events -json` a `host` field,
 and `[on]` commands get `DEN_HOST`.
 
 Limits today: Linux hosts and Claude Code agents only (no macOS, no Codex);
-Den cannot spawn agents on a host, missions cannot use remote agents, and the
-orchestrator lists them but cannot message or close them; `Enter` and `/open`
-cannot raise a terminal on another machine, they print `ssh -t <target>`;
+Den starts agents on a host only inside tmux there (`/spawn @host …`, or `den
+remote spawn`, which asks in the inbox; no tmux-less fallback and no restore
+yet); missions cannot use remote agents, and the orchestrator lists them but
+cannot spawn, message or close them; `Enter` and `/open` open a window only on
+agents Den started in tmux, and print `ssh -t <target>` for the rest;
 changes to `remotes.toml` are picked up when Den restarts. Every string a host
 sends is sanitised before Den shows it (see
 [Text from outside Den](#text-from-outside-den)).

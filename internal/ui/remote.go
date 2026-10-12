@@ -609,7 +609,7 @@ func (m Model) remoteLines(w int) []string {
 		}
 		out = append(out, "")
 	}
-	out = append(out, "  "+s.key.Render("/remote connect <label>")+s.keyLabel.Render(" retry now  ")+s.key.Render("Esc")+s.keyLabel.Render(" back"))
+	out = append(out, "  "+s.key.Render("/remote connect <label>")+s.keyLabel.Render(" retry now  ")+s.key.Render("/spawn @<label> <dir> <brief>")+s.keyLabel.Render(" start an agent  ")+s.key.Render("Esc")+s.keyLabel.Render(" back"))
 	return out
 }
 

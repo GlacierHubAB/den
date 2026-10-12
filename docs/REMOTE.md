@@ -85,8 +85,12 @@ den remote add <target> [--label L] [--policy P] [--den PATH] [--skip-checks]
 den remote list [-json]       label, target, policy, state, agents, last seen
 den remote status <label>     the checks again, plus a read-only handshake with the host
 den remote install <label>    put den on the host: asks in Den's inbox
+den remote spawn <label> <folder> [--model M] [--name N] [--worktree W] < brief
+                              start an agent on the host: asks in Den's inbox
 den remote remove <label>     also disable, enable
+den remote attach <session>   run by Den on the host over ssh -t to show an agent it started
 den remote serve --proto 1    run by Den on the host over ssh; not for humans
+den remote agent <id>         run by tmux on the host for an agent Den starts; not for humans
 ```
 
 `--policy` sets the host's policy for the new host (see [Policies](#policies));
@@ -115,6 +119,10 @@ policy = "observe"           # what the host may send, see Policies
 labels = true                # false withholds the badge role and task
 den_path = "/opt/den/bin/den" # optional; else found through a login shell and ~/.local/bin
 enabled = true
+spawn = "off"                # tmux | auto | terminal | off: may Den start agents here (see Starting agents on a host)
+spawn_dirs = ["~/src"]       # the folders, with their subfolders, agents may start in; none means no spawn
+orchestrator = false         # may the orchestrator act here
+max_agents = 4               # agents Den started, alive on the host at once
 ```
 
 A label is lower-case letters, digits and `-`, and `local` is taken. A target
@@ -309,6 +317,117 @@ On an `approve` host:
 The orchestrator cannot message or close remote agents.
 A `full` host does all of this too: it is `approve` plus content.
 
+## Starting agents on a host
+
+Den starts an agent on a host inside tmux there: a tmux server of Den's own
+(`tmux -L den`), one detached session per agent, named
+`den-<peer>-<8 hex of the session id>`. The agent carries on when the link
+drops or its window closes, and Den shows it again, with its spend, when the
+host is back. `tmux ls` does not list Den's sessions; `tmux -L den ls` does.
+
+A host allows it only when its entry in `remotes.toml` says so:
+
+```toml
+[hosts.devbox]
+target = "devbox"
+policy = "approve"           # approve or full: spawn is refused under observe
+spawn = "tmux"
+spawn_dirs = ["~/src", "~/work/api"]
+max_agents = 4
+```
+
+`spawn_dirs` is required: no list, no spawn. `~/` means the home on the host.
+A folder is checked by name here and, on the host, by its real path (symlinks
+resolved): it must be one of the listed folders or inside one, and owned by
+you. `max_agents` counts the agents Den started that run on the host, not
+agents you started there yourself. `auto` is accepted, but today it means
+`tmux`; the `terminal` route is not available yet.
+
+The host's owner has a say too, in the host's own `config.toml`:
+
+```toml
+[remote]
+spawn = false               # no Den elsewhere may start agents here
+spawn_dirs = ["~/sandbox"]  # or: only under these folders, whatever Den's list says
+```
+
+**From the TUI:** `/spawn @devbox ~/src/api [model=sonnet] [name=api]
+[worktree=fix-login] <brief>`. Den asks the host for a dry run first and shows
+what would start in place of the details pane: the host, the route, the folder
+as the host resolved it, the peer and tmux session names, the model, any
+warning (a folder Claude Code was never told to trust there, a tmux older than
+tested) and the whole brief. `Enter` starts it and `Esc` cancels. That preview
+is the confirmation; there is no inbox step for a spawn you typed.
+
+**From a script or an agent:** `den remote spawn devbox ~/src/api --model
+sonnet < brief.md`. The brief is read from stdin, never taken as an argument.
+The command asks the running Den, which checks it with the host and asks in
+its inbox with the same details and the whole brief. `Ctrl+Y` starts it,
+`Ctrl+N` declines, there is no "always", and a question unanswered for ten
+minutes is declined. With no Den running, nothing starts.
+
+**What runs on the host.** `den remote serve` checks the request again (the
+policy, the host's keys as Den sent them, the owner's `[remote]` settings, the
+names, the model, the brief's size), finds `tmux` and `claude` by absolute path
+(`PATH`, then `~/.local/bin`, `/usr/local/bin` and `/usr/bin`), and starts
+tmux with an argument list, never through a shell:
+
+```
+tmux -L den new-session -d -s <session> -c <folder> -x 200 -y 50 \
+     -e DEN_PEER=<peer> -e DEN_SPAWN=<id> -e DEN_SPAWN_DIR=<staging> \
+     -- <den> remote agent <id>
+```
+
+`den remote agent` reads the spawn staged for it and runs Claude Code in the
+pane: `claude --session-id <id> --name <peer> [--worktree <name>] [--model
+<model>] --add-dir <staging> -- "Your brief from Den is in <staging>/brief.md.
+Read it and follow it."` The brief itself is in that file (mode 0600, in a
+0700 folder under `$XDG_RUNTIME_DIR/den/spawn`); it is never in an argument
+list, the environment, tmux or a log. The agent reads it as its first turn, so
+it is in the transcript and survives `--resume`. `serve` deletes the file once
+that first turn is over, when the agent ends, or after an hour. When Claude
+Code exits, its tmux session ends with it.
+
+tmux 3.0 or newer is needed; remote spawn was tested on tmux 3.4 and 3.7c, and
+an older one is used with a warning. Claude Code 2.1.289 or newer is needed;
+an older one is refused with its version. A den on the host from before remote
+spawn makes Den say "den on devbox is too old to start agents; update it: den
+remote install devbox".
+
+**The window.** Once the agent runs, Den opens a terminal on the workspace you
+are looking at, as for a local spawn, running `ssh -t <target> '<den> remote
+attach <session>'` with the same options and connection as the link.
+`den remote attach` attaches only to a session Den started (it is tagged with
+the agent's session id), by its exact name. Closing the window only detaches.
+`Enter` or `/open` on the agent opens it again. `open_window = false` under
+`[remote]` in `config.toml` starts agents without opening a window.
+
+**While it starts** the agent's row shows "starting in tmux on devbox". If the
+link drops before the host answers, the row says "spawn unknown (devbox
+offline)"; when the host is back it reports what happened: the agent is found,
+or Den says it was not started. A spawn is never sent again on its own. If no
+session appears within 45 seconds, Den says so and leaves the session for you to
+open (a login or trust screen in its window); a Claude Code that is not logged
+in on the host is reported as such.
+
+**Leftovers.** A tmux session Den started whose Claude Code is not running (it
+stopped at a login screen, or your `.tmux.conf` keeps dead panes) is a
+leftover. `/remote` lists them per host, and `/remote cleanup devbox` asks in
+the inbox before ending them. Den never ends a tmux session it did not tag, and
+never touches your own tmux server.
+
+**Differences from a local spawn.**
+- Only the tmux route exists; there is no `ssh -t` fallback for hosts without
+  tmux yet, and remote agents are not restored after a restart of Den.
+- A spawn from `den remote spawn` always asks in the inbox. (A local spawn by
+  the orchestrator does not.)
+- A remote agent gets no Den MCP server: it cannot start agents of its own.
+- No role skills are shipped to the host: the spawn says "skills: none".
+- `--worktree` makes the worktree with Claude Code on the host; the name must
+  be free there. Review shows the remote worktree under `full`; `/merge` and
+  `/cleanup` stay local.
+- The orchestrator cannot spawn on hosts.
+
 ## Review on a `full` host
 
 Remote agents on a `full` host are listed in Review with their `@host` chip.
@@ -344,9 +463,12 @@ on this machine.
 ## Limits
 
 - Linux hosts only; agents are Claude Code only.
-- Remote agents cannot be spawned or restored from Den, missions cannot use
-  them, and the orchestrator cannot message or close them.
-- `Enter` and `/open` cannot raise a terminal on another machine.
+- Den starts agents on a host only in tmux, from `/spawn` or `den remote
+  spawn` (see Starting agents on a host). It cannot restore remote agents,
+  missions cannot use them, and the orchestrator cannot spawn, message or
+  close them.
+- `Enter` and `/open` open a window on an agent Den started in tmux there;
+  for any other remote agent they print `ssh -t <target>`.
 - Den does not keep remote agents alive: if the link drops, they carry on on
   the host, and Den shows them as last known until it is back.
 - A silent link is noticed in 45 to 60 seconds.
@@ -455,8 +577,11 @@ on this machine.
 - **What you approve is what you saw.** The host cuts the body and Den checks
   it again; a command, path or URL that would not show whole sends the request
   to the terminal instead.
-- **No generic command.** Messages and closes go through a closed pair of
-  commands with results. There is no shell on the host.
+- **No generic command.** Messages, closes, diffs, spawns and leftover
+  cleanups go through a closed set of commands with results. There is no shell
+  on the host: tmux runs `den remote agent <id>` from an argument list, and the
+  only user text that reaches the host for a spawn, the brief, goes into a
+  private file.
 - **What Den keeps.** On this machine: `remotes.toml`, and per host the last
   metadata it received and the position in its event stream
   (`remote/<label>.json` in the state directory, mode 0600).
