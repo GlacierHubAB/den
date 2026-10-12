@@ -48,7 +48,9 @@ func Env(ev Event) []string {
 		"DEN_AGENT=" + ev.Agent,
 		"DEN_TIME=" + ev.Time.Format(time.RFC3339),
 	}
-	for k, v := range map[string]string{"DEN_REQUEST": ev.Request, "DEN_TOOL": ev.Tool, "DEN_ERROR": ev.Error, "DEN_REASON": ev.Reason} {
+	// DEN_HOST is the remote host's label for an event from another
+	// machine, absent for this one.
+	for k, v := range map[string]string{"DEN_REQUEST": ev.Request, "DEN_TOOL": ev.Tool, "DEN_ERROR": ev.Error, "DEN_REASON": ev.Reason, "DEN_HOST": ev.Host} {
 		if v != "" {
 			env = append(env, k+"="+v)
 		}

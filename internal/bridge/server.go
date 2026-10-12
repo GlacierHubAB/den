@@ -17,6 +17,10 @@ import (
 type Request struct {
 	Envelope
 	Input HookInput
+	// Host is the remote host label the request came from, "" for this
+	// machine. It is set by whoever builds the request from the connection,
+	// never read from the payload.
+	Host  string
 	reply chan Decision
 	once  sync.Once
 	gone  chan struct{} // closed when the waiting hook hangs up

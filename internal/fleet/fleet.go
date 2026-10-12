@@ -184,7 +184,7 @@ func mergeUsage(u transcript.Usage, has bool, l badge.Usage, hasL bool) (transcr
 // Snapshot gathers every agent. Window lookup is skipped when Hyprland is not
 // available, and a failing lookup never fails the snapshot.
 // Recent is how many activity entries Snapshot reads per agent; main sets it
-// from the config file.
+// from the config file. 0 reads none (den remote serve never sends them).
 var Recent = 20
 
 // Prices prices the tokens in Cost; main sets it from the config file.
@@ -217,7 +217,9 @@ func Snapshot() ([]Agent, error) {
 		a.Title, a.Model = facts.Title, facts.Model
 		if a.Path != "" {
 			a.Usage, a.HasUsage = transcript.ReadUsage(a.Path)
-			a.Tail = transcript.Tail(a.Path, Recent)
+			if Recent > 0 {
+				a.Tail = transcript.Tail(a.Path, Recent)
+			}
 			a.Cost = Prices.Of(transcript.Shared.Account(a.Path))
 		}
 		a.Usage, a.HasUsage, a.UsageFromBadge = mergeUsage(a.Usage, a.HasUsage, a.Limits, a.HasLimit)
