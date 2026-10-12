@@ -56,6 +56,7 @@ type HostStatus struct {
 	// From remotes.toml: who may act on the host and how agents start there.
 	Orchestrator bool
 	Spawn        SpawnRoute
+	SpawnDirs    []string
 	// SpawnCap is what the host said it can do for a spawn in its last
 	// hello; nil when its den is too old to start agents.
 	SpawnCap *SpawnCap
@@ -289,6 +290,7 @@ func NewManager(cfg Config, o Options) *Manager {
 			status: HostStatus{
 				Label: h.Label, Target: h.Target, Policy: h.Policy, State: st, Reason: k.Reason, Since: k.Since,
 				Hostname: k.Hostname, Den: k.Den, Claude: k.Claude, Applied: k.Policy, Offset: k.Offset, Agents: len(k.Agents),
+				Orchestrator: h.Orchestrator, Spawn: h.Spawn, SpawnDirs: slices.Clone(h.SpawnDirs),
 			},
 		}
 	}
@@ -334,6 +336,7 @@ func (m *Manager) Hosts() []HostStatus {
 	for _, h := range m.hosts {
 		s := m.state[h.Label].status
 		s.Flags = slices.Clone(s.Flags)
+		s.SpawnDirs = slices.Clone(s.SpawnDirs)
 		out = append(out, s)
 	}
 	return out

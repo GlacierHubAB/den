@@ -282,3 +282,13 @@ func TestSpawnNames(t *testing.T) {
 		t.Error("~ allows every folder in the home")
 	}
 }
+
+func TestHostStatusCarriesSpawnKeys(t *testing.T) {
+	cfg := Config{Hosts: []Host{{Label: "b", Target: "b", Policy: Full, Enabled: true, Spawn: SpawnTmux, SpawnDirs: []string{"~/src"}, Orchestrator: true}}}
+	m := NewManager(cfg, Options{StateDir: t.TempDir(), EventsPath: filepath.Join(t.TempDir(), "e.jsonl"), Dial: func(context.Context, Host) (*Conn, error) { return nil, context.Canceled }})
+	defer m.Close()
+	hs := m.Hosts()
+	if len(hs) != 1 || !hs[0].Orchestrator || hs[0].Spawn != SpawnTmux || !slices.Equal(hs[0].SpawnDirs, []string{"~/src"}) {
+		t.Fatalf("status = %+v", hs)
+	}
+}
