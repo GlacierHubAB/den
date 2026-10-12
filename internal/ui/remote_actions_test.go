@@ -155,6 +155,16 @@ func TestSendRequestNameMustBeExactOrUniquePrefix(t *testing.T) {
 	}
 	if a, err := onHostAgent(m.remote.agents, "mossy m@devbox"); err != nil || a.Name != "Mossy Moth" {
 		t.Errorf("unique prefix: %v %v", a.Name, err)
+	} // No fit: the agents on that host are named, never guessed.
+	r = ask("nobody@devbox")
+	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "on devbox: ") || !strings.Contains(d.Message, "Mossy Lemur") || !strings.Contains(d.Message, "Mossy Moth") {
+		t.Errorf("an unknown name: %+v", d)
+	}
+	if _, err := onHostAgent(m.remote.agents, "nobody@nohost"); err == nil || !strings.Contains(err.Error(), "Den knows no agents on nohost") {
+		t.Errorf("an unknown host: %v", err)
+	}
+	if len(feed.sent) != 0 {
+		t.Fatalf("guessed: %q", feed.sent)
 	}
 }
 

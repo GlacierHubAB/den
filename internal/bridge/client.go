@@ -41,10 +41,26 @@ var ErrNoDen = errors.New("den is not running")
 // The error is ErrNoDen when no Den listens, so a caller can tell that
 // from a Den that did not answer in time.
 func Call(path string, env Envelope, wait time.Duration) (Decision, error) {
+	conn, err := Connect(path)
+	if err != nil {
+		return Decision{}, err
+	}
+	return CallOn(conn, env, wait)
+}
+
+// Connect reaches the running Den, ErrNoDen when none listens. With
+// CallOn it lets a caller tell the human it is asking only once a Den
+// will hear the question.
+func Connect(path string) (net.Conn, error) {
 	conn, err := Dial(path, 500*time.Millisecond)
 	if err != nil {
-		return Decision{}, ErrNoDen
+		return nil, ErrNoDen
 	}
+	return conn, nil
+}
+
+// CallOn is Call on a connection from Connect, which it closes.
+func CallOn(conn net.Conn, env Envelope, wait time.Duration) (Decision, error) {
 	return ask(conn, env, wait)
 }
 

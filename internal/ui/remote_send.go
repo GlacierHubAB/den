@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,11 +96,12 @@ func onHostAgent(agents []fleet.Agent, who string) (fleet.Agent, error) {
 	if host == "local" {
 		host = ""
 	}
-	var exact, prefix []fleet.Agent
+	var exact, prefix, there []fleet.Agent
 	for _, a := range agents {
 		if a.Host != host {
 			continue
 		}
+		there = append(there, a)
 		keys := []string{strings.ToLower(a.Name), strings.ToLower(a.Session.Name), strings.ToLower(a.Session.SessionID)}
 		for _, k := range keys {
 			if k == q {
@@ -120,7 +122,7 @@ func onHostAgent(agents []fleet.Agent, who string) (fleet.Agent, error) {
 	}
 	switch len(hits) {
 	case 0:
-		return fleet.Agent{}, fmt.Errorf("no agent matches %q", who)
+		return fleet.Agent{}, noMatchOnHost(who, host, there)
 	case 1:
 		return hits[0], nil
 	}
@@ -129,6 +131,28 @@ func onHostAgent(agents []fleet.Agent, who string) (fleet.Agent, error) {
 		names = append(names, h.Name)
 	}
 	return fleet.Agent{}, fmt.Errorf("%q fits more than one agent on %s: %s; use the full name", q, host, strings.Join(names, ", "))
+}
+
+// noMatchOnHost says no agent on host fits who, and names the agents that
+// are there, so the next try can use one of their names.
+func noMatchOnHost(who, host string, there []fleet.Agent) error {
+	where := host
+	if where == "" {
+		where = "this machine"
+	}
+	if len(there) == 0 {
+		return fmt.Errorf("no agent matches %q: Den knows no agents on %s", who, where)
+	}
+	const max = 8
+	var names []string
+	for _, a := range there {
+		names = append(names, a.Name)
+	}
+	sort.Strings(names)
+	if len(names) > max {
+		names = append(names[:max], fmt.Sprintf("and %d more", len(names)-max))
+	}
+	return fmt.Errorf("no agent matches %q; on %s: %s", who, where, strings.Join(names, ", "))
 }
 
 // applyCLISent records the outcome and answers the command.

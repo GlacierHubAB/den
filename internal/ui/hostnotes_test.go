@@ -124,3 +124,25 @@ func TestRemoteDoneFloodBoundsHistory(t *testing.T) {
 		t.Errorf("history.jsonl has %d lines, want %d", n, inbox.MaxRemoteNew)
 	}
 }
+
+// A remote agent has no window here: its notification, and the host's
+// coalesced one, offer no click.
+func TestRemoteNotificationsAreInert(t *testing.T) {
+	m, _, _ := remoteModel(t)
+	var notes []notify.Note
+	m.att.send = func(n notify.Note) bool { notes = append(notes, n); return false }
+	for i := range 3 {
+		ev := events.New(events.NeedsYou, floodSession(i))
+		ev.Request, ev.Tool, ev.Host = "permission", "Bash", "devbox"
+		runAll(m.remoteEvent(ev))
+	}
+	runAll(m.hostNotesDue(time.Now().Add(hostNoteWindow)))
+	if len(notes) != 2 {
+		t.Fatalf("notes = %+v", notes)
+	}
+	for _, n := range notes {
+		if !n.Inert {
+			t.Errorf("not inert: %+v", n)
+		}
+	}
+}

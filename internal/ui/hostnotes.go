@@ -112,6 +112,7 @@ func (h *hostNotes) post(n notify.Note, send func(notify.Note) bool, now time.Ti
 		return nil
 	}
 	h.sent = append(h.sent, now)
+	n.Inert = true // a host's agents have no window here to focus
 	return func() tea.Msg {
 		send(n)
 		return nil

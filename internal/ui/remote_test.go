@@ -670,6 +670,11 @@ func TestAttachedElsewhereHostIsLiveReadOnly(t *testing.T) {
 	if f := mm.(Model).flash; !strings.Contains(f, "answer it in the terminal there") || !strings.Contains(f, "another Den controls devbox, this one only observes it") {
 		t.Errorf("flash = %q", f)
 	}
+	// The item itself says the other Den may hold it, not that only the
+	// terminal can answer it.
+	if out := ansi.Strip(m.View().Content); !strings.Contains(out, "another Den controls devbox: answer it there or in the terminal") || strings.Contains(out, "answer it in the terminal on devbox") {
+		t.Errorf("inbox:\n%s", out)
+	}
 }
 
 // A request that carries a host never takes the local path, even with
