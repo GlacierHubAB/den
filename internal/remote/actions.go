@@ -32,6 +32,7 @@ type actions struct {
 	self     closer.Self
 	up       func(v any) error
 	log      func(string)
+	spawn    *hostSpawn // spawn and cleanup (spawnserve.go)
 
 	sem     chan struct{} // MaxActions sends and closes at once
 	diffSem chan struct{} // MaxDiffs diffs at once, apart: a slow git never holds up a send

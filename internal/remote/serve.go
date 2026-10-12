@@ -27,25 +27,30 @@ import (
 
 // ServeOptions tune Serve; the zero value is what `den remote serve` uses.
 type ServeOptions struct {
-	Version       string                        // this den's version, for hello
-	EventsPath    string                        // default events.Path()
-	Snapshot      func() ([]fleet.Agent, error) // default fleet.Snapshot, with Tail only under full
-	Watch         []string                      // default the sessions dir and the badge store
-	Skew          time.Duration                 // fakes a host clock this far off; default clockOffset, 0 outside sshtest builds
-	Debounce      time.Duration                 // a burst of file changes becomes one snapshot; default 250 ms
-	SnapshotEvery time.Duration                 // a snapshot this often even with no change; default 15 s
-	PollEvents    time.Duration                 // how often the event stream is read; default 200 ms
-	EventPace     time.Duration                 // pause after each event sent, so a backfill stays under MaxRate; default 1 ms
-	RequestWait   time.Duration                 // how long to wait for Den's hello; default 30 s
-	Orphaned      func() bool                   // the watchdog: true once the ssh session is gone; default parent pid 1
-	Socket        string                        // den-remote.sock; default bridge.RemoteSocketPath, its private fallback dir made 0700
-	Questions     *bool                         // relay AskUserQuestion; default the host's hooks.answer_questions
-	Silence       time.Duration                 // no word from Den this long ends serve, letting every held request go; default 60 s
-	Log           func(string)                  // what the relay did, metadata only; default remote-serve.log in the state dir
-	CloseOps      closer.Ops                    // how close signals; default closer.System
-	CloseSelf     closer.Self                   // what a close must leave alone; default this process and its ancestors
-	DirtyTTL      time.Duration                 // how long a checkout's dirty flag is trusted; default 20 s
-	DiffWait      time.Duration                 // how long one diff may take on the host; default 20 s
+	Version       string                             // this den's version, for hello
+	EventsPath    string                             // default events.Path()
+	Snapshot      func() ([]fleet.Agent, error)      // default fleet.Snapshot, with Tail only under full
+	Watch         []string                           // default the sessions dir and the badge store
+	Skew          time.Duration                      // fakes a host clock this far off; default clockOffset, 0 outside sshtest builds
+	Debounce      time.Duration                      // a burst of file changes becomes one snapshot; default 250 ms
+	SnapshotEvery time.Duration                      // a snapshot this often even with no change; default 15 s
+	PollEvents    time.Duration                      // how often the event stream is read; default 200 ms
+	EventPace     time.Duration                      // pause after each event sent, so a backfill stays under MaxRate; default 1 ms
+	RequestWait   time.Duration                      // how long to wait for Den's hello; default 30 s
+	Orphaned      func() bool                        // the watchdog: true once the ssh session is gone; default parent pid 1
+	Socket        string                             // den-remote.sock; default bridge.RemoteSocketPath, its private fallback dir made 0700
+	Questions     *bool                              // relay AskUserQuestion; default the host's hooks.answer_questions
+	Silence       time.Duration                      // no word from Den this long ends serve, letting every held request go; default 60 s
+	Log           func(string)                       // what the relay did, metadata only; default remote-serve.log in the state dir
+	CloseOps      closer.Ops                         // how close signals; default closer.System
+	CloseSelf     closer.Self                        // what a close must leave alone; default this process and its ancestors
+	DirtyTTL      time.Duration                      // how long a checkout's dirty flag is trusted; default 20 s
+	DiffWait      time.Duration                      // how long one diff may take on the host; default 20 s
+	Owner         *OwnerSpawn                        // the host's own say over spawn; default its config.toml [remote]
+	TmuxServer    string                             // Den's tmux server (tmux -L); default TmuxServer()
+	Executable    string                             // this den, which tmux runs as `den remote agent`; default os.Executable
+	SpawnWait     time.Duration                      // how long a spawn waits for its session to register; default 45 s
+	Sessions      func() ([]discover.Session, error) // the host's session files; default discover.Scan
 
 	snapshotDefault bool
 }
@@ -111,6 +116,20 @@ func (o *ServeOptions) defaults() {
 	}
 	if o.DirtyTTL == 0 {
 		o.DirtyTTL = 20 * time.Second
+	}
+	if o.TmuxServer == "" {
+		o.TmuxServer = TmuxServer()
+	}
+	if o.Executable == "" {
+		if exe, err := os.Executable(); err == nil {
+			o.Executable = exe
+		}
+	}
+	if o.SpawnWait == 0 {
+		o.SpawnWait = defaultSpawnWait()
+	}
+	if o.Sessions == nil {
+		o.Sessions = discover.Scan
 	}
 	if o.Log == nil {
 		o.Log = serveLog(filepath.Join(filepath.Dir(o.EventsPath), "remote-serve.log"))
@@ -248,6 +267,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 		o.Snapshot = withTail(o.Snapshot)
 	}
 	acts := newActions(policy.rank() >= Approve.rank(), full, o, func(v any) error { return writeMsg(out, v) })
+	acts.spawn = newHostSpawn(req, full, o)
 	defer func() {
 		cancel() // an action in flight stops waiting
 		acts.wait()
@@ -275,6 +295,14 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	if hello.Cursor.IsZero() {
 		hello.Cursor = req.Cursor
 	}
+	if acts.spawn.active() {
+		c := acts.spawn.capability()
+		hello.Spawn = &c
+		if acts.allowed {
+			acts.spawn.sweep()
+			hello.Spawns = acts.spawn.report()
+		}
+	}
 	if err := writeMsg(out, hello); err != nil {
 		return err
 	}
@@ -294,6 +322,10 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 				m.Dirty = dirty.get(a.Session.CWD)
 			}
 			s.Agents = append(s.Agents, m)
+		}
+		if acts.allowed && acts.spawn.active() {
+			acts.spawn.sweep()
+			s.Spawned = acts.spawn.list()
 		}
 		err := writeMsg(out, s)
 		if errors.Is(err, ErrLineTooLong) && full {
@@ -404,9 +436,11 @@ func fromDenMsg(ctx context.Context, line []byte, rl *relay, acts *actions, log 
 	case err != nil:
 		return fmt.Errorf("a message from Den that is not JSON")
 	case len(unknown) > 0 || allowedIn[typ] == nil:
-		return fmt.Errorf("proto 1 takes only decision, ping, send, close and diff after hello, not %s", sanitize.Label(typ, 40))
+		return fmt.Errorf("proto 1 takes only decision, ping, send, close, diff, spawn and cleanup after hello, not %s", sanitize.Label(typ, 40))
 	case typ == TypeSend || typ == TypeClose || typ == TypeDiff:
 		return acts.handle(ctx, typ, line)
+	case typ == TypeSpawn || typ == TypeCleanup:
+		return acts.spawnCmd(ctx, typ, line)
 	case typ == TypeDecision:
 		var d Decision
 		if json.Unmarshal(line, &d) != nil {

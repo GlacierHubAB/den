@@ -542,6 +542,10 @@ var inherited = []string{
 	"DEN_ORCHESTRATOR=", "DEN_PEER=",
 }
 
+// Environ is environ without what a parent Claude Code session or Den's
+// own markers set, plus extra: the environment an agent Den starts gets.
+func Environ(environ, extra []string) []string { return childEnv(environ, extra) }
+
 // childEnv is the environment for the new terminal: the current one
 // without what a parent session set, plus extra.
 func childEnv(environ, extra []string) []string {

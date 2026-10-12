@@ -22,7 +22,9 @@ import (
 const remoteUsage = `usage: den remote add <target> [--label L] [--policy observe|approve|full] [--den PATH] [--skip-checks]
        den remote list [-json] | status <label> | install <label>
        den remote remove <label> | disable <label> | enable <label>
-       den remote serve --proto 1      run by Den over ssh on the host; not for humans`
+       den remote attach <tmux-session>  attach to an agent Den started on this host
+       den remote serve --proto 1      run by Den over ssh on the host; not for humans
+       den remote agent <session-id>   run by tmux for an agent Den starts on the host; not for humans`
 
 // remoteCmd is `den remote`: the hosts in remotes.toml, the read-only
 // checks, installing den on a host, and serve, the host side of a session.
@@ -52,6 +54,16 @@ func remoteCmd(args []string) {
 		remoteInstall(args[1:])
 	case "serve":
 		remoteServe(args[1:])
+	case "agent":
+		if len(args) != 2 {
+			fail("usage: den remote agent <session-id>")
+		}
+		remoteAgent(args[1])
+	case "attach":
+		if len(args) != 2 {
+			fail("usage: den remote attach <tmux-session>")
+		}
+		remoteAttach(args[1])
 	case "-h", "--help", "help":
 		fmt.Println(remoteUsage)
 	default:
@@ -347,5 +359,51 @@ func remoteServe(args []string) {
 	if err := remote.Serve(ctx, os.Stdin, os.Stdout, remote.ServeOptions{Version: version}); err != nil {
 		fmt.Fprintf(os.Stderr, "den remote serve: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+// remoteAgent is `den remote agent <session-id>`, the process tmux starts
+// for an agent Den asked this host for: it claims the staged spawn and
+// becomes Claude Code. Its window would close with a failure, so it says
+// what failed and waits a minute (or for Enter) first.
+func remoteAgent(sid string) {
+	argv, dir, env, err := remote.AgentExec(sid, os.Environ())
+	if err == nil {
+		if err = os.Chdir(dir); err == nil {
+			err = syscall.Exec(argv[0], argv, env)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "den: could not start the agent: %v\n(this window closes in a minute, or press Enter)\n", err)
+	waitEnter(time.Minute)
+	os.Exit(1)
+}
+
+// remoteAttach is `den remote attach <tmux-session>`, which Den runs over
+// ssh -t in a terminal window to show an agent it started on this host.
+func remoteAttach(name string) {
+	argv, env, err := remote.AttachExec(name)
+	if err == nil {
+		err = syscall.Exec(argv[0], argv, env)
+	}
+	fmt.Fprintf(os.Stderr, "den: %v\n(press Enter to close)\n", err)
+	waitEnter(30 * time.Second)
+	os.Exit(1)
+}
+
+// waitEnter returns on a line from stdin or after d.
+func waitEnter(d time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		b := make([]byte, 1)
+		for {
+			if n, err := os.Stdin.Read(b); err != nil || n == 1 && b[0] == '\n' {
+				break
+			}
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
 	}
 }
