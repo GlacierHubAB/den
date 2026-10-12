@@ -664,8 +664,10 @@ skill's folder once it is empty, and drops the record.
 
 The Overview tab, first in the row, shows one project at a time. Projects are
 the repositories agents work in, found through the files their transcripts say
-they edited plus session folders that are checkouts; the strip under the tabs
-lists them with a count of agents on each. `← →` or `/project <name>` switch,
+they edited plus session folders that are checkouts. An agent serving a live
+mission is also listed on that mission's project, even from a checkout of its
+own such as a scratch clone. The strip under the tabs lists the projects with
+a count of agents on each. `← →` or `/project <name>` switch,
 the pick is remembered, and the Review tab follows it. A folder nobody works in
 yet is listed with `/project add <dir>` (its repository root when it is inside
 one) and stays listed, empty, until `/project drop`.
@@ -889,8 +891,10 @@ Colours follow the current Omarchy theme. Only the theme's real hues are used
 for agents, topped up from a built-in set of twelve soft colours to at least ten.
 Den gives every live session its own colour, oldest session first, and records
 the choice in `~/.local/state/den/colors.json`; the badge (1.2.0+) reads that
-file so the critter in each terminal matches the one in Den. The same colour
-marks the agent in the Fleet, inbox, dispatch cards, the map and Review.
+file so the critter in each terminal matches the one in Den. If something else
+replaces or removes that file, Den writes its record back within seconds. The
+same colour marks the agent in the Fleet, inbox, dispatch cards, the map and
+Review.
 
 ## Remote agents
 
