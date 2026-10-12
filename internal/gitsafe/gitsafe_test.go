@@ -69,7 +69,7 @@ func TestNothingRuns(t *testing.T) {
 }
 
 // Change makes a merge commit and deletes a branch without running a hook
-// the repository has; plain git runs them.
+// or the signing program the repository has; plain git runs them.
 func TestChangeRunsNoHook(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
@@ -100,18 +100,22 @@ func TestChangeRunsNoHook(t *testing.T) {
 	git(plain("commit", "-qm", "side"))
 	git(plain("checkout", "-q", "main"))
 	gitsafetest.Hooks(t, filepath.Join(repo, ".git", "hooks"), marks)
+	gitsafetest.Signer(t, repo, marks)
 
 	git(Change(ctx, repo, "merge", "--no-edit", "--no-ff", "-m", "Merge side", "side"))
 	git(Change(ctx, repo, "branch", "-d", "side"))
 	if got := marked(t, marks); len(got) > 0 {
-		t.Errorf("a hook ran: %v", got)
+		t.Errorf("the repository made git run %v", got)
 	}
 	if out, _ := plain("rev-list", "--parents", "-n", "1", "HEAD").Output(); len(strings.Fields(string(out))) != 3 {
 		t.Errorf("no merge commit: %s", out)
 	}
-	// The hooks are live.
-	git(plain("commit", "-q", "--allow-empty", "-m", "plain"))
-	if got := strings.Join(marked(t, marks), " "); !strings.Contains(got, "hook-commit-msg") {
-		t.Errorf("the hooks never ran under plain git (ran: %s)", got)
+	// The hooks and the signer are live; the signer makes plain git fail.
+	plain("commit", "-q", "--allow-empty", "-m", "plain").Run()
+	got := strings.Join(marked(t, marks), " ")
+	for _, want := range []string{"hook-commit-msg", "signer"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%s never ran under plain git (ran: %s)", want, got)
+		}
 	}
 }

@@ -838,7 +838,8 @@ it (else the usual base). Review offers two things for it, next to `/send`
   so the checkout is never left half-merged. If either branch moved since the
   question, it is dropped and `/merge` asks again. `Ctrl+N` drops it. Uncommitted
   changes in the worktree are not carried by a merge, and the question says so.
-  The repository's hooks do not run during the merge. If the branches need a
+  The repository's hooks do not run during the merge, and a merge commit Den
+  makes is not signed, even if you sign commits by default. If the branches need a
   merge commit and the repository's git config names its own merge driver, Den
   does not run it and asks you to merge yourself.
 - **`/cleanup`**: removing the worktree is a second, separate question, asked

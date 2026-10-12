@@ -52,6 +52,7 @@ func Hostile(t testing.TB) (repo, marks string) {
 	run("config", "diff.evil.command", mark("extdiff"))
 	run("config", "diff.external", mark("external"))
 	run("config", "merge.evil.driver", "touch "+filepath.Join(marks, "merge-driver"))
+	Signer(t, repo, marks)
 	os.WriteFile(filepath.Join(repo, ".git", "info", "attributes"), []byte("*.txt filter=evil diff=evil\n*.md filter=a=b\nh.txt merge=evil\n"), 0o644)
 	Hooks(t, filepath.Join(repo, ".git", "hooks"), marks)
 	os.WriteFile(filepath.Join(repo, "f.txt"), []byte("a\nb\n"), 0o644)
@@ -74,6 +75,25 @@ func Hooks(t testing.TB, dir, marks string) {
 		script := "#!/bin/sh\ntouch '" + filepath.Join(marks, "hook-"+h) + "'\n"
 		if err := os.WriteFile(filepath.Join(dir, h), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+// Signer makes the repository at repo sign every commit with a program
+// that writes the marker "signer" into marks and then fails, as it makes
+// no signature.
+func Signer(t testing.TB, repo, marks string) {
+	t.Helper()
+	prog := filepath.Join(t.TempDir(), "sign")
+	script := "#!/bin/sh\ntouch '" + filepath.Join(marks, "signer") + "'\nexit 1\n"
+	if err := os.WriteFile(prog, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range [][2]string{{"commit.gpgSign", "true"}, {"gpg.program", prog}} {
+		cmd := exec.Command("git", "-C", repo, "config", kv[0], kv[1])
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git config %s: %v %s", kv[0], err, out)
 		}
 	}
 }
