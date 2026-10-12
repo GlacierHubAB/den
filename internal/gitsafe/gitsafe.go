@@ -17,6 +17,7 @@ import (
 // make it execute anything:
 //
 //   - core.fsmonitor is off (a hook git would run before reading the tree);
+//   - submodules are ignored, so git never runs inside one with its config;
 //   - every filter driver the config names has its clean, smudge and process
 //     commands emptied and is not required (git diff and status run a clean
 //     filter on files whose stat changed);
@@ -30,7 +31,10 @@ import (
 func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	// The overrides go in the environment, not as -c, whose key=value a
 	// driver name containing '=' would split in the wrong place.
-	over := [][2]string{{"core.fsmonitor", "false"}}
+	// Submodules are not looked into: git would run there with the
+	// submodule's own config, whose filters are not emptied here.
+	over := [][2]string{{"core.fsmonitor", "false"}, {"diff.ignoreSubmodules", "all"},
+		{"submodule.recurse", "false"}, {"status.submoduleSummary", "false"}}
 	for _, d := range filterDrivers(ctx, dir) {
 		for _, v := range []string{"clean", "smudge", "process"} {
 			over = append(over, [2]string{"filter." + d + "." + v, ""})
