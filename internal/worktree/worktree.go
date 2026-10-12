@@ -19,19 +19,20 @@ import (
 	"syscall"
 
 	"github.com/GlacierHubAB/den/internal/gitsafe"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
-// git runs git in dir. The repository's own config must not run programs
-// while Den only looks, so reads use no filesystem monitor and take no
-// optional locks.
+// git runs git in dir to look. The repository's own config must not run
+// programs while Den only looks (gitsafe.Command).
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	return output(gitsafe.Command(ctx, dir, args...), args)
 }
 
-func run(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
-	return output(cmd, args)
+// run runs git in dir to change it, after the human said yes. The question
+// said what would happen, so no hook or merge driver of the repository
+// runs then either (gitsafe.Change).
+func run(ctx context.Context, dir string, args ...string) (string, error) {
+	return output(gitsafe.Change(ctx, dir, args...), args)
 }
 
 func output(cmd *exec.Cmd, args []string) (string, error) {
@@ -229,6 +230,9 @@ func Plan(ctx context.Context, worktree string) (MergePlan, error) {
 		if code := exitCode(err); code != 1 {
 			return p, err
 		}
+		if ds := gitsafe.MergeDrivers(ctx, p.Main); len(ds) > 0 {
+			return p, Refusal("this repository's git config names its own merge driver (" + driverList(ds) + "); Den does not run it, so it cannot check or make this merge: merge it yourself")
+		}
 		if p.Conflicts, err = dryRun(ctx, p.Main, p.TargetHead, p.BranchHead); err != nil {
 			return p, err
 		}
@@ -275,6 +279,19 @@ func (p MergePlan) Describe() []string {
 	return out
 }
 
+// driverList is merge driver names for a refusal, cleaned and capped.
+func driverList(ds []string) string {
+	var out []string
+	for i, d := range ds {
+		if i == 3 {
+			out = append(out, fmt.Sprintf("and %d more", len(ds)-i))
+			break
+		}
+		out = append(out, sanitize.Label(d, 40))
+	}
+	return strings.Join(out, ", ")
+}
+
 func plural(n int, noun string) string {
 	if n == 1 {
 		return "1 " + noun
@@ -313,9 +330,9 @@ func Merge(ctx context.Context, p MergePlan) error {
 	if !p.FastForward {
 		args = []string{"merge", "--no-edit", "--no-ff", "-m", "Merge branch '" + p.Branch + "'", p.BranchHead}
 	}
-	if _, err := run(ctx, p.Main, nil, args...); err != nil {
+	if _, err := run(ctx, p.Main, args...); err != nil {
 		abort := ""
-		if _, aerr := run(ctx, p.Main, nil, "merge", "--abort"); aerr == nil {
+		if _, aerr := run(ctx, p.Main, "merge", "--abort"); aerr == nil {
 			abort = "; the merge was aborted and nothing changed"
 		}
 		return fmt.Errorf("%w%s", err, abort)
@@ -451,13 +468,18 @@ type CleanupPlan struct {
 	Locked    bool   // git holds a lock on the worktree
 	LockPID   int    // the process Claude Code recorded in the lock, 0 if none
 	Target    string // the branch Merged is measured against
+	// Ignored lists the ignored files and folders in the worktree, which
+	// git deletes with it: it removes a worktree that has no changes, and
+	// ignored files are not changes.
+	Ignored []string
 }
 
 // CleanupPlanFor looks at the worktree. It refuses while an agent is still
 // in it (live reports whether a session's folder is inside the worktree),
 // while it has changes, or while its lock belongs to a process that is
 // still running. It never refuses for unmerged commits: removing the
-// worktree keeps the branch then, and says so.
+// worktree keeps the branch then, and says so. It lists the ignored files
+// git would delete with the worktree.
 func CleanupPlanFor(ctx context.Context, worktree string, live func(dir string) bool) (CleanupPlan, error) {
 	p := CleanupPlan{Worktree: worktree}
 	if !Linked(worktree) {
@@ -474,6 +496,9 @@ func CleanupPlanFor(ctx context.Context, worktree string, live func(dir string) 
 		return p, Refusal("could not read the state of the worktree: " + err.Error())
 	} else if ls := lines(st); len(ls) > 0 {
 		return p, Refusal(fmt.Sprintf("the worktree has %s (first: %s); Den never removes work that is not committed", plural(len(ls), "uncommitted change"), strings.TrimSpace(ls[0])))
+	}
+	if out, err := git(ctx, worktree, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"); err == nil {
+		p.Ignored = splitNUL(out)
 	}
 	p.Branch = Branch(ctx, worktree)
 	p.Target = Branch(ctx, p.Main)
@@ -507,6 +532,21 @@ func (p CleanupPlan) Describe() []string {
 	default:
 		out = append(out, "branch "+p.Branch+" is not merged into "+p.Target+" and stays, with its commits")
 	}
+	if n := len(p.Ignored); n > 0 {
+		var names []string
+		for i, f := range p.Ignored {
+			if i == ignoredListLimit {
+				names = append(names, fmt.Sprintf("… and %d more", n-i))
+				break
+			}
+			names = append(names, sanitize.Label(f, 80))
+		}
+		what := "1 ignored file or folder"
+		if n > 1 {
+			what = fmt.Sprintf("%d ignored files or folders", n)
+		}
+		out = append(out, what+" will be deleted with it, as git does not keep them: "+strings.Join(names, ", "))
+	}
 	if p.Locked {
 		out = append(out, fmt.Sprintf("git still holds the lock Claude Code took (process %d has ended); it will be released first", p.LockPID))
 	}
@@ -515,8 +555,9 @@ func (p CleanupPlan) Describe() []string {
 }
 
 // Cleanup removes the worktree, then deletes its branch when the branch is
-// merged. It plans again first, never forces a removal, and releases a lock
-// only when the process named in it has ended.
+// merged. It plans again first, and asks again when ignored files the
+// question did not list have appeared. It never forces a removal, and
+// releases a lock only when the process named in it has ended.
 func Cleanup(ctx context.Context, p CleanupPlan, live func(dir string) bool) error {
 	now, err := CleanupPlanFor(ctx, p.Worktree, live)
 	if err != nil {
@@ -525,21 +566,43 @@ func Cleanup(ctx context.Context, p CleanupPlan, live func(dir string) bool) err
 	if now.BranchSHA != p.BranchSHA {
 		return Moved("the worktree's branch has new commits since you were asked; ask again")
 	}
+	asked := map[string]bool{}
+	for _, f := range p.Ignored {
+		asked[f] = true
+	}
+	for _, f := range now.Ignored {
+		if !asked[f] {
+			return Moved("the worktree has ignored files the question did not list (" + sanitize.Label(f, 80) + "); ask again")
+		}
+	}
 	if now.Locked {
-		if _, err := run(ctx, now.Main, nil, "worktree", "unlock", now.Worktree); err != nil {
+		if _, err := run(ctx, now.Main, "worktree", "unlock", now.Worktree); err != nil {
 			return err
 		}
 	}
-	if _, err := run(ctx, now.Main, nil, "worktree", "remove", now.Worktree); err != nil {
+	if _, err := run(ctx, now.Main, "worktree", "remove", now.Worktree); err != nil {
 		return err
 	}
 	if now.Branch != "" && now.Merged {
 		// -d, not -D: git itself checks the branch is merged.
-		if _, err := run(ctx, now.Main, nil, "branch", "-d", now.Branch); err != nil {
+		if _, err := run(ctx, now.Main, "branch", "-d", now.Branch); err != nil {
 			return fmt.Errorf("the worktree is removed, but the branch stays: %w", err)
 		}
 	}
 	return nil
+}
+
+// ignoredListLimit is how many ignored files a cleanup question names.
+const ignoredListLimit = 5
+
+func splitNUL(s string) []string {
+	var out []string
+	for _, e := range strings.Split(s, "\x00") {
+		if e != "" {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // lockOf reads git's lock on a linked worktree: the reason Claude Code
