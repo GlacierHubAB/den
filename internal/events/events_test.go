@@ -59,6 +59,10 @@ func TestFromHookCarriesMetadataOnly(t *testing.T) {
 		hook("PostToolUse", map[string]any{"tool_name": "Bash"}),
 		hook("PreToolUse", map[string]any{"tool_name": "Bash"}),
 		hook("Notification", map[string]any{"notification_type": "permission_prompt"}),
+		// Claude Code 2.1.289 asks a question with PreToolUse, then about
+		// 60 ms later its PermissionRequest: the question once, not also as
+		// a permission for AskUserQuestion.
+		hook("PermissionRequest", map[string]any{"tool_name": "AskUserQuestion", "tool_input": map[string]any{"questions": secret}}),
 		{HookEventName: "Stop"}, // no session
 	} {
 		if _, ok := FromHook(in); ok {
