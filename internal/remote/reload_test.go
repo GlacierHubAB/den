@@ -104,7 +104,7 @@ func TestRaisedPolicyWaitsForConnect(t *testing.T) {
 		t.Error("a diff was allowed before the raise was applied")
 	}
 
-	g.m.Connect("b")
+	g.m.Connect("b", pending)
 	g.wait("full after /remote connect", 15*time.Second, func() bool {
 		s := g.status()
 		return s.State == remote.Live && s.Applied == remote.Full && s.Pending == ""
@@ -163,7 +163,7 @@ func TestNewTargetWaitsForConnect(t *testing.T) {
 		t.Errorf("status = %+v", s)
 	}
 
-	g.m.Connect("b")
+	g.m.Connect("b", pending)
 	g.wait("the new target dialed after /remote connect", 5*time.Second, func() bool { return dials("elsewhere") > 0 })
 	if s := g.status(); s.Pending != "" || s.Target != "elsewhere" {
 		t.Errorf("after Connect: %+v", s)

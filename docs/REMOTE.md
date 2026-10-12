@@ -95,8 +95,10 @@ without it, `default_policy` in `remotes.toml` applies.
 In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
 host now, under `remotes.toml` as it is then, a raise or new target included
-(see [remotes.toml](#remotestoml)). `disable`, `enable` and `remove` take
-effect when Den restarts.
+once you have seen it, and `/remote retry <label>` retries it under the
+settings in use (see [remotes.toml](#remotestoml)). `disable` and `remove` end the host's link
+at once; `enable` and `add` take effect when Den restarts, or for a host Den
+still shows, at `/remote connect`.
 
 Addressing a remote agent: `@Name@devbox text` messages it, `/close Name@devbox`
 closes it, and from a script `den send name@devbox "text"`. A bare `@Name` or
@@ -132,11 +134,21 @@ for one: `observe` to `approve`, `approve` to `full`, `labels = true`, and
 another `target` or `den_path`, which could point the host at any machine. A
 raise applies when you run `/remote connect devbox` in Den, or when Den
 starts; until then `/remote` shows what the file asks for ("remotes.toml asks
-for full; /remote connect devbox to apply"). A new `target` or `den_path` also
+for full; /remote connect devbox to apply"). The first `/remote connect devbox`
+shows the raise and applies nothing; the same command again applies exactly
+that raise, and a raise the file asks for in between is shown first in turn.
+A new target or den_path is shown whole; one longer than 256 characters, or
+with characters Den cannot show, is never applied: edit `remotes.toml`. A new `target` or `den_path` also
 ends the link to the old one at once, and Den makes no connection for the host
 until you run `/remote connect` ("remotes.toml points devbox at user@other;
-/remote connect devbox to apply"). Adding, removing, disabling or enabling a host still takes a
-restart of Den; a file that does not parse keeps the settings in use.
+/remote connect devbox to apply"). Disabling or removing a host trusts it
+least of all, so it applies at once: the link ends, nothing connects to or
+acts on the host, and it stays in `/remote` as disabled until Den restarts.
+Enabling it again is a raise, applied by `/remote connect`. Adding a host takes
+a restart of Den; a file that does not parse keeps the settings in use. A
+change counts once Den reads it twice, a tenth of a second apart, so a file
+caught half rewritten (by a shell's `>` or an editor that writes in place)
+changes nothing.
 `policy` and `default_policy` take `observe` or `approve`.
 They also take `full`.
 
@@ -214,7 +226,7 @@ last known. They are never counted as working or needing you.
 | needs you | unknown or changed host key, or ssh cannot log in without a prompt | stops; run `ssh <target>`, then `/remote connect devbox` |
 | version mismatch | `den` is missing on the host, or too old for `remote serve` | stops; `den remote install devbox` |
 | live, controlled elsewhere | another Den holds the host's requests | shows the host's agents; answers and acts on nothing there; asks again every minute |
-| disabled | the host flooded Den with events (see Security model) | stops until `/remote connect devbox`, or until Den restarts |
+| disabled | the host flooded Den with events (see Security model), or `remotes.toml` disables or removes it | stops until `/remote connect devbox`, or until Den restarts; a host disabled in the file connects only once it is enabled there again |
 
 A link that goes silent is noticed in 45 to 60 seconds; a killed ssh at once.
 On the host, `den remote serve` exits once it has heard nothing from Den for
@@ -465,7 +477,12 @@ on this machine.
   60 new ones a minute. Its desktop notifications are one at once, then at
   most one every 30 seconds ("devbox: 5 agents need you"), and no more than 6 a
   minute for all hosts; its `[on]` commands run at most 30 times a minute.
-  `/remote` shows what was dropped.
+  A host's held requests have a budget of their own: 32 at once, then one a
+  second, and at most 60 new inbox items a minute and 64 kept; the rest go to
+  their terminal there. A request withdrawn within a second of being offered
+  counts as a drop, so a host churning requests is disabled like a flooding
+  one, and a request a host let go is pruned from the inbox like an answered
+  one. `/remote` shows what was dropped.
 - **Metadata by default, checked twice.** The host filters before sending; Den
   filters again on arrival.
 - **Everything from a host is sanitised.** Escape sequences, control
@@ -481,7 +498,9 @@ on this machine.
   letters, digits and `. _ : -`, at most 128 characters, and at most 32 per
   agent; tokens under any other are dropped and flagged. An agent's age
   (since it started, changed status or was last active) below zero or over a
-  year becomes unknown and is flagged, and shows as `?`. An event dated in the
+  year becomes unknown and is flagged, and shows as `?`. A session name may
+  hold only lower-case letters, digits and `-`, at most 64; any other is
+  dropped and flagged (the agent's critter name is always made here). An event dated in the
   future or over a year ago is dropped and flagged, and counts towards
   flooding. A clock more than a year off is flagged and its times taken as
   they are.

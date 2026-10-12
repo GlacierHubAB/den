@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -107,6 +109,8 @@ type Options struct {
 	EventBurst  int           // events Den takes from one host at once; default EventBurst
 	FloodDrops  int           // events dropped within FloodWindow that disable a host until Reconnect; default FloodDrops
 	FloodWindow time.Duration // default FloodWindow
+	HeldRate    int           // held requests a second Den takes from one host after HeldBurst; default HeldRate
+	HeldBurst   int           // held requests Den takes from one host at once; default HeldBurst
 	Controller  string        // this machine's controller id; default LoadController(StateDir)
 	PingEvery   time.Duration // how often a live session pings serve; default PingEvery
 	Retake      time.Duration // a host attached elsewhere is asked again this often; default 1 min
@@ -125,9 +129,10 @@ type Options struct {
 	// human's /remote connect, or when Den starts: anything that can write
 	// the file could ask for one. Until then the host's status says it is
 	// Pending, and a host whose target or den_path changed has its link
-	// ended and makes no other. Adding, removing or
-	// disabling a host still takes a restart. Nil keeps the Config
-	// NewManager was given.
+	// ended and makes no other. Disabling or removing a host ends its
+	// link at once; adding one still takes a restart. A change counts
+	// once two reads agree (see read). Nil keeps the Config NewManager
+	// was given.
 	Reload func() (Config, error)
 	Watch  time.Duration // how often Reload is polled; 0 polls never
 }
@@ -165,6 +170,12 @@ func (o *Options) defaults() {
 	}
 	if o.FloodDrops == 0 {
 		o.FloodDrops = FloodDrops
+	}
+	if o.HeldRate == 0 {
+		o.HeldRate = HeldRate
+	}
+	if o.HeldBurst == 0 {
+		o.HeldBurst = HeldBurst
 	}
 	if o.FloodWindow == 0 {
 		o.FloodWindow = FloodWindow
@@ -261,6 +272,11 @@ type Manager struct {
 	mu    sync.Mutex
 	state map[string]*hostState
 
+	// rmu serialises reload's reads of remotes.toml; lastRead is the last
+	// one it read, starting from the Config NewManager was given.
+	rmu      sync.Mutex
+	lastRead Config
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -268,8 +284,9 @@ type Manager struct {
 }
 
 type hostState struct {
-	host      Host // as remotes.toml says now (Options.Reload)
-	held      bool // remotes.toml names another target or den_path: no connection until Connect
+	host      Host   // as remotes.toml says now (Options.Reload)
+	held      bool   // remotes.toml names another target or den_path: no connection until Connect
+	off       string // why remotes.toml no longer has the host enabled ("disabled in remotes.toml"): no connection, no action
 	restart   chan struct{}
 	status    HostStatus
 	known     Known
@@ -285,7 +302,7 @@ type hostState struct {
 func NewManager(cfg Config, o Options) *Manager {
 	o.defaults()
 	m := &Manager{o: o, hosts: cfg.Enabled(), updates: make(chan Update), state: map[string]*hostState{},
-		backlog: map[string]int{}, qsig: make(chan struct{}, 1), qdone: make(chan struct{})}
+		backlog: map[string]int{}, qsig: make(chan struct{}, 1), qdone: make(chan struct{}), lastRead: cfg}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	go m.dispatch()
 	for _, h := range m.hosts {
@@ -330,7 +347,7 @@ func (m *Manager) Start() {
 				case <-m.ctx.Done():
 					return
 				case <-t.C:
-					m.reload("")
+					m.reload("", "")
 				}
 			}
 		}()
@@ -339,16 +356,14 @@ func (m *Manager) Start() {
 
 // reload applies remotes.toml as it is now to the hosts Den runs (see
 // Options.Reload): what lowers trust in a host at once, a raise only for
-// the host raise names. A host whose settings changed has its agents
+// the host raise names, and only when it is the raise seen (the host's
+// Pending the human was shown, "" for none). A host whose settings changed has its agents
 // re-marked under them at once, which drops content the new policy does
 // not allow, and its session restarts to ask the host for the new
 // policy. A file that does not read keeps the settings in use.
-func (m *Manager) reload(raise string) {
-	if m.o.Reload == nil {
-		return
-	}
-	cfg, err := m.o.Reload()
-	if err != nil {
+func (m *Manager) reload(raise, seen string) {
+	cfg, ok := m.read()
+	if !ok {
 		return
 	}
 	now := map[string]Host{}
@@ -360,32 +375,79 @@ func (m *Manager) reload(raise string) {
 	for _, h := range m.hosts {
 		st, want := m.state[h.Label], now[h.Label]
 		if want.Label == "" {
-			continue // removed or disabled: that takes a restart
+			// Disabled or removed: the strongest lowering there is, so at
+			// once. The session ends, nothing connects or acts on it, and
+			// it stays in view until Den restarts.
+			off := "removed from remotes.toml"
+			if _, ok := cfg.Find(h.Label); ok {
+				off = "disabled in remotes.toml"
+			}
+			if st.off != off {
+				st.off = off
+				st.status.Pending = ""
+				m.kick(st)
+				ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(st.host)})
+			}
+			continue
+		}
+		if st.off != "" {
+			// Enabled again: a raise, which waits for /remote connect.
+			pending := "remotes.toml enables " + h.Label + " again; /remote connect " + h.Label + " to apply"
+			if h.Label != raise || seen != pending {
+				if pending != st.status.Pending {
+					st.status.Pending = pending
+					ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(st.host)})
+				}
+				continue
+			}
+			st.off = ""
 		}
 		old, asked := st.host, want
 		pending, held := "", false
-		if h.Label != raise {
-			// Another target or den_path could point the host at any
-			// machine: a raise too. The old link ends at once, and no
-			// new one is made until the human says so.
-			want.Policy, want.Labels = Min(old.Policy, asked.Policy), old.Labels && asked.Labels
-			want.Target, want.DenPath = old.Target, old.DenPath
-			var asks []string
-			if asked.Policy.rank() > want.Policy.rank() {
-				asks = append(asks, "asks for "+string(asked.Policy))
+		// Another target or den_path could point the host at any machine:
+		// a raise too. The old link ends at once, and no new one is made
+		// until the human says so.
+		want.Policy, want.Labels = Min(old.Policy, asked.Policy), old.Labels && asked.Labels
+		want.Target, want.DenPath = old.Target, old.DenPath
+		var asks []string
+		if asked.Policy.rank() > want.Policy.rank() {
+			asks = append(asks, "asks for "+string(asked.Policy))
+		}
+		if asked.Labels && !want.Labels {
+			asks = append(asks, "turns labels on")
+		}
+		// A new target or den_path is shown whole, so the raise the
+		// human applies is the one they read; one that cannot be shown
+		// whole never applies.
+		whole := true
+		shown := func(what, v string) string {
+			switch {
+			case len(v) > maxRaiseShown:
+				whole = false
+				return fmt.Sprintf("a %s longer than %d characters, which Den does not apply; edit remotes.toml", what, maxRaiseShown)
+			case sanitize.Line(v) != v || strings.ContainsFunc(v, func(r rune) bool { return unicode.Is(unicode.Cf, r) }):
+				whole = false
+				return "a " + what + " with characters Den cannot show, which it does not apply; edit remotes.toml"
 			}
-			if asked.Labels && !want.Labels {
-				asks = append(asks, "turns labels on")
+			return v
+		}
+		if asked.Target != old.Target {
+			asks, held = append(asks, "points "+h.Label+" at "+shown("target", asked.Target)), true
+		}
+		if asked.DenPath != old.DenPath {
+			asks, held = append(asks, "sets "+h.Label+"'s den_path to "+shown("den_path", asked.DenPath)), true
+		}
+		if len(asks) > 0 {
+			pending = "remotes.toml " + strings.Join(asks, " and ")
+			if whole {
+				pending += "; /remote connect " + h.Label + " to apply"
 			}
-			if asked.Target != old.Target {
-				asks, held = append(asks, "points "+h.Label+" at "+sanitize.Label(asked.Target, 80)), true
-			}
-			if asked.DenPath != old.DenPath {
-				asks, held = append(asks, "sets "+h.Label+"'s den_path to "+sanitize.Label(asked.DenPath, 80)), true
-			}
-			if len(asks) > 0 {
-				pending = "remotes.toml " + strings.Join(asks, " and ") + "; /remote connect " + h.Label + " to apply"
-			}
+		}
+		if h.Label == raise && pending == seen && whole {
+			// The human's /remote connect, having been shown exactly this
+			// raise (or none): it applies. One the file asks for since
+			// they looked stays pending.
+			want, pending, held = asked, "", false
 		}
 		changed := want.Policy != old.Policy || want.Labels != old.Labels || want.Target != old.Target || want.DenPath != old.DenPath || held != st.held
 		if !changed && pending == st.status.Pending {
@@ -396,14 +458,7 @@ func (m *Manager) reload(raise string) {
 			st.held = held
 			st.host = want
 			st.status.Policy, st.status.Target = want.Policy, want.Target
-			select {
-			case st.restart <- struct{}{}:
-			default:
-			}
-			select {
-			case st.reconnect <- struct{}{}:
-			default:
-			}
+			m.kick(st)
 		}
 		ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(want)})
 	}
@@ -411,6 +466,30 @@ func (m *Manager) reload(raise string) {
 	for _, u := range ups {
 		m.send(u)
 	}
+}
+
+// maxRaiseShown is the longest target or den_path a raise shows, whole.
+const maxRaiseShown = 256
+
+// kick ends the host's session, if it has one, and wakes its loop to
+// apply what changed. Called with m.mu held.
+func (m *Manager) kick(st *hostState) {
+	select {
+	case st.restart <- struct{}{}:
+	default:
+	}
+	select {
+	case st.reconnect <- struct{}{}:
+	default:
+	}
+}
+
+// offWhy says why remotes.toml no longer has the host enabled, "" while
+// it does.
+func (m *Manager) offWhy(label string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].off
 }
 
 // isHeld says remotes.toml names another target or den_path for the host
@@ -425,6 +504,20 @@ func (m *Manager) pending(label string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.state[label].status.Pending
+}
+
+// Applied is the host labelled label as Den connects to it now: its
+// target and den_path are the ones the human connected, and held says
+// remotes.toml names others, which wait for /remote connect. ok is false
+// for a host this Manager does not have.
+func (m *Manager) Applied(label string) (h Host, held, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := m.state[label]
+	if st == nil {
+		return Host{}, false, false
+	}
+	return st.host, st.held, true
 }
 
 // hostNow is h as remotes.toml says now.
@@ -496,20 +589,60 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 // version mismatch (after the human fixed it). It reads remotes.toml
 // again first: a live host whose settings now trust it less reconnects
 // under them. A raise waits for Connect.
-func (m *Manager) Reconnect(label string) { m.retry(label, "") }
+func (m *Manager) Reconnect(label string) { m.retry(label, "", "") }
+
+// reloadSettle is how long reload waits to read remotes.toml again when
+// it changed.
+var reloadSettle = 100 * time.Millisecond
+
+// read reads remotes.toml for reload. A file that does not read keeps the
+// settings in use. One that reads other than last time is read again
+// after reloadSettle, and taken only when both reads agree: a file being
+// rewritten in place (a shell's >, an editor that does not rename) can
+// read empty or cut short for a moment, which would otherwise disable or
+// lower its hosts at once and then wait for /remote connect to raise them
+// again. A change that is still going on is taken when a later read
+// agrees with it.
+func (m *Manager) read() (Config, bool) {
+	if m.o.Reload == nil {
+		return Config{}, false
+	}
+	m.rmu.Lock()
+	defer m.rmu.Unlock()
+	cfg, err := m.o.Reload()
+	if err != nil {
+		return Config{}, false
+	}
+	if reflect.DeepEqual(cfg, m.lastRead) {
+		return cfg, true
+	}
+	select {
+	case <-time.After(reloadSettle):
+	case <-m.ctx.Done():
+		return Config{}, false
+	}
+	again, err := m.o.Reload()
+	if err != nil {
+		return Config{}, false
+	}
+	m.lastRead = again
+	return cfg, reflect.DeepEqual(cfg, again)
+}
 
 // Connect is the human's /remote connect: Reconnect, applying what
-// remotes.toml says for the host now, a raise too.
-func (m *Manager) Connect(label string) { m.retry(label, label) }
+// remotes.toml says for the host now, a raise too, but only the raise the
+// human was shown: seen is the host's Pending as they saw it, "" for none.
+// A raise the file asks for since then stays pending.
+func (m *Manager) Connect(label, seen string) { m.retry(label, label, seen) }
 
-func (m *Manager) retry(label, raise string) {
+func (m *Manager) retry(label, raise, seen string) {
 	m.mu.Lock()
 	st, ok := m.state[label]
 	m.mu.Unlock()
 	if !ok {
 		return
 	}
-	m.reload(raise)
+	m.reload(raise, seen)
 	select {
 	case st.reconnect <- struct{}{}:
 	default:
@@ -600,6 +733,9 @@ func (m *Manager) setState(h Host, s State, reason string) {
 			st.status.Hint = fmt.Sprintf("install a den that speaks proto %d on the host: den remote install %s", Proto, h.Label)
 		case Disabled:
 			st.status.Hint = "find out why it floods, then /remote connect " + h.Label
+			if st.off != "" {
+				st.status.Hint = "restart Den to drop it from view, or enable it in remotes.toml and /remote connect " + h.Label
+			}
 		}
 	}
 	st.known.State, st.known.Reason, st.known.Since = s, reason, st.status.Since
@@ -631,10 +767,19 @@ func (m *Manager) loop(h Host) {
 	for {
 		// Each connection goes out under remotes.toml as it is now, but
 		// for a raise, which waits for Connect.
-		m.reload("")
+		m.reload("", "")
 		select {
 		case <-st.restart: // the session this asked to end is over
 		default:
+		}
+		if off := m.offWhy(h.Label); off != "" {
+			m.setState(h, Disabled, off)
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-st.reconnect: // Connect lifts it once remotes.toml enables it again
+			}
+			continue
 		}
 		if m.isHeld(h.Label) {
 			m.setState(h, Offline, m.pending(h.Label))
@@ -763,6 +908,27 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	// fire); after unlistedSnapshots more without it, and parkGrace, it
 	// goes back to its terminal with no decision, and the host is flagged.
 	var parked []parkedHeld
+	// offered is when each held id still open arrived, to tell a gone that
+	// follows at once (QuickGone) from one a human caused.
+	offered := map[string]time.Time{}
+	// heldDrop counts a held request or a gone Den did not take as a drop
+	// towards FloodDrops, like an event's, and reports whether the host is
+	// now flooding.
+	heldDrop := func(now time.Time, why string) bool {
+		m.mu.Lock()
+		m.state[h.Label].status.Dropped++
+		m.mu.Unlock()
+		m.flag(h, why)
+		if !g.droppedHeld(now) {
+			return false
+		}
+		m.flag(h, "flooding: disabled")
+		g.forgive() // for when the human connects it again
+		return true
+	}
+	heldFlood := func() string {
+		return fmt.Sprintf("flooding: held requests over Den's limit; disabled until /remote connect %s", h.Label)
+	}
 	listed := func(session string) bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -1026,6 +1192,17 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, why)
 				continue
 			}
+			if !g.held(in.at) {
+				held.refuse(hm)
+				if heldDrop(in.at, "more held requests than Den takes from one host") {
+					return end(Disabled, heldFlood())
+				}
+				continue
+			}
+			if len(offered) >= 4*MaxHeld {
+				maps.DeleteFunc(offered, func(_ string, at time.Time) bool { return in.at.Sub(at) >= QuickGone })
+			}
+			offered[hm.ID] = in.at
 			if listed(hm.Session) {
 				offer(hm)
 				continue
@@ -1062,6 +1239,11 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue
 			}
 			parked = slices.DeleteFunc(parked, func(p parkedHeld) bool { return p.hm.ID == g.ID })
+			at, ok := offered[g.ID]
+			delete(offered, g.ID)
+			if ok && in.at.Sub(at) < QuickGone && heldDrop(in.at, "held requests withdrawn as soon as offered") {
+				return end(Disabled, heldFlood())
+			}
 			if r := held.gone(g.ID); r != nil {
 				m.send(Update{Kind: HeldReleased, Host: h.Label, Request: r})
 			}
@@ -1116,6 +1298,9 @@ func cleanEvent(ev events.Event, host string) (events.Event, bool) {
 	ev.Session = l(ev.Session)
 	ev.Agent = badge.Name(ev.Session)
 	ev.Request, ev.Tool, ev.Error, ev.Reason = l(ev.Request), l(ev.Tool), l(ev.Error), l(ev.Reason)
+	if !ToolName(ev.Tool) {
+		ev.Tool = "" // not a tool name Claude Code uses: shown nowhere
+	}
 	ev.Host = host
 	return ev, true
 }

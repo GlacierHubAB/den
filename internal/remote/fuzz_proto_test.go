@@ -327,7 +327,7 @@ func FuzzEvent(f *testing.F) {
 }
 
 // A held request is let in only for an approving host, with an id, a UUID
-// session and a plain tool; what it carries to the inbox is Den's own
+// session and a tool name (ToolName); what it carries to the inbox is Den's own
 // PermissionRequest of that session and tool, with a body that is clean, at
 // most MaxLine, and hashed as received.
 func FuzzHeld(f *testing.F) {
@@ -355,7 +355,7 @@ func FuzzHeld(f *testing.F) {
 			if hp.configured.rank() < Approve.rank() || hp.applied.rank() < Approve.rank() {
 				t.Fatalf("a held request taken under %s/%s", hp.configured, hp.applied)
 			}
-			if why != "" || !isID(hm.ID) || !isSessionID(hm.Session) || !plainField(hm.Tool) {
+			if why != "" || !isID(hm.ID) || !isSessionID(hm.Session) || !ToolName(hm.Tool) {
 				t.Fatalf("taken: id %q session %q tool %q why %q", hm.ID, hm.Session, hm.Tool, why)
 			}
 			if len(hm.Body) > MaxLine {

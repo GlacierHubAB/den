@@ -138,12 +138,29 @@ func reportSSHFailure(h remote.Host, err error) {
 	fmt.Fprintf(os.Stderr, "%s: %s\n", h.Label, reason)
 	var f *remote.Failure
 	if errors.As(err, &f) && f.Stderr != "" {
-		fmt.Fprintf(os.Stderr, "  ssh said: %s\n", strings.ReplaceAll(f.Stderr, "\n", "\n  "))
+		fmt.Fprintf(os.Stderr, "  ssh said: %s\n", sshSaid(f.Stderr))
 	}
 	if state == remote.NeedsAttention {
 		fmt.Fprintf(os.Stderr, "  Den never answers ssh prompts. %s.\n", remote.AttentionHint(h.Target))
 	}
 }
+
+// sshSaid is what ssh wrote to stderr, which the host's side can write
+// to, made safe to print in the human's terminal: its last maxSSHLines
+// lines, each sanitised and capped, so no escape sequence reaches it.
+func sshSaid(stderr string) string {
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(stderr, "\r\n", "\n")), "\n")
+	if len(lines) > maxSSHLines {
+		lines = append([]string{fmt.Sprintf("(%d lines before these)", len(lines)-maxSSHLines)}, lines[len(lines)-maxSSHLines:]...)
+	}
+	for i, l := range lines {
+		lines[i] = sanitize.Label(l, 200)
+	}
+	return strings.Join(lines, "\n  ")
+}
+
+// maxSSHLines is how much of ssh's stderr den remote add and status print.
+const maxSSHLines = 20
 
 func printProbe(h remote.Host, p remote.Probe) {
 	none := func(s string) string {
@@ -172,7 +189,7 @@ func remoteStatus(label string) {
 	if k, ok := remote.LoadKnown(remote.StateDir(), label); ok {
 		fmt.Printf("  last known   %s", k.State)
 		if k.Reason != "" {
-			fmt.Printf(" (%s)", k.Reason)
+			fmt.Printf(" (%s)", sanitize.Label(k.Reason, 200))
 		}
 		fmt.Printf(", %d agents, since %s\n", len(k.Agents), k.Since.Local().Format("2006-01-02 15:04"))
 	}
@@ -218,7 +235,11 @@ func remoteEdit(op, label string) {
 	if op == "remove" {
 		os.Remove(filepath.Join(remote.StateDir(), label+".json"))
 	}
-	fmt.Printf("%sd %s. A running Den picks this up when it restarts.\n", strings.ToUpper(op[:1])+op[1:], label)
+	note := "A running Den ends its link to it at once."
+	if op == "enable" {
+		note = "A running Den connects it at /remote connect " + label + ", or when it restarts."
+	}
+	fmt.Printf("%sd %s. %s\n", strings.ToUpper(op[:1])+op[1:], label, note)
 }
 
 func remoteList(asJSON bool) {
@@ -270,7 +291,7 @@ func remoteList(asJSON bool) {
 			state = "disabled"
 		case r.Reason != "" && remote.State(r.State) != remote.Live:
 			// A reason can be long: under the table, so it keeps its columns.
-			reasons = append(reasons, r.Label+": "+r.Reason)
+			reasons = append(reasons, r.Label+": "+sanitize.Label(r.Reason, 200))
 		}
 		seen := ""
 		if !r.LastSeen.IsZero() {

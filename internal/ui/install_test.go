@@ -202,3 +202,38 @@ func TestInstallLeavesALiveHostOrAFailureAlone(t *testing.T) {
 		t.Errorf("reconnected after a failed install: %q", feed.reconnect)
 	}
 }
+
+// An install reads the host with ssh before the human sees anything: it
+// goes to the target Den connects to, not one remotes.toml only asks for,
+// and a held change to the target or den_path refuses it outright.
+func TestInstallProbesTheAppliedTarget(t *testing.T) {
+	fakeRemoteInstall(t, nil)
+	installHosts = func() (remote.Config, error) {
+		return remote.Config{Hosts: []remote.Host{{Label: "devbox", Target: "user@attacker-box", DenPath: "/tmp/x", Policy: remote.Observe, Enabled: true}}}, nil
+	}
+	plan := installPlan
+	var probed []string
+	installPlan = func(ctx context.Context, h remote.Host) (remote.Plan, error) {
+		probed = append(probed, h.Target+" "+h.DenPath)
+		return plan(ctx, h)
+	}
+	m, feed, _ := remoteModel(t)
+	feed.applied = map[string]remote.Host{"devbox": {Label: "devbox", Target: "user@devbox", Policy: remote.Observe, Enabled: true}}
+	ask(m, installRequest("devbox"))
+	if len(probed) != 1 || probed[0] != "user@devbox " {
+		t.Fatalf("probed %q, want the applied target only", probed)
+	}
+	feed.held = map[string]bool{"devbox": true}
+	req := installRequest("devbox")
+	probed = nil
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.Install {
+			m.store.Dismiss(it)
+		}
+	}
+	ask(m, req)
+	d, ok := req.Decided()
+	if len(probed) != 0 || !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "/remote connect devbox to apply it first") {
+		t.Errorf("held target: probed %q, answer %+v %v", probed, d, ok)
+	}
+}

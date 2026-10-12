@@ -248,6 +248,10 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
+		if host != "" && !s.heldFits(host) {
+			r.Reply(bridge.Decision{}) // to its terminal on the host
+			return nil
+		}
 		it := s.add(&Item{Host: host, SessionID: in.SessionID, Tool: in.ToolName, req: r})
 		if in.ToolName == bridge.PlanTool {
 			it.Kind = Plan
@@ -803,6 +807,12 @@ func (s *Store) Prune(keep time.Duration, maxNotices int) {
 			continue
 		}
 		if it.State == Resolved && time.Since(it.At) > keep && !it.Unread {
+			continue
+		}
+		if it.State == InTerminal && it.Host != "" && time.Since(it.At) > keep && !it.Unread {
+			// A host's request it let go: only its terminal there answers
+			// it, and a host churning held requests would otherwise keep
+			// every one here for good.
 			continue
 		}
 		if it.Kind > Done {

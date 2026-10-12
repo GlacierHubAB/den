@@ -219,8 +219,9 @@ func TestAdvEnvelopeShapedMessages(t *testing.T) {
 	}
 }
 
-// More than 32 held requests: the 33rd and later are refused, the host is
-// not dropped.
+// More than 32 held requests at once: the 33rd and later are refused (by
+// the host's held bucket, HeldBurst, before MaxHeld), the host is not
+// dropped.
 func TestAdvStubFloodOfHeld(t *testing.T) {
 	var lines []string
 	for i := 0; i < 40; i++ {
@@ -234,7 +235,7 @@ func TestAdvStubFloodOfHeld(t *testing.T) {
 	if n := len(g.heldIDs()); n != 32 {
 		t.Errorf("%d requests held, want 32", n)
 	}
-	if !g.flagged("more held requests than a serve holds") || g.status().State != remote.Live {
+	if !g.flagged("more held requests than Den takes from one host") || g.status().State != remote.Live {
 		t.Errorf("flags %v state %s", g.status().Flags, g.status().State)
 	}
 }

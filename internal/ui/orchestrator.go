@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -187,6 +188,17 @@ func (m Model) roster() []orch.RosterAgent {
 				line := it.Kind.String() + ": " + it.Title
 				if len(it.Body) > 0 {
 					line += " " + it.Body[0]
+				}
+				if a.Host != "" {
+					// A host's request body is its own text, up to 16 KB of
+					// it: never in the prompt, which is written to disk.
+					line = "a " + it.Kind.String() + " request"
+					if it.Kind == inbox.Question {
+						line = "a question"
+					}
+					if remote.ToolName(it.Tool) {
+						line += " (" + it.Tool + ")"
+					}
 				}
 				r.Waiting = append(r.Waiting, line)
 			}

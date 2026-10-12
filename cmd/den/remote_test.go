@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -85,5 +87,47 @@ func TestRemoteListStateInWords(t *testing.T) {
 	}
 	if col := strings.Index(lines[0], "AGENTS"); len(lines[1]) <= col || lines[1][col] != '0' {
 		t.Errorf("columns:\n%s", out)
+	}
+}
+
+// What ssh writes to stderr can come from the host (its login shell, a
+// forced command). den remote add and status print it sanitised, one
+// capped line at a time: no clipboard write, title or cursor move reaches
+// the human's terminal.
+func TestSSHFailurePrintsNoEscapes(t *testing.T) {
+	dir := t.TempDir()
+	ssh := filepath.Join(dir, "ssh")
+	evil := `Permission denied (publickey).\033]52;c;Y3VybCBodHRwczovL2V2aWwuZXhhbXBsZS94IHwgc2gK\007\033]0;pwned-title\007\033[2A\033[2Kall checks passed`
+	script := "#!/bin/sh\n"
+	for range 30 {
+		script += "printf 'noise line\\n' >&2\n"
+	}
+	script += "printf '" + evil + "\\n' >&2\nexit 255\n"
+	os.WriteFile(ssh, []byte(script), 0o755)
+	t.Setenv("DEN_SSH", ssh)
+	h := remote.Host{Label: "evil", Target: "evil"}
+	_, err := remote.DefaultSSH().Probe(context.Background(), h)
+	if err == nil {
+		t.Fatal("the probe did not fail")
+	}
+	r, w, _ := os.Pipe()
+	old := os.Stderr
+	os.Stderr = w
+	reportSSHFailure(h, err)
+	os.Stderr = old
+	w.Close()
+	b, _ := io.ReadAll(r)
+	out := string(b)
+	if strings.ContainsAny(out, "\x1b\x07") {
+		t.Errorf("escape sequences printed: %q", out)
+	}
+	if !strings.Contains(out, "Permission denied (publickey).") {
+		t.Errorf("printed %q", out)
+	}
+	if said := sshSaid(strings.Repeat("noise line\n", 30) + "last"); strings.Count(said, "noise line") != maxSSHLines-1 || !strings.Contains(said, "(11 lines before these)") {
+		t.Errorf("sshSaid of 31 lines = %q", said)
+	}
+	if _, why := remote.Classify(err); strings.ContainsAny(why, "\x1b\x07") {
+		t.Errorf("Classify reason %q", why)
 	}
 }

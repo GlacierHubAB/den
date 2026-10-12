@@ -399,7 +399,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
-| `/remote`, `/remote connect <label>` | list the remote hosts with their state; retry one now (see [Remote agents](#remote-agents)) |
+| `/remote`, `/remote connect <label>`, `/remote retry <label>` | list the remote hosts with their state; retry one now, applying a raise in `remotes.toml` after showing it (`connect`) or not (`retry`) (see [Remote agents](#remote-agents)) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
 | `/map` | toggle the Fleet map |
 | `/orchestrator` `/orch` | open the orchestrator; `/orch new` starts a fresh session, `/orch restart` restarts it |
@@ -995,8 +995,8 @@ Den cannot spawn agents on a host, missions cannot use remote agents, and the
 orchestrator lists them but cannot message or close them; `Enter` and `/open`
 cannot raise a terminal on another machine, they print `ssh -t <target>`;
 a lowered policy in `remotes.toml` applies within seconds, and a raised one or a
-new target on `/remote connect`, but adding or removing a host is picked up
-when Den restarts. Every string a host
+new target on `/remote connect`; disabling or removing a host ends its link at
+once, and adding one is picked up when Den restarts. Every string a host
 sends is sanitised before Den shows it (see
 [Text from outside Den](#text-from-outside-den)).
 
