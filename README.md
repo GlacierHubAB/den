@@ -794,7 +794,9 @@ project picked on Overview.
   Submodules are not looked into. Untracked files are read without following
   symlinks, at most 1000 of them and 16 MB in all; the rest are listed as
   binary. A file shows under an agent only if it owns a line in it (next item),
-  so files the agent never touched stay out of its Review.
+  so files the agent never touched stay out of its Review. A file whose name
+  has control characters is listed by its cleaned name, which may not be its
+  real one, and its content is not shown.
 - **Per agent, per line.** Each agent gets the files in which it owns at least
   one changed line, with its own added and removed counts. A line belongs to
   the newest agent edit that added (or removed) exactly that text. Lines no

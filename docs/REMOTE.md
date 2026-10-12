@@ -294,12 +294,15 @@ A `full` host does all of this too: it is `approve` plus content.
 ## Review on a `full` host
 
 Remote agents on a `full` host are listed in Review with their `@host` chip.
-Den asks the host for each diff, at most 2 at a time per host. The host reads
+Den asks the host for each diff, at most 2 at a time per host, every agent in
+turn; an agent whose diff fails is asked again after a wait that grows from
+15 s to 5 minutes, so it never holds up the others. The host reads
 it in the agent's checkout, with the session's own work marked, as Review does
 locally. While it waits, the row says "reading its diff on devbox…", and a
 failure shows its reason. If none of the changes in the checkout are the
 agent's, Review says so and shows nothing. A diff over 200 KB, 300 files or
-2000 lines in a file is cut and says what was left out.
+2000 lines in a file is cut and says what was left out. A file whose name has
+control characters is listed by its cleaned name, without its content.
 
 When the host goes offline its diffs disappear ("devbox is offline"); they are
 read again when it is back. Below `full` the agent is greyed with "diff on

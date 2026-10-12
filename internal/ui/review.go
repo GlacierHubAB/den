@@ -67,6 +67,7 @@ type reviewState struct {
 	all      []work                   // local and remote
 	local    []work                   // as the last local load found them
 	remote   map[string]*remoteReview // by agent key
+	round    int                      // the remote read in progress; each agent is asked once in it
 	cur      int
 	fileCur  int
 	scroll   int // diff rows scrolled off the top
@@ -193,10 +194,10 @@ func loadWorks(in []reviewInput) reviewLoadedMsg {
 		mem := member{reviewInput: a, changes: transcript.Changes(a.Path, a.Started)}
 		changed += len(mem.changes)
 		for _, c := range mem.changes {
-			if !filepath.IsAbs(c.Path) {
+			if !filepath.IsAbs(c.Real()) {
 				continue
 			}
-			if root := lookup(filepath.Dir(c.Path)); root != "" {
+			if root := lookup(filepath.Dir(c.Real())); root != "" {
 				join(root, mem)
 			} else {
 				outside++

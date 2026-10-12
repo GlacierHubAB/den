@@ -244,3 +244,134 @@ func TestRemoteContentStaysOutOfTheRosterAndOffline(t *testing.T) {
 		}
 	}
 }
+
+// Agents whose diff fails never keep a host's slots from the others: each
+// round reads every agent once, the one read longest ago first, and a
+// failing agent waits out a growing backoff, still showing its error.
+func TestReviewRemoteFailingDiffsDoNotStarveTheOthers(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	bad := "33333333-2222-4333-8444-555555555555"
+	good := "44444444-2222-4333-8444-555555555555"
+	// The failing agents come first in the fleet.
+	feed.agents[0].Name = "Agent One"
+	feed.agents = append(feed.agents, remoteAgent("devbox", bad, "Agent Two", fleet.Idle, 0), remoteAgent("devbox", good, "Zesty Otter", fleet.Idle, 0))
+	fail := errors.New("git found no branch to compare its work with")
+	feed.diffErrs = map[string]error{dupSession: fail, bad: fail}
+	feed.diff = remoteDiff()
+	now := time.Now()
+	reviewNow = func() time.Time { return now }
+	t.Cleanup(func() { reviewNow = time.Now })
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = ""
+	asked := func(sid string) int {
+		n := 0
+		for _, d := range feed.diffs {
+			if d == "devbox/"+sid {
+				n++
+			}
+		}
+		return n
+	}
+	failing := map[string]int{}
+	for round := 1; round <= 6; round++ {
+		feed.diffs = nil
+		cmd := m.loadRemoteReviews()
+		loading := 0
+		for _, rr := range m.rev.remote {
+			if rr.loading {
+				loading++
+			}
+		}
+		if loading > remote.MaxDiffs {
+			t.Fatalf("round %d: %d diffs asked at once", round, loading)
+		}
+		runReview(m, cmd)
+		if asked(good) != 1 {
+			t.Fatalf("round %d: the working agent's diff was not read again (asked %v)", round, feed.diffs)
+		}
+		for _, sid := range []string{dupSession, bad} {
+			failing[sid] += asked(sid)
+		}
+		now = now.Add(5 * time.Second)
+	}
+	// Asked at 0 s, again at 15 s (backoff 15 s), then not before 45 s.
+	if failing[dupSession] != 2 || failing[bad] != 2 {
+		t.Errorf("failing agents asked %v times in 25 s", failing)
+	}
+	if !strings.Contains(frame(m), "func run") {
+		t.Errorf("Review lacks the working agent's diff:\n%s", frame(m))
+	}
+	for _, a := range m.agents {
+		if a.Host == "devbox" && a.Name != "Zesty Otter" {
+			if note := m.remoteNote(a); note != fail.Error() {
+				t.Errorf("%s in backoff says %q", a.Name, note)
+			}
+		}
+	}
+}
+
+func TestDiffBackoffGrowsAndIsCapped(t *testing.T) {
+	for fails, want := range map[int]time.Duration{1: 15 * time.Second, 2: 30 * time.Second, 3: time.Minute, 5: 4 * time.Minute, 6: 5 * time.Minute, 40: 5 * time.Minute} {
+		if got := backoff(fails); got != want {
+			t.Errorf("backoff(%d) = %v, want %v", fails, got, want)
+		}
+	}
+}
+
+// A remote file whose name has control characters keeps that mark, so
+// Review says its content is not shown.
+func TestRemoteUnsafeNameIsMarked(t *testing.T) {
+	ws := workFromDiff("s@devbox", "devbox", &remote.Diff{Root: "/home/user/den", Files: []remote.DiffFile{{Path: "evilname.txt", Created: true, Unsafe: true}}})
+	if len(ws) != 1 || len(ws[0].Files) != 1 || !ws[0].Files[0].Unsafe || len(ws[0].Files[0].Hunks) > 0 {
+		t.Errorf("works = %+v", ws)
+	}
+}
+
+// Drafts on a remote agent's work quote its host's diff: they never go to
+// the orchestrator, and while the host is down they wait for it, said as
+// such, never as an ended session.
+func TestRemoteDraftsNeverGoToTheOrchestrator(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	m.syncRemote()
+	m.tab = tabReview
+	m.rev.commentsPath = filepath.Join(t.TempDir(), "reviews.json")
+	remoteDraft := review.Comment{ID: "r1", Root: "/home/user/den @devbox", Host: "devbox", Path: "main.go", Side: "new", Start: 2, End: 2,
+		Quote: []string{"+SECRET-remote-line"}, Body: "rename it", SessionID: dupSession + "@devbox", Created: time.Now()}
+	m.rev.comments = append(m.rev.comments, remoteDraft)
+	feed.setState("devbox", remote.Offline)
+	m.syncRemote()
+
+	mm, _ := m.sendReview(nil) // the cmd is not run: nothing is started
+	*m = mm.(Model)
+	if !strings.Contains(m.flash, "until devbox is back") || strings.Contains(m.flash, "orchestrator") {
+		t.Errorf("/send: %q", m.flash)
+	}
+	mm, _ = m.sendReviewToOrchestrator()
+	*m = mm.(Model)
+	if !strings.Contains(m.flash, "until devbox is back") || strings.Contains(m.flash, "ended") {
+		t.Errorf("/send orchestrator: %q", m.flash)
+	}
+	if !m.rev.comments[0].Draft() || len(m.orch.pending) > 0 {
+		t.Fatalf("handed over: draft %v, pending %q", m.rev.comments[0].Draft(), m.orch.pending)
+	}
+
+	// With a draft for an ended local session too, only that one goes.
+	m.rev.comments = append(m.rev.comments, review.Comment{ID: "l1", Root: "/home/user/proj", Path: "a.go", Side: "new", Start: 1, End: 1,
+		Quote: []string{"+local line"}, Body: "local note", SessionID: "99999999-2222-4333-8444-555555555555", Created: time.Now()})
+	mm, _ = m.sendReviewToOrchestrator()
+	*m = mm.(Model)
+	prompt := strings.Join(m.orch.pending, "\n")
+	if !strings.Contains(prompt, "local note") || strings.Contains(prompt, "SECRET") || strings.Contains(prompt, "rename it") {
+		t.Errorf("orchestrator prompt: %q", prompt)
+	}
+	if !m.rev.comments[0].Draft() || m.rev.comments[1].Draft() {
+		t.Errorf("remote draft %v, local draft %v", m.rev.comments[0].Draft(), m.rev.comments[1].Draft())
+	}
+	if !strings.Contains(m.flash, "Handed 1 comment") || !strings.Contains(m.flash, "until devbox is back") {
+		t.Errorf("flash: %q", m.flash)
+	}
+}

@@ -393,6 +393,8 @@ func (m Model) filesPane(w, h int) string {
 		a, r := f.Counts()
 		counts := ok.Render(fmt.Sprintf("+%d", a)) + dim.Render(" ") + errS.Render(fmt.Sprintf("−%d", r))
 		switch {
+		case f.Unsafe:
+			counts = attn.Render("not shown")
 		case f.Binary:
 			counts = dim.Render("binary")
 		case f.Deleted:
@@ -478,6 +480,9 @@ func (m Model) diffRowsDrawn(w, from, to int) []diffRow {
 	}
 	rows := []diffRow{hdr(s.bright.Render(" "+sanitize.Code(f.Path)) + s.dim.Render("  "+by)), hdr("")}
 	switch {
+	case f.Unsafe:
+		// The name above is cleaned and may not be the file's real one.
+		return append(rows, hdr(s.dim.Render(" Content "+review.UnsafeNote+".")))
 	case f.Binary:
 		return append(rows, hdr(s.dim.Render(" Binary file, not shown.")))
 	case len(f.Hunks) == 0:

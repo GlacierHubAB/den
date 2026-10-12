@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,7 +27,21 @@ type remoteReview struct {
 	at      time.Time // when the last answer came
 	err     string    // why the last read failed
 	works   []work    // the diff as work, none or one
+	round   int       // the last round it was asked in
+	fails   int       // reads failed in a row
+	retry   time.Time // a failing agent is not asked again before this
 }
+
+// A failing diff is asked again after diffBackoff, doubled with each
+// failure in a row up to diffBackoffMax, so agents whose diff fails never
+// keep the host's slots from the others.
+const (
+	diffBackoff    = 15 * time.Second
+	diffBackoffMax = 5 * time.Minute
+)
+
+// reviewNow is the clock remote Review schedules by; tests move it.
+var reviewNow = time.Now
 
 type reviewRemoteMsg struct {
 	key  string
@@ -50,15 +65,21 @@ func (m Model) remoteReviewable() []fleet.Agent {
 	return out
 }
 
-// loadRemoteReviews asks each reviewable remote agent's host for its diff,
-// one request per agent and at most remote.MaxDiffs per host at a time, as
+// loadRemoteReviews starts a round: it asks each reviewable remote agent's
+// host for its diff once, at most remote.MaxDiffs per host at a time, as
 // serve reads no more at once; the rest are asked as answers come back.
 // The Manager's wait bounds each one.
-func (m *Model) loadRemoteReviews() tea.Cmd { return m.loadRemote(false) }
+func (m *Model) loadRemoteReviews() tea.Cmd {
+	m.rev.round++
+	return m.loadRemote()
+}
 
-// loadRemote is loadRemoteReviews; onlyNew asks only for agents not read
-// since their host last came up.
-func (m *Model) loadRemote(onlyNew bool) tea.Cmd {
+// loadRemote asks for the diffs of the round not asked yet, as the host's
+// slots allow. The agent read longest ago goes first, one never read before
+// all, and an agent whose diff failed waits out its backoff (keeping its
+// error), so neither the order of the fleet nor failing agents can keep
+// another agent's diff from being read again.
+func (m *Model) loadRemote() tea.Cmd {
 	var cmds []tea.Cmd
 	feed := m.remote.feed
 	busy := map[string]int{}
@@ -67,21 +88,37 @@ func (m *Model) loadRemote(onlyNew bool) tea.Cmd {
 			busy[rr.host]++
 		}
 	}
+	if m.rev.remote == nil {
+		m.rev.remote = map[string]*remoteReview{}
+	}
+	now := reviewNow()
+	var due []string
 	for _, a := range m.remoteReviewable() {
 		key := a.Session.SessionID
-		if m.rev.remote == nil {
-			m.rev.remote = map[string]*remoteReview{}
-		}
 		rr := m.rev.remote[key]
 		if rr == nil {
 			rr = &remoteReview{host: a.Host}
 			m.rev.remote[key] = rr
 		}
-		if rr.loading || busy[a.Host] >= remote.MaxDiffs || (onlyNew && !rr.at.IsZero()) {
+		if rr.loading || rr.round >= m.rev.round || now.Before(rr.retry) {
 			continue
 		}
-		busy[a.Host]++
-		rr.loading = true
+		due = append(due, key)
+	}
+	sort.Slice(due, func(i, j int) bool {
+		a, b := m.rev.remote[due[i]], m.rev.remote[due[j]]
+		if !a.at.Equal(b.at) {
+			return a.at.Before(b.at)
+		}
+		return due[i] < due[j]
+	})
+	for _, key := range due {
+		rr := m.rev.remote[key]
+		if busy[rr.host] >= remote.MaxDiffs {
+			continue
+		}
+		busy[rr.host]++
+		rr.loading, rr.round = true, m.rev.round
 		sid, host := splitKey(key)
 		cmds = append(cmds, func() tea.Msg {
 			d, err := feed.Diff(host, sid)
@@ -91,6 +128,16 @@ func (m *Model) loadRemote(onlyNew bool) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// backoff is how long an agent whose diff failed fails times in a row
+// waits before it is asked again.
+func backoff(fails int) time.Duration {
+	d := diffBackoff
+	for i := 1; i < fails && d < diffBackoffMax; i++ {
+		d *= 2
+	}
+	return min(d, diffBackoffMax)
+}
+
 // applyRemoteReview takes one host's answer, and asks for the next agent
 // waiting on that host.
 func (m *Model) applyRemoteReview(msg reviewRemoteMsg) tea.Cmd {
@@ -98,23 +145,26 @@ func (m *Model) applyRemoteReview(msg reviewRemoteMsg) tea.Cmd {
 	if rr == nil {
 		return nil
 	}
-	rr.loading, rr.at = false, time.Now()
+	rr.loading, rr.at = false, reviewNow()
 	if h, ok := m.hostStatus(rr.host); !ok || h.State != remote.Live {
 		// The link dropped while it was read: it is not current.
 		rr.works, rr.err, rr.at = nil, "", time.Time{}
 		m.mergeReview()
 		return nil
 	}
+	rr.fails, rr.retry = 0, time.Time{}
 	switch {
 	case msg.err != nil:
 		rr.err, rr.works = msg.err.Error(), nil
+		rr.fails++
+		rr.retry = rr.at.Add(backoff(rr.fails))
 	case msg.diff != nil && msg.diff.Unowned:
 		rr.err, rr.works = "none of the changes in its checkout on "+rr.host+" match what it wrote, so they stay there", nil
 	default:
 		rr.err, rr.works = "", workFromDiff(msg.key, rr.host, msg.diff)
 	}
 	m.mergeReview()
-	return m.loadRemote(true)
+	return m.loadRemote()
 }
 
 // remoteWorks is the remote agents' work to list: only from hosts that are
@@ -148,7 +198,7 @@ func workFromDiff(key, host string, d *remote.Diff) []work {
 		w.Repo += " · " + d.Branch
 	}
 	for _, df := range d.Files {
-		f := review.File{Path: df.Path, OldPath: df.OldPath, Created: df.Created, Deleted: df.Deleted, Binary: df.Binary}
+		f := review.File{Path: df.Path, OldPath: df.OldPath, Created: df.Created, Deleted: df.Deleted, Binary: df.Binary, Unsafe: df.Unsafe}
 		for _, h := range df.Hunks {
 			f.Hunks = append(f.Hunks, transcript.Hunk{OldStart: h.OldStart, NewStart: h.NewStart, Lines: h.Lines})
 			own := make([]string, len(h.Lines))
@@ -203,6 +253,9 @@ func (m *Model) remoteReviewChanged(host string) tea.Cmd {
 		for _, rr := range m.rev.remote {
 			if rr.host == host && (len(rr.works) > 0 || !rr.at.IsZero()) {
 				rr.works, rr.err, rr.at, dropped = nil, "", time.Time{}, true
+			}
+			if rr.host == host {
+				rr.fails, rr.retry = 0, time.Time{} // a host that comes back is asked afresh
 			}
 		}
 		if dropped {

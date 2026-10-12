@@ -131,7 +131,11 @@ func TestLongCommandRenders(t *testing.T) {
 			t.Errorf("tab %d: the frame carries %q", tb, l)
 		}
 	}
-	if d := time.Since(start); d > 5*time.Second {
+	budget := 5 * time.Second
+	if raceDetector {
+		budget = time.Minute // only a hang fails: -race is slow, more so on a loaded runner
+	}
+	if d := time.Since(start); d > budget {
 		t.Errorf("took %v", d)
 	}
 }

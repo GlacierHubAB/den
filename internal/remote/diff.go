@@ -47,13 +47,16 @@ type Diff struct {
 
 // DiffFile is one changed file, relative to Root.
 type DiffFile struct {
-	Path    string     `json:"path"`
-	OldPath string     `json:"old_path,omitempty"`
-	Created bool       `json:"created,omitempty"`
-	Deleted bool       `json:"deleted,omitempty"`
-	Binary  bool       `json:"binary,omitempty"`
-	Cut     bool       `json:"cut,omitempty"` // lines were left out
-	Hunks   []DiffHunk `json:"hunks,omitempty"`
+	Path    string `json:"path"`
+	OldPath string `json:"old_path,omitempty"`
+	Created bool   `json:"created,omitempty"`
+	Deleted bool   `json:"deleted,omitempty"`
+	Binary  bool   `json:"binary,omitempty"`
+	Cut     bool   `json:"cut,omitempty"` // lines were left out
+	// Unsafe says the real name has control characters: Path is cleaned,
+	// and the content is not sent.
+	Unsafe bool       `json:"unsafe,omitempty"`
+	Hunks  []DiffHunk `json:"hunks,omitempty"`
 }
 
 // DiffHunk is a review hunk; Mine lists the indexes of the lines the
@@ -115,7 +118,7 @@ func hostDiff(ctx context.Context, ag fleet.Agent) (*Diff, error) {
 	// changed by path (a binary file has no lines to match).
 	touched := map[string]bool{}
 	for _, c := range changes {
-		touched[filepath.Clean(c.Path)] = true
+		touched[filepath.Clean(c.Real())] = true
 	}
 	var mine []review.File
 	for _, f := range files {
@@ -165,7 +168,7 @@ func packDiff(d *Diff, files []review.File, session string) {
 			break
 		}
 		df := DiffFile{
-			Path: capLine(f.Path, maxDiffPath), Created: f.Created, Deleted: f.Deleted, Binary: f.Binary,
+			Path: capLine(f.Path, maxDiffPath), Created: f.Created, Deleted: f.Deleted, Binary: f.Binary, Unsafe: f.Unsafe,
 		}
 		if f.OldPath != "" {
 			df.OldPath = capLine(f.OldPath, maxDiffPath)
@@ -174,6 +177,10 @@ func packDiff(d *Diff, files []review.File, session string) {
 		if used > MaxDiffBytes {
 			cuts = append(cuts, fmt.Sprintf("%d more files past %d KB", len(files)-i, MaxDiffBytes>>10))
 			break
+		}
+		if f.Unsafe {
+			d.Files = append(d.Files, df)
+			continue
 		}
 		n := 0
 	hunks:
@@ -247,9 +254,12 @@ func cleanDiff(d *Diff) *Diff {
 	dropped := len(d.Files) > MaxDiffFiles
 	for _, f := range d.Files[:min(len(d.Files), MaxDiffFiles)] {
 		cf := DiffFile{Path: capLine(f.Path, maxDiffPath), OldPath: capLine(f.OldPath, maxDiffPath),
-			Created: f.Created, Deleted: f.Deleted, Binary: f.Binary, Cut: f.Cut}
+			Created: f.Created, Deleted: f.Deleted, Binary: f.Binary, Cut: f.Cut, Unsafe: f.Unsafe}
 		n := 0
 		for _, h := range f.Hunks {
+			if cf.Unsafe {
+				break // its content is not shown, whatever the host sent
+			}
 			if n >= MaxDiffFileLines || used > MaxLine {
 				cf.Cut, dropped = true, true
 				break

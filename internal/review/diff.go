@@ -27,7 +27,11 @@ type File struct {
 	Created bool
 	Deleted bool
 	Binary  bool
-	Hunks   []transcript.Hunk
+	// Unsafe says the path has control characters, bidi controls or
+	// invalid UTF-8: Review lists the file by its cleaned name, which may
+	// not be its real one, and does not show its content.
+	Unsafe bool
+	Hunks  []transcript.Hunk
 	// Owner holds, per hunk and per line, the session that wrote that line
 	// ("" for context lines and for lines no agent wrote). Set by Attribute.
 	Owner [][]string
@@ -180,8 +184,14 @@ func Diff(ctx context.Context, dir, base string) ([]File, error) {
 		read += n
 		files = append(files, f)
 	}
+	for i, f := range files {
+		files[i].Unsafe = sanitize.Code(f.Path) != f.Path || sanitize.Code(f.OldPath) != f.OldPath
+	}
 	return files, nil
 }
+
+// UnsafeNote is what Review shows for a file whose name is Unsafe.
+const UnsafeNote = "not shown (name contains control characters)"
 
 // How much of a checkout's untracked files Diff reads at most; the rest are
 // listed as binary.
