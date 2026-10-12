@@ -8,12 +8,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/gitsafe"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
@@ -42,9 +42,8 @@ const untrackedLimit = 1 << 20
 
 func git(ctx context.Context, dir string, args ...string) (string, error) {
 	// The repository's own config must not run programs while Den looks at
-	// it: no filesystem monitor hook, no external diff or text conversion.
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.fsmonitor=false"}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "LC_ALL=C")
+	// it (gitsafe), and diff runs with no external diff or text conversion.
+	cmd := gitsafe.Command(ctx, dir, args...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
@@ -136,7 +135,7 @@ func BaseAt(ctx context.Context, dir, commit string) (string, bool) {
 }
 
 func emptyTree(ctx context.Context, dir string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "hash-object", "-t", "tree", "--stdin")
+	cmd := gitsafe.Command(ctx, dir, "hash-object", "-t", "tree", "--stdin")
 	cmd.Stdin = strings.NewReader("")
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err

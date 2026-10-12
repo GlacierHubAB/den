@@ -9,12 +9,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe"
 )
 
 // Target is one agent that may be closed.
@@ -261,7 +262,9 @@ func dirty(ctx context.Context, dir string) []string {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "git", "-C", dir, "status", "--porcelain", "--untracked-files=normal").Output()
+	// The checkout may belong to an agent, or to a host's user: nothing its
+	// config names may run (gitsafe), and status takes no optional locks.
+	out, err := gitsafe.Command(ctx, dir, "status", "--porcelain", "--untracked-files=normal").Output()
 	if err != nil {
 		return nil
 	}

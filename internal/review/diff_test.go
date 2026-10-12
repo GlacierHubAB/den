@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe/gitsafetest"
 )
 
 const unified = `diff --git a/cmd/list.go b/cmd/list.go
@@ -217,5 +219,25 @@ func TestParseUnifiedSanitisesLines(t *testing.T) {
 	want := []string{" ctx ", "-old", "+new\tend"}
 	if got := files[0].Hunks[0].Lines; strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("lines = %q, want %q", got, want)
+	}
+}
+
+// A repository's config cannot make Diff run a program: no fsmonitor hook,
+// filter driver, text conversion or external diff.
+func TestDiffRunsNothingTheRepoNames(t *testing.T) {
+	repo, marks := gitsafetest.Hostile(t)
+	base, err := Base(context.Background(), repo, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := Diff(context.Background(), repo, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 {
+		t.Errorf("files = %+v", files)
+	}
+	if ents, _ := os.ReadDir(marks); len(ents) > 0 {
+		t.Errorf("the repository made git run %s", ents[0].Name())
 	}
 }
