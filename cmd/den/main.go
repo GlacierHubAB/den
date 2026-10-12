@@ -107,6 +107,7 @@ func main() {
 }
 
 func runTUI() {
+	ui.Version = version
 	m := ui.New(config.Load())
 	defer m.Close()
 	if _, err := tea.NewProgram(m).Run(); err != nil {

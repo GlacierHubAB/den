@@ -258,7 +258,7 @@ func (m Model) workPane(w, h int) string {
 		for _, e := range m.rev.errs {
 			lines = append(lines, s.err.Render(" "+ansi.Truncate(e, w-2, "…")))
 		}
-		return strings.Join(lines, "\n")
+		return strings.Join(append(lines, m.remoteWorkLines(w)...), "\n")
 	}
 	var lines []string
 	for i, wk := range m.rev.works {
@@ -300,7 +300,35 @@ func (m Model) workPane(w, h int) string {
 		)
 	}
 	start := scrollStart(len(lines), 3*m.rev.cur, 3, h)
+	lines = append(lines, m.remoteWorkLines(w)...)
 	return strings.Join(lines[start:min(len(lines), start+h)], "\n")
+}
+
+// remoteWorkLines lists remote agents greyed out under the work list:
+// their diffs stay on their host until a policy lets them travel.
+func (m Model) remoteWorkLines(w int) []string {
+	s := m.st
+	var out []string
+	host := projectHost(m.proj.cur)
+	for _, a := range m.agents {
+		if a.Host == "" || a.Status == fleet.Gone || (host != "" && a.Host != host) {
+			continue
+		}
+		policy := "observe"
+		if h, ok := m.hostStatus(a.Host); ok && h.Applied != "" {
+			policy = string(h.Applied)
+		} else if ok && h.Policy != "" {
+			policy = string(h.Policy)
+		}
+		if len(out) == 0 {
+			out = append(out, "")
+		}
+		out = append(out,
+			s.muted.Render(" "+ansi.Truncate(a.Name+hostChip(a), w-2, "…")),
+			s.muted.Render(" "+ansi.Truncate("diff on "+a.Host+", policy "+policy, w-2, "…")),
+		)
+	}
+	return out
 }
 
 // fileRows lists, for each row of the Files pane, the file it shows, or -1

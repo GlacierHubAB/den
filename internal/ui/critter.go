@@ -24,7 +24,7 @@ func animTick() tea.Cmd {
 
 // critterRows renders the agent's creature as 8 lines of half-blocks.
 func (m Model) critterRows(a fleet.Agent) []string {
-	seed := critter.Hash(a.Session.SessionID)
+	seed := critterSeed(a.Session.SessionID)
 	colors := critter.Colors{Bodies: []string{m.agentColor(a)}, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
 	pose := critter.PoseAt(seed, m.anim, a.Status == fleet.Working)
 	px := critter.Pixels(seed, colors, pose)
@@ -121,7 +121,7 @@ func (m Model) colorFor(sessionID string) string {
 // octant characters, the badge's footprint at full resolution; on a
 // selection row the gaps carry the selection colour.
 func (m Model) smallCritter(sessionID string, selected bool) []string {
-	seed := critter.Hash(sessionID)
+	seed := critterSeed(sessionID)
 	colors := critter.Colors{Bodies: []string{m.colorFor(sessionID)}, Dark: m.st.pal.Bg, Blush: m.st.pal.Blush}
 	px := critter.Pixels(seed, colors, critter.Pose{})
 	rows := critter.OctantRows(px, critter.Ink(seed, colors))
@@ -145,4 +145,11 @@ func (m Model) smallCritter(sessionID string, selected bool) []string {
 		out = append(out, b.String())
 	}
 	return out
+}
+
+// critterSeed seeds an agent's creature from its own session id, so a
+// remote agent looks as the badge on its host draws it.
+func critterSeed(key string) uint32 {
+	sid, _ := splitKey(key)
+	return critter.Hash(sid)
 }

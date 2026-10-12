@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -216,6 +217,22 @@ func (m *Model) buildProjects() {
 		if a.Status == fleet.Gone {
 			continue
 		}
+		if a.Host != "" {
+			// A remote checkout is its own project, (host, repository),
+			// even of a repository that is also checked out here.
+			if !a.HasGit || a.Git.Repo == "" {
+				m.proj.loose++
+				continue
+			}
+			root := remoteProject(a.Host, a.Git.Repo)
+			p := byRoot[root]
+			if p == nil {
+				p = &project{Root: root, Name: root, Branch: a.Git.Branch}
+				byRoot[root] = p
+			}
+			p.Agents = append(p.Agents, a.Session.SessionID)
+			continue
+		}
 		roots := rootsOf(a)
 		if len(roots) == 0 {
 			m.proj.loose++
@@ -250,7 +267,7 @@ func (m *Model) buildProjects() {
 		names[p.Name]++
 	}
 	for i, p := range list {
-		if names[p.Name] > 1 {
+		if names[p.Name] > 1 && projectHost(p.Root) == "" {
 			if p.Branch != "" {
 				list[i].Name = p.Name + " · " + p.Branch
 			} else {
@@ -344,4 +361,19 @@ func (m *Model) filterReview() {
 		return
 	}
 	m.applyReview(reviewLoadedMsg{works: m.rev.all, errs: m.rev.errs, note: m.rev.note})
+}
+
+// remoteProject is the root, and the name, of a repository on a remote
+// host: "den @devbox". It is no path, so nothing local ever runs in it.
+func remoteProject(host, repo string) string { return repo + " @" + host }
+
+// projectHost is the host of a remote project's root, "" for a local one.
+func projectHost(root string) string {
+	if strings.HasPrefix(root, "/") {
+		return ""
+	}
+	if i := strings.LastIndex(root, " @"); i >= 0 {
+		return root[i+2:]
+	}
+	return ""
 }

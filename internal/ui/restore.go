@@ -163,7 +163,7 @@ func (m *Model) observeRoster() {
 	var skillsLooked bool
 	var prov *skills.Provenance
 	for _, a := range m.agents {
-		if a.Status == fleet.Gone || !a.Session.Alive || m.isOrchestrator(a) || a.Session.Name == m.cfg.Orchestrator.Name {
+		if a.Status == fleet.Gone || !a.Session.Alive || a.Host != "" || m.isOrchestrator(a) || a.Session.Name == m.cfg.Orchestrator.Name {
 			continue
 		}
 		// Only terminal sessions can be reopened in a terminal.
