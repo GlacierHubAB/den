@@ -729,7 +729,7 @@ func TestAlwaysIsScopedToTheHost(t *testing.T) {
 	if r := got(t, c, 2*time.Second); r.d.Behavior != "allow" {
 		t.Fatalf("first = %+v", r)
 	}
-	c = hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go test ./internal/..."})
+	c = hook(t, s.sock, sidA, "Bash", map[string]any{"command": "go test ./..."}) // the exact command again
 	if it := store.Apply(g.next(t)); it != nil {
 		t.Fatalf("the rule did not cover the same host and session: %+v", it)
 	}
@@ -737,7 +737,7 @@ func TestAlwaysIsScopedToTheHost(t *testing.T) {
 		t.Errorf("auto-allowed = %+v", r)
 	}
 	// The same session id on this machine is another agent.
-	payload, _ := json.Marshal(map[string]any{"session_id": sidA, "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": map[string]string{"command": "go test ./x"}})
+	payload, _ := json.Marshal(map[string]any{"session_id": sidA, "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": map[string]string{"command": "go test ./..."}})
 	local := bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: sidA, Payload: payload})
 	if it := store.Apply(local); it == nil {
 		t.Error("devbox's rule answered a local agent")

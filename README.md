@@ -232,7 +232,8 @@ view shows whole, as the Fleet view's Details pane can; otherwise it opens the
 Inbox on that request to be read there first, and `Ctrl+Y` again answers it.
 `Ctrl+N` never waits.
 
-What `/always` allows from then on, for that agent's session only, kept in
+What `/always` allows from then on, for that agent's session only (an agent
+on a host is told apart by its host as well), kept in
 memory until Den exits (the line that confirms it says which):
 
 - a command: that exact command only. A command with shell operators,
@@ -251,6 +252,8 @@ memory until Den exits (the line that confirms it says which):
   as usual, and takes no `/always`. Inside the working
   directory a rule does cover files other tools run later, such as `.envrc`,
   `.vscode/`, a `Makefile` or `package.json`.
+  An agent on a remote host gets no edit rule at all: its paths and
+  symlinks cannot be checked from here, so each edit there is asked about.
 - `WebFetch`: fetches from the same host.
 - an MCP tool: that tool of that server, never the whole server.
 - any other tool: every call of that tool.
