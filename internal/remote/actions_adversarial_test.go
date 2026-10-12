@@ -835,12 +835,19 @@ func TestAdvCLISendThroughDen(t *testing.T) {
 	if delivered(inB) || delivered(inC) {
 		t.Error("@local reached a remote")
 	}
-	// Text from the command line goes as one message, whatever it holds.
-	run(0, "send", idA[:8]+"@b", "$(touch "+filepath.Join(l.Dir, "x")+") `id` ; \x1b[2J")
+	// Text from the command line goes as one message, whatever shell syntax
+	// it holds.
+	run(0, "send", idA[:8]+"@b", "$(touch "+filepath.Join(l.Dir, "x")+") `id` ;")
 	if txt, ok := inB.text(time.Second); !ok || !strings.Contains(txt, "$(touch") {
 		t.Errorf("text = %q", txt)
 	}
 	if _, err := os.Stat(filepath.Join(l.Dir, "x")); err == nil {
 		t.Fatal("command substitution in the text ran")
+	}
+	// Text Den would not show as written, such as an escape sequence, is
+	// refused before Den is asked, and nothing is sent.
+	run(8, "send", idA[:8]+"@b", "clear \x1b[2J")
+	if delivered(inB) {
+		t.Error("text with an escape sequence was sent")
 	}
 }
