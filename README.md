@@ -218,10 +218,22 @@ Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest
 `inbox.history`, 100 by default, come back on restart). The request shows the
 whole command or edit the permission is about.
 
-Den holds a permission request only while you are not at that terminal. If the
-agent's window is focused, or you switch to it, the normal Claude Code dialog
-appears instead, and so it does when `hooks.permission_wait` (580 s) runs out
-or Den is not running.
+Claude Code shows its own dialog in the agent's terminal at once, beside
+Den's hold, so a request can always be answered there too; whichever answers
+first counts. Answered or dismissed in the terminal first, the inbox item
+closes at once and takes no `Ctrl+Y` or `Ctrl+N`. Den holds a request only
+while you are not at that terminal: if the agent's window is focused, or you
+switch to it, Den lets go and the terminal dialog is the only one, as it is
+when `hooks.permission_wait` (580 s) runs out or Den is not running.
+
+A plan (`claude --permission-mode plan`) is approved from Den like a
+permission: `Ctrl+Y` is the dialog's "Yes, manually approve edits", so the
+agent leaves plan mode for the mode it had before and starts on the plan;
+`Ctrl+N` sends it back to keep planning, with a note that you denied it from
+Den. Claude Code ignores a plain allow for a plan, so Den's hook answers with
+the plan's own call, which Claude Code 2.1.289 takes; a plan call Den cannot
+answer that way is left to the terminal and says so. `/always` approves later
+plans of that session the same way, never in a wider mode.
 
 #### Answering an agent's questions
 
@@ -904,8 +916,8 @@ there, without its colours; Den's own colours are not affected.
   `XDG_RUNTIME_DIR`, reinstall `den` and run `den install-hooks` again so the
   hooks and Den agree on the path.
 - **A hook that crashes fails open.** `den hook` exits 0 with no decision, so
-  Claude Code asks in the terminal, instead of exiting 2, which Claude Code
-  reads as a denial.
+  the request stays with Claude Code's own dialog, which is on screen from
+  the start, instead of exiting 2, which Claude Code reads as a denial.
 - **Git reads of an agent's checkout run nothing the repository names.** Review,
   the uncommitted-changes check and worktree reads turn off fsmonitor, filter
   drivers, merge drivers, external diff, textconv and lazy fetch, and do not
@@ -933,7 +945,7 @@ history = 100               # finished turns kept as history
 recent = 20                 # activity entries shown in the details pane
 
 [hooks]
-permission_wait = 580       # seconds Den may hold a permission before the terminal dialog takes over
+permission_wait = 580       # seconds Den may hold a permission; the terminal dialog then answers alone
 log = true                  # append every hook run to ~/.local/state/den/hooks.log
 answer_questions = false    # answer an agent's questions (AskUserQuestion) from the inbox, see Inbox
 
