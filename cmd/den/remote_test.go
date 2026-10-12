@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -37,5 +39,26 @@ func TestAskInstallGoesThroughDen(t *testing.T) {
 	}
 	if !strings.Contains(out, "installed: den v0.2.0") {
 		t.Errorf("printed %q", out)
+	}
+}
+
+// With no Den running, den remote install never says it is asking for a
+// ^Y: it prints the plan, says nothing changed, and reports that den is
+// still to be installed (an exit 1 for den remote install).
+func TestAskInstallWithoutDen(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DEN_SOCKET", filepath.Join(dir, "den.sock"))
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	uname := map[string]string{"amd64": "x86_64", "arm64": "aarch64"}[runtime.GOARCH]
+	if runtime.GOOS != "linux" || uname == "" {
+		t.Skip("the fake host is linux on amd64 or arm64")
+	}
+	ssh := filepath.Join(dir, "ssh")
+	os.WriteFile(ssh, []byte("#!/bin/sh\nprintf 'uname=Linux "+uname+"\\nden_path=\\nclaude_path=/usr/bin/claude\\nhooks=no\\nruntime_dir=/run/user/1000\\n'\n"), 0o755)
+	t.Setenv("DEN_SSH", ssh)
+	var ok bool
+	out := captureStdout(t, func() { ok = askInstall(remote.Host{Label: "devbox", Target: "devbox"}, "den remote install") })
+	if ok || strings.Contains(out, "^Y") || strings.Contains(out, "Asking Den") || !strings.Contains(out, "nothing was changed") {
+		t.Errorf("ok %v, printed %q", ok, out)
 	}
 }

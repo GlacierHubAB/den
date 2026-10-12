@@ -298,19 +298,20 @@ func remoteInstall(args []string) {
 	if !ok {
 		fail("den: no host labelled %q; see den remote list", args[0])
 	}
-	askInstall(h, "den remote install")
+	if !askInstall(h, "den remote install") {
+		os.Exit(1)
+	}
 }
 
 // askInstall sends an install request for h to the running Den and prints
 // the outcome. With no Den running it prints the plan and changes nothing.
-func askInstall(h remote.Host, what string) {
+// It reports false when den still has to be installed there.
+func askInstall(h remote.Host, what string) bool {
 	cwd, _ := os.Getwd()
 	payload, _ := json.Marshal(bridge.InstallInput{Host: h.Label, AskedBy: fmt.Sprintf("%s, pid %d in %s", what, os.Getpid(), cwd)})
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.InstallEvent, Payload: payload}
-	fmt.Printf("Asking Den to install den on %s: approve with ^Y in its inbox (Ctrl+C stops waiting).\n", h.Label)
-	d, err := bridge.Call(bridge.SocketPath(), env, 30*time.Minute)
-	switch {
-	case errors.Is(err, bridge.ErrNoDen):
+	conn, err := bridge.Connect(bridge.SocketPath())
+	if errors.Is(err, bridge.ErrNoDen) {
 		plan, perr := remote.PlanInstall(context.Background(), remote.DefaultSSH(), h, version)
 		if perr != nil {
 			var f *remote.Failure
@@ -324,6 +325,11 @@ func askInstall(h remote.Host, what string) {
 		if plan.Copy {
 			fmt.Println("\nDen is not running. Start Den to approve this in its inbox; nothing was changed.")
 		}
+		return !plan.Copy
+	}
+	fmt.Printf("Asking Den to install den on %s: approve with ^Y in its inbox (Ctrl+C stops waiting).\n", h.Label)
+	d, err := bridge.CallOn(conn, env, 30*time.Minute)
+	switch {
 	case err != nil:
 		fail("den: no answer from Den (%v); nothing is known to have changed", err)
 	case d.Behavior == "allow":
@@ -331,6 +337,7 @@ func askInstall(h remote.Host, what string) {
 	default:
 		fail("%s", sanitize.Text(d.Message))
 	}
+	return true
 }
 
 // remoteServe is `den remote serve --proto 1`, started by a Den elsewhere
