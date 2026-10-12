@@ -66,6 +66,11 @@ func (m *Model) handleSendRequest(r *bridge.Request) tea.Cmd {
 	case strings.TrimSpace(in.Text) == "" || len(in.Text) > remote.MaxSendText:
 		deny(fmt.Sprintf("the message must be 1 byte to %d KB", remote.MaxSendText>>10))
 		return nil
+	case sanitize.Text(in.Text) != in.Text:
+		// The question shows the text as sanitize.Text prints it, and ^Y
+		// sends the text: they must be the same.
+		deny("the message has characters Den would not show in its question (escape sequences, carriage returns, control, bidi or invisible characters); nothing was sent")
+		return nil
 	}
 	if err := m.remoteCan(a.Host); err != nil {
 		deny(err.Error())

@@ -72,19 +72,25 @@ func remoteHostOf(who string) (string, bool) {
 
 // Exit codes of den send name@host (docs/REMOTE.md).
 const (
-	sendNotSent   = 1 // bad usage, no such agent, or Den refused or failed to send
-	sendDeclined  = 4 // the human answered ^N
-	sendCancelled = 5 // the question ended before the human answered
-	sendNoDen     = 6 // no Den is running here
-	sendUnknown   = 7 // no answer from Den: whether it was sent is not known
+	sendNotSent    = 1 // bad usage, no such agent, or Den refused or failed to send
+	sendDeclined   = 4 // the human answered ^N
+	sendCancelled  = 5 // the question ended before the human answered
+	sendNoDen      = 6 // no Den is running here
+	sendUnknown    = 7 // no answer from Den: whether it was sent is not known
+	sendUnshowable = 8 // the text has what Den would not show you, so it was not asked for
 )
 
 // sendViaDen asks the running Den to message an agent on a remote host:
 // only Den holds the ssh session to it. The text travels over den.sock, and
 // from there down that session, never in an argument list. Without a Den
-// nothing is sent.
+// nothing is sent. Den shows the human the text as sanitize.Text prints
+// it and sends what it showed, so text that would print otherwise is
+// refused here, before Den is asked.
 func sendViaDen(sock, who, text string) (string, int, error) {
 	host, _ := remoteHostOf(who)
+	if sanitize.Text(text) != text {
+		return "", sendUnshowable, errors.New(unshowable)
+	}
 	cwd, _ := os.Getwd()
 	payload, _ := json.Marshal(bridge.SendInput{Who: who, Text: text, AskedBy: fmt.Sprintf("den send, pid %d in %s", os.Getpid(), cwd)})
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.SendEvent, Payload: payload}
@@ -107,6 +113,9 @@ func sendViaDen(sock, who, text string) (string, int, error) {
 	}
 	return "", sendNotSent, fmt.Errorf("den: %s", orElse(msg, "Den refused the request; nothing was sent"))
 }
+
+// unshowable is why a den send name@host is refused before Den is asked.
+const unshowable = "den: the message has escape sequences, carriage returns, or control, bidi or invisible characters, which Den would not show in its question; nothing was sent (send plain text)"
 
 // orElse is s, or def when s is empty.
 func orElse(s, def string) string {

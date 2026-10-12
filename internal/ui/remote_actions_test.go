@@ -466,6 +466,28 @@ func TestSendRequestFromDenSockMessagesARemoteAgent(t *testing.T) {
 	}
 }
 
+// A den send whose text sanitising would change is refused: the question
+// would show other text than is sent.
+func TestSendRequestRefusesTextDenCannotShow(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	for _, text := range []string{"run the tests\x1b]0;and something else\x07", "run the tests\U000E0041", "run the tests\r\nthen push"} {
+		pl, _ := json.Marshal(bridge.SendInput{Who: "mossy@devbox", Text: text, AskedBy: "den send, pid 1"})
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.SendEvent, Payload: pl})
+		m.handleRequest(r)
+		if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "Den would not show") {
+			t.Errorf("%q: %+v %v", text, d, ok)
+		}
+	}
+	for _, o := range m.store.Items() {
+		if o.Kind == inbox.Message {
+			t.Errorf("a question was asked: %q", o.Body)
+		}
+	}
+	if len(feed.sent) != 0 {
+		t.Errorf("sent %q", feed.sent)
+	}
+}
+
 func TestRunCloseOrderMixesLocalAndRemote(t *testing.T) {
 	feed := &fakeFeed{}
 	ops := &fakeCloseOps{}
