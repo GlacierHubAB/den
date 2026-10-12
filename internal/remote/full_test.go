@@ -324,7 +324,7 @@ func TestRecheckDropsFullContent(t *testing.T) {
 		d := &pipeDialer{serve: func(ctx context.Context, in io.Reader, out io.Writer) error {
 			newLineReader(in, MaxLine).next()
 			writeMsg(out, Hello{Type: TypeHello, Proto: Proto, Den: "v0.2.0", Hostname: "b", RemoteNow: time.Now(), Policy: c.says, Labels: true})
-			io.WriteString(out, `{"type":"snapshot","remote_now":"2026-10-12T12:00:00Z","agents":[{"session":"s1","status":"idle","name":"Mossy Lemur","full":{"title":"SECRET-title","cwd":"/SECRET","tail":[{"age_ms":1,"kind":"text","text":"SECRET"}]}}]}`+"\n")
+			io.WriteString(out, `{"type":"snapshot","remote_now":"2026-10-12T12:00:00Z","agents":[{"session":"11111111-2222-4333-8444-555555555555","status":"idle","name":"Mossy Lemur","full":{"title":"SECRET-title","cwd":"/SECRET","tail":[{"age_ms":1,"kind":"text","text":"SECRET"}]}}]}`+"\n")
 			<-ctx.Done()
 			return nil
 		}}

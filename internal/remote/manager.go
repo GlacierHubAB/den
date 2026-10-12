@@ -733,10 +733,6 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, "a malformed event")
 				continue
 			}
-			if !isSessionID(em.Event.Session) {
-				m.flag(h, "an event whose session id is not a UUID")
-				continue
-			}
 			ev, ok := cleanEvent(em.Event, h.Label)
 			if !ok {
 				m.flag(h, "an event of an unknown kind or version")
@@ -751,7 +747,10 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			ev.Time = ev.Time.Add(-st.status.Offset).UTC().Truncate(time.Millisecond)
 			st.known.Cursor = em.Cursor
 			st.status.LastSeen = in.at
-			v, why := g.check(ev, st.known.Agents, in.at)
+			v, why := g.malformed(ev)
+			if isSessionID(em.Event.Session) {
+				v, why = g.check(ev, st.known.Agents, in.at)
+			}
 			if v == drop {
 				// Past it, but not worth a write each: the cursor is saved
 				// with the next event Den keeps, a heartbeat or the end.

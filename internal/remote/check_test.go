@@ -238,3 +238,40 @@ func TestManagerFlag(t *testing.T) {
 		t.Errorf("flags %q", state(m).Flags)
 	}
 }
+
+// Events whose session id is not a UUID are dropped like events for an
+// unlisted session, and count towards flooding: a host that keeps sending
+// them is disabled, and none reach the events log.
+func TestNonUUIDEventsCountAsFlooding(t *testing.T) {
+	s := newScratch(t)
+	d := &pipeDialer{serve: func(ctx context.Context, in io.Reader, out io.Writer) error {
+		newLineReader(in, MaxLine).next() // Den's request
+		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Observe, RemoteNow: time.Now()})
+		writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{Session: sidA, Status: "busy", Name: "a"}}})
+		for i := range 20 {
+			ev := events.New(events.NeedsYou, "not-a-uuid")
+			ev.Time = time.Now().Add(time.Minute) // live, not backfill
+			writeMsg(out, Event{Type: TypeEvent, Cursor: events.Cursor{Ino: 1, Off: int64(i + 1)}, Event: ev})
+		}
+		<-ctx.Done()
+		return nil
+	}}
+	m := NewManager(Config{Hosts: []Host{hostB()}}, Options{
+		Version: "v0.2.0", StateDir: s.stateDir, EventsPath: s.localEvts, Dial: d.dial,
+		Backoff: 20 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, Healthy: time.Second,
+		FloodDrops: 10, FloodWindow: time.Minute,
+	})
+	go func() {
+		for range m.Updates() {
+		}
+	}()
+	m.Start()
+	t.Cleanup(m.Close)
+	waitFor(t, "the host disabled", func() bool { return state(m).State == Disabled })
+	if st := state(m); !slices.Contains(st.Flags, "an event whose session id is not a UUID") || st.Dropped < 10 {
+		t.Errorf("flags %q dropped %d", st.Flags, st.Dropped)
+	}
+	if n := len(localLines(t, s.localEvts)); n != 0 {
+		t.Errorf("%d events logged", n)
+	}
+}

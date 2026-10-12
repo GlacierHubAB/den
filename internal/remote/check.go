@@ -3,6 +3,7 @@ package remote
 import (
 	"math"
 
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
@@ -152,4 +153,14 @@ func (m *Manager) Flag(label, what string) {
 			m.flag(h, what)
 		}
 	}
+}
+
+// malformed is check for an event whose session id is not a UUID: only a
+// UUID names a session, so it is dropped like an event for a session the
+// host never listed, and counts towards flooding the same way.
+func (g *gate) malformed(ev events.Event) (verdict, string) {
+	if !ev.Time.Before(g.start) {
+		g.live = true
+	}
+	return drop, "an event whose session id is not a UUID"
 }
