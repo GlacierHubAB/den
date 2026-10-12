@@ -1006,7 +1006,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// question or nothing: it never goes on to the orchestrator.
 			if it := m.inboxSelected(); it != nil && it.AsksInDen() {
 				if m.unsettled(it) {
-					return m.say("A new question just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press Enter again to answer it.", true)
+					return m.say("A new question just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press Enter again to answer it.", true)
 				}
 				return m.answerQuestion(it, text)
 			}

@@ -599,7 +599,7 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		// ^Y and ^N act on another request here: no keys on this one.
 		note := "waiting · select it in the Inbox to answer"
 		if t != nil {
-			note = "waiting · ^Y and ^N answer " + m.nameFor(t.SessionID) + "'s request first; select this one in the Inbox"
+			note = "waiting · ^Y and ^N answer " + m.nameFor(itemKey(t)) + "'s request first; select this one in the Inbox"
 		}
 		return append(out, s.dim.Render(note))
 	}
