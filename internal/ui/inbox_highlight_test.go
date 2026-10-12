@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -243,5 +245,79 @@ func TestRefusalSaysWhatTheSelectedItemIs(t *testing.T) {
 	want := "The request you selected can only be answered in its terminal (/open); nothing was sent. A request is waiting: select it to answer (↑ ↓)."
 	if decided(b) || got.flash != want {
 		t.Errorf("^Y on a request in its terminal: decided %v, flash %q", decided(b), got.flash)
+	}
+}
+
+// askQuestion puts a second agent's question waiting in Den.
+func askQuestion(m *Model, sid string) *bridge.Request {
+	m.store.Apply(req("PreToolUse", sid, map[string]any{"tool_name": twoAsks["tool_name"], "tool_input": twoAsks["tool_input"]}))
+	in := map[string]any{"tool_name": twoAsks["tool_name"], "tool_input": twoAsks["tool_input"], "session_id": sid, "hook_event_name": "PermissionRequest"}
+	p, _ := json.Marshal(in)
+	r := bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: p})
+	m.store.Apply(r)
+	return r
+}
+
+func TestTypedAnswerWithAStaleSelectionGoesNowhere(t *testing.T) {
+	const sid2 = "22222222-2222-4333-8444-555555555555"
+	for _, stale := range []string{"back in its terminal", "dismissed"} {
+		t.Run(stale, func(t *testing.T) {
+			m, _ := heldQuestion(t, true)
+			m.refresh()
+			first := m.inboxSelected()
+			if first == nil || !first.AsksInDen() {
+				t.Fatalf("selected %+v", first)
+			}
+			r2 := askQuestion(&m, sid2)
+			m.refresh()
+			m.store.Release(first, "you chose the terminal")
+			if stale == "dismissed" {
+				m.store.Dismiss(first)
+			}
+			m.refresh()
+			m = enter(m, "2")
+			if decided(r2) {
+				t.Fatal("the typed answer went to a question the human did not select")
+			}
+			if got := m.input.Value(); got != "2" {
+				t.Errorf("the typed text left the line (sent on as a prompt?): line %q, flash %q", got, m.flash)
+			}
+			if !strings.Contains(m.flash, "Nothing was sent: the item you selected is not a waiting question.") {
+				t.Errorf("flash = %q", m.flash)
+			}
+			// @Name still messages an agent on purpose.
+			m.input.Reset()
+			if m = enter(m, "@Nobody hello"); !strings.Contains(m.flash, `No agent called "Nobody"`) {
+				t.Errorf("@Name did not go to the agent lookup: %q", m.flash)
+			}
+		})
+	}
+}
+
+func TestTypedAnswerRightAfterAQuestionArrivesIsHeld(t *testing.T) {
+	answerSettle = 700 * time.Millisecond
+	t.Cleanup(func() { answerSettle = 0 })
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	answerNow = func() time.Time { return now }
+	t.Cleanup(func() { answerNow = time.Now })
+
+	// Nothing chosen yet; the question lands in the first row before Den
+	// has refreshed, and a digit typed for something else meets it.
+	m := inboxModel()
+	m.store.AnswerQuestions(true)
+	m.inboxCur = 0
+	r := askQuestion(&m, m.agents[0].Session.SessionID)
+	now = now.Add(100 * time.Millisecond)
+	m = enter(m, "1")
+	if decided(r) || !strings.Contains(m.flash, "A new question just came up") {
+		t.Fatalf("Enter right after the question arrived: decided %v, flash %q", decided(r), m.flash)
+	}
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = mm.(Model)
+	if it := m.inboxSelected(); it == nil || it.Kind != inbox.Question || strings.Contains(m.flash, "came up") {
+		t.Fatalf("the second Enter did not answer: flash %q", m.flash)
+	}
+	if !strings.Contains(m.flash, "Next question for") {
+		t.Errorf("flash = %q", m.flash)
 	}
 }
