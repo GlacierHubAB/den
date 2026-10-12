@@ -1113,7 +1113,7 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.ID == m.shown.id && !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
 		m.shown.since = time.Time{}
-		return m.say("A new request just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press again to answer it.", true)
+		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
 	if it.Kind == inbox.Question {
 		if verb == "deny" {

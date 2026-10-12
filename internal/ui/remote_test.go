@@ -249,7 +249,7 @@ func TestRemotePermissionIsShownNotAnswerable(t *testing.T) {
 		t.Errorf("^Y from the fleet would pick the remote item")
 	}
 	m.tab = tabInbox
-	m.inboxCur = 0
+	m.selectInbox(0)
 	mm, _ := m.answer("allow")
 	got := mm.(Model)
 	if !strings.Contains(got.flash, "answer it in the terminal there") || it.State == inbox.Resolved {
@@ -656,7 +656,8 @@ func TestAttachedElsewhereHostIsLiveReadOnly(t *testing.T) {
 	if it == nil || it.Answerable() {
 		t.Fatalf("attached elsewhere: item %+v", it)
 	}
-	m.tab, m.inboxCur = tabInbox, 0
+	m.tab = tabInbox
+	m.selectInbox(0)
 	mm, _ := m.answer("allow")
 	if f := mm.(Model).flash; !strings.Contains(f, "answer it in the terminal there") || !strings.Contains(f, "another Den controls devbox, this one only observes it") {
 		t.Errorf("flash = %q", f)
