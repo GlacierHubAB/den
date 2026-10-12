@@ -437,7 +437,9 @@ on this machine.
   UUID; an agent, event or request with anything else is dropped and the host
   flagged in `/remote`. Token counts below zero or over ten billion for one
   session, and a reported cost over $100,000, are cleared and flagged: that
-  agent shows no cost and adds nothing to the totals. A model id may hold only
+  agent shows no cost and adds nothing to the totals. A context size or window
+  over ten million tokens, and a usage percentage outside 0 to 100, are cleared
+  and flagged too, and never kept in the host's file. A model id may hold only
   letters, digits and `. _ : -`, at most 128 characters, and at most 32 per
   agent; tokens under any other are dropped and flagged.
 - **A host cannot answer for you.** Decisions only go from Den to the host

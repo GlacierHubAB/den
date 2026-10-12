@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -273,5 +275,51 @@ func TestNonUUIDEventsCountAsFlooding(t *testing.T) {
 	}
 	if n := len(localLines(t, s.localEvts)); n != 0 {
 		t.Errorf("%d events logged", n)
+	}
+}
+
+// Context and usage figures out of bounds are cleared before they are
+// shown or written to the host's file, and the host is flagged; a file
+// written before is checked again when it is loaded.
+func TestImplausibleContextAndUsageAreDropped(t *testing.T) {
+	const sidB = "11111111-2222-4333-8444-555555555556"
+	pct, huge, neg := 42.0, 1e15, -5.0
+	bad := fleet.Meta{Session: sidB, Status: "idle", Context: 1_000_000_000_000_000, Window: 200_000, HasUsage: true,
+		Limits: &fleet.MetaLimits{Context: &huge, FiveHour: &huge, SevenDay: &neg, Filled: &pct}}
+	m, _ := hostileRun(t, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{
+		{Session: sidA, Status: "idle", Context: 50_000, Window: 200_000, HasUsage: true},
+		bad,
+	}})
+	for _, a := range m.Agents() {
+		switch a.Session.SessionID {
+		case sidA:
+			if a.Usage.Tokens != 50_000 || a.Usage.Window != 200_000 {
+				t.Errorf("a plausible usage was lost: %+v", a.Usage)
+			}
+		case sidB:
+			if a.Usage.Tokens != 0 || a.Usage.Window != 0 || a.HasUsage {
+				t.Errorf("implausible context kept: %+v", a.Usage)
+			}
+			if l := a.Limits; l.Context != nil || l.FiveHour != nil || l.SevenDay != nil || l.Filled == nil || *l.Filled != pct {
+				t.Errorf("limits %+v", l)
+			}
+		}
+	}
+	if !hasFlag(m, "implausible context or usage figures") {
+		t.Errorf("flags %q", state(m).Flags)
+	}
+	// What is kept, and what an older file held, is checked on load.
+	dir := t.TempDir()
+	saveKnown(dir, Known{Label: "b", Agents: []fleet.Meta{bad}})
+	raw, _ := os.ReadFile(filepath.Join(dir, "b.json"))
+	if !strings.Contains(string(raw), "1000000000000000") {
+		t.Fatalf("the test file does not hold the raw figure:\n%s", raw)
+	}
+	k, _ := LoadKnown(dir, "b")
+	if len(k.Agents) != 1 || k.Agents[0].Context != 0 || k.Agents[0].Limits.FiveHour != nil {
+		t.Errorf("loaded %+v", k.Agents)
+	}
+	if *bad.Limits.FiveHour != huge {
+		t.Error("the check changed the host's copy")
 	}
 }

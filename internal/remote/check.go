@@ -24,6 +24,13 @@ const (
 	// the same reasoning: well above what the token ceiling could cost at
 	// cache-read prices, far below a figure that would swamp every total.
 	maxReportedUSD = 100_000
+	// maxContext caps a context size or window in tokens: ten times the
+	// largest window today (1M), so a bigger model still fits, far below a
+	// figure that would only be a host's error or a lie.
+	maxContext = 10_000_000
+	// maxPercent caps the badge's percentages (context filled, the 5-hour
+	// and weekly limits): they run 0 to 100.
+	maxPercent = 100
 	// maxModels caps the models one agent's tokens are kept for, per map;
 	// a session uses a handful.
 	maxModels = 32
@@ -85,7 +92,37 @@ func checkMeta(a fleet.Meta) (_ fleet.Meta, why []string, ok bool) {
 		a.Reported, a.Unpriced = nil, false
 		why = append(why, "an implausible reported cost")
 	}
+	if checkUsage(&a) {
+		why = append(why, "implausible context or usage figures")
+	}
 	return a, why, true
+}
+
+// checkUsage clears the context and usage figures that are out of bounds,
+// so they are neither shown nor kept in the host's file, and reports
+// whether it cleared any. The context in use and the window go together.
+func checkUsage(a *fleet.Meta) (cleared bool) {
+	if a.Context < 0 || a.Context > maxContext || a.Window < 0 || a.Window > maxContext {
+		a.Context, a.Window, a.HasUsage, a.UsageFromBadge = 0, 0, false, false
+		cleared = true
+	}
+	if a.Limits == nil {
+		return cleared
+	}
+	l := *a.Limits // the host's copy stays as it came
+	a.Limits = &l
+	drop := func(p **float64, max float64) {
+		if v := *p; v != nil && (math.IsNaN(*v) || *v < 0 || *v > max) {
+			*p, cleared = nil, true
+		}
+	}
+	drop(&l.Context, maxContext)
+	drop(&l.Window, maxContext)
+	drop(&l.Filled, maxPercent)
+	drop(&l.FiveHour, maxPercent)
+	drop(&l.SevenDay, maxPercent)
+	drop(&l.USD, maxReportedUSD)
+	return cleared
 }
 
 // checkModels keeps the entries of a tokens-by-model map whose key is a
