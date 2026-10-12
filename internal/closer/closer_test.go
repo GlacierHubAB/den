@@ -11,6 +11,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/gitsafe/gitsafetest"
 )
 
 func cands() []Target {
@@ -260,5 +262,17 @@ func TestCheckoutDoesNotRunFsmonitor(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("the dirty check ran the repo's core.fsmonitor script")
+	}
+}
+
+// The dirty check runs nothing a repository names, in it or in a submodule.
+func TestCheckoutRunsNothingTheRepoNames(t *testing.T) {
+	repo, marks := gitsafetest.Hostile(t)
+	paths, ok := Checkout(context.Background(), repo)
+	if !ok || len(paths) == 0 {
+		t.Fatalf("paths %v ok %v", paths, ok)
+	}
+	if ents, _ := os.ReadDir(marks); len(ents) > 0 {
+		t.Errorf("the dirty check made git run %s", ents[0].Name())
 	}
 }

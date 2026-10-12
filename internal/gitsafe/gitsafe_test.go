@@ -120,16 +120,19 @@ func TestChangeRunsNoHook(t *testing.T) {
 	}
 }
 
-// Emptying only the outer repository's filters is not enough: git diff
-// looks into a submodule with the submodule's own config.
+// Without the submodule overrides, git looks into the fixture's submodule
+// and runs the filter its own config names, so TestNothingRuns and the
+// readers' tests can fail.
 func TestSubmoduleFilterIsLive(t *testing.T) {
 	repo, marks := gitsafetest.Hostile(t)
 	cmd := exec.Command("git", "-C", repo, "diff", "--no-ext-diff", "--no-textconv", "HEAD", "--")
-	cmd.Env = append(environ(), "GIT_CONFIG_COUNT=4",
+	// Everything gitsafe sets but the submodule overrides.
+	cmd.Env = append(environ(), "GIT_CONFIG_COUNT=5",
 		"GIT_CONFIG_KEY_0=core.fsmonitor", "GIT_CONFIG_VALUE_0=false",
 		"GIT_CONFIG_KEY_1=filter.evil.clean", "GIT_CONFIG_VALUE_1=",
 		"GIT_CONFIG_KEY_2=filter.evil.process", "GIT_CONFIG_VALUE_2=",
-		"GIT_CONFIG_KEY_3=filter.a=b.clean", "GIT_CONFIG_VALUE_3=")
+		"GIT_CONFIG_KEY_3=filter.evil.required", "GIT_CONFIG_VALUE_3=false",
+		"GIT_CONFIG_KEY_4=filter.a=b.clean", "GIT_CONFIG_VALUE_4=")
 	cmd.Run()
 	if _, err := os.Stat(filepath.Join(marks, "submodule-clean")); err != nil {
 		t.Fatal("the fixture's submodule filter did not run without the submodule overrides; the test would prove nothing")

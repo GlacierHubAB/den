@@ -47,12 +47,14 @@ func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 // Change is git with args, run in dir, for the commands that change a
 // checkout on the human's request: merge, worktree remove, branch -d. No
 // hook runs (core.hooksPath is /dev/null), and neither does the
-// filesystem monitor or a merge driver the config names. A merge commit is
+// filesystem monitor or a merge driver the config names, and git does not
+// recurse into a submodule, whose own config it would use. A merge commit is
 // not signed, since the config names the signing program too (gpg.program,
 // gpg.ssh.program, gpg.x509.program). Filter drivers do run: a checkout
 // needs them to write files, as Git LFS does. The environment is Command's.
 func Change(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	over := [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"commit.gpgSign", "false"}}
+	over := [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"commit.gpgSign", "false"},
+		{"submodule.recurse", "false"}}
 	return command(ctx, dir, append(over, noMergeDrivers(ctx, dir)...), args)
 }
 
