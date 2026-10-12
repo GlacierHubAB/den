@@ -1250,7 +1250,10 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 			return m.say(why, true)
 		}
 		scope := inbox.AlwaysScope(it)
-		m.store.Answer(it, verb)
+		if !m.store.Answer(it, verb) {
+			m.refresh()
+			return m.say(m.nameFor(it.SessionID)+": "+it.Resolved, true)
+		}
 		m.refresh()
 		return m.say("Allowed for "+m.nameFor(itemKey(it))+", and from now on this session: "+scope, false)
 	}
