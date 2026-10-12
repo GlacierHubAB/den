@@ -46,7 +46,7 @@ type remoteFeed interface {
 	Hosts() []remote.HostStatus
 	Agents() []fleet.Agent
 	Reconnect(label string)
-	Connect(label string) // the human's /remote connect: applies a raise in remotes.toml too
+	Connect(label, seen string) // the human's /remote connect: applies the raise in remotes.toml they were shown (seen), too
 	Close()
 	// Send and CloseAgent act on a remote agent through the host's live
 	// session (internal/remote); Actionable says up front whether
@@ -73,6 +73,7 @@ type remoteState struct {
 	twins   map[string]string       // agent key → the other agent with the same session id (findTwins)
 	loadErr error                   // remotes.toml could not be read: no host is connected
 	listing bool                    // /remote: the hosts show in place of the details pane
+	confirm string                  // the host and raise a /remote connect showed, waiting for the same command again
 	pump    *remotePump             // drains the feed once Init starts it
 }
 
@@ -505,13 +506,32 @@ func (m Model) remoteCommand(args []string) (tea.Model, tea.Cmd) {
 	}
 	if len(args) > 0 && (args[0] == "connect" || args[0] == "retry") {
 		if len(args) < 2 {
-			return m.say("Which host? /remote connect <label>", true)
+			return m.say("Which host? /remote "+args[0]+" <label>", true)
 		}
 		label := strings.TrimPrefix(args[1], "@")
-		if _, ok := m.hostStatus(label); !ok {
+		h, ok := m.hostStatus(label)
+		if !ok {
 			return m.say("No host called "+label+". /remote lists them.", true)
 		}
-		m.remote.feed.Connect(label)
+		if args[0] == "retry" {
+			// A retry under the settings in use: no raise applies.
+			m.remote.feed.Reconnect(label)
+			return m.say("Connecting to "+label+"…", false)
+		}
+		// A raise remotes.toml asks for applies only once the human has
+		// been shown exactly what it is, and repeated the command.
+		key := label + "\x00" + h.Pending
+		if h.Pending != "" && m.remote.confirm != key {
+			m.remote.confirm = key
+			raise, _, _ := strings.Cut(h.Pending, "; /remote connect")
+			return m.say(raise+". /remote connect "+label+" again applies it; /remote retry "+label+" connects as it is.", true)
+		}
+		m.remote.confirm = ""
+		m.remote.feed.Connect(label, h.Pending)
+		if h.Pending != "" {
+			raise, _, _ := strings.Cut(h.Pending, "; /remote connect")
+			return m.say("Applying ("+strings.TrimPrefix(raise, "remotes.toml ")+") and connecting to "+label+"…", false)
+		}
 		return m.say("Connecting to "+label+"…", false)
 	}
 	if len(args) > 0 {

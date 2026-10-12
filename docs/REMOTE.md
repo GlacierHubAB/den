@@ -95,7 +95,8 @@ without it, `default_policy` in `remotes.toml` applies.
 In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
 host now, under `remotes.toml` as it is then, a raise or new target included
-(see [remotes.toml](#remotestoml)). `disable` and `remove` end the host's link
+once you have seen it, and `/remote retry <label>` retries it under the
+settings in use (see [remotes.toml](#remotestoml)). `disable` and `remove` end the host's link
 at once; `enable` and `add` take effect when Den restarts, or for a host Den
 still shows, at `/remote connect`.
 
@@ -133,7 +134,9 @@ for one: `observe` to `approve`, `approve` to `full`, `labels = true`, and
 another `target` or `den_path`, which could point the host at any machine. A
 raise applies when you run `/remote connect devbox` in Den, or when Den
 starts; until then `/remote` shows what the file asks for ("remotes.toml asks
-for full; /remote connect devbox to apply"). A new `target` or `den_path` also
+for full; /remote connect devbox to apply"). The first `/remote connect devbox`
+shows the raise and applies nothing; the same command again applies exactly
+that raise, and a raise the file asks for in between is shown first in turn. A new `target` or `den_path` also
 ends the link to the old one at once, and Den makes no connection for the host
 until you run `/remote connect` ("remotes.toml points devbox at user@other;
 /remote connect devbox to apply"). Disabling or removing a host trusts it

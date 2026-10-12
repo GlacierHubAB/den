@@ -35,6 +35,7 @@ type fakeFeed struct {
 	ch        chan remote.Update
 	reconnect []string
 	connect   []string
+	seen      []string // the raise each Connect was shown
 	// What Send and CloseAgent got, and what they answer.
 	sent      []string // "host/session: text"
 	closed    []string // "host/session force"
@@ -57,9 +58,12 @@ func (f *fakeFeed) Updates() <-chan remote.Update { return f.ch }
 func (f *fakeFeed) Hosts() []remote.HostStatus    { return f.hosts }
 func (f *fakeFeed) Agents() []fleet.Agent         { return f.agents }
 func (f *fakeFeed) Reconnect(label string)        { f.reconnect = append(f.reconnect, label) }
-func (f *fakeFeed) Connect(label string)          { f.connect = append(f.connect, label) }
-func (f *fakeFeed) Close()                        {}
-func (f *fakeFeed) Actionable(string) error       { return f.actErr }
+func (f *fakeFeed) Connect(label, seen string) {
+	f.connect = append(f.connect, label)
+	f.seen = append(f.seen, seen)
+}
+func (f *fakeFeed) Close()                  {}
+func (f *fakeFeed) Actionable(string) error { return f.actErr }
 func (f *fakeFeed) Applied(label string) (remote.Host, bool, bool) {
 	h, ok := f.applied[label]
 	return h, f.held[label], ok
@@ -790,5 +794,39 @@ func TestRemoteToolNameInSummaryIsAToolName(t *testing.T) {
 	runAll(m.remoteEvent(ev))
 	if len(*sent) != 1 || (*sent)[0] != "Mossy Lemur on devbox needs your permission" {
 		t.Errorf("notifications = %q", *sent)
+	}
+}
+
+// /remote connect applies a raise remotes.toml asks for only once it has
+// shown the human exactly what it is and they repeated the command, and
+// then only that raise; /remote retry connects as it is.
+func TestRemoteConnectShowsARaiseFirst(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	pending := "remotes.toml asks for full and points devbox at attacker-box; /remote connect devbox to apply"
+	feed.hosts[0].Pending = pending
+	m.syncRemote()
+	mm, _ := m.command("/remote connect devbox")
+	got := mm.(Model)
+	if len(feed.connect) != 0 || got.flash != "remotes.toml asks for full and points devbox at attacker-box. /remote connect devbox again applies it; /remote retry devbox connects as it is." {
+		t.Fatalf("first connect: connected %v, flash %q", feed.connect, got.flash)
+	}
+	mm, _ = got.command("/remote connect devbox")
+	got = mm.(Model)
+	if len(feed.connect) != 1 || feed.seen[0] != pending || !strings.Contains(got.flash, "Applying (asks for full and points devbox at attacker-box)") {
+		t.Fatalf("second connect: connected %v seen %q, flash %q", feed.connect, feed.seen, got.flash)
+	}
+	// A raise that changed after it was shown is shown again first.
+	feed.hosts[0].Pending = "remotes.toml asks for full; /remote connect devbox to apply"
+	got.syncRemote()
+	mm, _ = got.command("/remote connect devbox")
+	got = mm.(Model)
+	mm, _ = got.command("/remote connect devbox")
+	if len(feed.connect) != 2 || feed.seen[1] != "remotes.toml asks for full; /remote connect devbox to apply" {
+		t.Errorf("connects %v seen %q", feed.connect, feed.seen)
+	}
+	// /remote retry never applies a raise.
+	mm.(Model).command("/remote retry devbox")
+	if len(feed.connect) != 2 || len(feed.reconnect) != 1 {
+		t.Errorf("retry: connect %v reconnect %v", feed.connect, feed.reconnect)
 	}
 }

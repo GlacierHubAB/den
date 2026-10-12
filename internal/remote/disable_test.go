@@ -67,7 +67,7 @@ func TestDisablingAHostEndsItsLinkAtOnce(t *testing.T) {
 				t.Errorf("after enabling: state %s pending %q", st.State, st.Pending)
 			}
 			// The human's /remote connect does.
-			m.Connect("b")
+			m.Connect("b", state(m).Pending)
 			waitFor(t, "live again", func() bool { return state(m).State == Live })
 			if err := m.Actionable("b"); err != nil {
 				t.Errorf("Actionable after connect = %v", err)
