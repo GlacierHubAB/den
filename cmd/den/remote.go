@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 const remoteUsage = `usage: den remote add <target> [--label L] [--policy observe|approve|full] [--den PATH] [--skip-checks]
        den remote list [-json] | status <label> | install <label>
        den remote remove <label> | disable <label> | enable <label>
+       den remote spawn <label> <folder> [--model M] [--name N] [--worktree W] < brief   (asks in Den's inbox)
        den remote attach <tmux-session>  attach to an agent Den started on this host
        den remote serve --proto 1      run by Den over ssh on the host; not for humans
        den remote agent <session-id>   run by tmux for an agent Den starts on the host; not for humans`
@@ -54,6 +56,8 @@ func remoteCmd(args []string) {
 		remoteInstall(args[1:])
 	case "serve":
 		remoteServe(args[1:])
+	case "spawn":
+		remoteSpawn(args[1:])
 	case "agent":
 		if len(args) != 2 {
 			fail("usage: den remote agent <session-id>")
@@ -405,5 +409,68 @@ func waitEnter(d time.Duration) {
 	select {
 	case <-done:
 	case <-time.After(d):
+	}
+}
+
+// remoteSpawn is `den remote spawn <label> <folder> … < brief`. Starting an
+// agent on another machine is the human's call: this asks the running Den,
+// which checks it with the host and puts it in its inbox with the whole
+// brief, and starts it only on ^Y. The brief comes on stdin, never as an
+// argument, so it is in no process's command line. With no Den running it
+// prints what it would ask and starts nothing.
+func remoteSpawn(args []string) {
+	fs := flag.NewFlagSet("remote spawn", flag.ExitOnError)
+	model := fs.String("model", "", "haiku, sonnet or opus (default: the host's)")
+	name := fs.String("name", "", "the agent's peer name (default: from the folder)")
+	tree := fs.String("worktree", "", "start it in a git worktree of its own, by name")
+	var pos []string
+	for len(args) > 0 {
+		if !strings.HasPrefix(args[0], "-") {
+			pos, args = append(pos, args[0]), args[1:]
+			continue
+		}
+		fs.Parse(args)
+		args = fs.Args()
+	}
+	if len(pos) != 2 {
+		fail("usage: den remote spawn <label> <folder> [--model M] [--name N] [--worktree W] < brief")
+	}
+	h, ok := loadRemotes().Find(pos[0])
+	if !ok {
+		fail("den: no host labelled %q; see den remote list", pos[0])
+	}
+	if err := h.SpawnAllowed(); err != nil {
+		fail("den: %v", err)
+	}
+	if !remote.UnderSpawnDirs(pos[1], h.SpawnDirs) {
+		fail("den: %s is not under spawn_dirs for %s (%s)", pos[1], h.Label, strings.Join(h.SpawnDirs, ", "))
+	}
+	if st, err := os.Stdin.Stat(); err == nil && st.Mode()&os.ModeCharDevice != 0 {
+		fmt.Fprintln(os.Stderr, "Type the brief, then Ctrl+D on a line of its own.")
+	}
+	raw, err := io.ReadAll(io.LimitReader(os.Stdin, remote.MaxSendText+1))
+	if err != nil {
+		fail("den: reading the brief: %v", err)
+	}
+	brief := strings.TrimSpace(string(raw))
+	if err := remote.CheckBrief(brief); err != nil {
+		fail("den: %v", err)
+	}
+	cwd, _ := os.Getwd()
+	payload, _ := json.Marshal(bridge.SpawnInput{Host: h.Label, Dir: pos[1], Name: *name, Model: *model, Worktree: *tree, Brief: brief,
+		AskedBy: fmt.Sprintf("den remote spawn, pid %d in %s", os.Getpid(), cwd)})
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.SpawnEvent, Payload: payload}
+	fmt.Printf("Asking Den to start an agent on %s: approve with ^Y in its inbox (Ctrl+C stops waiting).\n", h.Label)
+	d, err := bridge.Call(bridge.SocketPath(), env, 15*time.Minute)
+	switch {
+	case errors.Is(err, bridge.ErrNoDen):
+		fmt.Printf("Den is not running, so nothing was started. Start Den and run this again; it would ask:\n  start an agent on %s in %s (%s route)\n", h.Label, pos[1], h.Spawn)
+		os.Exit(1)
+	case err != nil:
+		fail("den: no answer from Den (%v); whether it started is not known", err)
+	case d.Behavior == "allow":
+		fmt.Println(sanitize.Text(d.Message))
+	default:
+		fail("%s", sanitize.Text(d.Message))
 	}
 }

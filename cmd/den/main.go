@@ -100,7 +100,7 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|spawn|remove|disable|enable ...\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}

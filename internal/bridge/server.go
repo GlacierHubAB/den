@@ -151,7 +151,7 @@ func (s *Server) serve(conn net.Conn) {
 	}
 	req := &Request{Envelope: env}
 	_ = json.Unmarshal(env.Payload, &req.Input)
-	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent {
+	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == SpawnEvent {
 		req.reply = make(chan Decision, 1)
 		req.gone = make(chan struct{})
 	}
