@@ -68,6 +68,9 @@ func hook() {
 	if ev, ok := events.FromHook(in); ok && os.Getenv("DEN_ORCHESTRATOR") != "1" && config.Load().Events.Log {
 		events.Append(events.Path(), ev) // best effort
 	}
+	if raw = fitLine(raw, in.HookEventName); raw == nil {
+		return // a request too large for den.sock: Claude Code's own dialog answers it
+	}
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: in.HookEventName, SessionID: in.SessionID, Payload: raw}
 	path := bridge.SocketPath()
 	if in.HookEventName != "PermissionRequest" {
@@ -131,6 +134,33 @@ func permissionOutput(in bridge.HookInput, d bridge.Decision, cfg config.Config)
 		return nil
 	}
 	return append(out, '\n')
+}
+
+// lineRoom is what an envelope leaves of bridge.MaxLine for the payload.
+const lineRoom = bridge.MaxLine - 4096
+
+// fitLine makes a hook payload fit den.sock's line limit. An event Den only
+// follows loses its tool input and output, which it does not need; a
+// permission request is never cut, since Den must show it whole: nil, and
+// the hook leaves it to the terminal.
+func fitLine(raw []byte, event string) []byte {
+	if len(raw) <= lineRoom {
+		return raw
+	}
+	if event == "PermissionRequest" {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return nil
+	}
+	delete(m, "tool_input")
+	delete(m, "tool_response")
+	out, err := json.Marshal(m)
+	if err != nil || len(out) > lineRoom {
+		return nil
+	}
+	return out
 }
 
 // notifyWithoutDen is the fallback for when no Den is listening: with
