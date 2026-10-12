@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -66,12 +67,24 @@ type Server struct {
 var ErrAlreadyRunning = errors.New("another den is already listening")
 
 // Listen binds the socket. A stale socket file with no listener is removed.
+// In the fallback directory it makes the directory private first, and
+// refuses one that is not. A listener there of another user is an error,
+// not a running Den.
 func Listen(path string) (*Server, error) {
-	if _, err := os.Stat(path); err == nil {
+	if filepath.Dir(path) == FallbackDir() {
+		if err := EnsurePrivateDir(FallbackDir()); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := os.Lstat(path); err == nil {
 		c, err := net.DialTimeout("unix", path, 300*time.Millisecond)
 		if err == nil {
+			uid, perr := peerUID(c)
 			c.Close()
-			return nil, ErrAlreadyRunning
+			if perr == nil && uid == os.Getuid() {
+				return nil, ErrAlreadyRunning
+			}
+			return nil, fmt.Errorf("%s is held by another user's process", path)
 		}
 		os.Remove(path)
 	}
@@ -108,6 +121,11 @@ func (s *Server) accept() {
 
 func (s *Server) serve(conn net.Conn) {
 	defer conn.Close()
+	// The socket is 0600, but a connection is also checked: only this
+	// user's processes may hand Den an event, a close or an install.
+	if uid, err := peerUID(conn); err != nil || uid != os.Getuid() {
+		return
+	}
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil && len(line) == 0 {
