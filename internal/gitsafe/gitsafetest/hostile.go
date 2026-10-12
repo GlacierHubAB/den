@@ -7,10 +7,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Hostile is a repository whose config names a program at every hook git
-// would run while it is only looked at, and whose hooks directory has a
+// would run while it is only looked at, with a submodule whose own config
+// has a filter, and whose hooks directory has a
 // hook for merging and committing; each one writes a marker file. Its
 // branches ours and theirs both change h.txt, so merging them needs its
 // merge driver. It returns the repository, on main, and the marker
@@ -21,14 +23,27 @@ func Hostile(t testing.TB) (repo, marks string) {
 		t.Skip("git is not installed")
 	}
 	marks, repo = t.TempDir(), t.TempDir()
-	run := func(args ...string) {
+	home := t.TempDir()
+	runIn := func(dir string, args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+t.TempDir())
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "HOME="+home)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v %s", args, err, out)
 		}
 	}
+	run := func(args ...string) { t.Helper(); runIn(repo, args...) }
+	// A submodule (a nested checkout committed as a gitlink) whose own
+	// config, which the outer repository's does not name, has a filter.
+	sub := filepath.Join(repo, "sub")
+	os.MkdirAll(sub, 0o755)
+	runIn(sub, "init", "-q", "-b", "main")
+	runIn(sub, "config", "user.email", "user@example.com")
+	runIn(sub, "config", "user.name", "user")
+	os.WriteFile(filepath.Join(sub, "s.dat"), []byte("s\n"), 0o644)
+	os.WriteFile(filepath.Join(sub, ".gitattributes"), []byte("s.dat filter=subevil\n"), 0o644)
+	runIn(sub, "add", ".")
+	runIn(sub, "commit", "-qm", "init")
 	run("init", "-q", "-b", "main")
 	run("config", "user.email", "user@example.com")
 	run("config", "user.name", "user")
@@ -55,6 +70,10 @@ func Hostile(t testing.TB) (repo, marks string) {
 	Signer(t, repo, marks)
 	os.WriteFile(filepath.Join(repo, ".git", "info", "attributes"), []byte("*.txt filter=evil diff=evil\n*.md filter=a=b\nh.txt merge=evil\n"), 0o644)
 	Hooks(t, filepath.Join(repo, ".git", "hooks"), marks)
+	runIn(sub, "config", "filter.subevil.clean", mark("submodule-clean"))
+	// Touched, not changed: git must read it again, through the filter.
+	later := time.Now().Add(time.Minute)
+	os.Chtimes(filepath.Join(sub, "s.dat"), later, later)
 	os.WriteFile(filepath.Join(repo, "f.txt"), []byte("a\nb\n"), 0o644)
 	os.WriteFile(filepath.Join(repo, "g.md"), []byte("x\n"), 0o644)
 	return repo, marks

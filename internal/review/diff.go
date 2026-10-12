@@ -149,7 +149,7 @@ func Diff(ctx context.Context, dir, base string) ([]File, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := git(ctx, root, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--find-renames", "-U3",
+	out, err := git(ctx, root, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--ignore-submodules=all", "--find-renames", "-U3",
 		"--src-prefix=a/", "--dst-prefix=b/", base, "--")
 	if err != nil {
 		return nil, err

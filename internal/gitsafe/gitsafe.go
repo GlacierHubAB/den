@@ -18,6 +18,7 @@ import (
 // make it execute anything:
 //
 //   - core.fsmonitor is off (a hook git would run before reading the tree);
+//   - submodules are ignored, so git never runs inside one with its config;
 //   - every filter driver the config names has its clean, smudge and process
 //     commands emptied and is not required (git diff and status run a clean
 //     filter on files whose stat changed);
@@ -30,7 +31,10 @@ import (
 // --no-ext-diff and --no-textconv to diff. Hooks never run on reads.
 // Commands that change the checkout on the human's request use Change.
 func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	over := [][2]string{{"core.fsmonitor", "false"}}
+	// Submodules are not looked into: git would run there with the
+	// submodule's own config, whose filters are not emptied here.
+	over := [][2]string{{"core.fsmonitor", "false"}, {"diff.ignoreSubmodules", "all"},
+		{"submodule.recurse", "false"}, {"status.submoduleSummary", "false"}}
 	for _, d := range names(ctx, dir, `^filter\.`, "filter") {
 		for _, v := range []string{"clean", "smudge", "process"} {
 			over = append(over, [2]string{"filter." + d + "." + v, ""})
@@ -43,12 +47,14 @@ func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 // Change is git with args, run in dir, for the commands that change a
 // checkout on the human's request: merge, worktree remove, branch -d. No
 // hook runs (core.hooksPath is /dev/null), and neither does the
-// filesystem monitor or a merge driver the config names. A merge commit is
+// filesystem monitor or a merge driver the config names, and git does not
+// recurse into a submodule, whose own config it would use. A merge commit is
 // not signed, since the config names the signing program too (gpg.program,
 // gpg.ssh.program, gpg.x509.program). Filter drivers do run: a checkout
 // needs them to write files, as Git LFS does. The environment is Command's.
 func Change(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	over := [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"commit.gpgSign", "false"}}
+	over := [][2]string{{"core.fsmonitor", "false"}, {"core.hooksPath", os.DevNull}, {"commit.gpgSign", "false"},
+		{"submodule.recurse", "false"}}
 	return command(ctx, dir, append(over, noMergeDrivers(ctx, dir)...), args)
 }
 
