@@ -67,8 +67,16 @@ mkdir -p ~/.local/bin && mv den_linux_amd64 ~/.local/bin/den
 den version
 ```
 
-`make release` builds the same files into `dist/`; pushing a `v*` tag runs it
-on GitHub Actions. Only Linux binaries are built.
+Releases after v0.3.1 also carry a build provenance attestation, which says
+the binary was built by Den's release workflow from the tagged commit:
+
+```
+gh attestation verify den_linux_amd64 --repo GlacierHubAB/den
+```
+
+`make release` builds the same files into `dist/`; pushing a `v*` tag on main
+runs it on GitHub Actions (see [docs/RELEASING.md](docs/RELEASING.md)). Only
+Linux binaries are built.
 
 ## Requirements
 

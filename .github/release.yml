@@ -1,0 +1,14 @@
+# Groups the pull request list GitHub generates for release notes. The release
+# workflow puts this list under the tag's own message.
+changelog:
+  exclude:
+    labels: [skip-changelog]
+  categories:
+    - title: Fixes
+      labels: [bug]
+    - title: Features
+      labels: [enhancement]
+    - title: Dependencies
+      labels: [dependencies]
+    - title: Other changes
+      labels: ["*"]
