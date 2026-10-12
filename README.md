@@ -219,9 +219,7 @@ With the hooks installed, each item is a permission, a plan review, a question
 or a finished turn; Den adds its own questions, to close agents, to install
 skills or to reopen agents after a restart. Waiting permissions and plans can
 be answered from Den: `Ctrl+Y` allows and `Ctrl+N` denies the waiting one,
-`/always` allows it and the same again this session (for a command, that exact
-command only; a command with shell operators, substitutions, redirections or
-several lines is allowed one `Ctrl+Y` at a time), `/open` focuses the
+`/always` allows it and the same again this session (see below), `/open` focuses the
 terminal, `/dismiss` clears an item, and `/unread` keeps the selected item
 counted as new until you open or dismiss it (`/unread` again marks it read).
 Finished turns are appended to `~/.local/state/den/history.jsonl` (the newest
@@ -231,6 +229,27 @@ scrolls inside it (`↑` `↓`, `PgUp` `PgDn`) under a marker that says how many
 lines are left, and `Ctrl+Y`, `/always` or a typed answer waits until you have
 scrolled to its end; from another view, such a request is answered only once
 it was read in the Inbox. `Ctrl+N` never waits.
+
+What `/always` allows from then on, for that agent's session only, kept in
+memory until Den exits (the line that confirms it says which):
+
+- a command: that exact command only. A command with shell operators,
+  substitutions, redirections or several lines (`;`, `&`, `|`, `$(`, a
+  backtick, `<`, `>`) takes no `/always`; `Ctrl+Y` allows it once.
+- a file edit (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`): edits by that
+  tool inside the agent's working directory, never outside it, never through
+  a symlink that leads out, and never of a file whose change runs code or
+  raises trust: anything under `~/.ssh`, `~/.config/den`, `~/.local/state/den`,
+  `~/.config/fish`, a `.claude` folder or `.git` (any repository), `.githooks`,
+  `.gitattributes`, `.gitmodules`, `.mcp.json` or a shell start-up file
+  (`.bashrc`, `.profile`, `.zshrc` and the like). Such an edit, or one outside,
+  is asked about as usual, and takes no `/always`. Inside the working
+  directory a rule does cover files other tools run later, such as `.envrc`,
+  `.vscode/`, a `Makefile` or `package.json`.
+- `WebFetch`: fetches from the same host.
+- an MCP tool: that tool of that server, never the whole server.
+- any other tool: every call of that tool.
+- a plan or a question: nothing; each is answered on its own.
 
 Claude Code shows its own dialog in the agent's terminal at once, beside
 Den's hold, so a request can always be answered there too; whichever answers

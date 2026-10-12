@@ -38,7 +38,7 @@ func TestPlanNeverAlwaysAllowed(t *testing.T) {
 	if _, ok := r.Decided(); ok {
 		t.Error("the hook got a decision")
 	}
-	if allowKey(bridge.PlanTool, r.Input.ToolInput) != "" {
+	if allowKey(r.Input, "") != "" {
 		t.Error("a plan has an always-rule key")
 	}
 	store.always[r.Input.SessionID] = map[string]bool{bridge.PlanTool: true, "": true}
