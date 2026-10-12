@@ -454,11 +454,24 @@ func TestHostileHost(t *testing.T) {
 	if a.Name != "Mossy Lemur" || a.Labels.Role != "coder" || state(m).Hostname != "devbox" {
 		t.Errorf("not sanitised: name %q role %q host %q", a.Name, a.Labels.Role, state(m).Hostname)
 	}
-	flags := strings.Join(state(m).Flags, "; ")
-	for _, want := range []string{"unknown message type exec", "unknown fields in snapshot: tail", "unknown kind"} {
-		if !strings.Contains(flags, want) {
-			t.Errorf("flags %q lack %q", flags, want)
+	// The event comes after the snapshot that made the agent appear, so its
+	// flag may not be there yet.
+	wants := []string{"unknown message type exec", "unknown fields in snapshot: tail", "unknown kind"}
+	flagged := func() bool {
+		flags := strings.Join(state(m).Flags, "; ")
+		for _, want := range wants {
+			if !strings.Contains(flags, want) {
+				return false
+			}
 		}
+		return true
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !flagged() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !flagged() {
+		t.Errorf("flags %q lack one of %q", strings.Join(state(m).Flags, "; "), wants)
 	}
 	if len(localLines(t, s.localEvts)) != 0 {
 		t.Error("an unknown event kind was logged")
@@ -518,15 +531,18 @@ func TestOfflineBacksOff(t *testing.T) {
 	d.down.Store(true)
 	m := s.manager(d, hostB())
 	m.Start()
+	defer m.Close()
 	time.Sleep(400 * time.Millisecond)
-	m.Close()
 	// 20, 40, 80, 100, 100 ms: about 5 dials in 400 ms, never a tight loop.
 	if n := d.dials.Load(); n < 3 || n > 8 {
 		t.Errorf("dialled %d times in 400 ms", n)
 	}
-	if st := state(m); st.State != Offline || !strings.Contains(st.Reason, "Connection refused") {
-		t.Errorf("state %+v", st)
-	}
+	// Between dials the host is offline; a read during a dial would say
+	// connecting, so wait for the backoff.
+	waitFor(t, "offline", func() bool {
+		st := state(m)
+		return st.State == Offline && strings.Contains(st.Reason, "Connection refused")
+	})
 }
 
 func TestVersionMismatch(t *testing.T) {
