@@ -73,3 +73,38 @@ func TestLoweredPolicyAppliesWithoutARestart(t *testing.T) {
 		})
 	}
 }
+
+// A raise written to remotes.toml waits for the human: the watch and a
+// Reconnect (as after an install) leave the host as it was and say what the
+// file asks for; Connect, the human's /remote connect, applies it.
+func TestRaisedPolicyWaitsForConnect(t *testing.T) {
+	g := newRig(t)
+	g.l.Local.WriteRemotes(g.l.RemotesTOML("approve"))
+	g.opts = func(o *remote.Options) { o.Reload, o.Watch = remote.Load, 50*time.Millisecond }
+	g.r.SeedSession(sshtest.SecretOpts())
+	g.start()
+	g.live()
+	g.wait("the agent", 10*time.Second, func() bool { return len(g.m.Agents()) == 1 })
+
+	g.l.Local.WriteRemotes(g.l.RemotesTOML("full"))
+	pending := "remotes.toml asks for full; /remote connect b to apply"
+	g.wait("the raise noted", 5*time.Second, func() bool { return g.status().Pending == pending })
+	g.m.Reconnect("b")
+	time.Sleep(time.Second)
+	if s := g.status(); s.Policy != remote.Approve || s.Applied != remote.Approve || s.Pending != pending {
+		t.Errorf("the raise applied without /remote connect: %+v", s)
+	}
+	if a := g.m.Agents(); len(a) != 1 || a[0].Title != "" {
+		t.Errorf("content under approve: %+v", a)
+	}
+	if _, err := g.m.Diff("b", g.m.Agents()[0].Session.SessionID); err == nil {
+		t.Error("a diff was allowed before the raise was applied")
+	}
+
+	g.m.Connect("b")
+	g.wait("full after /remote connect", 15*time.Second, func() bool {
+		s := g.status()
+		return s.State == remote.Live && s.Applied == remote.Full && s.Pending == ""
+	})
+	g.wait("full content", 10*time.Second, func() bool { a := g.m.Agents(); return len(a) == 1 && a[0].Title == "SECRET-title" })
+}

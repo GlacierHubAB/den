@@ -46,6 +46,7 @@ type remoteFeed interface {
 	Hosts() []remote.HostStatus
 	Agents() []fleet.Agent
 	Reconnect(label string)
+	Connect(label string) // the human's /remote connect: applies a raise in remotes.toml too
 	Close()
 	// Send and CloseAgent act on a remote agent through the host's live
 	// session (internal/remote); Actionable says up front whether
@@ -484,6 +485,9 @@ func hostDetail(h remote.HostStatus) []string {
 	if h.Hint != "" {
 		out = append(out, h.Hint)
 	}
+	if h.Pending != "" {
+		out = append(out, h.Pending)
+	}
 	return out
 }
 
@@ -504,7 +508,7 @@ func (m Model) remoteCommand(args []string) (tea.Model, tea.Cmd) {
 		if _, ok := m.hostStatus(label); !ok {
 			return m.say("No host called "+label+". /remote lists them.", true)
 		}
-		m.remote.feed.Reconnect(label)
+		m.remote.feed.Connect(label)
 		return m.say("Connecting to "+label+"…", false)
 	}
 	if len(args) > 0 {
@@ -564,6 +568,7 @@ func (m Model) remoteLines(w int) []string {
 			kv("reason", h.Reason)
 		}
 		kv("hint", h.Hint)
+		kv("pending", h.Pending)
 		kv("dropped", m.droppedText(h))
 		for _, f := range h.Flags {
 			out = append(out, "    "+s.attn.Render("dropped: ")+s.dim.Render(f))

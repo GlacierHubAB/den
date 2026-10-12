@@ -94,8 +94,9 @@ without it, `default_policy` in `remotes.toml` applies.
 
 In the TUI, `/remote` lists the hosts with state, policy, agent count, cost,
 the last message, versions and the clock; `/remote connect <label>` retries a
-host now, under `remotes.toml` as it is then. `disable`, `enable` and `remove`
-take effect when Den restarts.
+host now, under `remotes.toml` as it is then, a raised policy included (see
+[remotes.toml](#remotestoml)). `disable`, `enable` and `remove` take effect
+when Den restarts.
 
 Addressing a remote agent: `@Name@devbox text` messages it, `/close Name@devbox`
 closes it, and from a script `den send name@devbox "text"`. A bare `@Name` or
@@ -122,11 +123,17 @@ A label is lower-case letters, digits and `-`, and `local` is taken. A target
 that starts with `-` is refused. Den reads the file when it starts. A file that
 does not parse connects no host, and `/remote` says why. There is no command to
 change a host's policy: edit `policy`. Den reads the file again every two
-seconds, before each connection and on `/remote connect`. A host whose
-`policy`, `labels`, `target` or `den_path` changed is shown under the new
-settings at once, so content a lowered policy no longer allows disappears, and
-it reconnects under them. Adding, removing, disabling or enabling a host still
-takes a restart of Den; a file that does not parse keeps the settings in use.
+seconds and before each connection, and applies what trusts a host less at
+once: a lower `policy`, `labels = false`, or another `target` or `den_path`
+(under the lower of the old and new policy). The host is shown under it
+straight away, so content a lowered policy no longer allows disappears, and it
+reconnects under it. A raise (`observe` to `approve`, `approve` to `full`, or
+`labels = true`) does not apply because the file changed, since anything that
+can write the file, an agent with a shell included, could ask for one. It
+applies when you run `/remote connect devbox` in Den, or when Den starts;
+until then `/remote` shows "remotes.toml asks for full; /remote connect devbox
+to apply". Adding, removing, disabling or enabling a host still takes a
+restart of Den; a file that does not parse keeps the settings in use.
 `policy` and `default_policy` take `observe` or `approve`.
 They also take `full`.
 
