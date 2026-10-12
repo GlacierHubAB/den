@@ -42,9 +42,10 @@
 //
 //	{"type":"ping"}
 //
-// Den is still there. Den sends one every PingEvery; a serve that relays
-// held requests and hears nothing from Den for Silence lets them all go to
-// their terminals and exits, so a half-open link does not hold them.
+// Den is still there. Den sends one every PingEvery, under every policy; a
+// serve that hears nothing from Den for Silence lets every held request go
+// to its terminal and exits, so a half-open link neither holds them nor
+// leaves serve running on the host.
 //
 //	{"type":"send","id":"…","session":"…","text":"…"}
 //	{"type":"close","id":"…","session":"…","force":false}

@@ -197,6 +197,9 @@ last known. They are never counted as working or needing you.
 | disabled | the host flooded Den with events (see Security model) | stops until `/remote connect devbox`, or until Den restarts |
 
 A link that goes silent is noticed in 45 to 60 seconds; a killed ssh at once.
+On the host, `den remote serve` exits once it has heard nothing from Den for
+60 seconds, under every policy, so a link that died half-open leaves nothing
+running there.
 Events that happened while the link was down arrive once it is back, once each.
 Items waiting from the host read "released to the terminal on devbox (link
 lost)", and the terminal's own dialog shows: a request is never left looking

@@ -284,6 +284,34 @@ func TestRelaySilentDenFailsOpen(t *testing.T) {
 	}
 }
 
+// Under observe nothing is held, but a link that died half-open must still
+// end serve: Den pings under every policy, and serve exits once they stop.
+func TestServeUnderObserveExitsWhenPingsStop(t *testing.T) {
+	s := newScratch(t)
+	silence := 400 * time.Millisecond
+	sv, hello := serveDirect(t, s, Request{Policy: Observe, Controller: ctlA}, func(o *ServeOptions) { o.Silence = silence })
+	if hello.Policy != Observe {
+		t.Fatalf("hello = %+v", hello)
+	}
+	// Pinging keeps it alive well past its silence.
+	for range 8 {
+		writeMsg(sv.in, Ping{Type: TypePing})
+		select {
+		case err := <-sv.errc:
+			t.Fatalf("serve ended while Den pinged: %v", err)
+		case <-time.After(silence / 4):
+		}
+	}
+	select {
+	case err := <-sv.errc:
+		if err == nil || !strings.Contains(err.Error(), "no word from Den") {
+			t.Errorf("serve ended with %v, want the silence watchdog", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve under observe is still running 10 s after Den went silent")
+	}
+}
+
 func TestRelayUnderObserveDoesNotHold(t *testing.T) {
 	s := newScratch(t)
 	sv, hello := serveDirect(t, s, Request{Policy: Observe, Controller: ctlA}, nil)

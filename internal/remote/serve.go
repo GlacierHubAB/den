@@ -40,7 +40,7 @@ type ServeOptions struct {
 	Orphaned      func() bool                   // the watchdog: true once the ssh session is gone; default parent pid 1
 	Socket        string                        // den-remote.sock; default bridge.RemoteSocketPath, its private fallback dir made 0700
 	Questions     *bool                         // relay AskUserQuestion; default the host's hooks.answer_questions
-	Silence       time.Duration                 // relaying, no word from Den this long lets every held request go; default 60 s
+	Silence       time.Duration                 // no word from Den this long ends serve, letting every held request go; default 60 s
 	Log           func(string)                  // what the relay did, metadata only; default remote-serve.log in the state dir
 	CloseOps      closer.Ops                    // how close signals; default closer.System
 	CloseSelf     closer.Self                   // what a close must leave alone; default this process and its ancestors
@@ -317,16 +317,17 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 		return err
 	}
 	var handed <-chan struct{}
-	var silent <-chan time.Time
 	heard := time.Now()
 	inRate := rateCap{max: 100} // decisions are a human's keypresses, pings one per PingEvery
 	if rl != nil {
 		rl.start()
 		handed = rl.Done()
-		t := time.NewTicker(o.Silence / 4)
-		defer t.Stop()
-		silent = t.C
 	}
+	// Den pings under every policy, so silence means the link died
+	// half-open: without the watchdog an observe serve whose ssh session
+	// lingers would live on, reading a pipe nobody writes.
+	silent := time.NewTicker(o.Silence / 4)
+	defer silent.Stop()
 
 	changed := watch(ctx, o.Watch, o.Debounce)
 	every := time.NewTicker(o.SnapshotEvery)
@@ -342,8 +343,11 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 			return nil
 		case <-handed:
 			return fmt.Errorf("handed over to a new session of the same Den")
-		case <-silent:
+		case <-silent.C:
 			if time.Since(heard) > o.Silence {
+				if rl == nil {
+					return fmt.Errorf("no word from Den for %s", o.Silence)
+				}
 				return fmt.Errorf("no word from Den for %s; held requests went to their terminals", o.Silence)
 			}
 		case line := <-fromDen:
