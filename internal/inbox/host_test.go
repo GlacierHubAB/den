@@ -47,21 +47,21 @@ func TestSessionsAreKeyedByHost(t *testing.T) {
 	if !s.Answer(remote, "always") {
 		t.Fatal("answer failed")
 	}
-	again := hostHook("", "PermissionRequest", bash("go test ./internal"))
+	again := hostHook("", "PermissionRequest", bash("go test ./..."))
 	if it := s.Apply(again); it == nil {
 		t.Fatal("the remote host's always-allow answered a local request")
 	}
 	if _, ok := again.Decided(); ok {
 		t.Error("the local request was answered without the human")
 	}
-	same := hostHook("devbox", "PermissionRequest", bash("go test ./cmd"))
+	same := hostHook("devbox", "PermissionRequest", bash("go test ./..."))
 	if it := s.Apply(same); it != nil {
 		t.Fatalf("always-allow on devbox did not cover devbox: %+v", it)
 	}
 	if d, ok := same.Decided(); !ok || d.Behavior != "allow" {
 		t.Errorf("devbox decision = %+v, %v", d, ok)
 	}
-	other := hostHook("gpu", "PermissionRequest", bash("go test ./cmd"))
+	other := hostHook("gpu", "PermissionRequest", bash("go test ./..."))
 	if it := s.Apply(other); it == nil {
 		t.Fatal("always-allow on devbox answered the same session id on gpu")
 	}

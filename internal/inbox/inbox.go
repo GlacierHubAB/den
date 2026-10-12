@@ -630,6 +630,9 @@ func (s *Store) Answer(it *Item, verb string) bool {
 		it.req.Reply(bridge.Decision{Behavior: "allow"})
 		it.State, it.Resolved = Resolved, "allowed in den"
 	case "always":
+		if AlwaysRefusal(it) != "" {
+			return false
+		}
 		if key := allowKey(it.Tool, it.req.Input.ToolInput); key != "" {
 			k := agentKey(it.Host, it.SessionID)
 			if s.always[k] == nil {
@@ -920,8 +923,38 @@ func (it *Item) is(host, sessionID string) bool {
 // agentKey keys per-agent state by host and session.
 func agentKey(host, sessionID string) string { return host + "\x00" + sessionID }
 
-// allowKey is the "always" rule key: tool plus the first two words of a
-// Bash command, or the tool name alone for everything else. A plan has
+// shellOperators are what /always refuses in a command: each lets one
+// approved command carry another, or write where it was not shown to.
+var shellOperators = []string{";", "&", "|", "$(", "`", "<", ">", "\n", "\r"}
+
+// AlwaysRefusal says why /always cannot answer the item, "" when it can.
+// A command with shell operators, substitutions or redirections is
+// allowed once at a time, never always: the rule would allow exactly that
+// compound line, and an approval of it should be read each time.
+func AlwaysRefusal(it *Item) string {
+	if it.Kind != Permission || it.req == nil || it.Tool != "Bash" {
+		return ""
+	}
+	var in struct {
+		Command string `json:"command"`
+	}
+	json.Unmarshal(it.req.Input.ToolInput, &in)
+	var found []string
+	for _, op := range shellOperators {
+		if strings.Contains(in.Command, op) {
+			found = append(found, strings.NewReplacer("\n", "a newline", "\r", "a carriage return").Replace(op))
+		}
+	}
+	if len(found) == 0 {
+		return ""
+	}
+	return "/always takes a single plain command, and this one has " + strings.Join(found, " ") + ": ^Y allows it once"
+}
+
+// allowKey is the "always" rule key: for Bash the whole command, exactly
+// as it will run, or the tool name alone for everything else. "" is no
+// rule. A Bash rule never matches a longer command: a prefix such as
+// "git status" would let "git status && curl … | sh" through. A plan has
 // none: no rule ever approves one (PlansOneAtATime).
 func allowKey(tool string, input json.RawMessage) string {
 	if tool == "" || tool == bridge.PlanTool {
@@ -932,14 +965,10 @@ func allowKey(tool string, input json.RawMessage) string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(input, &in)
-		f := strings.Fields(in.Command)
-		if len(f) == 0 {
-			return "Bash"
+		if strings.TrimSpace(in.Command) == "" {
+			return ""
 		}
-		if len(f) > 2 {
-			f = f[:2]
-		}
-		return "Bash:" + strings.Join(f, " ")
+		return "Bash:" + in.Command
 	}
 	return tool
 }
