@@ -21,6 +21,15 @@ type SessionOpts struct {
 	Status string // "idle" (default) or "busy"
 	// Badge store entry (role and task as agent-badge saved them).
 	Role, Task string
+	// Socket is the messagingSocketPath to write; default a path in the
+	// owner's runtime dir (nothing listens there unless a test makes it).
+	Socket string
+	// StartedAgo is how long ago the session file says it started; default 1m.
+	StartedAgo time.Duration
+	// PID, when set, names that process in the session file instead of
+	// starting a dummy one: the file then points at a process the session
+	// does not own.
+	PID int
 	// Transcript content. Any of these set writes a transcript.
 	Prompt, Reply, Command, Title string
 }
@@ -90,12 +99,15 @@ func (h *seedDir) add(o SessionOpts) *Session {
 	if o.Status == "" {
 		o.Status = "idle"
 	}
-	cmd := exec.Command(h.lab.claudeStandIn(), "3600")
-	cmd.Env = append(os.Environ(), "DEN_SSHTEST="+h.lab.Dir)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	must(t, cmd.Start())
-	s := &Session{ID: o.ID, PID: cmd.Process.Pid, h: h, opts: o, proc: cmd, reaped: make(chan struct{}), started: time.Now().UnixMilli()}
-	go func() { cmd.Wait(); close(s.reaped) }()
+	s := &Session{ID: o.ID, PID: o.PID, h: h, opts: o, reaped: make(chan struct{}), started: time.Now().UnixMilli()}
+	if o.PID == 0 {
+		cmd := exec.Command(h.lab.claudeStandIn(), "3600")
+		cmd.Env = append(os.Environ(), "DEN_SSHTEST="+h.lab.Dir)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		must(t, cmd.Start())
+		s.PID, s.proc = cmd.Process.Pid, cmd
+		go func() { cmd.Wait(); close(s.reaped) }()
+	}
 	h.sessions = append(h.sessions, s)
 	s.File = filepath.Join(h.claudeDir, "sessions", fmt.Sprintf("%d.json", s.PID))
 	s.writeFile(o.Status)
@@ -111,8 +123,13 @@ func (h *seedDir) add(o SessionOpts) *Session {
 
 func (s *Session) writeFile(status string) {
 	now := time.Now().UnixMilli()
+	// The session's real start time, unless a test says the file claims otherwise.
+	started := s.started
+	if s.opts.StartedAgo != 0 {
+		started = now - s.opts.StartedAgo.Milliseconds()
+	}
 	b, _ := json.Marshal(map[string]any{
-		"pid": s.PID, "sessionId": s.ID, "cwd": s.opts.CWD, "startedAt": s.started,
+		"pid": s.PID, "sessionId": s.ID, "cwd": s.opts.CWD, "startedAt": started,
 		"version": "2.1.289", "kind": "interactive", "entrypoint": "cli", "name": s.opts.Name,
 		"status": status, "updatedAt": now, "statusUpdatedAt": now,
 		"messagingSocketPath": s.Socket(),
@@ -123,8 +140,19 @@ func (s *Session) writeFile(status string) {
 	must(s.h.lab.t, os.Rename(tmp, s.File)) // atomic, like Claude Code's writes
 }
 
+// SocketPath is the default messagingSocketPath of the session.
+func (s *Session) SocketPath() string {
+	return filepath.Join(s.h.runtimeDir, fmt.Sprintf("msg-%d.sock", s.PID))
+}
+
+// SetSocket rewrites the session file with another messagingSocketPath.
+func (s *Session) SetSocket(path string) {
+	s.opts.Socket = path
+	s.writeFile(s.opts.Status)
+}
+
 // SetStatus rewrites the session file with a new busy/idle status.
-func (s *Session) SetStatus(status string) { s.writeFile(status) }
+func (s *Session) SetStatus(status string) { s.opts.Status = status; s.writeFile(status) }
 
 var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
@@ -178,7 +206,7 @@ func (s *Session) SetBadge(role, task string) {
 // (a zombie would still answer kill(pid, 0)). The session file stays, as it
 // does when Claude Code is killed.
 func (s *Session) Stop() {
-	if s.proc == nil {
+	if s.proc == nil { // not ours (a named pid), or already stopped
 		return
 	}
 	syscall.Kill(-s.proc.Process.Pid, syscall.SIGKILL)
@@ -188,6 +216,9 @@ func (s *Session) Stop() {
 
 // Exited reports whether the dummy process is gone (something killed it).
 func (s *Session) Exited() bool {
+	if s.proc == nil && s.PID != 0 && s.opts.PID != 0 {
+		return syscall.Kill(s.PID, 0) != nil // a named pid: the process is not ours to wait for
+	}
 	select {
 	case <-s.reaped:
 		return true
@@ -199,7 +230,10 @@ func (s *Session) Exited() bool {
 // Socket is the messagingSocketPath the session file names: a test that
 // listens there stands in for Claude Code's inbox socket.
 func (s *Session) Socket() string {
-	return filepath.Join(s.h.runtimeDir, fmt.Sprintf("msg-%d.sock", s.PID))
+	if s.opts.Socket != "" {
+		return s.opts.Socket
+	}
+	return s.SocketPath()
 }
 
 // Remove stops the process and deletes the session file, a clean exit.

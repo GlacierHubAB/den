@@ -46,6 +46,7 @@ type rig struct {
 	mu   sync.Mutex
 	ups  []remote.Update
 	stop func()
+	opts func(*remote.Options) // adjusts the Manager's options before start
 }
 
 // newRig makes the lab and writes remotes.toml for host b (observe).
@@ -65,7 +66,11 @@ func (g *rig) start() {
 	if err != nil {
 		g.t.Fatal(err)
 	}
-	g.m = remote.NewManager(cfg, remote.Options{Version: sshtest.Version()[len("den "):], Backoff: 300 * time.Millisecond, MaxBackoff: time.Second})
+	o := remote.Options{Version: sshtest.Version()[len("den "):], Backoff: 300 * time.Millisecond, MaxBackoff: time.Second}
+	if g.opts != nil {
+		g.opts(&o)
+	}
+	g.m = remote.NewManager(cfg, o)
 	stop := make(chan struct{})
 	done := make(chan struct{})
 	go func() {

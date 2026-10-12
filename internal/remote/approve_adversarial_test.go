@@ -397,7 +397,9 @@ func (g *rig) manual(policy remote.Policy) *manualServe {
 	}()
 	g.t.Cleanup(func() { in.Close(); cmd.Process.Kill() })
 	ms.send(remote.Request{Type: remote.TypeHello, Proto: remote.Proto, Policy: policy, Controller: "cccccccccccccccccccccccccccccccc"})
-	g.wait("den-remote.sock", 10*time.Second, func() bool { _, err := os.Stat(g.r.RemoteSock); return err == nil })
+	if policy.Valid() && policy != remote.Observe { // under observe there is no relay
+		g.wait("den-remote.sock", 10*time.Second, func() bool { _, err := os.Stat(g.r.RemoteSock); return err == nil })
+	}
 	return ms
 }
 
