@@ -33,7 +33,11 @@ func fakeTranscripts(t *testing.T, tokens map[string]int) {
 	proj := filepath.Join(dir, "projects", "-home-u-code-demo-app")
 	os.MkdirAll(proj, 0o755)
 	for id, n := range tokens {
-		line := fmt.Sprintf(`{"type":"assistant","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":10,"cache_read_input_tokens":%d,"cache_creation_input_tokens":0}}}`, n-10)
+		model := "claude-sonnet-5-5"
+		if id == "mossy-lemur" {
+			model = "claude-haiku-4-5" // as the roster remembers it
+		}
+		line := fmt.Sprintf(`{"type":"assistant","message":{"model":%q,"usage":{"input_tokens":10,"cache_read_input_tokens":%d,"cache_creation_input_tokens":0}}}`, model, n-10)
 		os.WriteFile(filepath.Join(proj, id+".jsonl"), []byte(line+"\n"), 0o644)
 	}
 }
@@ -342,3 +346,37 @@ func TestRosterSkipsTheOrchestratorAndHeadlessSessions(t *testing.T) {
 }
 
 var _ tea.Msg = restoreDoneMsg{}
+
+// An agent closed while in plan mode, which Claude Code may run on another
+// model, is reopened with the model it runs outside plan mode, as its
+// transcript records it; the roster saw only the plan-mode one.
+func TestRestoreUsesTheModelOutsidePlanMode(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	proj := filepath.Join(dir, "projects", "-home-u-code-demo-app")
+	os.MkdirAll(proj, 0o755)
+	lines := []string{
+		`{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-haiku-4-5-20251001"}}}`,
+		`{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","usage":{"input_tokens":10}}}`,
+		`{"type":"attachment","attachment":{"type":"model","identity":{"modelId":"claude-sonnet-5-5"}}}`,
+		`{"type":"attachment","attachment":{"type":"plan_mode"}}`,
+		`{"type":"assistant","message":{"model":"claude-sonnet-5-5","usage":{"input_tokens":10}}}`,
+	}
+	os.WriteFile(filepath.Join(proj, "brave-ferret.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
+	a := roster.Agent{SessionID: "brave-ferret", Critter: "Brave Ferret", Model: "claude-sonnet-5-5", CWD: "/home/u/code/demo-app"}
+	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), width: 120, height: 40, tree: newTreeState()}
+	m.ensureRestore()
+	reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{a}})
+	if len(reqs) != 1 || reqs[0].Model != "claude-haiku-4-5-20251001" {
+		t.Fatalf("requests = %+v", reqs)
+	}
+	if head, _, _ := m.restoreLines(a); !strings.Contains(strings.Join(head, "\n"), "Haiku 4.5") {
+		t.Errorf("restore lines = %q", head)
+	}
+	// Started in plan mode, its default model is not recorded: the model
+	// the roster saw, as before.
+	os.WriteFile(filepath.Join(proj, "brave-ferret.jsonl"), []byte(strings.Join(lines[2:], "\n")+"\n"), 0o644)
+	if reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{a}}); reqs[0].Model != "claude-sonnet-5-5" {
+		t.Errorf("unrecorded: %+v", reqs[0])
+	}
+}

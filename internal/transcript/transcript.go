@@ -103,6 +103,111 @@ func lineModel(line []byte) string {
 	return ""
 }
 
+// DefaultModel is the model a session runs outside plan mode, "" when the
+// transcript does not say. Claude Code 2.1.289 may run plan mode on
+// another model: entering it writes a model attachment for the plan model
+// and then a plan_mode attachment; leaving it writes the default model's
+// attachment and then plan_mode_exit. So when plan_mode is the newest
+// marker, the default model is the first model record before the plan
+// model's attachment; otherwise it is the model in use. A session that
+// started in plan mode has no record of its default model. It is for
+// restoring a session, so it reads further back than Read does.
+func DefaultModel(path string) string {
+	if path == "" {
+		return ""
+	}
+	var recs []modelRec // newest first
+	model, known := "", false
+	scanBackwards(path, 16<<20, func(line []byte) bool {
+		if mode := planMarker(line); mode != "" {
+			recs = append(recs, modelRec{mode: mode})
+		} else if m := lineModel(line); m != "" {
+			recs = append(recs, modelRec{model: m, attach: bytes.Contains(line, []byte(`"type":"attachment"`))})
+		}
+		model, known = defaultFrom(recs)
+		return known
+	})
+	if known {
+		return model
+	}
+	// No plan mode in what was read: the model in use is the default one.
+	// With a plan mode marker that did not settle it, it is not recorded.
+	for _, r := range recs {
+		if r.mode != "" {
+			return ""
+		}
+	}
+	return firstModel(recs)
+}
+
+// modelRec is a transcript record that bears on the model: a model in use
+// (from a model attachment, or a real reply), or a plan mode marker.
+type modelRec struct {
+	model  string
+	attach bool
+	mode   string // "plan_mode" or "plan_mode_exit"
+}
+
+// defaultFrom is the default model from recs, newest first, and whether
+// they settle it.
+func defaultFrom(recs []modelRec) (string, bool) {
+	for i, r := range recs {
+		switch r.mode {
+		case "plan_mode_exit":
+			if m := firstModel(recs[:i]); m != "" {
+				return m, true
+			}
+			// Left plan mode with no reply since: the attachment that came
+			// with the exit, just before it.
+			if i+1 < len(recs) && recs[i+1].model != "" {
+				return recs[i+1].model, true
+			}
+			return "", false
+		case "plan_mode":
+			rest := recs[i+1:]
+			if len(rest) > 0 && rest[0].attach {
+				rest = rest[1:] // the plan model's own attachment
+			}
+			if m := firstModel(rest); m != "" {
+				return m, true
+			}
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// firstModel is the first model in recs, "" when there is none.
+func firstModel(recs []modelRec) string {
+	for _, r := range recs {
+		if r.model != "" {
+			return r.model
+		}
+	}
+	return ""
+}
+
+// planMarker is "plan_mode" or "plan_mode_exit" for a line that is that
+// attachment, "" otherwise.
+func planMarker(line []byte) string {
+	if !bytes.Contains(line, []byte(`"type":"attachment"`)) || !bytes.Contains(line, []byte(`"plan_mode`)) {
+		return ""
+	}
+	var a struct {
+		Type       string `json:"type"`
+		Attachment struct {
+			Type string `json:"type"`
+		} `json:"attachment"`
+	}
+	if json.Unmarshal(line, &a) != nil || a.Type != "attachment" {
+		return ""
+	}
+	if a.Attachment.Type == "plan_mode" || a.Attachment.Type == "plan_mode_exit" {
+		return a.Attachment.Type
+	}
+	return ""
+}
+
 // scanBackwards feeds complete lines from the end of the file to fn until fn
 // returns true, the file is exhausted, or limit bytes have been read.
 func scanBackwards(path string, limit int64, fn func(line []byte) bool) error {
