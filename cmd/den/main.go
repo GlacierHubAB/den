@@ -145,9 +145,9 @@ func explain(who string) {
 	if err != nil {
 		fail("den: %v", err)
 	}
-	a, ok := fleet.Find(agents, who)
-	if !ok {
-		fail("den: no agent matches %q", who)
+	a, err := fleet.Lookup(agents, who)
+	if err != nil {
+		fail("den: %v", err)
 	}
 	for _, l := range fleet.Explain(a) {
 		fmt.Println(l)
@@ -159,9 +159,9 @@ func focus(who string) {
 	if err != nil {
 		fail("den: %v", err)
 	}
-	a, ok := fleet.Find(agents, who)
-	if !ok {
-		fail("den: no agent matches %q", who)
+	a, err := fleet.Lookup(agents, who)
+	if err != nil {
+		fail("den: %v", err)
 	}
 	note, err := fleet.Focus(a)
 	if err != nil {

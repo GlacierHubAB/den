@@ -94,6 +94,15 @@ type Agent struct {
 	TeamCost       *cost.Summary      `json:",omitempty"` // with everyone the agent directs; set by den list -json for agents that direct others
 	Tail           []transcript.Entry // recent prompts, replies and tool calls
 	Path           string             // transcript path, "" when none
+
+	// Host is the label of the remote host an agent runs on (remotes.toml),
+	// "" for this machine. A remote agent carries only what Meta carries.
+	// HostState is that host's link state ("live", "offline", ...) and
+	// Stale says the figures are the last known ones, not current. All
+	// three are left out of the JSON for local agents.
+	Host      string `json:"Host,omitempty"`
+	HostState string `json:",omitempty"`
+	Stale     bool   `json:",omitempty"`
 }
 
 // MarshalJSON adds StatusName, the status as a string, next to the integer
@@ -401,23 +410,66 @@ func humanAge(d time.Duration) string {
 }
 
 // Find returns the agent whose name, session id or pid matches query. Names
-// match case-insensitively on a prefix ("mossy", "Mossy Lemur").
+// match case-insensitively on a prefix ("mossy", "Mossy Lemur"). A query
+// that is ambiguous across hosts matches nothing; Lookup says why.
 func Find(agents []Agent, query string) (Agent, bool) {
-	q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(query, "@")))
+	a, err := Lookup(agents, query)
+	return a, err == nil
+}
+
+// Lookup is Find with a reason when nothing matches. A query may name the
+// host after an @ ("mossy@devbox", "mossy@local"); without one, a query
+// that matches agents on more than one host is an error listing them.
+func Lookup(agents []Agent, query string) (Agent, error) {
+	q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "@")))
 	if q == "" {
-		return Agent{}, false
+		return Agent{}, fmt.Errorf("no agent matches %q", query)
 	}
-	for _, a := range agents {
-		if strings.HasPrefix(a.Session.SessionID, q) || fmt.Sprint(a.Session.PID) == q {
-			return a, true
+	host, qualified := "", false
+	if i := strings.LastIndex(q, "@"); i >= 0 {
+		host, q, qualified = q[i+1:], strings.TrimSpace(q[:i]), true
+		if host == "local" {
+			host = ""
 		}
 	}
-	for _, a := range agents {
-		if strings.HasPrefix(strings.ToLower(a.Name), q) {
-			return a, true
+	// The first match on each host, in the order given; a host is only
+	// considered once so one host's prefix matches stay unambiguous.
+	var hits []Agent
+	seen := map[string]bool{}
+	take := func(match func(Agent) bool) {
+		for _, a := range agents {
+			if (qualified && a.Host != host) || seen[a.Host] || !match(a) {
+				continue
+			}
+			seen[a.Host] = true
+			hits = append(hits, a)
 		}
 	}
-	return Agent{}, false
+	take(func(a Agent) bool {
+		return q != "" && (strings.HasPrefix(a.Session.SessionID, q) || (a.Session.PID > 0 && fmt.Sprint(a.Session.PID) == q))
+	})
+	if len(hits) == 0 {
+		take(func(a Agent) bool { return q != "" && strings.HasPrefix(strings.ToLower(a.Name), q) })
+	}
+	switch len(hits) {
+	case 0:
+		return Agent{}, fmt.Errorf("no agent matches %q", query)
+	case 1:
+		return hits[0], nil
+	}
+	var names []string
+	for _, a := range hits {
+		names = append(names, a.Name+"@"+HostName(a.Host))
+	}
+	return Agent{}, fmt.Errorf("%q matches agents on more than one host: %s; add @host", query, strings.Join(names, ", "))
+}
+
+// HostName is the label shown for a host: "local" for this machine.
+func HostName(host string) string {
+	if host == "" {
+		return "local"
+	}
+	return host
 }
 
 // TouchedFolders lists where the agent's recent file changes landed, as

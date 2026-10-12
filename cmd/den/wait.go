@@ -56,9 +56,9 @@ func findAgent(who string) fleet.Agent {
 	if err != nil {
 		fail("den: %v", err)
 	}
-	a, ok := fleet.Find(agents, who)
-	if !ok {
-		fail("den: no agent matches %q", who)
+	a, err := fleet.Lookup(agents, who)
+	if err != nil {
+		fail("den: %v", err)
 	}
 	return a
 }
