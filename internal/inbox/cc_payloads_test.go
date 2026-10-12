@@ -61,10 +61,8 @@ func TestFixturesAreNeutral(t *testing.T) {
 		if in.SessionID != "11111111-2222-4333-8444-555555555555" {
 			t.Errorf("%s: session %q", f, in.SessionID)
 		}
-		for _, bad := range []string{"/home/", "grvlle", "claude-1000"} {
-			if strings.Contains(string(raw), bad) {
-				t.Errorf("%s names %q", f, bad)
-			}
+		if bad := notNeutral(string(raw)); bad != "" {
+			t.Errorf("%s: %s", f, bad)
 		}
 	}
 }
