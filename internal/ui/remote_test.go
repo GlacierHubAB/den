@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -46,6 +47,15 @@ type fakeFeed struct {
 	diff     *remote.Diff
 	diffErr  error
 	diffErrs map[string]error // by session, before diffErr
+	// What Spawn got, and what it answers (checkErr for a check).
+	spawns   []remote.SpawnRequest
+	spawnRes remote.SpawnResult
+	spawnErr error
+	checkErr error
+	// Leftovers' answer, what Cleanup got, and AttachCommand's answers.
+	leftovers []remote.Spawned
+	cleaned   []string // "host/tmux"
+	attachErr error
 }
 
 func (f *fakeFeed) Start()                        {}
@@ -76,6 +86,21 @@ func (f *fakeFeed) Diff(host, sid string) (*remote.Diff, error) {
 		return nil, err
 	}
 	return f.diff, f.diffErr
+}
+func (f *fakeFeed) Spawn(_ context.Context, host string, req remote.SpawnRequest) (remote.SpawnResult, error) {
+	f.spawns = append(f.spawns, req)
+	if req.Check {
+		return f.spawnRes, f.checkErr
+	}
+	return f.spawnRes, f.spawnErr
+}
+func (f *fakeFeed) Leftovers(string) []remote.Spawned { return f.leftovers }
+func (f *fakeFeed) Cleanup(host, sid, name string) error {
+	f.cleaned = append(f.cleaned, host+"/"+name)
+	return nil
+}
+func (f *fakeFeed) AttachCommand(host, name string) ([]string, error) {
+	return []string{"ssh", "-t", "--", host, "den remote attach " + name}, f.attachErr
 }
 func (f *fakeFeed) setState(label string, s remote.State) {
 	for i := range f.hosts {

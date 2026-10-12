@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"slices"
@@ -19,6 +20,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/remote"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Remote hosts (docs/REMOTE.md): agents on the
@@ -58,6 +60,13 @@ type remoteFeed interface {
 	Diff(host, sessionID string) (*remote.Diff, error)
 	// Flag marks a host for something the views noticed (twins).
 	Flag(label, what string)
+	// Spawn starts an agent on a host, or checks that it would start
+	// (internal/remote); Leftovers, Cleanup and AttachCommand serve the
+	// agents Den started there.
+	Spawn(ctx context.Context, host string, req remote.SpawnRequest) (remote.SpawnResult, error)
+	Leftovers(host string) []remote.Spawned
+	Cleanup(host, sessionID, tmuxName string) error
+	AttachCommand(host, tmuxName string) ([]string, error)
 }
 
 // remoteState is the remote hosts as the views show them.
@@ -248,6 +257,9 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 		cmd = m.remoteHeld(u.Host, u.Request)
 	case remote.HeldReleased:
 		m.store.LetGo()
+	case remote.SpawnNotice:
+		m.flash, m.flashErr = sanitize.Line(u.Note), true
+		cmd = tea.Tick(12*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 	}
 	m.refresh()
 	return tea.Batch(cmd, waitRemote(m.remote.pump))
@@ -501,14 +513,43 @@ func (m Model) remoteCommand(args []string) (tea.Model, tea.Cmd) {
 		m.remote.feed.Reconnect(label)
 		return m.say("Connecting to "+label+"…", false)
 	}
+	if len(args) > 0 && args[0] == "cleanup" {
+		if len(args) < 2 {
+			return m.say("Which host? /remote cleanup <label>", true)
+		}
+		return m.leftoverCommand(args[1])
+	}
 	if len(args) > 0 {
-		return m.say("/remote lists the hosts; /remote connect <label> retries one now.", true)
+		return m.say("/remote lists the hosts; /remote connect <label> retries one now; /remote cleanup <label> ends Den's leftover tmux sessions there.", true)
 	}
 	m.tab = tabFleet
 	m.focus = paneAgents
 	m.tree.mapView = false
 	m.remote.listing = true
 	return m, nil
+}
+
+// spawnLine is what a host allows of spawn, for the /remote listing.
+func spawnLine(h remote.HostStatus) string {
+	if h.Spawn == "" || h.Spawn == remote.SpawnOff || len(h.SpawnDirs) == 0 {
+		return ""
+	}
+	line := string(h.Spawn) + " in " + strings.Join(h.SpawnDirs, ", ")
+	switch c := h.SpawnCap; {
+	case c == nil && linked(h.State):
+		line += "; den there is too old to start agents"
+	case c == nil:
+	case c.Veto != "":
+		line += "; " + c.Veto
+	case c.Tmux == "":
+		line += "; no usable tmux: " + c.NoTmux
+	default:
+		line += fmt.Sprintf("; tmux %s, %d running", c.Tmux, c.Running)
+	}
+	if h.Orchestrator {
+		line += "; the orchestrator may act here"
+	}
+	return line
 }
 
 // remoteLines is the /remote listing: one block per host.
@@ -559,6 +600,10 @@ func (m Model) remoteLines(w int) []string {
 		}
 		kv("hint", h.Hint)
 		kv("dropped", m.droppedText(h))
+		kv("spawn", spawnLine(h))
+		if n := len(m.remote.feed.Leftovers(h.Label)); n > 0 {
+			kv("leftover", fmt.Sprintf("%d tmux session(s) Den started have no Claude Code running: /remote cleanup %s", n, h.Label))
+		}
 		for _, f := range h.Flags {
 			out = append(out, "    "+s.attn.Render("dropped: ")+s.dim.Render(f))
 		}

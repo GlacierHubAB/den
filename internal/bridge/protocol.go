@@ -94,6 +94,27 @@ type SendInput struct {
 	AskedBy string `json:"asked_by"` // who ran the command, for the notice
 }
 
+// SpawnEvent is not a hook either: `den remote spawn` sends it to ask the
+// running Den to start an agent on a remote host (docs/REMOTE.md). Any
+// process here can run that command, so Den always puts it to the human
+// as one inbox question with the full brief (^Y starts it; there is no
+// always), and answers allow with what started or deny with why not.
+//
+// Like InstallEvent it is only ever read from the local den.sock: a remote
+// host's messages never reach the bridge.
+const SpawnEvent = "SpawnRequest"
+
+// SpawnInput is the payload of a SpawnEvent.
+type SpawnInput struct {
+	Host     string `json:"host"`               // the host's label in remotes.toml
+	Dir      string `json:"dir"`                // the folder on the host, absolute or ~/
+	Name     string `json:"name,omitempty"`     // the wanted peer name
+	Model    string `json:"model,omitempty"`    // haiku, sonnet or opus
+	Worktree string `json:"worktree,omitempty"` // a git worktree of its own, by name
+	Brief    string `json:"brief"`              // what the agent should do
+	AskedBy  string `json:"asked_by"`           // who ran the command, for the question
+}
+
 // HookInput is the subset of Claude Code's hook JSON that Den reads.
 type HookInput struct {
 	SessionID        string          `json:"session_id"`

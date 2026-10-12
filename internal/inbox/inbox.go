@@ -35,6 +35,8 @@ const (
 	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
 	Install                // Den asks: copy this den to a remote host? y/n answer it
 	Message                // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
+	Spawn                  // Den asks: start this agent on a remote host? y/n answer it; there is no always
+	Leftover               // Den asks: end these leftover tmux sessions on a remote host? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -71,6 +73,10 @@ func (k Kind) String() string {
 		return "install"
 	case Message:
 		return "message"
+	case Spawn:
+		return "spawn"
+	case Leftover:
+		return "leftover"
 	}
 	return "?"
 }
@@ -129,7 +135,8 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message ||
+		it.Kind == Spawn || it.Kind == Leftover
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -638,6 +645,18 @@ func (s *Store) AddInstall(host, title string, body []string, req *bridge.Reques
 // req is the request of the den send that asked; it gets the outcome.
 func (s *Store) AddMessageOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
 	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Message, Tool: "den_send", Title: title, Body: body, req: req})
+}
+
+// AddSpawn adds Den's question: start this agent on a remote host? host is
+// its label; req is the request of the command that asked, nil when none.
+func (s *Store) AddSpawn(host, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: HostPrefix + host, Kind: Spawn, Tool: "remote_spawn", Title: title, Body: body, req: req})
+}
+
+// AddLeftover adds Den's question: end these leftover tmux sessions that Den
+// started on a remote host?
+func (s *Store) AddLeftover(host, title string, body []string) *Item {
+	return s.add(&Item{SessionID: HostPrefix + host, Kind: Leftover, Tool: "remote_cleanup", Title: title, Body: body})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's

@@ -116,6 +116,7 @@ type Model struct {
 	offers     map[string]skills.Approval // skills offers in the inbox, by item id
 	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
 	sends      map[string]askedSend       // den send questions in the inbox, by item id
+	rspawn     remoteSpawnState           // agents started on remote hosts (spawn_remote.go)
 	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard      *closer.Guard              // agents a close must leave alone or only propose when named
@@ -524,6 +525,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case installPlanMsg:
 		m.offerInstall(msg)
 		return m, nil
+	case spawnCheckedMsg:
+		return m, m.spawnChecked(msg)
+	case spawnStartedMsg:
+		return m, m.spawnStarted(msg)
+	case spawnExpiredMsg:
+		m.expireSpawn(msg)
+		return m, nil
+	case attachOpenedMsg:
+		return m, m.attachOpened(msg)
+	case leftoverDoneMsg:
+		m.leftoverDone(msg)
+		return m, tea.Tick(6*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 	case installDoneMsg:
 		return m, m.finishInstall(msg)
 	case askedSentMsg:
@@ -584,6 +597,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
+	}
+	if r.Event == bridge.SpawnEvent {
+		return m.handleSpawnRequest(r)
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
@@ -821,6 +837,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
+		if m.rspawn.ready != nil && strings.TrimSpace(m.input.Value()) == "" {
+			m.rspawn.ready = nil
+			return m.say("Cancelled; nothing started.", false)
+		}
 		if m.sel.active {
 			m.sel.active = false
 			return m, nil
@@ -1015,6 +1035,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
+			if m.rspawn.ready != nil {
+				return m.confirmSpawn()
+			}
 			if m.tab == tabOverview {
 				m.toggleMission()
 				return m, nil
@@ -1117,8 +1140,9 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if target.Host != "" {
-		// Den never types into or raises a remote terminal.
-		return m.say(m.remoteHint(target), false)
+		// Den never types into or raises a remote terminal; it opens a new
+		// one attached to the agent's tmux session when it started it there.
+		return m.attachOrHint(remoteAgentRef{host: target.Host, name: target.Name, peer: target.Session.Name, tmux: target.Tmux, hint: m.remoteHint(target)})
 	}
 	return m, func() tea.Msg {
 		note, err := fleet.Focus(target)
@@ -1221,6 +1245,12 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.Spawn {
+		return m.decideSpawn(it, verb)
+	}
+	if it.Kind == inbox.Leftover {
+		return m.decideLeftover(it, verb)
+	}
 	m.store.Answer(it, verb)
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(itemKey(it)), false)
@@ -1257,6 +1287,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.answerQuestion(it, text)
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
+	case "/spawn":
+		return m.spawnCommand(text)
 	case "/open", "/o", "/focus":
 		return m.openSelected()
 	case "/copy":

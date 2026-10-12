@@ -286,11 +286,17 @@ func (m Model) panes(w, h int) string {
 	if m.remote.listing {
 		detail = strings.Join(m.remoteLines(rw-2), "\n")
 	}
+	if m.rspawn.ready != nil {
+		detail = strings.Join(m.spawnPreviewLines(rw-2), "\n")
+	}
 	d := m.box(m.detailTitle(), detail, rw, h, m.focus == paneDetail)
 	return lipgloss.JoinHorizontal(lipgloss.Top, a, d)
 }
 
 func (m Model) detailTitle() string {
+	if m.rspawn.ready != nil {
+		return "Start on " + m.rspawn.ready.host
+	}
 	if m.remote.listing {
 		return "Remote hosts"
 	}
@@ -624,6 +630,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.Message:
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
+	case it.Answerable() && it.Kind == inbox.Spawn:
+		out = append(out, key("^Y", "start it")+"  "+key("^N", "decline"))
+	case it.Answerable() && it.Kind == inbox.Leftover:
+		out = append(out, key("^Y", "end them")+"  "+key("^N", "keep them"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -816,6 +826,12 @@ func (m Model) inboxPane(w, h int) string {
 			}
 			if it.Kind == inbox.Message {
 				acts = key("^Y", "send it") + sp + sp + key("^N", "do not send")
+			}
+			if it.Kind == inbox.Spawn {
+				acts = key("^Y", "start it") + sp + sp + key("^N", "decline")
+			}
+			if it.Kind == inbox.Leftover {
+				acts = key("^Y", "end them") + sp + sp + key("^N", "keep them")
 			}
 			if it.AsksInDen() {
 				acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")

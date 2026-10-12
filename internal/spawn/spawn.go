@@ -192,17 +192,6 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		env = append(env, "DEN_PEER="+res.Name)
 	}
 
-	// Where the human is right now is where the window must end up.
-	var want hypr.Workspace
-	var before []hypr.Client
-	hyprOK := hypr.Available()
-	if hyprOK {
-		var ok bool
-		if want, ok = hypr.ActiveWorkspace(); ok {
-			res.Workspace = strconv.Itoa(want.ID)
-		}
-		before, _ = hypr.Clients()
-	}
 	title := "den"
 	if res.Name != "" {
 		// PeerName keeps names to safe characters; sanitised again since a
@@ -210,29 +199,10 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		title = sanitize.Line("den · " + res.Name)
 	}
 	started := time.Now()
-	if err := Launch(dir, title, command, env); err != nil {
+	win, err := OpenWindow(ctx, dir, title, command, env)
+	res.Window, res.Workspace, res.Moved = win.Address, win.Workspace, win.Moved
+	if err != nil {
 		return res, err
-	}
-
-	if hyprOK {
-		deadline := time.Now().Add(WindowWait)
-		for time.Now().Before(deadline) && ctx.Err() == nil {
-			after, err := hypr.Clients()
-			if err == nil {
-				if c, ok := hypr.NewTerminal(before, after); ok {
-					res.Window = c.Address
-					res.Workspace = c.Workspace.Name
-					if want.ID != 0 && c.Workspace.ID != want.ID {
-						if hypr.MoveToWorkspace(c.Address, strconv.Itoa(want.ID)) == nil {
-							res.Moved = true
-							res.Workspace = want.Name
-						}
-					}
-					break
-				}
-			}
-			sleep(ctx, pollEvery)
-		}
 	}
 	if !req.Agent {
 		return res, nil
@@ -258,6 +228,59 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	}
 	return res, nil
 }
+
+// Window is where a terminal Den opened landed.
+type Window struct {
+	Address   string // Hyprland address of the new terminal, "" when unknown
+	Workspace string // where it is, "" when unknown
+	Moved     bool   // it landed elsewhere and was moved to the active workspace
+}
+
+// OpenWindow launches a terminal in dir titled title, running command (a
+// shell when empty) with env added, the way spawned agents open: it notes
+// the workspace the human is looking at first and moves the window there
+// if it lands anywhere else.
+func OpenWindow(ctx context.Context, dir, title string, command, env []string) (Window, error) {
+	var res Window
+	// Where the human is right now is where the window must end up.
+	var want hypr.Workspace
+	var before []hypr.Client
+	hyprOK := hypr.Available()
+	if hyprOK {
+		var ok bool
+		if want, ok = hypr.ActiveWorkspace(); ok {
+			res.Workspace = strconv.Itoa(want.ID)
+		}
+		before, _ = hypr.Clients()
+	}
+	if err := Launch(dir, title, command, env); err != nil {
+		return res, err
+	}
+	if hyprOK {
+		deadline := time.Now().Add(WindowWait)
+		for time.Now().Before(deadline) && ctx.Err() == nil {
+			after, err := hypr.Clients()
+			if err == nil {
+				if c, ok := hypr.NewTerminal(before, after); ok {
+					res.Address = c.Address
+					res.Workspace = c.Workspace.Name
+					if want.ID != 0 && c.Workspace.ID != want.ID {
+						if hypr.MoveToWorkspace(c.Address, strconv.Itoa(want.ID)) == nil {
+							res.Moved = true
+							res.Workspace = want.Name
+						}
+					}
+					break
+				}
+			}
+			sleep(ctx, pollEvery)
+		}
+	}
+	return res, nil
+}
+
+// WorktreeNote is what the brief of an agent in worktree name is told.
+func WorktreeNote(name string) string { return worktreeNote(name) }
 
 // WorktreeBranch is the branch Claude Code gives a worktree called name.
 func WorktreeBranch(name string) string { return "worktree-" + name }
