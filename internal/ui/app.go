@@ -487,6 +487,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.handleOrchEvent(msg.ev)
 		m.refresh()
 		return m, cmd
+	case cliSentMsg:
+		m.applyCLISent(msg)
+		m.refresh()
+		return m, nil
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
@@ -553,6 +557,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.InstallEvent {
 		return m.handleInstallRequest(r)
+	}
+	if r.Event == bridge.SendEvent {
+		return m.handleSendRequest(r)
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
@@ -709,7 +716,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, readClipboard()
 	case "tab":
 		if len(compl) > 0 {
-			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
+			m.input.SetValue(mentionText(compl[m.complIdx%len(compl)]) + " ")
 			m.input.CursorEnd()
 			m.complIdx = 0
 			return m, nil
@@ -863,7 +870,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.openSelected()
 		}
 		if len(compl) > 0 && resolveMention(m.input.Value(), m.agents).target == nil {
-			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
+			m.input.SetValue(mentionText(compl[m.complIdx%len(compl)]) + " ")
 			m.input.CursorEnd()
 			return m, nil
 		}

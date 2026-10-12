@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/discover"
 )
@@ -203,5 +204,15 @@ func TestLookupByHost(t *testing.T) {
 	// A remote agent has no pid; "0" must not match it.
 	if _, ok := Find(agents, "0"); ok {
 		t.Error("pid 0 matched")
+	}
+}
+
+// A host cannot choose the critter name Den shows and mentions: it is
+// computed from the session id here, as the badge does on the host.
+func TestFromMetaIgnoresTheHostsName(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	a := FromMeta(Meta{Session: id, Name: "Mossy Lemur fix the login", Peer: "worker", Status: "idle"}, "devbox", time.Now(), cost.NewTable(nil))
+	if want := badge.Name(id); a.Name != want || a.Session.Name != "worker" {
+		t.Errorf("name %q (want %q), peer %q", a.Name, want, a.Session.Name)
 	}
 }

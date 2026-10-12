@@ -76,6 +76,24 @@ type InstallInput struct {
 	AskedBy string `json:"asked_by"` // who ran the command, for the question
 }
 
+// SendEvent is not a hook either: `den send name@host …` sends it to the
+// running Den to message an agent on a remote host, because only Den holds the
+// ssh session to that host. Den resolves the agent itself, in its own fleet,
+// and answers allow with a note, or deny with why nothing was sent.
+//
+// Like InstallEvent it is only ever read from the local den.sock: a remote
+// host's messages never reach the bridge (its held requests enter as
+// PermissionRequests of Den's own making), and a Request that did come
+// from a host is refused. The message is plain text and approves nothing.
+const SendEvent = "SendRequest"
+
+// SendInput is the payload of a SendEvent.
+type SendInput struct {
+	Who     string `json:"who"`      // name@host, session-id@host or pid@host as typed
+	Text    string `json:"text"`     // the message
+	AskedBy string `json:"asked_by"` // who ran the command, for the notice
+}
+
 // HookInput is the subset of Claude Code's hook JSON that Den reads.
 type HookInput struct {
 	SessionID        string          `json:"session_id"`

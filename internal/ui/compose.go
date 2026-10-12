@@ -13,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/peer"
+	"github.com/GlacierHubAB/den/internal/remote"
 )
 
 // outgoing is a message waiting for the typing guard to let it through.
@@ -160,18 +161,51 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m.say(target.Name+" is gone.", true)
 	}
 	if target.Host != "" {
-		return m.say(target.Name+" runs on "+target.Host+": Den cannot message remote agents yet. "+m.remoteHint(target)+".", true)
+		// Checked up front, so a refusal costs no message in the inbox.
+		if err := m.remoteCan(target.Host); err != nil {
+			return m.say(err.Error(), true)
+		}
+		if len(mt.body) > remote.MaxSendText {
+			return m.say(fmt.Sprintf("That message is over %d KB, the most Den sends to a remote agent.", remote.MaxSendText>>10), true)
+		}
 	}
 	cleared := m.clear()
 	if m.atTerminal(target.Session.SessionID) {
-		it := m.store.Sent(target.Session.SessionID, mt.body, "waiting: you are at that terminal")
+		it := m.sentItem(target, mt.body, "waiting: you are at that terminal")
 		m.queue = append(m.queue, outgoing{agent: target, text: mt.body, item: it, since: time.Now()})
 		m.refresh()
 		return m, tea.Batch(cleared, holdTick())
 	}
-	it := m.store.Sent(target.Session.SessionID, mt.body, "sending…")
+	it := m.sentItem(target, mt.body, "sending…")
 	m.refresh()
-	return m, tea.Batch(cleared, deliver(target, mt.body, it))
+	return m, tea.Batch(cleared, deliver(m.sender(), target, mt.body, it))
+}
+
+// sentItem records an outgoing message in the inbox, on the agent's host
+// when it is a remote one.
+func (m Model) sentItem(a fleet.Agent, text, status string) *inbox.Item {
+	sid, host := splitKey(a.Session.SessionID)
+	return m.store.SentOn(host, sid, text, status)
+}
+
+// sendFunc posts a message to an agent.
+type sendFunc func(a fleet.Agent, text string) error
+
+// sender is how this Model posts to an agent: into its session socket on
+// this machine, through the host's live session for a remote one. The text
+// goes as data both ways, never as an argument.
+func (m Model) sender() sendFunc {
+	feed := m.remote.feed
+	return func(a fleet.Agent, text string) error {
+		if a.Host == "" {
+			return sendPeer(a.Session.Socket, text)
+		}
+		if feed == nil {
+			return fmt.Errorf("%s is offline; nothing was sent", a.Host)
+		}
+		sid, host := splitKey(a.Session.SessionID)
+		return feed.Send(host, sid, text)
+	}
 }
 
 // say shows a short message on the top bar without leaving compose mode.
@@ -180,9 +214,9 @@ func (m Model) say(text string, isErr bool) (tea.Model, tea.Cmd) {
 	return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 }
 
-func deliver(a fleet.Agent, text string, it *inbox.Item) tea.Cmd {
+func deliver(send sendFunc, a fleet.Agent, text string, it *inbox.Item) tea.Cmd {
 	return func() tea.Msg {
-		err := sendPeer(a.Session.Socket, text)
+		err := send(a, text)
 		return sentMsg{item: it, name: a.Name, err: err}
 	}
 }
@@ -200,10 +234,10 @@ func (m *Model) flushQueue() ([]tea.Cmd, bool) {
 		}
 		m.store.SetStatus(o.item, "sending…", false)
 		if o.review != nil {
-			cmds = append(cmds, deliverReview(o.agent, o.text, o.item, o.review))
+			cmds = append(cmds, deliverReview(m.sender(), o.agent, o.text, o.item, o.review))
 			continue
 		}
-		cmds = append(cmds, deliver(o.agent, o.text, o.item))
+		cmds = append(cmds, deliver(m.sender(), o.agent, o.text, o.item))
 	}
 	m.queue = keep
 	return cmds, len(keep) > 0

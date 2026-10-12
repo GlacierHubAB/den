@@ -449,7 +449,9 @@ func TestManagerOfflineSaysNothingWasSent(t *testing.T) {
 	s := newScratch(t)
 	d := &pipeDialer{opts: s.serveOptions}
 	d.down.Store(true)
-	m := s.manager(d, approveHost())
+	// A long backoff keeps the host offline, not connecting, under -race.
+	m := NewManager(Config{Hosts: []Host{approveHost()}}, Options{Version: "v0.2.0", StateDir: s.stateDir, EventsPath: s.localEvts, Dial: d.dial,
+		Backoff: time.Hour, MaxBackoff: time.Hour})
 	m.Start()
 	defer m.Close()
 	// A host reads Offline before its first attempt too; wait for the attempt's
@@ -605,5 +607,21 @@ func TestSnapshotCarriesDirtyOnlyUnderApprove(t *testing.T) {
 		if seen != c.want {
 			t.Errorf("under %s the snapshot's dirty = %s, want %s", c.policy, seen, c.want)
 		}
+	}
+}
+
+// A text that fits MaxSendText but whose escaped form passes MaxLine is
+// reported as too large, not as the host being offline.
+func TestManagerSendTooLargeOnceEncodedIsNotOffline(t *testing.T) {
+	s := newScratch(t)
+	d := &pipeDialer{opts: s.serveOptions}
+	d.setServe(answeringServe(Approve, func([]byte, func(any), func()) {}))
+	m := NewManager(Config{Hosts: []Host{approveHost()}}, Options{Version: "v0.2.0", StateDir: s.stateDir, EventsPath: s.localEvts, Dial: d.dial})
+	m.Start()
+	defer m.Close()
+	waitFor(t, "live", func() bool { return state(m).State == Live })
+	err := m.Send("b", sidA, strings.Repeat("\x01", MaxSendText)) // each byte escapes to six
+	if err == nil || !strings.Contains(err.Error(), "too large") || strings.Contains(err.Error(), "offline") {
+		t.Errorf("err = %v", err)
 	}
 }

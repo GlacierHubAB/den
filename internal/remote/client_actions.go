@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -89,6 +90,11 @@ func (m *Manager) Send(host, sessionID, text string) error {
 	case len(text) > MaxSendText:
 		return fmt.Errorf("the message is %d KB, over the %d KB limit for a remote agent", (len(text)+1023)>>10, MaxSendText>>10)
 	}
+	// Escaping can make a text several times longer; check the line as it
+	// will be written, so too large is not reported as offline.
+	if raw, err := json.Marshal(SendCmd{Type: TypeSend, ID: newID(), Session: sessionID, Text: text}); err == nil && len(raw) > MaxLine {
+		return fmt.Errorf("the message is too large once encoded (%d KB; the most is %d KB): shorten it", len(raw)>>10, MaxLine>>10)
+	}
 	_, err := m.act(host, "send", m.o.SendWait, func(id string) any {
 		return SendCmd{Type: TypeSend, ID: id, Session: sessionID, Text: text}
 	})
@@ -161,6 +167,9 @@ func (m *Manager) act(host, verb string, wait time.Duration, build func(id strin
 	}
 	defer l.forget(id)
 	if err := l.write(build(id)); err != nil {
+		if errors.Is(err, ErrLineTooLong) {
+			return Result{}, errors.New("the request is too large to send")
+		}
 		return Result{}, fmt.Errorf("%s is offline; %s", host, nothingDone(verb))
 	}
 	select {

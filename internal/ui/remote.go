@@ -47,6 +47,12 @@ type remoteFeed interface {
 	Agents() []fleet.Agent
 	Reconnect(label string)
 	Close()
+	// Send and CloseAgent act on a remote agent through the host's live
+	// session (internal/remote); Actionable says up front whether
+	// they would be tried, and if not why.
+	Send(host, sessionID, text string) error
+	CloseAgent(host, sessionID string, force bool) (killed bool, err error)
+	Actionable(host string) error
 }
 
 // remoteState is the remote hosts as the views show them.
@@ -260,6 +266,18 @@ func (m *Model) remoteEvent(ev events.Event) tea.Cmd {
 		cmds = append(cmds, m.runOn(ev))
 	}
 	return tea.Batch(cmds...)
+}
+
+// remoteCan says whether Den can act on host's agents now, in words for the
+// human when it cannot.
+func (m Model) remoteCan(host string) error {
+	if m.remote.feed == nil {
+		return fmt.Errorf("%s is offline; nothing was done", host)
+	}
+	if h, ok := m.hostStatus(host); ok && !linked(h.State) {
+		return fmt.Errorf("%s is %s; nothing was done", host, strings.ReplaceAll(string(h.State), "_", " "))
+	}
+	return m.remote.feed.Actionable(host)
 }
 
 // remoteHeld puts a request a hook on host holds into the inbox,

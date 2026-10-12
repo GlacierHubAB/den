@@ -1012,7 +1012,7 @@ func (m Model) detailPane(w, h int) string {
 		}
 	}
 	b.WriteString("\n")
-	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render("@"+a.Name) + s.keyLabel.Render(" to message"))
+	line(s.key.Render("Enter") + s.keyLabel.Render(" focus terminal  ") + s.key.Render(mentionText(a)) + s.keyLabel.Render(" to message"))
 	lines := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
 	if m.detailScroll > 0 && len(lines) > h {
 		off := min(m.detailScroll, len(lines)-h)
@@ -1034,7 +1034,7 @@ func (m Model) completionRows(w int) []string {
 	rows := make([]string, 0, len(compl))
 	for i, a := range compl {
 		fg, dim, muted, bright, _, _, _, marker := m.rowStyles(i == m.complIdx%len(compl))
-		line := marker + fg.Render("  ") + bright.Render(a.Name) + fg.Render("  ") + muted.Render(strings.ToLower(a.Labels.Role)) + fg.Render("  ") + dim.Render(a.Status.String())
+		line := marker + fg.Render("  ") + bright.Render(a.Name) + dim.Render(hostChip(a)) + fg.Render("  ") + muted.Render(strings.ToLower(a.Labels.Role)) + fg.Render("  ") + dim.Render(a.Status.String())
 		if i == m.complIdx%len(compl) {
 			line = fill(line, min(w, 60), fg)
 		}

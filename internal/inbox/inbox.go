@@ -547,7 +547,12 @@ func FailureTitle(errType string) string {
 // Sent records an outgoing message. status is shown as the trailer and can
 // be updated through SetStatus.
 func (s *Store) Sent(sessionID, text, status string) *Item {
-	return s.add(&Item{SessionID: sessionID, Kind: Sent, State: InTerminal, Title: "→ " + firstLine(text), Resolved: status})
+	return s.SentOn("", sessionID, text, status)
+}
+
+// SentOn is Sent to the agent on a remote host ("" for this machine).
+func (s *Store) SentOn(host, sessionID, text, status string) *Item {
+	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Sent, State: InTerminal, Title: "→ " + firstLine(text), Resolved: status})
 }
 
 // SetStatus updates a notice's trailer, marking it resolved when final.
@@ -591,7 +596,13 @@ func (s *Store) Answer(it *Item, verb string) bool {
 // agent it concerns, or the asker's session for a bulk close. req is the
 // orchestrator's request to answer when it asked, nil when the human did.
 func (s *Store) AddClose(sessionID, title string, body []string, req *bridge.Request) *Item {
-	return s.add(&Item{SessionID: sessionID, Kind: Close, Tool: "close_agent", Title: title, Body: body, req: req})
+	return s.AddCloseOn("", sessionID, title, body, req)
+}
+
+// AddCloseOn is AddClose for a plan whose first agent runs on a remote host
+// ("" for this machine).
+func (s *Store) AddCloseOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Close, Tool: "close_agent", Title: title, Body: body, req: req})
 }
 
 // AddSkills adds Den's question: install these catalogue skills? req is
@@ -648,8 +659,11 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 }
 
 // SessionClosed resolves everything open for an agent Den closed.
-func (s *Store) SessionClosed(sessionID string) {
-	s.resolveSession("", sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
+func (s *Store) SessionClosed(sessionID string) { s.SessionClosedOn("", sessionID) }
+
+// SessionClosedOn is SessionClosed for an agent on a remote host.
+func (s *Store) SessionClosedOn(host, sessionID string) {
+	s.resolveSession(host, sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
 }
 
 // Release hands a waiting permission back to the terminal dialog.

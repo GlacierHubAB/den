@@ -168,9 +168,10 @@ func FromMeta(m Meta, host string, received time.Time, prices cost.Table) Agent 
 		UsageFromBadge: m.UsageFromBadge,
 		Host:           host,
 	}
-	if a.Name == "" {
-		a.Name = badge.Name(a.Session.SessionID)
-	}
+	// The critter name is computed here from the session id, as the badge on
+	// the host does, never taken from the host: a host that picked its
+	// agents' names could capture @mentions meant for others.
+	a.Name = badge.Name(a.Session.SessionID)
 	switch a.Status {
 	case Working:
 		a.Session.Status = "busy"
