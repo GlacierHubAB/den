@@ -290,9 +290,7 @@ func TestAdvInterleavedGoneAndHeld(t *testing.T) {
 // holdCmd is hold with a handle on the hook process, to hang it up.
 func (g *rig) holdCmd(session, tool string, input map[string]any) (*exec.Cmd, <-chan hookOut) {
 	g.t.Helper()
-	if !g.r.Seeded(session) {
-		g.r.SeedSession(sshtest.SessionOpts{ID: session}) // as hold does
-	}
+	g.listed(session) // as hold does
 	b, _ := json.Marshal(map[string]any{"session_id": session, "hook_event_name": "PermissionRequest",
 		"tool_name": tool, "tool_input": input, "cwd": "/home/user/proj"})
 	c := exec.Command(g.l.Den, "hook")

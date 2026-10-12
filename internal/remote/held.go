@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -129,15 +130,20 @@ func (s *heldSet) check(hm Held, configured, applied Policy) string {
 }
 
 // parkedHeld is a held request for a session the host has not listed yet,
-// and how many snapshots have come since without it.
+// when it came, and how many snapshots have come since without it.
 type parkedHeld struct {
 	hm        Held
+	at        time.Time
 	snapshots int
 }
 
-// unlistedSnapshots is how many snapshots a held request waits for its
-// session to be listed: the one already on its way, and the next.
+// A held request waits for its session to be listed for at least
+// unlistedSnapshots snapshots (the one already on its way, and the next)
+// and parkGrace: two snapshots can come within moments of each other, and
+// a host's snapshot can miss a session that has only just started.
 const unlistedSnapshots = 2
+
+var parkGrace = 5 * time.Second // tests shorten it
 
 // refuse sends a held request back to its terminal on the host with no
 // decision, where the human answers it there.

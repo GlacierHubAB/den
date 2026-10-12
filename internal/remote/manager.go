@@ -760,8 +760,8 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	// listed in its last snapshot or announced with session_start. One for
 	// a session not listed yet waits for the snapshot that lists it (a new
 	// session's file reaches a snapshot a moment after its first hook can
-	// fire); after unlistedSnapshots more without it, it goes back to its
-	// terminal with no decision, and the host is flagged.
+	// fire); after unlistedSnapshots more without it, and parkGrace, it
+	// goes back to its terminal with no decision, and the host is flagged.
 	var parked []parkedHeld
 	listed := func(session string) bool {
 		m.mu.Lock()
@@ -778,13 +778,13 @@ func (m *Manager) session(h Host) (State, string, bool) {
 		}
 		m.send(Update{Kind: HeldArrived, Host: h.Label, Request: r})
 	}
-	recheck := func(afterSnapshot bool) {
+	recheck := func(now time.Time, afterSnapshot bool) {
 		keep := parked[:0]
 		for _, p := range parked {
 			switch {
 			case listed(p.hm.Session):
 				offer(p.hm)
-			case afterSnapshot && p.snapshots+1 >= unlistedSnapshots:
+			case afterSnapshot && p.snapshots+1 >= unlistedSnapshots && now.Sub(p.at) >= parkGrace:
 				held.refuse(p.hm)
 				m.flag(h, "a held request for a session the host never listed")
 			default:
@@ -943,7 +943,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, "content in a snapshot its policy does not allow")
 			}
 			if len(parked) > 0 {
-				recheck(true)
+				recheck(in.at, true)
 			}
 		case TypeEvent:
 			var em Event
@@ -998,7 +998,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue
 			}
 			if ev.Kind == events.SessionStart && len(parked) > 0 {
-				recheck(false)
+				recheck(in.at, false)
 			}
 			m.send(Update{Kind: EventArrived, Host: h.Label, Event: ev})
 			if m.waiting(h.Label) > m.o.MaxBacklog {
@@ -1037,7 +1037,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				held.refuse(hm)
 				m.flag(h, "a held request for a session the host never listed")
 			default:
-				parked = append(parked, parkedHeld{hm: hm})
+				parked = append(parked, parkedHeld{hm: hm, at: in.at})
 			}
 		case TypeResult:
 			var r Result
