@@ -188,3 +188,23 @@ func TestPermissionOutputForPlans(t *testing.T) {
 		}
 	}
 }
+
+// A payload too large for den.sock: an event Den only follows loses its
+// tool input and output; a permission request is left to the terminal.
+func TestFitLine(t *testing.T) {
+	big := strings.Repeat("x", bridge.MaxLine)
+	post, _ := json.Marshal(map[string]any{"session_id": "s1", "hook_event_name": "PostToolUse", "tool_name": "Read", "tool_input": map[string]string{"file_path": "/x"}, "tool_response": big})
+	out := fitLine(post, "PostToolUse")
+	var m map[string]any
+	if out == nil || json.Unmarshal(out, &m) != nil || m["tool_name"] != "Read" || m["tool_response"] != nil || m["session_id"] != "s1" {
+		t.Errorf("PostToolUse: %.200s", out)
+	}
+	perm, _ := json.Marshal(map[string]any{"session_id": "s1", "hook_event_name": "PermissionRequest", "tool_name": "Write", "tool_input": map[string]string{"content": big}})
+	if fitLine(perm, "PermissionRequest") != nil {
+		t.Error("an oversized permission request was sent")
+	}
+	small := []byte(`{"session_id":"s1"}`)
+	if string(fitLine(small, "Stop")) != string(small) {
+		t.Error("a small payload changed")
+	}
+}

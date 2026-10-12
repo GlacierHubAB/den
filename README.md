@@ -940,7 +940,11 @@ there, without its colours; Den's own colours are not affected.
 - **Den's socket.** With `XDG_RUNTIME_DIR` unset, `den.sock` is now
   `den-<uid>/den.sock` under `$TMPDIR`, a directory only you may use, checked at
   each use; it used to be `/tmp/den-<uid>.sock`. Every connection to it, in
-  either direction, checks that the peer is the same user. On a machine without
+  either direction, checks that the peer is the same user, and sends one line
+  of at most 1 MB; at most 256 requests wait for an answer at once. A request
+  past either limit gets no decision from Den, and Claude Code's own dialog
+  answers it. (`den hook` drops the tool input and output from an event Den
+  only follows when it would not fit.) On a machine without
   `XDG_RUNTIME_DIR`, reinstall `den` and run `den install-hooks` again so the
   hooks and Den agree on the path.
 - **A hook that crashes fails open.** `den hook` exits 0 with no decision, so
