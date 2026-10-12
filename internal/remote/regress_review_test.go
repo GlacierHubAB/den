@@ -1,6 +1,7 @@
 package remote_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,7 +120,9 @@ func TestRegressFailingDiffsDoNotStarveOthers(t *testing.T) {
 
 	// The working agent writes another file; entering Review again must show it.
 	g.r.WriteFile("good/plain-new.txt", "second\n")
-	wrote(g, idA, filepath.Join(good, "f.txt"), filepath.Join(good, "plain-new.txt"))
+	// A transcript only ever grows: the host reads on from where it stopped,
+	// so the new write is appended, not the whole file written again.
+	appendWrote(g, idA, filepath.Join(good, "plain-new.txt"))
 	tm.Keys("Escape")
 	tm.Type("/fleet")
 	tm.Keys("Enter")
@@ -146,4 +149,18 @@ func TestRegressFailingDiffsDoNotStarveOthers(t *testing.T) {
 			t.Errorf("a failing agent was never asked")
 		}
 	}
+}
+
+// appendWrote adds one Write of path to the end of session id's transcript,
+// as Claude Code does, and leaves what is there alone.
+func appendWrote(g *rig, id, path string) {
+	file := filepath.Join(g.r.Home, ".claude/projects/-adv/"+id+".jsonl")
+	old, err := os.ReadFile(file)
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	at := time.Now().Add(time.Second).UTC().Format(time.RFC3339Nano)
+	line := fmt.Sprintf(`{"type":"assistant","timestamp":%q,"message":{"content":[{"type":"tool_use","id":"w-more","name":"Write","input":{"file_path":%s}}]}}`+"\n"+
+		`{"type":"user","timestamp":%q,"message":{"content":[{"type":"tool_result","tool_use_id":"w-more","content":"ok"}]},"toolUseResult":{"type":"create","filePath":%s,"content":"x\n"}}`+"\n", at, j(path), at, j(path))
+	g.r.WriteFile(".claude/projects/-adv/"+id+".jsonl", string(old)+line)
 }
