@@ -104,15 +104,29 @@ func TestCapturedQuestionAnsweredInTheTerminal(t *testing.T) {
 
 func TestCapturedCommandAnsweredInTheTerminalFirst(t *testing.T) {
 	store := New()
-	it := store.Apply(capturedAs(t, "permissionrequest-bash", ""))
+	held := capturedAs(t, "permissionrequest-bash", "")
+	it := store.Apply(held)
 	if it == nil || !it.Answerable() {
 		t.Fatalf("held = %+v", it)
 	}
 	store.Apply(capturedAs(t, "notification-permission_prompt-after-held-bash", ""))
-	// The human allowed it in Claude Code's dialog; the tool ran.
-	store.Apply(capturedAs(t, "posttooluse-write", "00000000-0000-4000-8000-000000000001"))
+
+	// Another call of the turn runs beside the held one (the recording's
+	// Write): the held request still waits.
+	other := capturedAs(t, "posttooluse-write", held.Input.SessionID)
+	store.Apply(other)
+	if it.State != Waiting || !it.Answerable() {
+		t.Fatalf("a different call closed the held one: state=%v", it.State)
+	}
+
+	// The human allowed it in Claude Code's dialog and the command ran: a
+	// PostToolUse for the same tool and input (the recording has a Write's;
+	// this carries the Bash call's own).
+	ran := capturedAs(t, "posttooluse-write", held.Input.SessionID)
+	ran.Input.ToolName, ran.Input.ToolInput = "Bash", held.Input.ToolInput
+	store.Apply(ran)
 	if it.State != Resolved || it.Answerable() || store.Answer(it, "allow") {
-		t.Errorf("after the tool ran: state=%v answerable=%v", it.State, it.Answerable())
+		t.Errorf("after the command ran: state=%v answerable=%v", it.State, it.Answerable())
 	}
 }
 

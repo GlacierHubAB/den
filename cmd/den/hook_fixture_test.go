@@ -236,3 +236,31 @@ func TestHookBinaryAnswersAQuestionFromDen(t *testing.T) {
 		t.Errorf("%d items for one question", n)
 	}
 }
+
+// Claude Code ends a hook whose dialog the human answered in the terminal.
+// The held item then closes in Den, rather than staying answerable.
+func TestHookBinaryKilledByTheTerminalAnswerClosesTheItem(t *testing.T) {
+	for _, name := range []string{"permission-bash", "permission-exitplanmode"} {
+		t.Run(name, func(t *testing.T) {
+			r := newHookRig(t, "")
+			cmd, _ := r.hook(r.fixture(name))
+			_, it := r.next()
+			if it == nil || !it.Answerable() {
+				t.Fatalf("held = %+v", it)
+			}
+			cmd.Process.Kill()
+			cmd.Wait()
+			deadline := time.Now().Add(5 * time.Second)
+			for it.Answerable() && time.Now().Before(deadline) {
+				r.st.LetGo(10 * time.Minute)
+				time.Sleep(20 * time.Millisecond)
+			}
+			if it.Answerable() || it.State != inbox.Resolved {
+				t.Errorf("state=%v resolved=%q", it.State, it.Resolved)
+			}
+			if r.st.Answer(it, "allow") {
+				t.Error("answered a request whose hook is gone")
+			}
+		})
+	}
+}
