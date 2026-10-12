@@ -5,6 +5,9 @@ package inbox
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -222,7 +225,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{})
 			return nil
 		}
-		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[in.SessionID][key] {
+		if key := allowKey(in); key != "" && s.always[in.SessionID][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
@@ -580,7 +583,7 @@ func (s *Store) Answer(it *Item, verb string) bool {
 		if AlwaysRefusal(it) != "" {
 			return false
 		}
-		if key := allowKey(it.Tool, it.req.Input.ToolInput); key != "" {
+		if key := allowKey(it.req.Input); key != "" {
 			if s.always[it.SessionID] == nil {
 				s.always[it.SessionID] = map[string]bool{}
 			}
@@ -820,7 +823,16 @@ var shellOperators = []string{";", "&", "|", "$(", "`", "<", ">", "\n", "\r"}
 // allowed once at a time, never always: the rule would allow exactly that
 // compound line, and an approval of it should be read each time.
 func AlwaysRefusal(it *Item) string {
-	if it.Kind != Permission || it.req == nil || it.Tool != "Bash" {
+	switch {
+	case it.Kind == Plan:
+		return "plans are approved one at a time; ^Y approves this one"
+	case it.Kind != Permission || it.req == nil:
+		return "/always answers a permission only"
+	case editTools[it.Tool] != "" && allowKey(it.req.Input) == "":
+		return "/always covers edits inside the agent's working directory, never this file: ^Y allows it once"
+	case allowKey(it.req.Input) == "":
+		return "/always cannot tell this call from others like it: ^Y allows it once"
+	case it.Tool != "Bash":
 		return ""
 	}
 	var in struct {
@@ -839,16 +851,31 @@ func AlwaysRefusal(it *Item) string {
 	return "/always takes a single plain command, and this one has " + strings.Join(found, " ") + ": ^Y allows it once"
 }
 
-// allowKey is the "always" rule key: for Bash the whole command, exactly
-// as it will run, or the tool name alone for everything else. "" is no
-// rule. A Bash rule never matches a longer command: a prefix such as
-// "git status" would let "git status && curl … | sh" through. A plan has
-// none: no rule ever approves one (PlansOneAtATime).
-func allowKey(tool string, input json.RawMessage) string {
-	if tool == "" || tool == bridge.PlanTool {
-		return ""
+// allowKey is the "always" rule key: what a later call must match to be
+// allowed without asking. "" is no rule. For Bash, the command exactly as
+// it will run: a prefix such as "git status" would let "git status && curl
+// … | sh" by. For a file edit, the session's working directory, when the
+// file is inside it and not sensitive (editscope.go). For WebFetch, the
+// URL's host. A plan or a question has none.
+// Anything else is the tool by its full name (an MCP tool with its
+// server), as Claude Code's own "allow during this session" is: AlwaysScope
+// says so when the rule is made.
+func allowKey(in bridge.HookInput) string {
+	tool, input := in.ToolName, in.ToolInput
+	if field := editTools[tool]; field != "" {
+		var args map[string]any
+		json.Unmarshal(input, &args)
+		path, _ := args[field].(string)
+		home, _ := os.UserHomeDir()
+		if !editRealInScope(path, in.CWD, home) {
+			return ""
+		}
+		return tool + ":under:" + filepath.Clean(in.CWD)
 	}
-	if tool == "Bash" {
+	switch tool {
+	case "", "ExitPlanMode", question.Tool:
+		return ""
+	case "Bash":
 		var in struct {
 			Command string `json:"command"`
 		}
@@ -857,8 +884,50 @@ func allowKey(tool string, input json.RawMessage) string {
 			return ""
 		}
 		return "Bash:" + in.Command
+	case "WebFetch":
+		if host := fetchHost(input); host != "" {
+			return "WebFetch:" + host
+		}
+		return ""
 	}
 	return tool
+}
+
+// fetchHost is the host a WebFetch call asks for, lower-cased, "" when its
+// URL has none.
+func fetchHost(input json.RawMessage) string {
+	var in struct {
+		URL string `json:"url"`
+	}
+	json.Unmarshal(input, &in)
+	u, err := url.Parse(strings.TrimSpace(in.URL))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
+}
+
+// AlwaysScope says what /always on the item allows from then on, for the
+// line that confirms it.
+func AlwaysScope(it *Item) string {
+	if it.req == nil {
+		return ""
+	}
+	key := allowKey(it.req.Input)
+	switch {
+	case key == "":
+		return ""
+	case editTools[it.Tool] != "":
+		return "every " + it.Tool + " under " + sanitize.Line(filepath.Clean(it.req.Input.CWD)) + ", except sensitive files"
+	case it.Tool == "Bash":
+		return "this exact command, " + sanitize.Line(strings.TrimPrefix(key, "Bash:"))
+	case it.Tool == "WebFetch":
+		return "every WebFetch to " + sanitize.Line(strings.TrimPrefix(key, "WebFetch:"))
+	}
+	if server, name, ok := mcpTool(it.Tool); ok {
+		return "every " + name + " call on " + server
+	}
+	return "every " + it.Tool + " call, whatever it touches"
 }
 
 // bodyLimit caps how much of a diff, a file or a payload an item carries.
