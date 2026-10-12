@@ -28,6 +28,21 @@ type scratch struct {
 	remoteEvts string // the remote's events.jsonl
 	stateDir   string // the local Den's remote state
 	localEvts  string // the local Den's events.jsonl
+	sock       string // the "remote" den-remote.sock
+}
+
+// shortDir is a scratch dir with a path short enough for a Unix socket.
+func shortDir(t *testing.T) string {
+	t.Helper()
+	base := filepath.Join("/tmp", fmt.Sprintf("den-test-%d", os.Getuid()))
+	os.MkdirAll(base, 0o700)
+	d, err := os.MkdirTemp(base, "rs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(d, 0o700)
+	t.Cleanup(func() { os.RemoveAll(d) })
+	return d
 }
 
 func newScratch(t *testing.T) *scratch {
@@ -41,6 +56,9 @@ func newScratch(t *testing.T) *scratch {
 	}
 	t.Setenv("CLAUDE_CONFIG_DIR", s.cfg)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "lstate"))
+	s.sock = filepath.Join(shortDir(t), "den-remote.sock")
+	t.Setenv("DEN_REMOTE_SOCKET", s.sock) // never the real runtime dir
+	t.Setenv("DEN_SOCKET", filepath.Join(filepath.Dir(s.sock), "den.sock"))
 	os.MkdirAll(filepath.Join(s.cfg, "sessions"), 0o755)
 	os.MkdirAll(filepath.Join(s.cfg, "plugins", "store"), 0o755)
 	os.MkdirAll(filepath.Dir(s.remoteEvts), 0o755)
@@ -92,6 +110,7 @@ func (s *scratch) serveOptions() ServeOptions {
 		PollEvents: 20 * time.Millisecond,
 		EventPace:  time.Microsecond,
 		Orphaned:   func() bool { return false },
+		Socket:     s.sock,
 	}
 }
 
@@ -108,6 +127,14 @@ type pipeDialer struct {
 	mu    sync.Mutex
 	wire  strings.Builder
 	kills []func()
+}
+
+// setServe replaces Serve for the next dials; a test may call it while the
+// Manager is dialling.
+func (d *pipeDialer) setServe(f func(ctx context.Context, in io.Reader, out io.Writer) error) {
+	d.mu.Lock()
+	d.serve = f
+	d.mu.Unlock()
 }
 
 type tee struct {
@@ -134,10 +161,13 @@ func (d *pipeDialer) dial(ctx context.Context, h Host) (*Conn, error) {
 	outR, outW := io.Pipe()
 	sctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
+	d.mu.Lock()
+	serve := d.serve
+	d.mu.Unlock()
 	go func() {
 		var err error
-		if d.serve != nil {
-			err = d.serve(sctx, inR, tee{outW, d})
+		if serve != nil {
+			err = serve(sctx, inR, tee{outW, d})
 		} else {
 			err = Serve(sctx, inR, tee{outW, d}, d.opts())
 		}
@@ -243,7 +273,7 @@ func TestServeHandshakeCapsThePolicy(t *testing.T) {
 	}
 	var h Hello
 	json.Unmarshal(line, &h)
-	if h.Type != TypeHello || h.Proto != 1 || h.Policy != Observe || h.Den != "v0.2.0" || h.Claude != "2.1.300" {
+	if h.Type != TypeHello || h.Proto != 1 || h.Policy != Approve || h.Den != "v0.2.0" || h.Claude != "2.1.300" {
 		t.Errorf("hello = %s", line)
 	}
 	line, _ = lr.next()

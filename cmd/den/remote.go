@@ -124,8 +124,8 @@ func remoteAdd(args []string) {
 		fail("den: %v", err)
 	}
 	fmt.Printf("Added %s (%s, policy %s) to %s. Den connects to it while it runs.\n", h.Label, h.Target, h.Policy, remote.Path())
-	if h.Policy != remote.Observe {
-		fmt.Printf("This Den applies observe to every host for now; %s takes effect when a later version supports it.\n", h.Policy)
+	if h.Policy == remote.Full {
+		fmt.Println("This Den applies full as approve for now: held requests can be answered here, transcripts and diffs stay on the host.")
 	}
 	if needsDen {
 		fmt.Println()
@@ -193,7 +193,9 @@ func remoteStatus(label string) {
 		os.Exit(1)
 	}
 	offset := time.Until(hello.RemoteNow).Round(time.Second)
-	fmt.Printf("  serve        proto %d, den %s on %s, policy %s, clock %+v\n", hello.Proto, hello.Den, hello.Hostname, hello.Policy, offset)
+	// The check asks for observe only (Handshake), so it says nothing of
+	// whether this host relays held requests; Den's own session does.
+	fmt.Printf("  serve        proto %d, den %s on %s, clock %+v (checked read-only; Den asks for %s)\n", hello.Proto, hello.Den, hello.Hostname, offset, h.Policy)
 }
 
 func remoteEdit(op, label string) {

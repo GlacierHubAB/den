@@ -3,6 +3,7 @@ package inbox
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -97,5 +98,69 @@ func TestHistoryKeepsTheHost(t *testing.T) {
 	got := LoadHistory(path, 10)
 	if len(got) != 2 || got[0].Host != "devbox" || got[1].Host != "" {
 		t.Fatalf("history = %+v", got)
+	}
+}
+
+// A remote host's question, held for Den, is answered here; the answers go
+// back through the request's own way, and the item says which host.
+func TestRemoteQuestionAnsweredInDen(t *testing.T) {
+	s := New()
+	s.AnswerQuestions(true)
+	var sent []bridge.Decision
+	in, _ := json.Marshal(map[string]any{"session_id": sid, "hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "tool_input": askInput})
+	r := bridge.NewRemoteRequest("devbox", "0123456789abcdef0123456789abcdef", bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: in},
+		func(d bridge.Decision) { sent = append(sent, d) })
+	it := s.Apply(r)
+	if it == nil || !it.AsksInDen() || it.Host != "devbox" || !strings.Contains(it.Intent, "on devbox") {
+		t.Fatalf("item = %+v", it)
+	}
+	s.AnswerQuestion(it, "2")
+	if done, ok := s.AnswerQuestion(it, "1 3"); !done || !ok {
+		t.Fatalf("answering: done %v ok %v", done, ok)
+	}
+	if len(sent) != 1 || sent[0].Behavior != "allow" || sent[0].Answers["Which colour scheme?"] != "Cool, calm" {
+		t.Errorf("sent %+v", sent)
+	}
+	// Offered again after a reconnect under the same id: one item, not two.
+	r2 := bridge.NewRemoteRequest("devbox", "fedcba9876543210fedcba9876543210", bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: in}, func(bridge.Decision) {})
+	first := s.Apply(r2)
+	r2.LetGo("released to the terminal on devbox (link lost)")
+	s.LetGo()
+	again := bridge.NewRemoteRequest("devbox", "fedcba9876543210fedcba9876543210", bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: in}, func(bridge.Decision) {})
+	second := s.Apply(again)
+	if first.Answerable() || !second.Answerable() || !second.At.Equal(first.At) {
+		t.Errorf("re-offer: first answerable %v, second %v, at %v vs %v", first.Answerable(), second.Answerable(), first.At, second.At)
+	}
+	for _, it := range s.Items() {
+		if it == first {
+			t.Error("the item offered again is still listed twice")
+		}
+	}
+}
+
+// Flags that change what a call does are listed under its body; MultiEdit
+// shows every edit.
+func TestBodyListsWhatTheLayoutLeavesOut(t *testing.T) {
+	s := New()
+	it := s.Apply(hostHook("devbox", "PermissionRequest", map[string]any{"tool_name": "Bash",
+		"tool_input": map[string]any{"command": "make", "dangerouslyDisableSandbox": true, "timeout": 5}}))
+	body := strings.Join(it.Body, "\n")
+	if !strings.Contains(body, "dangerouslyDisableSandbox: true") || strings.Contains(body, "timeout") {
+		t.Errorf("bash body = %q", body)
+	}
+	it = s.Apply(hostHook("", "PermissionRequest", map[string]any{"tool_name": "MultiEdit",
+		"tool_input": map[string]any{"file_path": "/p/a.go", "edits": []any{
+			map[string]any{"old_string": "a", "new_string": "b"},
+			map[string]any{"old_string": "c", "new_string": "d", "replace_all": true}}}}))
+	body = strings.Join(it.Body, "\n")
+	for _, want := range []string{"edit 1 of 2", "- a", "+ b", "edit 2 of 2 (replace_all: every occurrence)", "+ d"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("multiedit body lacks %q:\n%s", want, body)
+		}
+	}
+	it = s.Apply(hostHook("gpu", "PermissionRequest", map[string]any{"tool_name": "ExitPlanMode",
+		"tool_input": map[string]any{"plan": "1. ship", "allowedPrompts": []any{map[string]any{"tool": "Bash", "prompt": "run tests"}}}}))
+	if body = strings.Join(it.Body, "\n"); !strings.Contains(body, `allowedPrompts: [{"prompt":"run tests","tool":"Bash"}]`) {
+		t.Errorf("plan body = %q", body)
 	}
 }

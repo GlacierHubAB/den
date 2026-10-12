@@ -50,15 +50,16 @@ func PeerUID(c net.Conn) (int, error) {
 	return uid, cerr
 }
 
-// ErrForeign means the process at the other end of den.sock is not this
-// user's.
+// ErrForeign means the process at the other end of a Den socket is not
+// this user's.
 var ErrForeign = errors.New("the socket belongs to another user")
 
-// Dial connects to den.sock and keeps the connection only when the process
-// at the other end is this user's. A listener another user put in place is
+// Dial connects to a Den socket (den.sock or den-remote.sock) and keeps the
+// connection only when the process at the other end is this user's. A
+// listener another user put in place, say at a path in a shared /tmp, is
 // treated as no Den at all: nothing is sent to it, and a hook fails open
-// instead of handing it a request to answer. A path in the private fallback
-// directory is dialled only while that directory checks out.
+// instead of handing it a request to answer. A path in the private
+// fallback directory is dialled only while that directory checks out.
 func Dial(path string, timeout time.Duration) (net.Conn, error) {
 	if filepath.Dir(path) == FallbackDir() {
 		if err := CheckPrivateDir(FallbackDir()); err != nil {
@@ -76,9 +77,9 @@ func Dial(path string, timeout time.Duration) (net.Conn, error) {
 	return conn, nil
 }
 
-// FallbackDir is the private directory den.sock lives in when
-// $XDG_RUNTIME_DIR is unset (a server reached over ssh without
-// systemd-logind, for one): $TMPDIR/den-<uid>.
+// FallbackDir is the private directory den.sock (and, on a remote host,
+// den-remote.sock) lives in when $XDG_RUNTIME_DIR is unset (a server
+// reached over ssh without systemd-logind, for one): $TMPDIR/den-<uid>.
 func FallbackDir() string {
 	return filepath.Join(os.TempDir(), "den-"+strconv.Itoa(os.Getuid()))
 }

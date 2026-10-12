@@ -5,6 +5,7 @@ package inbox
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -111,7 +112,8 @@ func (it *Item) Answerable() bool {
 	if it.DenAsks() {
 		return it.State == Waiting
 	}
-	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan || it.Kind == Question) && it.req != nil && it.req.WantsReply()
+	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan || it.Kind == Question) && it.req != nil && it.req.WantsReply() &&
+		!(it.req.Host != "" && it.req.HungUp()) // a remote one let go: its link is lost or its hook gave up
 }
 
 // AsksInDen reports whether the item is an agent's question that Den holds
@@ -142,7 +144,8 @@ type Store struct {
 	items   []*Item
 	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
-	asks    bool // hold AskUserQuestion permission requests to be answered here
+	asks    bool      // hold AskUserQuestion permission requests to be answered here
+	reoffer time.Time // when the item a request offered again replaces arrived
 }
 
 // New returns an empty store.
@@ -222,6 +225,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 	s.resolveSession(host, in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
 	switch r.Event {
 	case "PermissionRequest":
+		s.offeredAgain(r)
 		if it := s.holdQuestion(r); it != nil {
 			return it
 		}
@@ -239,14 +243,18 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		if in.ToolName == "ExitPlanMode" {
 			it.Kind = Plan
 			it.Title = "Plan ready for review"
-			it.Body = planExcerpt(in.ToolInput)
+			it.Body = append(planExcerpt(in.ToolInput), extraLines(in.ToolName, in.ToolInput)...)
 		} else {
 			it.Kind = Permission
 			it.Title, it.Intent, it.Body = describeTool(in.ToolName, in.ToolInput)
 		}
+		if host != "" {
+			it.Title += " on " + host
+			it.clean()
+		}
 		// Drop the soft "permission_prompt" notice for the same session.
 		for _, o := range s.items {
-			if o != it && o.is(host, in.SessionID) && o.Kind == Permission && o.req == nil && o.State != Resolved {
+			if o != it && o.is(host, in.SessionID) && (o.Kind == Permission || o.Kind == Plan) && o.req == nil && o.State != Resolved {
 				o.State, o.Resolved = Resolved, "superseded"
 			}
 		}
@@ -395,6 +403,9 @@ func (it *Item) describeStep() {
 	if q.Multi {
 		intent = append(intent, "choose one or more")
 	}
+	if it.Host != "" {
+		intent = append(intent, "on "+it.Host)
+	}
 	it.Intent = strings.Join(intent, " · ")
 	it.Options = nil
 	for _, o := range q.Options {
@@ -462,16 +473,42 @@ func (s *Store) AnswerQuestion(it *Item, typed string) (done, ok bool) {
 
 // LetGo hands held questions whose hook stopped waiting back to the
 // terminal: Claude Code ended the hook because the dialog was dismissed
-// there, or Den's wait ran out. It reports whether any changed.
+// there, or Den's wait ran out. A remote host's held items go the same
+// way when they are let go, saying why ("released to the terminal on
+// devbox (link lost)"). It reports whether any changed.
 func (s *Store) LetGo() bool {
 	changed := false
 	for _, it := range s.items {
-		if it.Kind == Question && it.State == Waiting && it.req != nil && it.req.HungUp() {
+		if it.State != Waiting || it.req == nil || !it.req.HungUp() {
+			continue
+		}
+		switch {
+		case it.req.Host != "" && it.Kind <= Question:
+			it.State, it.Resolved = InTerminal, firstNonEmpty(it.req.Why(), "no longer held on "+it.req.Host)
+			it.clean()
+			changed = true
+		case it.Kind == Question:
 			it.State, it.Resolved = InTerminal, "no longer held"
 			changed = true
 		}
 	}
 	return changed
+}
+
+// offeredAgain drops the item of a remote request that its host offers
+// again under the same id (after Den reconnected), keeping its place, so
+// the new request takes over rather than showing twice.
+func (s *Store) offeredAgain(r *bridge.Request) {
+	if r.Host == "" || r.RemoteID == "" {
+		return
+	}
+	for i, it := range s.items {
+		if it.req != nil && it.req != r && it.req.Host == r.Host && it.req.RemoteID == r.RemoteID && it.State != Resolved {
+			s.items = append(s.items[:i], s.items[i+1:]...)
+			s.reoffer = it.At
+			return
+		}
+	}
 }
 
 // AddStalled adds a Stalled notice for a session that has been working
@@ -741,6 +778,10 @@ func (s *Store) add(it *Item) *Item {
 	it.clean()
 	s.seq++
 	it.ID = fmt.Sprintf("i%d", s.seq)
+	if it.At.IsZero() && !s.reoffer.IsZero() {
+		it.At = s.reoffer
+	}
+	s.reoffer = time.Time{}
 	if it.At.IsZero() {
 		it.At = time.Now()
 	}
@@ -809,11 +850,62 @@ func allowKey(tool string, input json.RawMessage) string {
 // Enough to decide on; the terminal has the rest.
 const bodyLimit = 40
 
+// laidOut are, per tool, the input keys describeTool shows in its own
+// layout. Every other key but the quiet ones is listed under the body
+// (extraLines), so a flag that changes what the call does (replace_all,
+// dangerouslyDisableSandbox, a subagent type) is never hidden.
+var laidOut = map[string][]string{
+	"Bash": {"command", "description"}, "Edit": {"file_path", "old_string", "new_string"},
+	"MultiEdit": {"file_path", "edits"}, "Write": {"file_path", "content"},
+	"NotebookEdit": {"notebook_path", "new_source"}, "Read": {"file_path"},
+	"WebFetch": {"url", "prompt"}, "WebSearch": {"query"},
+	"Agent": {"description", "prompt"}, "Task": {"description", "prompt"},
+	"SendMessage": {"to", "message"}, "ExitPlanMode": {"plan"},
+}
+
+// quietKeys change nothing worth asking about.
+var quietKeys = map[string]bool{"timeout": true, "run_in_background": true, "offset": true, "limit": true, "pages": true}
+
+// extraLines lists a call's arguments its tool's layout does not show, one
+// "key: value" line each, in key order.
+func extraLines(tool string, input json.RawMessage) []string {
+	shown, ok := laidOut[tool]
+	if !ok {
+		return nil // shown whole as JSON
+	}
+	var in map[string]any
+	json.Unmarshal(input, &in)
+	var keys []string
+	for k := range in {
+		if !quietKeys[k] && !slices.Contains(shown, k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		v, isStr := in[k].(string)
+		if !isStr {
+			b, _ := json.Marshal(in[k])
+			v = string(b)
+		}
+		out = append(out, sanitize.Line(k)+": "+sanitize.Line(v))
+	}
+	return out
+}
+
 // describeTool says what a permission request is for: a short title, the
 // agent's stated intent when the call carries one, and the thing being
 // decided in full, line by line, so the human can approve or reject
 // knowing exactly what runs.
 func describeTool(tool string, input json.RawMessage) (title, intent string, body []string) {
+	title, intent, body = describeLayout(tool, input)
+	return title, intent, append(body, extraLines(tool, input)...)
+}
+
+// describeLayout is describeTool without the arguments its layout leaves
+// out.
+func describeLayout(tool string, input json.RawMessage) (title, intent string, body []string) {
 	var in map[string]any
 	json.Unmarshal(input, &in)
 	// Sanitised before it is split into lines, so a carriage return
@@ -827,8 +919,10 @@ func describeTool(tool string, input json.RawMessage) (title, intent string, bod
 	switch tool {
 	case "Bash":
 		return "Wants to run", str("description"), commandLines(str("command"))
-	case "Edit", "MultiEdit":
+	case "Edit":
 		return "Wants to edit " + str("file_path"), "", diffLines(str("old_string"), str("new_string"))
+	case "MultiEdit":
+		return "Wants to edit " + str("file_path"), "", multiEditLines(in["edits"])
 	case "Write":
 		return "Wants to write " + str("file_path"), "", limitLines(str("content"), bodyLimit)
 	case "NotebookEdit":
@@ -848,6 +942,30 @@ func describeTool(tool string, input json.RawMessage) (title, intent string, bod
 		return "Wants to call " + name + " on " + server, "", jsonLines(in)
 	}
 	return "Wants to use " + tool, "", jsonLines(in)
+}
+
+// multiEditLines shows each of a MultiEdit's edits as a diff, numbered,
+// with its replace_all, within the body limit.
+func multiEditLines(v any) []string {
+	edits, _ := v.([]any)
+	var out []string
+	for i, e := range edits {
+		em, _ := e.(map[string]any)
+		s := func(k string) string {
+			str, _ := em[k].(string)
+			return sanitize.Text(str)
+		}
+		head := fmt.Sprintf("edit %d of %d", i+1, len(edits))
+		if all, _ := em["replace_all"].(bool); all {
+			head += " (replace_all: every occurrence)"
+		}
+		out = append(out, head)
+		out = append(out, diffLines(s("old_string"), s("new_string"))...)
+		if len(out) > bodyLimit {
+			return append(out[:bodyLimit], fmt.Sprintf("… %d more edits", len(edits)-i-1))
+		}
+	}
+	return out
 }
 
 // mcpTool splits an MCP tool name, mcp__server__tool, into its parts.

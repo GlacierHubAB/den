@@ -24,6 +24,10 @@
 //     U+FFFD, so a stray byte cannot change the width of what is shown.
 //
 // \r\n and a lone \r become \n, so a carriage return cannot overwrite a line.
+// U+2028 and U+2029 (line and paragraph separator) become \n too: some
+// terminals and fonts break a line there and some show nothing, so a name
+// or a line of code could look shorter, or other, than it is. Line and Code
+// then make that newline a space, like any other.
 //
 // Every function runs in one pass, linear in the input, and is idempotent:
 // Text(Text(s)) == Text(s). Den's own styling (lipgloss) is added after
@@ -46,7 +50,8 @@ const (
 )
 
 // Text returns s with escape sequences, control characters other than \n and
-// \t, bidi controls and invalid UTF-8 removed, and \r\n or \r turned into \n.
+// \t, bidi controls and invalid UTF-8 removed, and \r\n, \r, U+2028 and
+// U+2029 turned into \n.
 // It is for text that may span lines: a command, a plan, a message body.
 func Text(s string) string {
 	return text(s, false)
@@ -110,6 +115,8 @@ func text(s string, sgr bool) string {
 		case r >= 0x80 && r <= 0x9f:
 			// Any other C1 control.
 		case bidi(r):
+		case r == 0x2028 || r == 0x2029:
+			b.WriteByte('\n')
 		default:
 			b.WriteString(s[i-n : i])
 		}
@@ -170,7 +177,7 @@ func Label(s string, max int) string {
 
 // JSON makes encoded JSON safe to print without changing what it decodes
 // to. encoding/json already escapes C0 controls; JSON spells DEL, C1
-// controls and bidi controls out as \uXXXX escapes too, and invalid UTF-8 as
+// controls, bidi controls and U+2028 and U+2029 out as \uXXXX escapes too, and invalid UTF-8 as
 // \ufffd, which is how encoding/json decodes it anyway. Outside strings
 // valid JSON is ASCII, so b must be valid JSON for the result to be.
 func JSON(b []byte) []byte {
@@ -196,7 +203,7 @@ func JSON(b []byte) []byte {
 		switch {
 		case r == utf8.RuneError && n == 1:
 			out = append(out, `\ufffd`...)
-		case r == del || (r >= 0x80 && r <= 0x9f) || bidi(r):
+		case r == del || (r >= 0x80 && r <= 0x9f) || bidi(r) || r == 0x2028 || r == 0x2029:
 			out = fmt.Appendf(out, `\u%04x`, r)
 		default:
 			out = append(out, b[i:i+n]...)

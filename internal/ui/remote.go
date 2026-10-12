@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
@@ -20,10 +21,12 @@ import (
 	"github.com/GlacierHubAB/den/internal/remote"
 )
 
-// Remote hosts (docs/REMOTE.md): agents on the hosts in
-// remotes.toml join the fleet, read-only. Den shows them and their
-// requests, and says where to answer; it never answers, sends to, closes
-// or focuses a remote agent.
+// Remote hosts (docs/REMOTE.md): agents on the
+// hosts in remotes.toml join the fleet. Den shows them and their requests.
+// On a host whose policy is approve or full, a permission, plan or
+// question its hook holds is answered here like a local one (remoteHeld);
+// elsewhere Den says where to answer. It never sends to, closes or focuses
+// a remote agent.
 //
 // Inside the UI a remote agent is known by its key, "<session id>@<host>",
 // which is what its Session.SessionID holds in m.agents. Everything the
@@ -203,7 +206,7 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 			m.flash, m.flashErr = hostNow(u.Host, h.State), h.State != remote.Live
 			cmd = tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 		}
-		if h, ok := m.hostStatus(u.Host); ok && h.State != remote.Live {
+		if h, ok := m.hostStatus(u.Host); ok && !linked(h.State) {
 			why := "released to the terminal on " + u.Host + " (link lost)"
 			if h.State == remote.Connecting {
 				why = "released to the terminal on " + u.Host + " (reconnecting)"
@@ -218,6 +221,10 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 		}
 	case remote.EventArrived:
 		cmd = m.remoteEvent(u.Event)
+	case remote.HeldArrived:
+		cmd = m.remoteHeld(u.Host, u.Request)
+	case remote.HeldReleased:
+		m.store.LetGo()
 	}
 	m.refresh()
 	return tea.Batch(cmd, waitRemote(m.remote.pump))
@@ -230,7 +237,7 @@ func (m *Model) remoteEvent(ev events.Event) tea.Cmd {
 	if ev.Host == "" || ev.Session == "" {
 		return nil
 	}
-	if h, ok := m.hostStatus(ev.Host); !ok || h.State != remote.Live {
+	if h, ok := m.hostStatus(ev.Host); !ok || !linked(h.State) {
 		return nil // backfill from before the link dropped is history
 	}
 	key := remoteKey(ev.Host, ev.Session)
@@ -254,6 +261,55 @@ func (m *Model) remoteEvent(ev events.Event) tea.Cmd {
 	}
 	return tea.Batch(cmds...)
 }
+
+// remoteHeld puts a request a hook on host holds into the inbox,
+// answerable: ^Y, ^N, /always and a question's answers go back down that
+// host's link, bound to the request's id and body. It is only ever a
+// PermissionRequest from that host: it never reaches handleRequest, so
+// nothing from a host can reach the close, skills or install questions,
+// the orchestrator's rules, or what Den learns from local hooks. A request
+// Den cannot take (the host not live, or not approve or full here) goes
+// back to its terminal at once.
+func (m *Model) remoteHeld(host string, r *bridge.Request) tea.Cmd {
+	if r == nil {
+		return nil
+	}
+	h, ok := m.hostStatus(host)
+	if r.Host == "" || r.Host != host || r.Event != "PermissionRequest" || r.Input.HookEventName != "PermissionRequest" ||
+		!ok || h.State != remote.Live || !answersHere(h) {
+		r.Reply(bridge.Decision{})
+		return nil
+	}
+	key := remoteKey(host, r.SessionID)
+	m.att.ready()
+	m.att.lastHook[key] = time.Now()
+	// The host's event for this wait may have come first and notified.
+	noted := m.store.NeedsYouOn(host, r.SessionID)
+	it := m.store.Apply(r)
+	if it == nil {
+		r.Reply(bridge.Decision{}) // a no-op when an always-allow answered it
+		return nil
+	}
+	if a, ok := m.agentFor(key); ok {
+		it.Role, it.Task = a.Labels.Role, a.Labels.Task
+	}
+	if noted {
+		m.att.noted[key] = it.ID
+		return nil
+	}
+	return m.attendItem(key, it)
+}
+
+// answersHere reports whether Den answers the host's held requests: its
+// policy is approve or full here, and the host applies it.
+func answersHere(h remote.HostStatus) bool {
+	ok := func(p remote.Policy) bool { return p == remote.Approve || p == remote.Full }
+	return ok(h.Policy) && ok(h.Applied)
+}
+
+// linked reports whether a host's link carries its fleet and events now.
+// A host attached to another Den is linked, read-only.
+func linked(s remote.State) bool { return s == remote.Live || s == remote.AttachedElsewhere }
 
 // hostStatus is the status of the host with label.
 func (m Model) hostStatus(label string) (remote.HostStatus, bool) {
@@ -324,6 +380,8 @@ func (m Model) hostLine(h remote.HostStatus) string {
 		return h.Label + " · needs you" + since + " · " + agents + " (last known)"
 	case remote.VersionMismatch:
 		return h.Label + " · version mismatch · " + agents + " (last known)"
+	case remote.AttachedElsewhere:
+		return h.Label + " · live, another Den controls it · " + agents
 	}
 	return h.Label + " · " + strings.ReplaceAll(string(h.State), "_", " ") + since + " · " + agents + " (last known)"
 }
@@ -397,7 +455,7 @@ func (m Model) remoteLines(w int) []string {
 		}
 		kv("policy", policy)
 		agents := fmt.Sprint(h.Agents)
-		if h.State != remote.Live {
+		if !linked(h.State) {
 			agents += " (last known)"
 		}
 		kv("agents", agents)
@@ -593,7 +651,7 @@ func hostNow(label string, s remote.State) string {
 	case remote.VersionMismatch:
 		return label + " has a den that does not match this one"
 	case remote.AttachedElsewhere:
-		return label + " is attached to another Den"
+		return remote.ElsewhereNote(label)
 	}
 	return label + ": " + strings.ReplaceAll(string(s), "_", " ")
 }

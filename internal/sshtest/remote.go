@@ -2,12 +2,14 @@ package sshtest
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -26,7 +28,8 @@ type Remote struct {
 	ConfigHome string // remote XDG_CONFIG_HOME
 	RuntimeDir string // remote XDG_RUNTIME_DIR, mode 0700
 	Socket     string // remote DEN_SOCKET (the local-to-remote Den socket)
-	// RemoteSock is where slice 2's den-remote.sock would live.
+	// RemoteSock is where den-remote.sock, for answering held requests, would
+	// live.
 	RemoteSock string
 	// KnownHosts is the client's known_hosts file for this host.
 	KnownHosts string
@@ -420,6 +423,26 @@ func (r *Remote) Freeze() int { return r.signalSSHD(syscall.SIGSTOP) }
 // Thaw continues what Freeze stopped.
 func (r *Remote) Thaw() int { return r.signalSSHD(syscall.SIGCONT) }
 
+// HalfOpen stops this host's private sshd processes (SIGSTOP) but leaves
+// the commands they run, such as den remote serve, running: after KillSSH
+// the remote end of the link is half-open. serve hears no EOF and keeps
+// its held hooks, as on a network path that died without a reset. Thaw
+// continues the sshd processes.
+func (r *Remote) HalfOpen() int {
+	n := 0
+	files, _ := filepath.Glob(filepath.Join(r.lab.pids, "sshd-"+r.Label+".*"))
+	for _, f := range files {
+		for _, pid := range recorded(f) {
+			signalTreeIf(pid, syscall.SIGSTOP, func(p int) bool {
+				comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", p))
+				return strings.TrimSpace(string(comm)) == "den"
+			})
+			n++
+		}
+	}
+	return n
+}
+
 func (r *Remote) signalSSHD(sig syscall.Signal) int {
 	n := 0
 	files, _ := filepath.Glob(filepath.Join(r.lab.pids, "sshd-"+r.Label+".*"))
@@ -430,4 +453,29 @@ func (r *Remote) signalSSHD(sig syscall.Signal) int {
 		}
 	}
 	return n
+}
+
+// ServePIDs lists the `den remote serve` processes running on this host: the
+// ones started through the private sshd carry the lab's marker in their
+// environment and "remote serve" in their command line.
+func (r *Remote) ServePIDs() []int {
+	var out []int
+	entries, _ := os.ReadDir("/proc")
+	marker := []byte("DEN_SSHTEST=" + r.lab.Dir + "\x00")
+	home := []byte("HOME=" + r.Home + "\x00")
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		cmd, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		if err != nil || !strings.Contains(strings.ReplaceAll(string(cmd), "\x00", " "), "remote serve") {
+			continue
+		}
+		env, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+		if err == nil && bytes.Contains(env, marker) && bytes.Contains(env, home) {
+			out = append(out, pid)
+		}
+	}
+	return out
 }

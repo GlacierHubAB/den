@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/GlacierHubAB/den/internal/badge"
+	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -31,6 +35,10 @@ type ServeOptions struct {
 	EventPace     time.Duration                 // pause after each event sent, so a backfill stays under MaxRate; default 1 ms
 	RequestWait   time.Duration                 // how long to wait for Den's hello; default 30 s
 	Orphaned      func() bool                   // the watchdog: true once the ssh session is gone; default parent pid 1
+	Socket        string                        // den-remote.sock; default bridge.RemoteSocketPath, its private fallback dir made 0700
+	Questions     *bool                         // relay AskUserQuestion; default the host's hooks.answer_questions
+	Silence       time.Duration                 // relaying, no word from Den this long lets every held request go; default 60 s
+	Log           func(string)                  // what the relay did, metadata only; default remote-serve.log in the state dir
 }
 
 func (o *ServeOptions) defaults() {
@@ -67,22 +75,71 @@ func (o *ServeOptions) defaults() {
 	if o.Orphaned == nil {
 		o.Orphaned = func() bool { return os.Getppid() == 1 }
 	}
+	if o.Questions == nil {
+		q := config.Load().Hooks.AnswerQuestions
+		o.Questions = &q
+	}
+	if o.Silence == 0 {
+		o.Silence = 4 * PingEvery
+	}
+	if o.Log == nil {
+		o.Log = serveLog(filepath.Join(filepath.Dir(o.EventsPath), "remote-serve.log"))
+	}
+}
+
+// remoteSocket is where serve listens for held requests. Without
+// $XDG_RUNTIME_DIR it makes the private fallback directory (0700) and
+// refuses one somebody else made or opened up.
+func remoteSocket() (string, error) {
+	if os.Getenv("DEN_REMOTE_SOCKET") == "" && os.Getenv("XDG_RUNTIME_DIR") == "" {
+		os.Mkdir(bridge.FallbackDir(), 0o700)
+	}
+	return bridge.RemoteSocketPath()
+}
+
+// serveLog appends one line per relay happening to path (0600): ids cut to
+// 8 characters, session prefixes, tool names, never a body.
+func serveLog(path string) func(string) {
+	return func(line string) {
+		os.MkdirAll(filepath.Dir(path), 0o700)
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		defer f.Close()
+		fmt.Fprintf(f, "%s pid %d %s\n", time.Now().Format("2006-01-02 15:04:05"), os.Getpid(), sanitize.Line(line))
+	}
+}
+
+// syncWriter writes whole messages from several goroutines.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // Serve is `den remote serve --proto 1`, the remote side: it reads Den's
 // request from in, then writes hello, snapshots and events to out until in
 // reaches EOF, out fails, the watchdog sees the session gone, or ctx ends.
-// It never executes anything it reads. Errors are also sent as an error
-// message when out still works.
+// Under approve it also owns den-remote.sock and relays held permission
+// requests (relay.go); then decisions and pings are all it reads. It never
+// executes anything it reads. Errors are also sent as an error message when
+// out still works.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) error {
 	o.defaults()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	out = &syncWriter{w: out}
 
 	lines := newLineReader(in, MaxLine)
 	reqc := make(chan []byte, 1)
 	errc := make(chan error, 1)
-	extra := make(chan struct{}, 1)
+	fromDen := make(chan []byte)
 	go func() {
 		line, err := lines.next()
 		if err != nil {
@@ -90,13 +147,19 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 			return
 		}
 		reqc <- line
-		// Version 1 takes nothing after the hello: anything more is refused
-		// and ends the session, and EOF ends it quietly.
-		if _, err := lines.next(); err != nil {
-			cancel()
-			return
+		// Decisions and pings; EOF ends the session.
+		for {
+			line, err := lines.next()
+			if err != nil {
+				cancel()
+				return
+			}
+			select {
+			case fromDen <- line:
+			case <-ctx.Done():
+				return
+			}
 		}
-		extra <- struct{}{}
 	}()
 	var req Request
 	select {
@@ -117,6 +180,29 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 		return fmt.Errorf("unsupported proto %d", req.Proto)
 	}
 	policy := Min(req.Policy, Supported)
+	var rl *relay
+	var attached *Attached
+	note := ""
+	if policy.rank() >= Approve.rank() {
+		path := o.Socket
+		var err error
+		if path == "" {
+			path, err = remoteSocket()
+		}
+		if err == nil {
+			rl, attached, err = openRelay(path, req.Controller, *o.Questions, func(v any) error { return writeMsg(out, v) }, o.Log)
+		}
+		switch {
+		case err != nil:
+			policy, note = Observe, sanitize.Label("held requests are not relayed: "+err.Error(), 160)
+			o.Log(note)
+		case attached != nil:
+			policy = Observe
+		}
+	}
+	if rl != nil {
+		defer rl.close()
+	}
 
 	tail := events.Follow(o.EventsPath, req.Cursor)
 	defer tail.Close()
@@ -125,7 +211,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	hello := Hello{
 		Type: TypeHello, Proto: Proto, Den: o.Version, Claude: claudeVersion(agents),
 		Hostname: sanitize.Label(host, 64), RemoteNow: time.Now().Add(o.Skew).UTC(), Policy: policy, Labels: req.Labels,
-		Cursor: tail.Cursor(),
+		Cursor: tail.Cursor(), Attached: attached, Note: note,
 	}
 	if hello.Cursor.IsZero() {
 		hello.Cursor = req.Cursor
@@ -146,6 +232,17 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	if err := snap(agents); err != nil {
 		return err
 	}
+	var handed <-chan struct{}
+	var silent <-chan time.Time
+	heard := time.Now()
+	inRate := rateCap{max: 100} // decisions are a human's keypresses, pings one per PingEvery
+	if rl != nil {
+		rl.start()
+		handed = rl.Done()
+		t := time.NewTicker(o.Silence / 4)
+		defer t.Stop()
+		silent = t.C
+	}
 
 	changed := watch(ctx, o.Watch, o.Debounce)
 	every := time.NewTicker(o.SnapshotEvery)
@@ -159,9 +256,22 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-extra:
-			writeMsg(out, Error{Type: TypeError, Code: "request", Message: "proto 1 takes nothing after hello"})
-			return fmt.Errorf("Den sent something after hello")
+		case <-handed:
+			return fmt.Errorf("handed over to a new session of the same Den")
+		case <-silent:
+			if time.Since(heard) > o.Silence {
+				return fmt.Errorf("no word from Den for %s; held requests went to their terminals", o.Silence)
+			}
+		case line := <-fromDen:
+			heard = time.Now()
+			if !inRate.allow(heard) {
+				writeMsg(out, Error{Type: TypeError, Code: "request", Message: "more than 100 messages a second from Den"})
+				return fmt.Errorf("Den sent more than 100 messages a second")
+			}
+			if err := fromDenMsg(line, rl, o.Log); err != nil {
+				writeMsg(out, Error{Type: TypeError, Code: "request", Message: err.Error()})
+				return err
+			}
 		case <-dog.C:
 			if o.Orphaned() {
 				return fmt.Errorf("the ssh session is gone")
@@ -190,6 +300,31 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 			return err
 		}
 	}
+}
+
+// fromDenMsg handles one message from Den after its request: a decision
+// for the relay, or a ping. Anything else is refused: the session ends with
+// an error (code request). A decision with nothing relayed in this session
+// is dropped and logged, as a decision for an id that is not open is.
+func fromDenMsg(line []byte, rl *relay, log func(string)) error {
+	typ, unknown, err := peekIn(line, allowedIn)
+	switch {
+	case err != nil:
+		return fmt.Errorf("a message from Den that is not JSON")
+	case len(unknown) > 0 || (typ != TypePing && typ != TypeDecision):
+		return fmt.Errorf("proto 1 takes only decision and ping after hello, not %s", sanitize.Label(typ, 40))
+	case typ == TypeDecision:
+		var d Decision
+		if json.Unmarshal(line, &d) != nil {
+			return fmt.Errorf("a malformed decision")
+		}
+		if rl == nil {
+			log("dropped a decision: nothing is relayed in this session")
+			return nil
+		}
+		rl.decide(d)
+	}
+	return nil
 }
 
 func snapAgain(o ServeOptions, snap func([]fleet.Agent) error) error {

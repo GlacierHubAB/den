@@ -19,9 +19,8 @@ What you can do with a host:
 - see what they cost, per machine and in the total.
 - keep working when a host drops: it shows as offline, with its last known
   agents dimmed.
-
-Answering a remote agent's requests is not part of this version: you answer in
-the terminal on the host.
+- on a host you set to `approve`, answer its waiting permissions, plans and
+  questions in the inbox, as you do for local agents.
 
 Messaging and closing a remote agent are not part of this version: for those
 you go to the terminal on the host.
@@ -121,6 +120,7 @@ A label is lower-case letters, digits and `-`, and `local` is taken. A target
 that starts with `-` is refused. Den reads the file when it starts. A file that
 does not parse connects no host, and `/remote` says why. There is no command to
 change a host's policy: edit `policy` and restart Den.
+`policy` and `default_policy` take `observe` or `approve`.
 
 ## Policies
 
@@ -132,9 +132,11 @@ policy does not allow.
 | Policy | What crosses the wire |
 | --- | --- |
 | `observe` (default) | Metadata only. Per agent: status, critter name, session id, peer name, badge role and task (at most 80 characters, withheld with `labels = false`), model, Claude Code version, repository name and branch, context and usage figures, tokens by model, and how long ago things happened. Per event: kind, session, agent name, time, request kind, tool name, error type. |
+| `approve` | Everything under `observe`, plus, for a waiting permission, plan or question only, what Den shows to decide it: the command, the edit or file, the plan, the question and its options. Your answers travel the other way. |
 
 Under `observe` a host never sends prompts, replies, transcripts, commands,
 tool input, file paths, working directories, window titles or recent activity.
+Under `approve` that stays true except for the body of a waiting request.
 
 Badge role and task are short summaries Claude Code's own model writes about
 the work, so they say a little about it. Set `labels = false` on a sensitive
@@ -161,6 +163,12 @@ host to keep them back.
   devbox is its own project, `den @devbox`.
 - **The orchestrator** lists remote agents in its roster as host-tagged lines
   that say `SendMessage` cannot reach them. It does not act on remote agents.
+- **Inbox, `approve` hosts.** The item shows the host chip, "on devbox" in its
+  title and the whole body Den was sent. `Ctrl+Y`, `Ctrl+N` and `/always`
+  answer it exactly as for a local agent; `/always` allows that tool again for
+  that agent on that host only, and is kept on this machine. There is no extra
+  confirmation: the host chip, "on devbox" and the full body are the guard. On
+  an `observe` host, `Ctrl+Y` says how to change that.
 
 ### Hosts that are not live
 
@@ -174,9 +182,13 @@ last known. They are never counted as working or needing you.
 | offline | ssh ended or failed | retries after 5 s, doubling up to 2 minutes |
 | needs you | unknown or changed host key, or ssh cannot log in without a prompt | stops; run `ssh <target>`, then `/remote connect devbox` |
 | version mismatch | `den` is missing on the host, or too old for `remote serve` | stops; `den remote install devbox` |
+| live, controlled elsewhere | another Den holds the host's requests | shows the host's agents; answers and acts on nothing there; asks again every minute |
 
 A link that goes silent is noticed in 45 to 60 seconds; a killed ssh at once.
 Events that happened while the link was down arrive once it is back, once each.
+Items waiting from the host read "released to the terminal on devbox (link
+lost)", and the terminal's own dialog shows: a request is never left looking
+answerable.
 
 ## Installing den on a host
 
@@ -198,6 +210,41 @@ the `sha256sum` check to run by hand. A host whose `den` is not known to be
 older is left alone. Den never installs hooks on a host: run
 `den install-hooks` there yourself.
 
+## Remote approvals
+
+On an `approve` host, `den remote serve` listens on a Unix socket on the host,
+`den-remote.sock`, only while a Den is attached. On the host, `den hook` asks a
+Den running there first, as always, and only if none is, that socket. So a
+human at the server who runs Den there keeps control of that machine's
+requests.
+
+A waiting permission, plan or question travels to your inbox with a random id.
+You answer; the answer goes back down the same ssh session; the hook on the
+host returns it to Claude Code. The terminal there stays usable the whole time,
+and whichever answer comes first counts. If it was answered or dismissed on the
+host, the item reads "no longer waiting on devbox: answered or dismissed there".
+
+**It fails open.** If the link drops, Den is not running, or anything is
+doubtful, the hook on the host returns no decision and Claude Code asks in its
+own terminal, as if Den did not exist. A request is sent to the terminal rather
+than to you when it cannot be shown whole: a command or path over 16 KB, or one
+that changes when sanitised, an input with a key Den does not know, a request
+over 1 MB, or more than 32 held at once on one host.
+
+A question (`AskUserQuestion`) is relayed only if the host's own config has
+`hooks.answer_questions` on, because the hook on the host applies its own
+config.
+
+**One Den per host.** Only one Den controls a host's requests. A second Den
+attached to the same host sees "another Den controls devbox, this one only
+observes it".
+
+The socket is in `$XDG_RUNTIME_DIR`, else in `den-<uid>/` under `$TMPDIR` (a
+directory only that user may use, checked); `DEN_REMOTE_SOCKET` moves it. It is
+mode 0600 and `serve` refuses a connection from another user. `serve` keeps a
+metadata-only log of what it did with requests, never a command or text, in
+`remote-serve.log` in the state directory on the host.
+
 ## For scripts
 
 `den list` and `den list -json` include remote agents as the running Den last
@@ -210,7 +257,6 @@ on this machine.
 
 ## Limits
 
-- Den cannot answer a remote agent's requests in this version.
 - Den cannot message or close a remote agent in this version.
 - Den cannot review a remote agent's changes in this version.
 - Linux hosts only; agents are Claude Code only.
@@ -245,6 +291,20 @@ on this machine.
 - **Agents appear but no events or requests.** Den's hooks are not installed on
   the host: run `den install-hooks` there. Only sessions started afterwards
   report.
+- **"another Den controls devbox, this one only observes it".** Another Den
+  (on another machine, or the same one in another session) holds the host's
+  requests. Quit that one, or use it; this one asks again every minute.
+- **A request went to the terminal on the host.** It could not be shown whole
+  (see Remote approvals), or the link was down. The terminal's own dialog
+  works as usual.
+- **No `XDG_RUNTIME_DIR` on the host.** The socket then lives in
+  `den-<uid>/` under `$TMPDIR`, which must be your own directory with mode
+  0700. If it is not, `serve` applies `observe` for the host, and `/remote` shows
+  "the host applies observe".
+  `DEN_REMOTE_SOCKET` names another path. The same applies on this machine to
+  `den.sock`: without `XDG_RUNTIME_DIR` it is in `den-<uid>/` under `$TMPDIR`,
+  so reinstall `den` and run `den install-hooks` again so the hooks and Den
+  agree.
 
 ## Security model
 
@@ -260,7 +320,8 @@ on this machine.
   `$XDG_RUNTIME_DIR/den/ssh` (mode 0700); a master ends with its last session.
 - **No daemon, no network listener.** `den remote serve` is a child of the ssh
   session Den started and exits when it ends, or if its parent is gone.
-  It opens no socket.
+  Under `observe` it opens no socket; under `approve` it listens only on a
+  Unix socket on the host, mode 0600, while a Den is attached.
 - **A host cannot reach this Den.** What a host sends never touches Den's own
   socket, so it cannot ask this Den to close, spawn or install anything. A host
   speaks a closed set of messages: an unknown type is dropped and the host
@@ -271,6 +332,16 @@ on this machine.
 - **Everything from a host is sanitised.** Escape sequences, control
   characters and bidirectional overrides are removed from every string a host
   sends, before it is shown, put in a notification or title, or logged.
+- **A host cannot answer for you.** Decisions only go from Den to the host
+  and are never read from it. Each is bound to a random request id and to a
+  hash of the body you were shown, is valid once, and only while the request
+  is open and on the connection that offered it. A late, replayed or
+  mismatched decision is dropped. A compromised host can lie about what its
+  own agent will run, which it controls anyway; it cannot approve anything for
+  another host or for this machine.
+- **What you approve is what you saw.** The host cuts the body and Den checks
+  it again; a command, path or URL that would not show whole sends the request
+  to the terminal instead.
 - **What Den keeps.** On this machine: `remotes.toml`, and per host the last
   metadata it received and the position in its event stream
   (`remote/<label>.json` in the state directory, mode 0600).

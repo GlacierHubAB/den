@@ -20,11 +20,15 @@ type Request struct {
 	// Host is the remote host label the request came from, "" for this
 	// machine. It is set by whoever builds the request from the connection,
 	// never read from the payload.
-	Host  string
-	reply chan Decision
-	once  sync.Once
-	gone  chan struct{} // closed when the waiting hook hangs up
-	bye   sync.Once
+	Host string
+	// RemoteID is the remote's id for a request relayed from Host.
+	RemoteID string
+	reply    chan Decision
+	once     sync.Once
+	gone     chan struct{} // closed when the waiting hook hangs up
+	bye      sync.Once
+	send     func(Decision) // a remote request's way back; nil for a local one
+	why      string         // why a remote request was let go
 }
 
 // WantsReply reports whether the sender is waiting for a decision.
@@ -57,7 +61,12 @@ func (r *Request) Reply(d Decision) {
 	if r.reply == nil {
 		return
 	}
-	r.once.Do(func() { r.reply <- d })
+	r.once.Do(func() {
+		r.reply <- d
+		if r.send != nil && !r.HungUp() {
+			r.send(d)
+		}
+	})
 }
 
 // Server accepts hook connections.

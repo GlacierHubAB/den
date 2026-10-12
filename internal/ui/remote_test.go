@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/badge"
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/discover"
@@ -464,10 +466,191 @@ func TestHostNowReadsAsASentence(t *testing.T) {
 		remote.Offline:           "b is offline",
 		remote.NeedsAttention:    "b needs your attention",
 		remote.VersionMismatch:   "b has a den that does not match this one",
-		remote.AttachedElsewhere: "b is attached to another Den",
+		remote.AttachedElsewhere: "another Den controls b, this one only observes it",
 	} {
 		if got := hostNow("b", s); got != want {
 			t.Errorf("%s: %q, want %q", s, got, want)
 		}
+	}
+}
+
+// heldRequest is a request the Manager would hand over for devbox: a
+// PermissionRequest whose decisions are recorded instead of sent.
+func heldRequest(host, event, tool string, input any, sent *[]bridge.Decision) *bridge.Request {
+	raw, _ := json.Marshal(input)
+	payload, _ := json.Marshal(map[string]any{"session_id": dupSession, "hook_event_name": event, "tool_name": tool, "tool_input": json.RawMessage(raw)})
+	env := bridge.Envelope{Event: event, SessionID: dupSession, Payload: payload}
+	return bridge.NewRemoteRequest(host, "0123456789abcdef0123456789abcdef", env, func(d bridge.Decision) { *sent = append(*sent, d) })
+}
+
+func approveDevbox(feed *fakeFeed) {
+	feed.hosts[0].Policy, feed.hosts[0].Applied = remote.Approve, remote.Approve
+}
+
+func TestRemoteHeldPermissionIsAnsweredHere(t *testing.T) {
+	m, feed, notes := remoteModel(t)
+	approveDevbox(feed)
+	m.syncRemote()
+	var sent []bridge.Decision
+	r := heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "go test ./..."}, &sent)
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+	it := m.topAnswerable()
+	if it == nil || it.Host != "devbox" || !strings.Contains(it.Title, "on devbox") || it.Body[0] != "$ go test ./..." {
+		t.Fatalf("item = %+v", it)
+	}
+	if len(*notes) != 1 || !strings.Contains((*notes)[0], "on devbox needs your permission") {
+		t.Errorf("notifications = %q", *notes)
+	}
+	m.tab = tabInbox
+	m.inboxCur = 0
+	out := frame(m)
+	if !strings.Contains(out, "^Y allow") || !strings.Contains(out, "$ go test ./...") {
+		t.Errorf("inbox view:\n%s", out)
+	}
+	mm, _ := m.answer("allow")
+	if len(sent) != 1 || sent[0].Behavior != "allow" || it.State != inbox.Resolved {
+		t.Errorf("sent %+v, item %v %q (flash %q)", sent, it.State, it.Resolved, mm.(Model).flash)
+	}
+
+	// The link drops with a request held: released, never answerable.
+	m2 := mm.(Model)
+	r = heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "make"}, &sent)
+	runAll(m2.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+	r.LetGo("released to the terminal on devbox (link lost)")
+	runAll(m2.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldReleased, Host: "devbox", Request: r}, ok: true}))
+	if m2.topAnswerable() != nil {
+		t.Error("a released request still answerable")
+	}
+	mm, _ = m2.answer("allow")
+	if len(sent) != 1 {
+		t.Errorf("a released request sent %+v", sent)
+	}
+	if !strings.Contains(frame(&m2), "link lost") {
+		t.Errorf("no link lost trailer:\n%s", frame(&m2))
+	}
+}
+
+// What is not a PermissionRequest from that very host never reaches the
+// local handlers: no close, skills or install question appears, and the
+// request goes back to its terminal.
+func TestRemoteHeldCannotReachLocalHandlers(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	approveDevbox(feed)
+	m.syncRemote()
+	closeIn := map[string]any{"peers": []string{"all"}, "reason": "cleanup", "idle_for": "1m"}
+	cases := []struct {
+		host, event, why string
+	}{
+		{"devbox", bridge.CloseEvent, "close"},
+		{"devbox", bridge.SkillsEvent, "skills"},
+		{"devbox", bridge.InstallEvent, "install"},
+		{"gpu", "PermissionRequest", "another host's label"},
+	}
+	for _, c := range cases {
+		var sent []bridge.Decision
+		r := heldRequest(c.host, c.event, "Bash", closeIn, &sent)
+		runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+		if len(sent) != 1 || sent[0].Behavior != "" {
+			t.Errorf("%s: sent %+v", c.why, sent)
+		}
+	}
+	for _, it := range m.store.Items() {
+		if it.DenAsks() || it.Answerable() {
+			t.Errorf("remote input made %v %q", it.Kind, it.Title)
+		}
+	}
+	// Under observe here, a held request is not taken either.
+	feed.hosts[0].Policy, feed.hosts[0].Applied = remote.Observe, remote.Observe
+	m.syncRemote()
+	var sent []bridge.Decision
+	r := heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "ls"}, &sent)
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+	if len(sent) != 1 || m.topAnswerable() != nil {
+		t.Errorf("observe host: sent %+v", sent)
+	}
+}
+
+// The host's needs-you event and the held request are one wait: one item,
+// one notification, whichever comes first.
+func TestRemoteHeldAndItsEventAreOneItem(t *testing.T) {
+	for _, eventFirst := range []bool{true, false} {
+		m, feed, notes := remoteModel(t)
+		approveDevbox(feed)
+		m.syncRemote()
+		ev := events.New(events.NeedsYou, dupSession)
+		ev.Request, ev.Tool, ev.Host = "plan", "ExitPlanMode", "devbox"
+		var sent []bridge.Decision
+		r := heldRequest("devbox", "PermissionRequest", "ExitPlanMode", map[string]string{"plan": "1. do it"}, &sent)
+		held := remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}
+		if eventFirst {
+			runAll(m.remoteEvent(ev))
+			runAll(m.handleRemote(held))
+		} else {
+			runAll(m.handleRemote(held))
+			runAll(m.remoteEvent(ev))
+		}
+		open := 0
+		for _, it := range m.store.Items() {
+			if it.Host == "devbox" && it.State != inbox.Resolved {
+				open++
+			}
+		}
+		if open != 1 || len(*notes) != 1 || m.topAnswerable() == nil {
+			t.Errorf("event first %v: %d open items, notes %q", eventFirst, open, *notes)
+		}
+	}
+}
+
+func TestAttachedElsewhereHostIsLiveReadOnly(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	feed.hosts[0].Policy = remote.Approve
+	feed.hosts[0].Reason = remote.ElsewhereNote("devbox") + " (its serve is pid 4242 on the host, attached for 3m0s)"
+	feed.setState("devbox", remote.AttachedElsewhere)
+	for i := range feed.agents {
+		if feed.agents[i].Host == "devbox" {
+			feed.agents[i].Stale = false
+		}
+	}
+	m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HostChanged, Host: "devbox"}, ok: true})
+	h, _ := m.hostStatus("devbox")
+	if line := m.hostLine(h); strings.Contains(line, "last known") || !strings.Contains(line, "another Den") {
+		t.Errorf("host line = %q", line)
+	}
+	ev := events.New(events.NeedsYou, dupSession)
+	ev.Request, ev.Tool, ev.Host = "permission", "Bash", "devbox"
+	runAll(m.remoteEvent(ev))
+	var it *inbox.Item
+	for _, o := range m.store.Items() {
+		if o.Host == "devbox" && o.State != inbox.Resolved {
+			it = o
+		}
+	}
+	if it == nil || it.Answerable() {
+		t.Fatalf("attached elsewhere: item %+v", it)
+	}
+	m.tab, m.inboxCur = tabInbox, 0
+	mm, _ := m.answer("allow")
+	if f := mm.(Model).flash; !strings.Contains(f, "answer it in the terminal there") || !strings.Contains(f, "another Den controls devbox, this one only observes it") {
+		t.Errorf("flash = %q", f)
+	}
+}
+
+// A request that carries a host never takes the local path, even with
+// the orchestrator's session id or a local agent's.
+func TestHandleRequestSendsRemoteRequestsAway(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	approveDevbox(feed)
+	m.syncRemote()
+	var sent []bridge.Decision
+	r := heldRequest("devbox", bridge.CloseEvent, "Bash", map[string]any{"peers": []string{"all"}}, &sent)
+	runAll(m.handleRequest(r))
+	r = heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "ls"}, &sent)
+	runAll(m.handleRequest(r))
+	if _, ok := m.att.lastHook[dupSession]; ok {
+		t.Error("a remote request moved the local agent's stall timer")
+	}
+	it := m.topAnswerable()
+	if len(sent) != 1 || sent[0].Behavior != "deny" || it == nil || it.Host != "devbox" {
+		t.Errorf("sent %+v, item %+v", sent, it)
 	}
 }

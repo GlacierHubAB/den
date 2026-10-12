@@ -16,9 +16,15 @@ type Info struct {
 
 // Lookup walks up from dir to the nearest .git and reads HEAD. Linked
 // worktrees (a .git file pointing at the main repo) are resolved so Repo is
-// the main repository's name, not the worktree directory.
+// the main repository's name, not the worktree directory. A relative dir
+// has no git info: session folders are absolute, and one that is not was
+// not written by Claude Code, so it is not read relative to Den's own.
 func Lookup(dir string) (Info, bool) {
-	for d := dir; d != "" && d != "/"; d = filepath.Dir(d) {
+	if !filepath.IsAbs(dir) {
+		return Info{}, false
+	}
+	// Absolute and clean, so filepath.Dir reaches "/" and the walk ends.
+	for d := filepath.Clean(dir); d != "/"; d = filepath.Dir(d) {
 		g := filepath.Join(d, ".git")
 		st, err := os.Stat(g)
 		if err != nil {

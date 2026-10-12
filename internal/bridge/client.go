@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"net"
 	"time"
 )
 
@@ -44,6 +45,11 @@ func Call(path string, env Envelope, wait time.Duration) (Decision, error) {
 	if err != nil {
 		return Decision{}, ErrNoDen
 	}
+	return ask(conn, env, wait)
+}
+
+// ask posts env on conn and waits for the decision, then closes conn.
+func ask(conn net.Conn, env Envelope, wait time.Duration) (Decision, error) {
 	defer conn.Close()
 	b, _ := json.Marshal(env)
 	conn.SetWriteDeadline(time.Now().Add(time.Second))

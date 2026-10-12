@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/badge"
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -30,7 +31,7 @@ const (
 	Offline           State = "offline"            // the session ended or failed; retried with backoff
 	NeedsAttention    State = "needs_attention"    // auth or host key failure: not retried until Reconnect
 	VersionMismatch   State = "version_mismatch"   // den missing, too old, or another proto: not retried until Reconnect
-	AttachedElsewhere State = "attached_elsewhere" // reserved for slice 2: another Den holds the host
+	AttachedElsewhere State = "attached_elsewhere" // live, but another Den answers the host's held requests: observe only
 )
 
 // HostStatus is one host as the views show it.
@@ -59,6 +60,8 @@ const (
 	HostChanged  UpdateKind = iota // Status changed; Agents are the host's agents re-marked
 	FleetChanged                   // a new snapshot: Agents
 	EventArrived                   // Event, already appended to the local events.jsonl
+	HeldArrived                    // Request: a held permission, plan or question to put in the inbox
+	HeldReleased                   // Request: no longer answerable (its Why says why)
 )
 
 // Update is one change, sent on Manager.Updates.
@@ -68,6 +71,10 @@ type Update struct {
 	Status HostStatus
 	Agents []fleet.Agent // HostChanged and FleetChanged: the host's agents, Host, HostState and Stale set
 	Event  events.Event  // EventArrived: Host set, Time on the local clock
+	// HeldArrived and HeldReleased: a PermissionRequest held on the host.
+	// Its Host is the connection's label and its Reply goes back down that
+	// connection, only while it is live. Never queued behind a coalesce.
+	Request *bridge.Request
 }
 
 // Conn is one running session with `den remote serve`.
@@ -94,6 +101,9 @@ type Options struct {
 	Healthy    time.Duration // a session live this long resets the backoff
 	MaxBacklog int           // events waiting for the reader before a host counts as flooding; default 10000
 	MaxRate    int           // messages a second a host may send before it counts as flooding; default MaxRate
+	Controller string        // this machine's controller id; default LoadController(StateDir)
+	PingEvery  time.Duration // how often a live session pings serve; default PingEvery
+	Retake     time.Duration // a host attached elsewhere is asked again this often; default 1 min
 	Now        func() time.Time
 }
 
@@ -124,6 +134,15 @@ func (o *Options) defaults() {
 	}
 	if o.MaxBacklog == 0 {
 		o.MaxBacklog = 10000
+	}
+	if o.Controller == "" {
+		o.Controller = LoadController(o.StateDir)
+	}
+	if o.PingEvery == 0 {
+		o.PingEvery = PingEvery
+	}
+	if o.Retake == 0 {
+		o.Retake = time.Minute
 	}
 	if o.Now == nil {
 		o.Now = time.Now
@@ -221,7 +240,7 @@ func NewManager(cfg Config, o Options) *Manager {
 		k, _ := LoadKnown(o.StateDir, h.Label)
 		k.Label = h.Label
 		st := Offline
-		if k.State != "" && k.State != Live && k.State != Connecting {
+		if k.State != "" && k.State != Live && k.State != Connecting && k.State != AttachedElsewhere {
 			st = k.State
 		}
 		m.state[h.Label] = &hostState{
@@ -297,7 +316,7 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 	out := make([]fleet.Agent, 0, len(st.known.Agents))
 	for _, meta := range st.known.Agents {
 		a := fleet.FromMeta(recheck(meta, h), h.Label, st.known.Received, m.o.Prices)
-		a.HostState, a.Stale = string(st.status.State), st.status.State != Live
+		a.HostState, a.Stale = string(st.status.State), st.status.State != Live && st.status.State != AttachedElsewhere
 		out = append(out, a)
 	}
 	return out
@@ -323,9 +342,12 @@ func (m *Manager) Reconnect(label string) {
 // the events that came before it.
 func (m *Manager) send(u Update) {
 	m.qmu.Lock()
-	if u.Kind == EventArrived {
+	switch u.Kind {
+	case EventArrived:
 		m.backlog[u.Host]++
-	} else {
+	case HeldArrived, HeldReleased:
+		// in order, never dropped
+	default:
 		q := m.queue[:0]
 		for _, o := range m.queue {
 			if o.Host != u.Host || o.Kind != u.Kind {
@@ -400,7 +422,7 @@ func (m *Manager) setState(h Host, s State, reason string) {
 		}
 	}
 	st.known.State, st.known.Reason, st.known.Since = s, reason, st.status.Since
-	if s == Live {
+	if s == Live || s == AttachedElsewhere {
 		st.known.Heartbeat = m.o.Now()
 	}
 	saveKnown(m.o.StateDir, st.known)
@@ -442,6 +464,9 @@ func (m *Manager) loop(h Host) {
 		}
 		m.setState(h, s, reason)
 		var wait <-chan time.Time
+		if s == AttachedElsewhere {
+			wait = time.After(0) // ask the host again at once
+		}
 		if s == Offline {
 			if live && m.o.Now().Sub(start) >= m.o.Healthy {
 				delay = m.o.Backoff
@@ -476,8 +501,24 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	m.mu.Lock()
 	cur := m.state[h.Label].known.Cursor
 	m.mu.Unlock()
-	req := Request{Type: TypeHello, Proto: Proto, Den: m.o.Version, Policy: h.Policy, Labels: h.Labels, Cursor: cur}
-	if err := writeMsg(conn.In, req); err != nil {
+	req := Request{Type: TypeHello, Proto: Proto, Den: m.o.Version, Policy: h.Policy, Labels: h.Labels, Cursor: cur, Controller: m.o.Controller}
+	var wmu sync.Mutex
+	write := func(v any) error {
+		wmu.Lock()
+		defer wmu.Unlock()
+		return writeMsg(conn.In, v)
+	}
+	// Decisions are made in Den's update loop (a request's Reply); they
+	// are queued here and written by their own goroutine, in order, so a
+	// slow or stuck ssh pipe never holds up the TUI.
+	held := newHeldSet(ctx, h.Label, pipeQueue(ctx, write, 2*MaxHeld))
+	defer func() {
+		cancel() // replies from now on go nowhere
+		for _, r := range held.releaseAll() {
+			m.send(Update{Kind: HeldReleased, Host: h.Label, Request: r})
+		}
+	}()
+	if err := write(req); err != nil {
 		s, r := Classify(conn.Wait())
 		return s, r, false
 	}
@@ -505,6 +546,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	}()
 	heartbeat := time.NewTicker(HeartbeatEvery)
 	defer heartbeat.Stop()
+	ping := time.NewTicker(m.o.PingEvery)
+	defer ping.Stop()
+	var retake <-chan time.Time
 	rc := rateCap{max: m.o.MaxRate}
 	live, applied := false, Policy("")
 	end := func(s State, r string) (State, string, bool) {
@@ -525,6 +569,13 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.mu.Unlock()
 			}
 			continue
+		case <-ping.C:
+			if live {
+				write(Ping{Type: TypePing})
+			}
+			continue
+		case <-retake:
+			return end(AttachedElsewhere, m.statusQuiet(h).Reason)
 		case in = <-msgs:
 		}
 		if errors.Is(in.err, ErrLineTooLong) {
@@ -585,7 +636,14 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			}
 			m.mu.Unlock()
 			live = true
-			m.setState(h, Live, "")
+			if a := hm.Attached; a != nil {
+				// Another Den controls this host's held requests; ask again
+				// now and then, so this one takes over once it leaves.
+				m.setState(h, AttachedElsewhere, attachedReason(h.Label, a, m.o.Now()))
+				retake = time.After(m.o.Retake)
+			} else {
+				m.setState(h, Live, sanitize.Label(hm.Note, 160))
+			}
 		case TypeSnapshot:
 			var sm Snapshot
 			if json.Unmarshal(in.line, &sm) != nil {
@@ -649,10 +707,53 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				return end(VersionMismatch, reason)
 			}
 			return end(Offline, reason)
+		case TypeHeld:
+			var hm Held
+			if json.Unmarshal(in.line, &hm) != nil {
+				m.flag(h, "a malformed held request")
+				continue
+			}
+			r, why := held.add(hm, h.Policy, applied)
+			if r == nil {
+				if why != "" {
+					m.flag(h, why)
+				}
+				continue
+			}
+			m.send(Update{Kind: HeldArrived, Host: h.Label, Request: r})
+		case TypeGone:
+			var g Gone
+			if json.Unmarshal(in.line, &g) != nil {
+				m.flag(h, "a malformed gone")
+				continue
+			}
+			if r := held.gone(g.ID); r != nil {
+				m.send(Update{Kind: HeldReleased, Host: h.Label, Request: r})
+			}
 		default:
 			m.flag(h, "unknown message type "+sanitize.Label(typ, 40))
 		}
 	}
+}
+
+// statusQuiet is a host's status.
+func (m *Manager) statusQuiet(h Host) HostStatus {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[h.Label].status
+}
+
+// attachedReason says which Den's serve holds a host.
+func attachedReason(label string, a *Attached, now time.Time) string {
+	r := ElsewhereNote(label)
+	if a.Pid > 0 {
+		r += fmt.Sprintf(" (its serve is pid %d on the host", a.Pid)
+		if !a.Since.IsZero() {
+			r += fmt.Sprintf(", attached for %s", now.Sub(a.Since).Round(time.Second))
+		}
+		r += ")"
+	}
+	return r
 }
 
 // cleanMeta sanitises every string a host sent in a projection.
@@ -682,4 +783,32 @@ func cleanEvent(ev events.Event, host string) (events.Event, bool) {
 	ev.Request, ev.Tool, ev.Error, ev.Reason = l(ev.Request), l(ev.Tool), l(ev.Error), l(ev.Reason)
 	ev.Host = host
 	return ev, true
+}
+
+// pipeQueue returns a send that queues messages for write and returns at
+// once; one goroutine writes them in order until ctx ends. Past n queued
+// messages it drops and says so: the request it answered then goes to its
+// terminal when its hook or the link gives up, as with a lost link. One
+// session never has more open requests than MaxHeld, each answered once,
+// so 2*MaxHeld is never reached in practice.
+func pipeQueue(ctx context.Context, write func(any) error, n int) func(any) error {
+	q := make(chan any, n)
+	go func() {
+		for {
+			select {
+			case v := <-q:
+				write(v) // a failed write ends the session elsewhere
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return func(v any) error {
+		select {
+		case q <- v:
+			return nil
+		default:
+			return errors.New("too many decisions waiting for the pipe")
+		}
+	}
 }

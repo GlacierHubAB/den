@@ -196,7 +196,7 @@ func (l *Lab) Cmd(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 // StrictOptions are the options Den adds to every background connection
-// (design §3.2), without ConnectTimeout so a test can choose its own.
+// (remote.SSH's options), without ConnectTimeout so a test can choose its own.
 func StrictOptions() []string {
 	return []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
 		"-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"}
@@ -427,7 +427,11 @@ func startTime(pid int) string {
 func killTree(pid int) { signalTree(pid, syscall.SIGKILL) }
 
 // signalTree sends sig to pid and its descendants, children first.
-func signalTree(pid int, sig syscall.Signal) {
+func signalTree(pid int, sig syscall.Signal) { signalTreeIf(pid, sig, nil) }
+
+// signalTreeIf is signalTree for the processes skip does not exclude (their
+// descendants are still visited).
+func signalTreeIf(pid int, sig syscall.Signal, skip func(pid int) bool) {
 	children := map[int][]int{}
 	entries, _ := os.ReadDir("/proc")
 	for _, e := range entries {
@@ -457,7 +461,9 @@ func signalTree(pid int, sig syscall.Signal) {
 		for _, c := range children[p] {
 			kill(c)
 		}
-		syscall.Kill(p, sig)
+		if skip == nil || !skip(p) {
+			syscall.Kill(p, sig)
+		}
 	}
 	kill(pid)
 }

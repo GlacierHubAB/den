@@ -114,8 +114,8 @@ func TestHookBinaryAlwaysExitsZero(t *testing.T) {
 	}
 	dir := t.TempDir()
 	env := []string{"HOME=" + dir, "XDG_STATE_HOME=" + dir, "XDG_CONFIG_HOME=" + dir, "XDG_RUNTIME_DIR=" + dir,
-		"DEN_SOCKET=" + filepath.Join(dir, "den.sock"), "DEN_CONFIG=" + filepath.Join(dir, "config.toml"),
-		"CLAUDE_CONFIG_DIR=" + dir, "PATH=/usr/bin:/bin"}
+		"DEN_SOCKET=" + filepath.Join(dir, "den.sock"), "DEN_REMOTE_SOCKET=" + filepath.Join(dir, "den-remote.sock"),
+		"DEN_CONFIG=" + filepath.Join(dir, "config.toml"), "CLAUDE_CONFIG_DIR=" + dir, "PATH=/usr/bin:/bin"}
 	for _, in := range []string{
 		"",
 		"not json",

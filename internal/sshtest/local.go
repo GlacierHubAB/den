@@ -82,8 +82,7 @@ func (lo *Local) WriteRemotes(content string) {
 }
 
 // RemotesTOML returns a remotes.toml that lists every remote of the lab by
-// label with the given policy ("" leaves the key out), in the shape of design
-// §4.1. Adjust it once the real schema is final.
+// label with the given policy ("" leaves the key out).
 func (l *Lab) RemotesTOML(policy string) string {
 	var b strings.Builder
 	for _, k := range l.order {

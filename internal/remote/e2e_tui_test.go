@@ -9,9 +9,9 @@ import (
 	"github.com/GlacierHubAB/den/internal/sshtest"
 )
 
-// The real den TUI, in a private tmux server, against a real private sshd:
-// slice 1 as the human sees it. Slow (and it types into the TUI), so it runs
-// only with DEN_SLOW_TESTS=1.
+// The real den TUI, in a private tmux server, against a real private sshd: the
+// read-only fleet as the human sees it. Slow (and it types into the TUI), so
+// it runs only with DEN_SLOW_TESTS=1.
 func TestE2ETUI(t *testing.T) {
 	if testing.Short() || os.Getenv("DEN_SLOW_TESTS") != "1" {
 		t.Skip("end-to-end TUI test: set DEN_SLOW_TESTS=1")
@@ -70,7 +70,7 @@ func TestE2ETUI(t *testing.T) {
 	f = show("/inbox", "┌─ Inbox", "on b")
 	frame("inbox", f)
 
-	// Ctrl+Y does not answer a remote request (slice 1 is read-only).
+	// Ctrl+Y does not answer a remote request (observe is read-only).
 	tm.Keys("C-y")
 	f = tm.WaitFor(10*time.Second, "answer it in the terminal there")
 	frame("after Ctrl+Y", f)
