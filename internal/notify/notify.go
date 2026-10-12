@@ -83,6 +83,13 @@ func Post(n Note) {
 // text by the spec and stays as it is.
 var markup = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace
 
+// plainSummary keeps a summary from reading as markup. The spec makes the
+// summary plain text, but some servers (dunst with markup on, for one)
+// format it with the body. An entity would show as written on a server
+// that follows the spec, so the three characters markup needs become
+// look-alikes that read the same everywhere.
+var plainSummary = strings.NewReplacer("&", "\uff06", "<", "\u2039", ">", "\u203a").Replace
+
 func args(n Note, action bool) []string {
 	urgency := "normal"
 	if n.Urgent {
@@ -95,7 +102,7 @@ func args(n Note, action bool) []string {
 	// "--" so a summary can never be read as an option. Sanitised as a
 	// last line of defence: an agent's name or words must not carry escape
 	// sequences into the notification server or its log.
-	a = append(a, "--", sanitize.Line(n.Summary))
+	a = append(a, "--", plainSummary(sanitize.Line(n.Summary)))
 	if body := sanitize.Line(n.Body); body != "" {
 		a = append(a, markup(body))
 	}
