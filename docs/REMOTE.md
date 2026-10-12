@@ -433,7 +433,10 @@ on this machine.
   and are never read from it. Each is bound to a random request id and to a
   hash of the body you were shown, is valid once, and only while the request
   is open and on the connection that offered it. A late, replayed or
-  mismatched decision is dropped. A compromised host can lie about what its
+  mismatched decision is dropped. An id you answered is never answerable
+  again: if the host offers it again, Den flags the host and sends the request
+  to its terminal. A request still waiting when the link dropped keeps its id
+  and comes back to the inbox when the link does. A compromised host can lie about what its
   own agent will run, which it controls anyway; it cannot approve anything for
   another host or for this machine.
 - **What you approve is what you saw.** The host cuts the body and Den checks
