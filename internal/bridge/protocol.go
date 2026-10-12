@@ -122,7 +122,10 @@ type HookInput struct {
 	StopReason       string          `json:"stop_reason"`
 	Prompt           string          `json:"prompt"`
 	Source           string          `json:"source"`
-	EndReason        string          `json:"end_reason"`
+	// SessionEnd: why it ended. Claude Code 2.1.289 sends "reason"
+	// (prompt_input_exit, logout, clear, other); end_reason is read too.
+	Reason    string `json:"reason"`
+	EndReason string `json:"end_reason"`
 	// StopFailure: the documented error_type, and the error field Claude
 	// Code 2.1.289 actually sends (a string such as "rate_limit"). Raw so
 	// another event's error of a different shape cannot spoil the decode.
@@ -131,6 +134,14 @@ type HookInput struct {
 	// PostToolUseFailure: true when the human interrupted the tool (Esc),
 	// which is not the tool failing.
 	IsInterrupt bool `json:"is_interrupt"`
+}
+
+// SessionEndReason is why a session ended, "" when Claude Code gave none.
+func (in HookInput) SessionEndReason() string {
+	if in.Reason != "" {
+		return in.Reason
+	}
+	return in.EndReason
 }
 
 // FailureType is a StopFailure's error type: "rate_limit", "server_error",
