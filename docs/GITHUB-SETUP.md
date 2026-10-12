@@ -6,6 +6,12 @@ Dependabot. They are GitHub settings, not files, so they are written here as
 commands for a maintainer with admin rights on `GlacierHubAB/den` to run, in
 order. Each step says how to check it.
 
+These settings were applied to `GlacierHubAB/den` on 2026-10-12, in the order
+0, 1, 2, 3, 5, 6, 7, 8 and 4 (the `main` ruleset last), and every check below
+passed. Rulesets: `dev` 24912742, `main` 24912806, `release tags are
+immutable` 24912750, `release tags by admins only` 24912751. The commands stay
+here to show what is set and to repeat it on another repository.
+
 Set this once in the shell you run them from:
 
 ```
@@ -194,16 +200,18 @@ and open Settings → Rules → Rulesets once to see that the tag-creation
 ruleset's bypass list shows "Repository admin":
 
 ```
-gh api "repos/$R/rulesets/<id of 'release tags by admins only'>" --jq .bypass_actors
+gh api "repos/$R/rulesets/<id of 'release tags by admins only'>" \
+  --jq '{bypass_actors, current_user_can_bypass}'
 ```
 
-This repository is owned by a user account, not an organisation; that GitHub
-honours a repository-role bypass there has not been tested. If the list comes
-back empty or the next real `git push origin vX.Y.Z` is refused with a
-ruleset error, set that ruleset's enforcement to `disabled` (Settings → Rules,
-or `gh api -X PUT "repos/$R/rulesets/<id>" -f enforcement=disabled`) and rely
-on the immutability ruleset alone. Do not test it with a throwaway tag: the
-immutability ruleset means a pushed `v*` tag can never be deleted.
+For an admin this prints `"current_user_can_bypass": "always"`. That holds
+on this repository although it is owned by a user account, not an
+organisation: the `RepositoryRole` 5 bypass is honoured there, and the v0.3.2
+tag was pushed through it. The immutability ruleset prints `"never"`, as it
+should.
+
+Do not test the rulesets with a throwaway tag: a pushed `v*` tag can never be
+deleted.
 
 ## 6. Actions settings
 
