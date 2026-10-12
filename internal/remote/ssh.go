@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // SSH runs the system ssh and scp with Den's fixed options. Den embeds no
@@ -234,6 +236,13 @@ func (l *limitWriter) Write(p []byte) (int, error) {
 // den that is missing or does not know `remote serve` is a version
 // mismatch; anything else is offline and retried with backoff.
 func Classify(err error) (State, string) {
+	st, why := classify(err)
+	// The reason can quote the host's stderr: printed by den remote add
+	// and status as well as shown in the TUI, it is one clean line.
+	return st, sanitize.Label(why, 200)
+}
+
+func classify(err error) (State, string) {
 	var f *Failure
 	if !errors.As(err, &f) {
 		if err == nil {
