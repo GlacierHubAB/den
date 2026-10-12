@@ -321,6 +321,62 @@ func TestDiffBackoffGrowsAndIsCapped(t *testing.T) {
 	}
 }
 
+// An agent whose diff keeps failing is asked less and less often, as a
+// real host's 20 s rounds go by, while another agent is read every round;
+// one good read puts it back in every round.
+func TestReviewRemoteBackoffGrowsWhileTheDiffKeepsFailing(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	setPolicy(feed, "devbox", remote.Full)
+	good := "44444444-2222-4333-8444-555555555555"
+	feed.agents = append(feed.agents, remoteAgent("devbox", good, "Zesty Otter", fleet.Idle, 0))
+	feed.diffErrs = map[string]error{dupSession: errors.New("git found no branch to compare its work with")}
+	feed.diff = remoteDiff()
+	start := time.Now()
+	now := start
+	reviewNow = func() time.Time { return now }
+	t.Cleanup(func() { reviewNow = time.Now })
+	m.syncRemote()
+	m.refresh()
+	m.tab = tabReview
+	m.proj.cur = ""
+	round := func() (failing, working bool) {
+		feed.diffs = nil
+		runReview(m, m.loadRemoteReviews())
+		for _, d := range feed.diffs {
+			failing = failing || d == "devbox/"+dupSession
+			working = working || d == "devbox/"+good
+		}
+		return failing, working
+	}
+	var asked []time.Duration
+	for at := time.Duration(0); at <= 3*time.Minute; at += 20 * time.Second {
+		now = start.Add(at)
+		failing, working := round()
+		if !working {
+			t.Fatalf("at %v the working agent was not read", at)
+		}
+		if failing {
+			asked = append(asked, at)
+		}
+	}
+	// Backoffs of 15 s, 30 s, 1 min and 2 min: asked at 0, 20 s, 1 min and 2 min.
+	want := []time.Duration{0, 20 * time.Second, time.Minute, 2 * time.Minute}
+	if fmt.Sprint(asked) != fmt.Sprint(want) {
+		t.Errorf("the failing agent was asked at %v, want %v", asked, want)
+	}
+
+	// Once its diff reads, it is read every round again.
+	delete(feed.diffErrs, dupSession)
+	now = start.Add(5 * time.Minute)
+	if failing, _ := round(); !failing {
+		t.Fatal("not asked after its backoff")
+	}
+	now = now.Add(20 * time.Second)
+	if failing, _ := round(); !failing {
+		t.Errorf("not read in the next round after a good read: fails %d", m.rev.remote[dupSession].fails)
+	}
+}
+
 // A remote file whose name has control characters keeps that mark, so
 // Review says its content is not shown.
 func TestRemoteUnsafeNameIsMarked(t *testing.T) {
