@@ -559,11 +559,7 @@ func (m Model) reopenCommand(args []string) (tea.Model, tea.Cmd) {
 func (m Model) showRestore(it *inbox.Item) (tea.Model, tea.Cmd) {
 	m.refresh()
 	m.tab = tabInbox
-	for i, o := range m.store.Items() {
-		if o == it {
-			m.inboxCur = i
-		}
-	}
+	m.selectItem(it)
 	return m.say(it.Title+" ^Y reopens, ^N leaves it closed.", false)
 }
 
