@@ -179,19 +179,27 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 			}
 		}
 	}()
-	var req Request
+	var line []byte
 	select {
-	case line := <-reqc:
-		if json.Unmarshal(line, &req) != nil || req.Type != TypeHello {
-			writeMsg(out, Error{Type: TypeError, Code: "request", Message: "expected a hello request"})
-			return fmt.Errorf("bad request")
-		}
+	case line = <-reqc:
 	case err := <-errc:
 		return err
 	case <-time.After(o.RequestWait):
 		return fmt.Errorf("no request within %s", o.RequestWait)
 	case <-ctx.Done():
-		return ctx.Err()
+		// The reader cancels when in ends, which can be right after the
+		// request it already queued: answer that request rather than lose it
+		// to select's random choice.
+		select {
+		case line = <-reqc:
+		default:
+			return ctx.Err()
+		}
+	}
+	var req Request
+	if json.Unmarshal(line, &req) != nil || req.Type != TypeHello {
+		writeMsg(out, Error{Type: TypeError, Code: "request", Message: "expected a hello request"})
+		return fmt.Errorf("bad request")
 	}
 	if req.Proto != Proto {
 		writeMsg(out, Error{Type: TypeError, Code: "proto", Message: fmt.Sprintf("this den speaks proto %d, not %d", Proto, req.Proto)})
