@@ -1,21 +1,163 @@
 name: ci
+
+# Pull requests into dev or main, pushes to dev and main, a weekly run on the
+# default branch (new advisories for the Go version and modules Den ships),
+# and the release workflow, which calls this one before it builds anything.
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-permissions:
-  contents: read
+    branches: [main, dev]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_call:
+
+# Every job asks for what it needs. Pull requests from forks get a read-only
+# token and no secrets (this is pull_request, never pull_request_target).
+permissions: {}
+
+# A newer push to a pull request cancels its older run; every pushed commit on
+# dev and main gets its own run. github.workflow is the caller's name when the
+# release workflow calls this one, so the two never share a group.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The Go that builds the release. 1.26.x is the newest 1.26 patch, so
+  # binaries pick up standard-library security fixes without a go.mod change.
+  GO_VERSION: "1.26.x"
+  GOTOOLCHAIN: local
+  ACTIONLINT_VERSION: "1.7.12"
+  ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  GOVULNCHECK_VERSION: "v1.8.0"
+
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
       # agent-badge is a submodule that Den embeds, so the build needs it.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          submodules: true
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: go.mod
-      - run: gofmt -l . | tee /dev/stderr | (! read)
-      - run: make test
-      - run: make build && ./den version
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            echo "::error::these files need gofmt -w"
+            exit 1
+          fi
+      - name: go.mod and go.sum are tidy and verified
+        run: |
+          go mod tidy -diff
+          go mod verify
+      - name: THIRD_PARTY_LICENSES is up to date
+        run: go run ./internal/tools/thirdparty -check
+      - name: actionlint
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # The release Go, and the newest Go so a new release does not surprise us.
+        go: ["1.26.x", "stable"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go }}
+          check-latest: true
+      - name: Download modules
+        run: go mod download
+      # The tests make their own git repositories and set their own identity,
+      # and need no network: no global git config, no module proxy.
+      - name: make test (vet, tests with -race)
+        env:
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
+          GOPROXY: "off"
+          GOFLAGS: -mod=readonly
+        run: make test TESTFLAGS=-race
+      - name: make build
+        env:
+          GOPROXY: "off"
+          GOFLAGS: -mod=readonly
+        run: make build && ./den version
+
+  vuln:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      # go run module@version is checked against the Go checksum database.
+      - name: govulncheck
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The released gitleaks binary, checked against a pinned checksum, rather
+      # than another third-party action. --redact keeps any match out of the log.
+      - name: gitleaks (whole history)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .
+
+  # The one check branch protection requires. Its name stays the same when
+  # jobs or the matrix change; it fails unless every job above succeeded.
+  ci-passed:
+    if: always()
+    needs: [lint, test, vuln, secrets]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: All jobs succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null

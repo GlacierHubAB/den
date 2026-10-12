@@ -1,6 +1,7 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 PREFIX  ?= $(HOME)/.local
+TESTFLAGS ?=
 
 .PHONY: build install test release clean
 
@@ -12,7 +13,7 @@ install:
 	go build -ldflags '$(LDFLAGS)' -o $(PREFIX)/bin/den ./cmd/den
 
 test:
-	go vet ./... && XDG_STATE_HOME=$$(mktemp -d) go test ./...
+	go vet ./... && XDG_STATE_HOME=$$(mktemp -d) go test $(TESTFLAGS) ./...
 
 # Static linux binaries (Den needs Hyprland, so Linux only), plus checksums.
 # Builds into dist/ only; nothing is published from here.
