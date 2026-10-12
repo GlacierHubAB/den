@@ -41,6 +41,7 @@ import (
 var version = "dev"
 
 func main() {
+	remote.LocalVersion = version
 	if len(os.Args) < 2 {
 		runTUI()
 		return

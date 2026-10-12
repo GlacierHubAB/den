@@ -32,6 +32,7 @@ const (
 	Failed                 // a turn ended on an API error, or tool calls keep failing
 	Merge                  // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
 	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
+	Install                // Den asks: copy this den to a remote host? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -64,6 +65,8 @@ func (k Kind) String() string {
 		return "merge"
 	case Cleanup:
 		return "cleanup"
+	case Install:
+		return "install"
 	}
 	return "?"
 }
@@ -120,7 +123,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -572,7 +575,16 @@ func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Restore, Tool: "restore", Title: title, Body: body})
 }
 
-// Settle resolves a Close, Skills, Budget or Restore item with the outcome and sends it to whoever
+// AddInstall adds Den's question: copy this den to a remote host? host is
+// its label; req is the request of the den remote command that asked.
+func (s *Store) AddInstall(host, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
+}
+
+// HostPrefix makes a remote host's label an item's SessionID, for Den's
+// questions about the host rather than one of its agents.
+const HostPrefix = "host:"
+
 // AddMerge adds Den's question: merge this agent's worktree branch? sessionID
 // is the agent that works in the worktree.
 func (s *Store) AddMerge(sessionID, title string, body []string) *Item {

@@ -5,6 +5,9 @@ import (
 	"strings"
 )
 
+// LocalVersion is this den's version; main sets it from the build.
+var LocalVersion = "dev"
+
 // versionParts reads "v0.2.0", "v0.1.0-96-g4f1ad22" (git describe: 96
 // commits after v0.1.0), "2.1.300" or "den v0.2.0" into numbers: the dotted
 // release, then the commit count. ok is false for "dev" and anything else

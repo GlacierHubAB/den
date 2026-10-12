@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,11 +14,13 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/remote"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 const remoteUsage = `usage: den remote add <target> [--label L] [--policy observe|approve|full] [--den PATH] [--skip-checks]
-       den remote list [-json] | status <label> | install <label> [-y]
+       den remote list [-json] | status <label> | install <label>
        den remote remove <label> | disable <label> | enable <label>
        den remote serve --proto 1      run by Den over ssh on the host; not for humans`
 
@@ -105,6 +106,7 @@ func remoteAdd(args []string) {
 	if err := probe.Add(h); err != nil {
 		fail("den: %v", err)
 	}
+	needsDen := false
 	if !*skip {
 		fmt.Printf("Checking %s (read-only)…\n", target)
 		p, err := remote.DefaultSSH().Probe(context.Background(), h)
@@ -113,6 +115,7 @@ func remoteAdd(args []string) {
 			fail("den: %s was not added. Fix that, or add it anyway with --skip-checks.", h.Label)
 		}
 		printProbe(h, p)
+		needsDen = p.DenPath == "" || remote.Older(p.DenVersion, version)
 	}
 	if err := cfg.Add(h); err != nil {
 		fail("den: %v", err)
@@ -123,6 +126,10 @@ func remoteAdd(args []string) {
 	fmt.Printf("Added %s (%s, policy %s) to %s. Den connects to it while it runs.\n", h.Label, h.Target, h.Policy, remote.Path())
 	if h.Policy != remote.Observe {
 		fmt.Printf("This Den applies observe to every host for now; %s takes effect when a later version supports it.\n", h.Policy)
+	}
+	if needsDen {
+		fmt.Println()
+		askInstall(h, "den remote add")
 	}
 }
 
@@ -276,44 +283,52 @@ func remoteList(asJSON bool) {
 	tw.Flush()
 }
 
+// remoteInstall is `den remote install <label>`. Copying den to another
+// machine is the human's call, made with ^Y in Den's inbox (decision 3):
+// this only asks the running Den, which makes the plan itself, shows it in
+// full and carries it out. There is no flag to skip the question, so an
+// agent that can run commands here can ask but never install.
 func remoteInstall(args []string) {
-	fs := flag.NewFlagSet("remote install", flag.ExitOnError)
-	yes := fs.Bool("y", false, "do not ask before installing")
-	label := firstArg(fs, args)
-	if label == "" {
-		fail("usage: den remote install <label> [-y]")
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		fail("usage: den remote install <label>   (asks in Den's inbox)")
 	}
-	h, ok := loadRemotes().Find(label)
+	h, ok := loadRemotes().Find(args[0])
 	if !ok {
-		fail("den: no host labelled %q; see den remote list", label)
+		fail("den: no host labelled %q; see den remote list", args[0])
 	}
-	s := remote.DefaultSSH()
-	plan, err := remote.PlanInstall(context.Background(), s, h, version)
-	if err != nil {
-		var f *remote.Failure
-		if errors.As(err, &f) {
-			reportSSHFailure(h, err)
-			os.Exit(1)
+	askInstall(h, "den remote install")
+}
+
+// askInstall sends an install request for h to the running Den and prints
+// the outcome. With no Den running it prints the plan and changes nothing.
+func askInstall(h remote.Host, what string) {
+	cwd, _ := os.Getwd()
+	payload, _ := json.Marshal(bridge.InstallInput{Host: h.Label, AskedBy: fmt.Sprintf("%s, pid %d in %s", what, os.Getpid(), cwd)})
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.InstallEvent, Payload: payload}
+	fmt.Printf("Asking Den to install den on %s: approve with ^Y in its inbox (Ctrl+C stops waiting).\n", h.Label)
+	d, err := bridge.Call(bridge.SocketPath(), env, 30*time.Minute)
+	switch {
+	case errors.Is(err, bridge.ErrNoDen):
+		plan, perr := remote.PlanInstall(context.Background(), remote.DefaultSSH(), h, version)
+		if perr != nil {
+			var f *remote.Failure
+			if errors.As(perr, &f) {
+				reportSSHFailure(h, perr)
+				os.Exit(1)
+			}
+			fail("den: %v", perr)
 		}
-		fail("den: %v", err)
-	}
-	fmt.Println(plan.Text)
-	if !plan.Copy {
-		return
-	}
-	if !*yes {
-		fmt.Print("\nProceed? [y/N] ")
-		answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		if a := strings.ToLower(strings.TrimSpace(answer)); a != "y" && a != "yes" {
-			fmt.Println("Nothing was changed.")
-			return
+		fmt.Println(plan.Text)
+		if plan.Copy {
+			fmt.Println("\nDen is not running. Start Den to approve this in its inbox; nothing was changed.")
 		}
+	case err != nil:
+		fail("den: no answer from Den (%v); nothing is known to have changed", err)
+	case d.Behavior == "allow":
+		fmt.Println(sanitize.Text(d.Message))
+	default:
+		fail("%s", sanitize.Text(d.Message))
 	}
-	got, err := s.Install(context.Background(), plan)
-	if err != nil {
-		fail("den: %v", err)
-	}
-	fmt.Printf("Installed: %s\n", got)
 }
 
 // remoteServe is `den remote serve --proto 1`, started by a Den elsewhere

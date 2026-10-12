@@ -26,6 +26,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
@@ -111,6 +112,7 @@ type Model struct {
 	srv        *bridge.Server
 	closing    map[string]closer.Plan     // close questions in the inbox, by item id
 	offers     map[string]skills.Approval // skills offers in the inbox, by item id
+	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
 	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard      *closer.Guard              // agents a close must leave alone or only propose when named
@@ -476,6 +478,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
 		return m, m.finishSkills(msg)
+	case installPlanMsg:
+		m.offerInstall(msg)
+		return m, nil
+	case installDoneMsg:
+		return m, m.finishInstall(msg)
 	case restoreDoneMsg:
 		return m, m.finishRestore(msg)
 	case serverClosedMsg:
@@ -514,6 +521,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SkillsEvent {
 		m.handleSkillsRequest(r)
 		return nil
+	}
+	if r.Event == bridge.InstallEvent {
+		return m.handleInstallRequest(r)
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
@@ -962,6 +972,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Cleanup {
 		return m.decideCleanup(it, verb)
 	}
+	if it.Kind == inbox.Install {
+		return m.decideInstall(it, verb)
+	}
 	m.store.Answer(it, verb)
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
@@ -1126,6 +1139,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) nameFor(sessionID string) string {
+	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
+		return "@" + host
+	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
 		if ms := m.missions.Get(id); ms != nil {
 			return ms.Name
