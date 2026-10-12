@@ -276,9 +276,13 @@ On an `approve` host:
 - **Closing.** `Ctrl+X`, `/close`, `/close Name@devbox` and `/close idle`
   include remote agents. The question names the host: "Close Mossy Lemur on
   devbox?", "on devbox · SIGTERM there, no window", and "! uncommitted changes
-  in its checkout on devbox". Every close needs `Ctrl+Y`. `/protect <Name>`
-  and `/flag` apply to remote agents too, but a protected folder in
-  `protected.json` only protects agents on this machine.
+  in its checkout on devbox". Every close needs `Ctrl+Y`. `/protect` and
+  `/flag` apply to remote agents too: `/protect Name@devbox` keeps that
+  host's agent out of every close, by name or not, and a bare
+  `/protect <Name>` covers every agent of that name, here and on every host.
+  A close of a protected agent is refused with the `/unprotect` that allows
+  it. A protected folder in `protected.json` only protects agents on this
+  machine.
 
   On the host, `serve` closes only a live Claude Code session, refuses a
   working agent without `--force`, sends SIGTERM and only with `--force`

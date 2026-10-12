@@ -117,6 +117,20 @@ func (g *Guard) Unflag(name string) bool {
 	return false
 }
 
+// ProtectedName is the protected name among names, as it was written to
+// the guard (so /unprotect takes it back), "" when none is protected.
+func (g *Guard) ProtectedName(names ...string) string {
+	for _, n := range names {
+		if n == "" {
+			continue
+		}
+		if i := g.has(g.Names, n); i >= 0 {
+			return g.Names[i]
+		}
+	}
+	return ""
+}
+
 // Protected says why an agent must be left alone, "" when it is not
 // protected. name and peer are its names; dirs are its working directory
 // and the repositories it edited; task is what it is working on.
