@@ -93,6 +93,7 @@ type Options struct {
 	MaxBackoff time.Duration
 	Healthy    time.Duration // a session live this long resets the backoff
 	MaxBacklog int           // events waiting for the reader before a host counts as flooding; default 10000
+	MaxRate    int           // messages a second a host may send before it counts as flooding; default MaxRate
 	Now        func() time.Time
 }
 
@@ -117,6 +118,9 @@ func (o *Options) defaults() {
 	}
 	if o.Healthy == 0 {
 		o.Healthy = time.Minute
+	}
+	if o.MaxRate == 0 {
+		o.MaxRate = MaxRate
 	}
 	if o.MaxBacklog == 0 {
 		o.MaxBacklog = 10000
@@ -501,7 +505,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	}()
 	heartbeat := time.NewTicker(HeartbeatEvery)
 	defer heartbeat.Stop()
-	rc := rateCap{max: MaxRate}
+	rc := rateCap{max: m.o.MaxRate}
 	live, applied := false, Policy("")
 	end := func(s State, r string) (State, string, bool) {
 		conn.Kill()

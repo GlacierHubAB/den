@@ -467,12 +467,16 @@ func TestHostileHost(t *testing.T) {
 	waitFor(t, "flooding", func() bool { return strings.Contains(state(m).Reason, "flooding") })
 }
 
+// The cap is lowered for the test: with the real one (MaxRate) the host must
+// get more than 2000 messages a second through the pipe, which a slow
+// machine under -race does not, and the test would wait in vain.
 func TestFloodingByRate(t *testing.T) {
+	const rate = 50
 	s := newScratch(t)
 	d := &pipeDialer{serve: func(ctx context.Context, in io.Reader, out io.Writer) error {
 		newLineReader(in, MaxLine).next()
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Observe, RemoteNow: time.Now()})
-		for i := 0; i < MaxRate+10 && ctx.Err() == nil; i++ {
+		for i := 0; i < 2*rate && ctx.Err() == nil; i++ {
 			if writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now()}) != nil {
 				break
 			}
@@ -480,7 +484,11 @@ func TestFloodingByRate(t *testing.T) {
 		<-ctx.Done()
 		return nil
 	}}
-	m := s.manager(d, hostB())
+	m := NewManager(Config{Hosts: []Host{hostB()}}, Options{
+		Version: "v0.2.0", StateDir: s.stateDir, EventsPath: s.localEvts, Dial: d.dial,
+		Backoff: 20 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, Healthy: time.Second,
+		MaxRate: rate,
+	})
 	m.Start()
 	defer m.Close()
 	waitFor(t, "flooding", func() bool { return strings.Contains(state(m).Reason, "flooding") })
