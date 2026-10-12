@@ -707,15 +707,12 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.flag(h, "a malformed snapshot")
 				continue
 			}
+			agents, flags, overreach := checkAgents(sm.Agents, h, applied)
+			for _, f := range flags {
+				m.flag(h, f)
+			}
 			m.mu.Lock()
 			st := m.state[h.Label]
-			agents := make([]fleet.Meta, 0, len(sm.Agents))
-			overreach := false
-			for _, a := range sm.Agents {
-				a, dropped := recheck(a, h, applied)
-				overreach = overreach || dropped
-				agents = append(agents, cleanMeta(a))
-			}
 			st.known.Agents, st.known.Received, st.known.Heartbeat = agents, in.at, in.at
 			g.snapshot()
 			st.status.Agents, st.status.LastSeen = len(agents), in.at
@@ -734,6 +731,10 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			var em Event
 			if json.Unmarshal(in.line, &em) != nil {
 				m.flag(h, "a malformed event")
+				continue
+			}
+			if !isSessionID(em.Event.Session) {
+				m.flag(h, "an event whose session id is not a UUID")
 				continue
 			}
 			ev, ok := cleanEvent(em.Event, h.Label)

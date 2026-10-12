@@ -25,7 +25,7 @@ func TestReplyNeverWaitsOnThePipe(t *testing.T) {
 		lr.next() // Den's request
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Approve, RemoteNow: time.Now()})
 		for _, id := range ids {
-			writeMsg(out, Held{Type: TypeHeld, ID: id, Session: "s1", Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
+			writeMsg(out, Held{Type: TypeHeld, ID: id, Session: sidA, Tool: "Bash", Body: json.RawMessage(`{"command":"ls"}`)})
 		}
 		select { // stuck: nothing more is read from the pipe for now
 		case <-readAgain:

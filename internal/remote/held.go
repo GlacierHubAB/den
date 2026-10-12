@@ -86,8 +86,10 @@ func (s *heldSet) add(hm Held, configured, applied Policy) (*bridge.Request, str
 		return nil, "a held request under observe"
 	case !isID(hm.ID):
 		return nil, "a held request with a malformed id"
-	case !plainField(hm.Session) || !plainField(hm.Tool):
-		return nil, "a held request with a malformed session or tool"
+	case !isSessionID(hm.Session):
+		return nil, "a held request whose session id is not a UUID"
+	case !plainField(hm.Tool):
+		return nil, "a held request with a malformed tool"
 	case !checkBody(hm.Tool, hm.Body):
 		return nil, "a held request whose body the policy does not allow"
 	}
@@ -163,6 +165,26 @@ func (s *heldSet) releaseAll() []*bridge.Request {
 // line, nothing sanitising would change.
 func plainField(s string) bool {
 	return s != "" && len(s) <= 80 && sanitize.Line(s) == s
+}
+
+// isSessionID reports whether s is a Claude Code session id: a UUID in its
+// 8-4-4-4-12 hex form. Every session id a host sends must be one; it keys
+// the agent, names its critter and ends up in titles and the event log.
+func isSessionID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case i == 8 || i == 13 || i == 18 || i == 23:
+			if c != '-' {
+				return false
+			}
+		case (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F'):
+			return false
+		}
+	}
+	return true
 }
 
 // ControllerPath is where this machine's Den keeps its controller id.

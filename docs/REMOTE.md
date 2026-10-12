@@ -429,6 +429,9 @@ on this machine.
 - **Everything from a host is sanitised.** Escape sequences, control
   characters and bidirectional overrides are removed from every string a host
   sends, before it is shown, put in a notification or title, or logged.
+- **What a host sends is checked, not trusted.** Every session id must be a
+  UUID; an agent, event or request with anything else is dropped and the host
+  flagged in `/remote`.
 - **A host cannot answer for you.** Decisions only go from Den to the host
   and are never read from it. Each is bound to a random request id and to a
   hash of the body you were shown, is valid once, and only while the request

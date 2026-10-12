@@ -57,6 +57,15 @@ func LoadKnown(dir, label string) (Known, bool) {
 	if json.Unmarshal(raw, &k) != nil || k.Label != label {
 		return Known{}, false
 	}
+	// Checked again: a file an older Den saved may hold what this one
+	// refuses from a host.
+	agents := k.Agents[:0]
+	for _, a := range k.Agents {
+		if a, _, ok := checkMeta(a); ok {
+			agents = append(agents, a)
+		}
+	}
+	k.Agents = agents
 	return k, true
 }
 
