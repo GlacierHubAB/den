@@ -75,15 +75,15 @@ func TestArgsAreSanitised(t *testing.T) {
 }
 
 // TestBodyMarkupIsEscaped checks, at the stand-in notify-send, that a body
-// cannot carry markup (a link, an image, bold) while the summary, plain text
-// by the spec, arrives as written.
+// cannot carry markup (a link, an image, bold), and that the summary, plain
+// text by the spec but formatted by some servers, carries none either.
 func TestBodyMarkupIsEscaped(t *testing.T) {
 	argsFile := fake(t, "")
 	Post(Note{Summary: "Mossy Lemur on devbox <needs> you & more", Body: `<a href="http://example.invalid">click</a> <img src="x"/> <b>a & b</b> &amp;`})
 	raw, _ := os.ReadFile(argsFile)
 	got := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	want := []string{"--app-name=Den", "--urgency=normal", "--",
-		"Mossy Lemur on devbox <needs> you & more",
+		"Mossy Lemur on devbox \u2039needs\u203a you \uff06 more",
 		`&lt;a href="http://example.invalid"&gt;click&lt;/a&gt; &lt;img src="x"/&gt; &lt;b&gt;a &amp; b&lt;/b&gt; &amp;amp;`}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("args = %q, want %q", got, want)
@@ -100,5 +100,13 @@ func TestInertSendHasNoAction(t *testing.T) {
 	raw, _ := os.ReadFile(argsFile)
 	if s := string(raw); strings.Contains(s, "--action") || strings.Contains(s, "--wait") {
 		t.Errorf("args = %q", s)
+	}
+}
+
+// A tool name shaped as markup cannot restyle or hide the summary.
+func TestSummaryCarriesNoMarkup(t *testing.T) {
+	got := args(Note{Summary: `Mossy Lemur needs your permission (<span size="1">x</span>)`}, false)
+	if s := got[len(got)-1]; strings.ContainsAny(s, "<>&") {
+		t.Errorf("summary = %q", s)
 	}
 }
