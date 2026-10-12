@@ -1,0 +1,15 @@
+{
+ "background_tasks": [],
+ "cwd": "/work/proj",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "Stop",
+ "last_assistant_message": "Created check.txt.",
+ "permission_mode": "default",
+ "prompt_id": "22222222-3333-4444-8555-666666666666",
+ "session_crons": [],
+ "session_id": "11111111-2222-4333-8444-555555555555",
+ "stop_hook_active": false,
+ "transcript_path": "/work/.claude/projects/-work-proj/11111111-2222-4333-8444-555555555555.jsonl"
+}
