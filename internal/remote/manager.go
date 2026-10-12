@@ -129,9 +129,10 @@ type Options struct {
 	// human's /remote connect, or when Den starts: anything that can write
 	// the file could ask for one. Until then the host's status says it is
 	// Pending, and a host whose target or den_path changed has its link
-	// ended and makes no other. Adding, removing or
-	// disabling a host still takes a restart. Nil keeps the Config
-	// NewManager was given.
+	// ended and makes no other. Disabling or removing a host ends its
+	// link at once; adding one still takes a restart. A change counts
+	// once two reads agree (see read). Nil keeps the Config NewManager
+	// was given.
 	Reload func() (Config, error)
 	Watch  time.Duration // how often Reload is polled; 0 polls never
 }
@@ -271,6 +272,11 @@ type Manager struct {
 	mu    sync.Mutex
 	state map[string]*hostState
 
+	// rmu serialises reload's reads of remotes.toml; lastRead is the last
+	// one it read, starting from the Config NewManager was given.
+	rmu      sync.Mutex
+	lastRead Config
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -296,7 +302,7 @@ type hostState struct {
 func NewManager(cfg Config, o Options) *Manager {
 	o.defaults()
 	m := &Manager{o: o, hosts: cfg.Enabled(), updates: make(chan Update), state: map[string]*hostState{},
-		backlog: map[string]int{}, qsig: make(chan struct{}, 1), qdone: make(chan struct{})}
+		backlog: map[string]int{}, qsig: make(chan struct{}, 1), qdone: make(chan struct{}), lastRead: cfg}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	go m.dispatch()
 	for _, h := range m.hosts {
@@ -356,11 +362,8 @@ func (m *Manager) Start() {
 // not allow, and its session restarts to ask the host for the new
 // policy. A file that does not read keeps the settings in use.
 func (m *Manager) reload(raise, seen string) {
-	if m.o.Reload == nil {
-		return
-	}
-	cfg, err := m.o.Reload()
-	if err != nil {
+	cfg, ok := m.read()
+	if !ok {
 		return
 	}
 	now := map[string]Host{}
@@ -587,6 +590,44 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 // again first: a live host whose settings now trust it less reconnects
 // under them. A raise waits for Connect.
 func (m *Manager) Reconnect(label string) { m.retry(label, "", "") }
+
+// reloadSettle is how long reload waits to read remotes.toml again when
+// it changed.
+var reloadSettle = 100 * time.Millisecond
+
+// read reads remotes.toml for reload. A file that does not read keeps the
+// settings in use. One that reads other than last time is read again
+// after reloadSettle, and taken only when both reads agree: a file being
+// rewritten in place (a shell's >, an editor that does not rename) can
+// read empty or cut short for a moment, which would otherwise disable or
+// lower its hosts at once and then wait for /remote connect to raise them
+// again. A change that is still going on is taken when a later read
+// agrees with it.
+func (m *Manager) read() (Config, bool) {
+	if m.o.Reload == nil {
+		return Config{}, false
+	}
+	m.rmu.Lock()
+	defer m.rmu.Unlock()
+	cfg, err := m.o.Reload()
+	if err != nil {
+		return Config{}, false
+	}
+	if reflect.DeepEqual(cfg, m.lastRead) {
+		return cfg, true
+	}
+	select {
+	case <-time.After(reloadSettle):
+	case <-m.ctx.Done():
+		return Config{}, false
+	}
+	again, err := m.o.Reload()
+	if err != nil {
+		return Config{}, false
+	}
+	m.lastRead = again
+	return cfg, reflect.DeepEqual(cfg, again)
+}
 
 // Connect is the human's /remote connect: Reconnect, applying what
 // remotes.toml says for the host now, a raise too, but only the raise the

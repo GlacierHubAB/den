@@ -145,7 +145,10 @@ until you run `/remote connect` ("remotes.toml points devbox at user@other;
 least of all, so it applies at once: the link ends, nothing connects to or
 acts on the host, and it stays in `/remote` as disabled until Den restarts.
 Enabling it again is a raise, applied by `/remote connect`. Adding a host takes
-a restart of Den; a file that does not parse keeps the settings in use.
+a restart of Den; a file that does not parse keeps the settings in use. A
+change counts once Den reads it twice, a tenth of a second apart, so a file
+caught half rewritten (by a shell's `>` or an editor that writes in place)
+changes nothing.
 `policy` and `default_policy` take `observe` or `approve`.
 They also take `full`.
 
