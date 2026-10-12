@@ -1,0 +1,17 @@
+{
+ "cwd": "/work/proj",
+ "effort": {
+  "level": "medium"
+ },
+ "hook_event_name": "PreToolUse",
+ "permission_mode": "default",
+ "prompt_id": "22222222-3333-4444-8555-666666666666",
+ "session_id": "11111111-2222-4333-8444-555555555555",
+ "tool_input": {
+  "plan": "# Context\nCreate a file `plan.txt` in /work/proj containing the word \"planned\".\n\n# Step\n1. Write `/work/proj/plan.txt` with the content `planned`.\n\n# Verification\nRead `plan.txt` and confirm it contains `planned`.\n",
+  "planFilePath": "/work/.claude/plans/plan-create-plan-txt-shimmering-turing.md"
+ },
+ "tool_name": "ExitPlanMode",
+ "tool_use_id": "toolu_plan1",
+ "transcript_path": "/work/.claude/projects/-work-proj/11111111-2222-4333-8444-555555555555.jsonl"
+}

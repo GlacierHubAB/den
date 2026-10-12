@@ -5,6 +5,7 @@ package inbox
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -245,10 +246,13 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			return nil
 		}
 		it := s.add(&Item{Host: host, SessionID: in.SessionID, Tool: in.ToolName, req: r})
-		if in.ToolName == "ExitPlanMode" {
+		if in.ToolName == bridge.PlanTool {
 			it.Kind = Plan
 			it.Title = "Plan ready for review"
 			it.Body = append(planExcerpt(in.ToolInput), extraLines(in.ToolName, in.ToolInput)...)
+			if _, ok := bridge.PlanApproval(in.ToolInput); !ok {
+				s.Release(it, CannotApprovePlan) // not held: the terminal is the only place to answer it
+			}
 		} else {
 			it.Kind = Permission
 			it.Title, it.Intent, it.Body = describeTool(in.ToolName, in.ToolInput)
@@ -277,6 +281,14 @@ func (s *Store) apply(r *bridge.Request) *Item {
 	case "PostToolUse":
 		s.resolveSession(host, in.SessionID, "answered in terminal", func(it *Item) bool {
 			return it.Kind == Question || (it.Kind <= Plan && it.State == InTerminal)
+		})
+		// The call Den still holds ran: its dialog was answered in the
+		// terminal first. A PermissionRequest carries no tool_use_id, so the
+		// call is matched by tool and input; other calls of the turn run
+		// beside a held one. A plan's PostToolUse comes with an empty input
+		// (the plan is in its response), and a session has one plan open.
+		s.resolveSession(host, in.SessionID, "answered in terminal", func(it *Item) bool {
+			return it.Kind <= Plan && it.State == Waiting && it.req != nil && it.req.Input.ToolName == in.ToolName && (it.Kind == Plan || sameJSON(it.req.Input.ToolInput, in.ToolInput))
 		})
 		delete(s.streak, agentKey(host, in.SessionID))
 		s.resolveSession(host, in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
@@ -476,29 +488,42 @@ func (s *Store) AnswerQuestion(it *Item, typed string) (done, ok bool) {
 	return true, true
 }
 
-// LetGo hands held questions whose hook stopped waiting back to the
-// terminal: Claude Code ended the hook because the dialog was dismissed
-// there, or Den's wait ran out. A remote host's held items go the same
-// way when they are let go, saying why ("released to the terminal on
-// devbox (link lost)"). It reports whether any changed.
-func (s *Store) LetGo() bool {
+// LetGo stops holding requests whose hook stopped waiting, so none stays
+// answerable in Den. Claude Code shows its own dialog at once, beside the
+// held hook, and ends the hook when that dialog is answered or dismissed:
+// a hook gone before wait (hooks.permission_wait) ran out means the
+// terminal settled it, and the item closes. One gone at the end of the
+// wait (or with wait unknown, 0) gave up itself; the dialog is still up
+// and the item says to answer it in the terminal. A remote host's held
+// items go the same way when they are let go, saying why ("released to
+// the terminal on devbox (link lost)"). It reports whether any changed.
+func (s *Store) LetGo(wait time.Duration) bool {
 	changed := false
 	for _, it := range s.items {
-		if it.State != Waiting || it.req == nil || !it.req.HungUp() {
+		if it.Kind > Question || it.State != Waiting || it.req == nil || !it.req.HungUp() {
 			continue
 		}
 		switch {
-		case it.req.Host != "" && it.Kind <= Question:
+		case it.req.Host != "":
 			it.State, it.Resolved = InTerminal, firstNonEmpty(it.req.Why(), "no longer held on "+it.req.Host)
 			it.clean()
-			changed = true
-		case it.Kind == Question:
+		case wait > 0 && time.Since(it.At) < wait-letGoSlack:
+			it.State, it.Resolved = Resolved, ClosedInTerminal
+		default:
 			it.State, it.Resolved = InTerminal, "no longer held"
-			changed = true
 		}
+		changed = true
 	}
 	return changed
 }
+
+// ClosedInTerminal is how a held request ends when its dialog was answered
+// or dismissed in the terminal first.
+const ClosedInTerminal = "answered or dismissed in the terminal"
+
+// letGoSlack is how close to the end of Den's wait a hook may hang up and
+// still count as giving up itself rather than being ended by Claude Code.
+const letGoSlack = 5 * time.Second
 
 // offeredAgain drops the item of a remote request that its host offers
 // again under the same id (after Den reconnected), keeping its place, so
@@ -569,10 +594,35 @@ func (s *Store) SetStatus(it *Item, status string, final bool) {
 	}
 }
 
+// PlansOneAtATime is why /always does not answer a plan: a plan is what
+// the human reads each time, and Claude Code's own plan dialog has no
+// "always" either.
+const PlansOneAtATime = "plans are approved one at a time; ^Y approves this one"
+
+// CannotApprovePlan is why a plan Den cannot approve went back to its
+// terminal.
+const CannotApprovePlan = "Den cannot approve this plan: answer it in the terminal"
+
 // Answer resolves an answerable item. verb is "allow", "deny" or "always".
+// It reports whether the answer went to the hook; a plan whose call Den
+// cannot approve goes back to the terminal instead (CannotApprovePlan).
 func (s *Store) Answer(it *Item, verb string) bool {
 	if !it.Answerable() || it.DenAsks() || it.Kind == Question {
 		return false // Den's own questions are carried out by Den, an agent's question takes an answer
+	}
+	if it.req.HungUp() {
+		return false // nobody waits for the answer; LetGo says what became of it
+	}
+	if it.Kind == Plan && verb == "always" {
+		return false // PlansOneAtATime
+	}
+	if it.Kind == Plan && verb != "deny" {
+		if _, ok := bridge.PlanApproval(it.req.Input.ToolInput); !ok {
+			// The hook could only answer with a bare allow, which Claude
+			// Code ignores: never say a plan was approved when it was not.
+			s.Release(it, CannotApprovePlan)
+			return false
+		}
 	}
 	switch verb {
 	case "allow":
@@ -849,9 +899,10 @@ func (it *Item) is(host, sessionID string) bool {
 func agentKey(host, sessionID string) string { return host + "\x00" + sessionID }
 
 // allowKey is the "always" rule key: tool plus the first two words of a
-// Bash command, or the tool name alone for everything else.
+// Bash command, or the tool name alone for everything else. A plan has
+// none: no rule ever approves one (PlansOneAtATime).
 func allowKey(tool string, input json.RawMessage) string {
-	if tool == "" {
+	if tool == "" || tool == bridge.PlanTool {
 		return ""
 	}
 	if tool == "Bash" {
@@ -1153,4 +1204,14 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// sameJSON reports whether two JSON texts hold the same value, whatever
+// their key order and spacing.
+func sameJSON(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
 }

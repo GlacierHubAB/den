@@ -254,7 +254,7 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 	case remote.HeldArrived:
 		cmd = m.remoteHeld(u.Host, u.Request)
 	case remote.HeldReleased:
-		m.store.LetGo()
+		m.store.LetGo(m.permissionWait())
 	}
 	m.refresh()
 	return tea.Batch(cmd, waitRemote(m.remote.pump))

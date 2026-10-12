@@ -125,7 +125,7 @@ func TestRemoteQuestionAnsweredInDen(t *testing.T) {
 	r2 := bridge.NewRemoteRequest("devbox", "fedcba9876543210fedcba9876543210", bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: in}, func(bridge.Decision) {})
 	first := s.Apply(r2)
 	r2.LetGo("released to the terminal on devbox (link lost)")
-	s.LetGo()
+	s.LetGo(0)
 	again := bridge.NewRemoteRequest("devbox", "fedcba9876543210fedcba9876543210", bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: in}, func(bridge.Decision) {})
 	second := s.Apply(again)
 	if first.Answerable() || !second.Answerable() || !second.At.Equal(first.At) {

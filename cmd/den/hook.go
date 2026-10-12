@@ -96,7 +96,8 @@ func hook() {
 // permissionOutput is what the hook prints for Den's decision, nil for
 // nothing: Claude Code's own dialog then stays. An AskUserQuestion call
 // answered in Den becomes allow plus the answers, only with
-// hooks.answer_questions on and every question answered.
+// hooks.answer_questions on and every question answered. An approved plan
+// becomes allow plus the call's own input (bridge.PlanApproval).
 func permissionOutput(in bridge.HookInput, d bridge.Decision, cfg config.Config) []byte {
 	if d.Behavior == "" {
 		return nil
@@ -111,10 +112,19 @@ func permissionOutput(in bridge.HookInput, d bridge.Decision, cfg config.Config)
 		}
 		return append(out, '\n')
 	}
+	decision := map[string]any{"behavior": d.Behavior, "message": d.Message}
+	if in.ToolName == bridge.PlanTool && d.Behavior == "allow" {
+		// A bare allow leaves Claude Code's plan dialog open.
+		updated, ok := bridge.PlanApproval(in.ToolInput)
+		if !ok {
+			return nil
+		}
+		decision = map[string]any{"behavior": "allow", "updatedInput": updated}
+	}
 	out, err := json.Marshal(map[string]any{
 		"hookSpecificOutput": map[string]any{
 			"hookEventName": "PermissionRequest",
-			"decision":      map[string]any{"behavior": d.Behavior, "message": d.Message},
+			"decision":      decision,
 		},
 	})
 	if err != nil {

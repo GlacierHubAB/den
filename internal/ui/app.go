@@ -647,7 +647,7 @@ func (m Model) atTerminal(sessionID string) bool {
 // active window, and lets go of held questions whose hook stopped waiting.
 // It returns true while anything is still held.
 func (m *Model) releaseIfAtTerminal() bool {
-	m.store.LetGo()
+	m.store.LetGo(m.permissionWait())
 	held := false
 	for _, it := range m.store.Items() {
 		if !it.Answerable() {
@@ -661,6 +661,11 @@ func (m *Model) releaseIfAtTerminal() bool {
 	}
 	m.refresh()
 	return held
+}
+
+// permissionWait is how long den hook holds a permission request.
+func (m Model) permissionWait() time.Duration {
+	return time.Duration(m.cfg.Hooks.PermissionWait) * time.Second
 }
 
 // topAnswerable is the item y/n/a act on from the agents pane.
@@ -1156,6 +1161,7 @@ func (m Model) answerTarget() *inbox.Item {
 // answer applies allow, deny or always to the item answerTarget names, only
 // while it is still open and has not just taken another's place.
 func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
+	m.store.LetGo(m.permissionWait()) // a hook gone since the last tick takes no answer
 	it := m.answerTarget()
 	if m.tab == tabInbox {
 		switch {
@@ -1197,6 +1203,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		}
 		return m.say(questionHint(it), true)
 	}
+	if it.Kind == inbox.Plan && verb == "always" {
+		return m.say(inbox.PlansOneAtATime, true)
+	}
 	if it.Kind == inbox.Close {
 		return m.decideClose(it, verb)
 	}
@@ -1221,7 +1230,10 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
-	m.store.Answer(it, verb)
+	if !m.store.Answer(it, verb) {
+		m.refresh()
+		return m.say(m.nameFor(itemKey(it))+": "+it.Resolved, true)
+	}
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(itemKey(it)), false)
 }
