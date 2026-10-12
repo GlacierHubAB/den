@@ -139,7 +139,9 @@ opens a real terminal with a real Claude Code session; run it by hand only
 pushes to them and weekly: `gofmt`, `go mod tidy -diff`, the
 `THIRD_PARTY_LICENSES` check, `actionlint`, `make test TESTFLAGS=-race` on the
 release Go and the newest Go (with no global git config and no module proxy,
-so tests must set their own git identity and need no network), `make build`,
+so tests must set their own git identity and need no network; with the full
+history checked out and ssh, sshd and tmux installed, for the remote
+acceptance tests), `make build`,
 `govulncheck` and `gitleaks`. Its last job, `ci-passed`, is the check branch
 protection requires.
 
