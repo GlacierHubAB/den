@@ -416,7 +416,7 @@ func TestAdvUntrackedTricks(t *testing.T) {
 		os.Symlink(g.r.Home, filepath.Join(repo, "link-to-dir"))
 		os.Symlink("/etc/hostname", filepath.Join(repo, "link-absolute"))
 		syscall.Mkfifo(filepath.Join(repo, "fifo"), 0o600)
-		names := []string{"esc\x1b[2Jname.txt", "sep arator.txt", "para graph.txt", "new\nline.txt", "bidi‮exe.txt", "trailing space .txt", "-leading-dash.txt", "tab\there.txt"}
+		names := []string{"esc\x1b[2Jname.txt", "sep\u2028arator.txt", "para\u2029graph.txt", "new\nline.txt", "bidi\u202eexe.txt", "trailing space .txt", "-leading-dash.txt", "tab\there.txt"}
 		written := []string{filepath.Join(repo, "link-to-file"), filepath.Join(repo, "link-to-dir"), filepath.Join(repo, "link-absolute"), filepath.Join(repo, "fifo")}
 		for _, n := range names {
 			os.WriteFile(filepath.Join(repo, n), []byte("+ content of "+n+"\n"), 0o644)
@@ -605,10 +605,10 @@ func TestAdvForgedDiffResults(t *testing.T) {
 	})
 	t.Run("a diff full of everything wrong is cut and cleaned", func(t *testing.T) {
 		g := fullStub(t, "")
-		bad := &remote.Diff{Root: "/home/\x1b]52;c;eA==\x07x", Repo: "r\x1b[2J", Branch: "b‮", Cut: "c\x1b[2J", Ahead: -5, Unowned: false}
+		bad := &remote.Diff{Root: "/home/\x1b]52;c;eA==\x07x", Repo: "r\x1b[2J", Branch: "b\u202e", Cut: "c\x1b[2J", Ahead: -5, Unowned: false}
 		for i := 0; i < 400; i++ {
-			bad.Files = append(bad.Files, remote.DiffFile{Path: fmt.Sprintf("f%d\x1b[2J.txt", i), OldPath: "o p",
-				Hunks: []remote.DiffHunk{{OldStart: -3, NewStart: -4, Lines: []string{"+a\x1b[2J", "no prefix", "", "-b‮", " ok"}, Mine: []int{-1, 99, 1, 1}}}})
+			bad.Files = append(bad.Files, remote.DiffFile{Path: fmt.Sprintf("f%d\x1b[2J.txt", i), OldPath: "o\u2028p",
+				Hunks: []remote.DiffHunk{{OldStart: -3, NewStart: -4, Lines: []string{"+a\x1b[2J", "no prefix", "", "-b\u202e", " ok"}, Mine: []int{-1, 99, 1, 1}}}})
 		}
 		var many []string
 		for i := 0; i < 5000; i++ {
