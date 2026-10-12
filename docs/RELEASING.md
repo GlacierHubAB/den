@@ -20,7 +20,8 @@ are in [GITHUB-SETUP.md](GITHUB-SETUP.md).
 
 `main` is merged into with merge commits and never squashed, so after a release
 `dev` is still an ancestor of `main` and the next release pull request has no
-conflicts of its own making.
+conflicts of its own making. The last step of a release fast-forwards `dev` to
+`main`, so the two branches are the same commit again (step 7 below).
 
 ## Versions
 
@@ -127,6 +128,46 @@ There is no CHANGELOG file; the releases page is the changelog.
    chmod +x den_linux_amd64 && ./den_linux_amd64 version
    ```
 
+7. **Fast-forward `dev` to `main`.** The release merge commits land only on
+   `main`, so after a release `dev` is an ancestor of `main` and GitHub shows it
+   "N commits behind" although the two trees are the same. Moving `dev` up to
+   `main` is a plain fast-forward (no force, nothing rewritten), but the `dev`
+   ruleset refuses any push and any merge commit, so a maintainer switches
+   that one ruleset off for the single push. The chain turns it back on even
+   when the push fails:
+
+   ```
+   R=GlacierHubAB/den
+   DEV_RULESET=$(gh api "repos/$R/rulesets" --jq '.[] | select(.name == "dev") | .id')
+   MAIN=$(gh api "repos/$R/git/ref/heads/main" --jq .object.sha)
+   DEV=$(gh api "repos/$R/git/ref/heads/dev" --jq .object.sha)
+   gh pr list --repo "$R" --base dev --state open      # none, or wait
+   git fetch origin
+   git merge-base --is-ancestor "$DEV" "$MAIN" && echo fast-forward   # stop if not
+   gh api "repos/$R/rulesets/$DEV_RULESET" > ruleset-before.json
+
+   gh api -X PUT "repos/$R/rulesets/$DEV_RULESET" -f enforcement=disabled --jq .enforcement
+   git push origin "$MAIN:refs/heads/dev"; push=$?
+   until [ "$(gh api -X PUT "repos/$R/rulesets/$DEV_RULESET" -f enforcement=active --jq .enforcement)" = active ]; do sleep 3; done
+   echo "push exit $push"
+   ```
+
+   Then check that nothing else changed and that the branches agree:
+
+   ```
+   gh api "repos/$R/rulesets/$DEV_RULESET" > ruleset-after.json
+   diff <(jq -S 'del(.updated_at)' ruleset-before.json) <(jq -S 'del(.updated_at)' ruleset-after.json) && echo unchanged
+   gh api "repos/$R/compare/main...dev" --jq '{status, ahead_by, behind_by}'   # "identical", 0, 0
+   ```
+
+   If the ruleset does not read `active` again, do nothing else until it does.
+   Never pass `--force`: if the push is refused as a non-fast-forward, `dev` has
+   commits `main` lacks; leave it, and the next release brings them together.
+
+   Between releases `dev` is normally ahead of `main` by the pull requests
+   merged since the last release, and after a release and before this step it
+   is behind by the release merges. Both are expected.
+
 ## When the release workflow fails
 
 A tag is never moved or reused once pushed, even when its workflow failed and
@@ -157,6 +198,11 @@ git switch -c fix/<topic> origin/dev
 git cherry-pick -x <first hotfix commit>^..<last hotfix commit>
 gh pr create --repo GlacierHubAB/den --base dev --title "<what it fixes> (from v0.4.1)"
 ```
+
+If `dev` has nothing that `main` lacks (`gh api "repos/$R/compare/main...dev"`
+shows `ahead_by` 0), skip the cherry-pick and fast-forward `dev` to `main` as in
+step 7 instead. After a cherry-pick `dev` is ahead of `main` by those copies,
+so step 7 is not possible until the next release brings the two together.
 
 v0.3.2 went this way: `hotfix/den-sock-v0.3.2` from `main`, pull request #1
 into `main` as a merge commit, the annotated tag `v0.3.2` on that merge
