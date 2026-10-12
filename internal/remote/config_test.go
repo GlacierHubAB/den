@@ -175,3 +175,110 @@ func TestVersions(t *testing.T) {
 		}
 	}
 }
+
+func TestSpawnKeys(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "remotes.toml")
+	os.WriteFile(p, []byte(`[hosts.devbox]
+target = "devbox"
+policy = "full"
+spawn = "auto"
+spawn_dirs = ["~/src", "/srv/work api"]
+orchestrator = true
+max_agents = 2
+
+[hosts.plain]
+target = "plain"
+`), 0o644)
+	c, err := LoadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := c.Find("devbox")
+	if d.Spawn != SpawnAuto || !slices.Equal(d.SpawnDirs, []string{"~/src", "/srv/work api"}) || !d.Orchestrator || d.MaxSpawned() != 2 {
+		t.Errorf("devbox = %+v", d)
+	}
+	plain, _ := c.Find("plain")
+	if plain.Spawn != "" || plain.SpawnDirs != nil || plain.Orchestrator || plain.MaxSpawned() != DefaultMaxAgents {
+		t.Errorf("plain = %+v: spawn must default to off, no dirs, not the orchestrator's, 4 agents", plain)
+	}
+	if err := plain.SpawnAllowed(); err == nil {
+		t.Error("a host without spawn keys allows spawn")
+	}
+	if err := d.SpawnAllowed(); err != nil {
+		t.Errorf("devbox: %v", err)
+	}
+	d.Policy = Observe
+	if err := d.SpawnAllowed(); err == nil || !strings.Contains(err.Error(), "observe") {
+		t.Errorf("observe host: %v", err)
+	}
+	d.Policy, d.SpawnDirs = Full, []string{}
+	if err := d.SpawnAllowed(); err == nil {
+		t.Error("an empty spawn_dirs allows spawn")
+	}
+	if err := c.Save(p); err != nil {
+		t.Fatal(err)
+	}
+	again, err := LoadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d2, _ := again.Find("devbox"); !slices.Equal(d2.SpawnDirs, []string{"~/src", "/srv/work api"}) || d2.Spawn != SpawnAuto || !d2.Orchestrator || d2.MaxAgents != 2 {
+		t.Errorf("round trip: %+v", d2)
+	}
+	for _, bad := range []string{
+		"spawn = \"always\"", "spawn_dirs = [\"src\"]", "spawn_dirs = [\"~/a/../b\"]", "max_agents = -1", "max_agents = 100", "spawn_dirs = \"~/src\"",
+	} {
+		os.WriteFile(p, []byte("[hosts.x]\ntarget = \"x\"\n"+bad+"\n"), 0o644)
+		if _, err := LoadFile(p); err == nil {
+			t.Errorf("%s: accepted", bad)
+		}
+	}
+}
+
+func TestSpawnNames(t *testing.T) {
+	sid := NewSessionID()
+	if CheckSessionID(sid) != nil || sid[14] != '4' {
+		t.Fatalf("session id %q", sid)
+	}
+	name := TmuxName("api", sid)
+	if CheckTmuxName(name, sid) != nil || CheckTmuxName(name, NewSessionID()) == nil {
+		t.Errorf("tmux name %q", name)
+	}
+	for _, bad := range []string{"den-a.b-12345678", "den-a:b-12345678", "den--x-12345678", "den-x-1234567", "den-x-1234567g", "den-$(x)-12345678", "x"} {
+		if CheckTmuxName(bad, "") == nil {
+			t.Errorf("tmux name %q accepted", bad)
+		}
+	}
+	taken := map[string]bool{"api": true, "api-2": true}
+	if p := RemotePeer("API", "/x", taken); p != "api-3" {
+		t.Errorf("peer %q", p)
+	}
+	if p := RemotePeer("", "~/src/My.Repo", nil); p != "my-repo" {
+		t.Errorf("peer from dir %q", p)
+	}
+	long := RemotePeer(strings.Repeat("a", 40), "", map[string]bool{strings.Repeat("a", 32): true})
+	if CheckPeer(long) != nil || len(long) > 32 {
+		t.Errorf("long peer %q", long)
+	}
+	if CheckPeer(RemotePeer("$(touch /tmp/x);'", "", nil)) != nil {
+		t.Error("a hostile name was not made safe")
+	}
+	if CheckSpawnModel("opus", false) != nil || CheckSpawnModel("claude-opus-5-5", false) == nil || CheckSpawnModel("claude-opus-5-5", true) != nil || CheckSpawnModel("x;y", true) == nil {
+		t.Error("models")
+	}
+	if CheckBrief("hi \x1b[31m") == nil || CheckBrief(" ") == nil || CheckBrief(strings.Repeat("a", MaxSendText+1)) == nil || CheckBrief("line\nline\ttab") != nil {
+		t.Error("briefs")
+	}
+	roots := []string{"~/src", "/srv/work"}
+	for dir, want := range map[string]bool{
+		"~/src": true, "~/src/api": true, "~/src/": true, "~/srcx": false, "~/src/../etc": false, "/srv/work/a": true,
+		"/srv/workx": false, "~": false, "/srv": false, "src/api": false, "~/src/a\nb": false, "~other/src": false,
+	} {
+		if got := UnderSpawnDirs(dir, roots); got != want {
+			t.Errorf("UnderSpawnDirs(%q) = %v", dir, got)
+		}
+	}
+	if !UnderSpawnDirs("~/x", []string{"~"}) {
+		t.Error("~ allows every folder in the home")
+	}
+}

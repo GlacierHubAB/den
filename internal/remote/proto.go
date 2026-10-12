@@ -187,7 +187,9 @@ const (
 	TypeSend     = "send"     // Den to serve, approve or full only
 	TypeClose    = "close"    // Den to serve, approve or full only
 	TypeDiff     = "diff"     // Den to serve, full only
-	TypeResult   = "result"   // serve to Den: the outcome of a send, close or diff
+	TypeResult   = "result"   // serve to Den: the outcome of a send, close, diff, spawn or cleanup
+	TypeSpawn    = "spawn"    // Den to serve, approve or full only, on a host that allows it
+	TypeCleanup  = "cleanup"  // Den to serve: end a leftover tmux session Den started
 )
 
 // Limits of the actions.
@@ -210,6 +212,17 @@ type Request struct {
 	Cursor events.Cursor `json:"cursor,omitzero"`
 	// Controller is the asking Den's identity marker (not a secret).
 	Controller string `json:"controller,omitempty"`
+	// Spawn is what the host's entry in remotes.toml allows of spawn;
+	// absent when it allows none.
+	Spawn *SpawnPolicy `json:"spawn,omitempty"`
+}
+
+// SpawnPolicy is a host's spawn keys as Den sends them in its hello, so
+// serve checks every spawn against them too.
+type SpawnPolicy struct {
+	Route SpawnRoute `json:"route"`
+	Dirs  []string   `json:"dirs"`
+	Max   int        `json:"max"`
 }
 
 // Hello is serve's first message.
@@ -225,6 +238,71 @@ type Hello struct {
 	Cursor    events.Cursor `json:"cursor,omitzero"`
 	Attached  *Attached     `json:"attached,omitempty"`
 	Note      string        `json:"note,omitempty"`
+	// Spawn says this den can start agents, and with what; absent from a
+	// den too old to.
+	Spawn *SpawnCap `json:"spawn,omitempty"`
+	// Spawns are the spawns this controller asked for that serve still
+	// tracks, so a Den whose link dropped mid-spawn learns what happened.
+	Spawns []SpawnState `json:"spawns,omitempty"`
+}
+
+// SpawnCap is what a host can do for a spawn, from its hello.
+type SpawnCap struct {
+	Tmux    string `json:"tmux,omitempty"`    // the usable tmux's version; "" for none
+	NoTmux  string `json:"no_tmux,omitempty"` // why tmux is not usable
+	Claude  string `json:"claude,omitempty"`  // the claude binary's version; "" when not found
+	Veto    string `json:"veto,omitempty"`    // the host's own config refuses spawn: why
+	Limited bool   `json:"limited,omitempty"` // the host's own config narrows the folders
+	Running int    `json:"running"`           // agents Den started that are alive there
+	Window  string `json:"window,omitempty"`  // the den to run in an attach window, when serve knows its path
+}
+
+// SpawnState is one spawn serve tracks: whether its agent started and
+// whether its brief went out.
+type SpawnState struct {
+	SessionID string `json:"session_id"`
+	TmuxName  string `json:"tmux_name"`
+	Started   bool   `json:"started"`
+	Delivered bool   `json:"delivered"`
+	Expired   bool   `json:"expired,omitempty"` // the brief was dropped undelivered after an hour
+}
+
+// SpawnCmd asks serve to start an agent. With Check it only resolves and
+// checks, and starts nothing. The brief travels here, never in an
+// argument list, and Skills is reserved: serve refuses any.
+type SpawnCmd struct {
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	SessionID string          `json:"session_id"`
+	Peer      string          `json:"peer"`
+	TmuxName  string          `json:"tmux_name"`
+	Dir       string          `json:"dir"`
+	Route     string          `json:"route"`
+	Model     string          `json:"model,omitempty"`
+	Worktree  string          `json:"worktree,omitempty"`
+	Skills    json.RawMessage `json:"skills,omitempty"`
+	Resume    bool            `json:"resume,omitempty"`
+	Fork      bool            `json:"fork,omitempty"`
+	Brief     string          `json:"brief,omitempty"`
+	Check     bool            `json:"check,omitempty"`
+}
+
+// CleanupCmd asks serve to end a tmux session Den started whose agent is
+// gone (a leftover).
+type CleanupCmd struct {
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	TmuxName  string `json:"tmux_name"`
+}
+
+// Spawned is one tmux session on the host that Den started, as a snapshot
+// lists it under approve or full: Live while its Claude Code session runs,
+// otherwise a leftover the human may clean up.
+type Spawned struct {
+	SessionID string `json:"session_id"`
+	TmuxName  string `json:"tmux_name"`
+	Live      bool   `json:"live"`
 }
 
 // Attached names the serve of another Den that relays the host's held
@@ -239,6 +317,7 @@ type Snapshot struct {
 	Type      string       `json:"type"`
 	RemoteNow time.Time    `json:"remote_now"`
 	Agents    []fleet.Meta `json:"agents"`
+	Spawned   []Spawned    `json:"spawned,omitempty"`
 }
 
 // Event is one line of the host's event stream.
@@ -304,6 +383,16 @@ type Result struct {
 	Killed bool   `json:"killed,omitempty"`
 	Error  string `json:"error,omitempty"`
 	Diff   *Diff  `json:"diff,omitempty"` // a diff's, under full only
+	// A spawn's: the route taken, its tmux session, the folder as the host
+	// resolved it, whether Claude Code has been told to trust that folder
+	// there, and a short warning. Code names a failure Den acts on:
+	// duplicate, no_tmux, no_session.
+	Route     string `json:"route,omitempty"`
+	TmuxName  string `json:"tmux_name,omitempty"`
+	Dir       string `json:"dir,omitempty"`
+	Untrusted bool   `json:"untrusted,omitempty"`
+	Warning   string `json:"warning,omitempty"`
+	Code      string `json:"code,omitempty"`
 }
 
 // Ping is Den saying it is still there.
@@ -324,13 +413,13 @@ func BodyHash(body []byte) string {
 // allowed lists, per message type, the top-level keys version 1 knows.
 // Anything else in a message is dropped and the host flagged.
 var allowed = map[string][]string{
-	TypeHello:    {"type", "proto", "den", "claude", "hostname", "remote_now", "policy", "labels", "cursor", "attached", "note"},
-	TypeSnapshot: {"type", "remote_now", "agents"},
+	TypeHello:    {"type", "proto", "den", "claude", "hostname", "remote_now", "policy", "labels", "cursor", "attached", "note", "spawn", "spawns"},
+	TypeSnapshot: {"type", "remote_now", "agents", "spawned"},
 	TypeEvent:    {"type", "cursor", "event"},
 	TypeError:    {"type", "code", "message"},
 	TypeHeld:     {"type", "id", "session", "tool", "body"},
 	TypeGone:     {"type", "id"},
-	TypeResult:   {"type", "id", "ok", "killed", "error", "diff"},
+	TypeResult:   {"type", "id", "ok", "killed", "error", "diff", "route", "tmux_name", "dir", "untrusted", "warning", "code"},
 }
 
 // allowedIn is the same for what serve reads after Den's hello request.
@@ -340,6 +429,8 @@ var allowedIn = map[string][]string{
 	TypeSend:     {"type", "id", "session", "text"},
 	TypeClose:    {"type", "id", "session", "force"},
 	TypeDiff:     {"type", "id", "session"},
+	TypeSpawn:    {"type", "id", "session_id", "peer", "tmux_name", "dir", "route", "model", "worktree", "skills", "resume", "fork", "brief", "check"},
+	TypeCleanup:  {"type", "id", "session_id", "tmux_name"},
 }
 
 // ErrLineTooLong is a message over MaxLine.

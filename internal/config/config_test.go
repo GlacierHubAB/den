@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -38,7 +39,7 @@ permission_wait = nonsense
 	t.Setenv("DEN_CONFIG", filepath.Join(dir, "missing.toml"))
 	t.Setenv("DEN_ORCHESTRATOR_MODEL", "")
 	t.Setenv("DEN_PERMISSION_WAIT", "")
-	if c := Load(); c != Defaults() {
+	if c := Load(); !reflect.DeepEqual(c, Defaults()) {
 		t.Errorf("missing file should give defaults: %+v", c)
 	}
 }
@@ -50,7 +51,7 @@ func TestExampleParsesToDefaults(t *testing.T) {
 	t.Setenv("DEN_ORCHESTRATOR_MODEL", "")
 	t.Setenv("DEN_PERMISSION_WAIT", "")
 	t.Setenv("DEN_HOOK_LOG", "")
-	if c := Load(); c != Defaults() {
+	if c := Load(); !reflect.DeepEqual(c, Defaults()) {
 		t.Errorf("example differs from defaults: %+v", c)
 	}
 }
@@ -133,5 +134,36 @@ func TestAnswerQuestionsIsOptIn(t *testing.T) {
 	t.Setenv("DEN_CONFIG", p)
 	if !Load().Hooks.AnswerQuestions {
 		t.Error("hooks.answer_questions = true not read")
+	}
+}
+
+func TestRemoteSpawnVeto(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	os.WriteFile(p, []byte("[remote]\nspawn = false\nspawn_dirs = [\"~/src\", \"/srv/a \\\"b\\\"\"]\nopen_window = false\n"), 0o644)
+	t.Setenv("DEN_CONFIG", p)
+	c := Load()
+	if c.Remote.Spawn || c.Remote.OpenWindow || !reflect.DeepEqual(c.Remote.SpawnDirs, []string{"~/src", `/srv/a "b"`}) {
+		t.Errorf("remote = %+v", c.Remote)
+	}
+	os.WriteFile(p, []byte("[remote]\nspawn_dirs = [\"~/src\", oops]\n"), 0o644)
+	if c := Load(); c.Remote.SpawnDirs == nil || len(c.Remote.SpawnDirs) != 0 {
+		t.Errorf("an unreadable list must allow no folder, got %#v", c.Remote.SpawnDirs)
+	}
+	if Defaults().Remote.SpawnDirs != nil || !Defaults().Remote.Spawn {
+		t.Errorf("defaults: %+v", Defaults().Remote)
+	}
+}
+
+func TestStringList(t *testing.T) {
+	for in, want := range map[string][]string{`[]`: {}, `["a"]`: {"a"}, `[ "a" , "b,c" ]`: {"a", "b,c"}, `["a\\b"]`: {`a\b`}} {
+		got, err := StringList(in)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: %q %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{``, `"a"`, `[a]`, `["a" "b"]`, `["a",]x`, `["a`} {
+		if _, err := StringList(bad); err == nil {
+			t.Errorf("%s: accepted", bad)
+		}
 	}
 }

@@ -87,7 +87,66 @@ type Host struct {
 	DenPath string `json:"den_path,omitempty"` // absolute den on the remote; "" finds it through a login shell
 	Enabled bool   `json:"enabled"`
 
+	// Spawn is how Den may start agents on the host: in tmux there (tmux),
+	// in a local terminal over ssh -t (terminal), tmux when the host has it
+	// and the terminal otherwise (auto), or not at all (off, the default).
+	Spawn SpawnRoute `json:"spawn,omitempty"`
+	// SpawnDirs are the folders, with their subfolders, an agent may start
+	// in; ~/ is the host's home. None means no spawn on the host.
+	SpawnDirs []string `json:"spawn_dirs,omitempty"`
+	// Orchestrator lets the orchestrator and the leads it started spawn,
+	// message and close agents on the host. false (the default) leaves the
+	// host to the human, from Den's own UI.
+	Orchestrator bool `json:"orchestrator,omitempty"`
+	// MaxAgents caps the agents Den started that are alive on the host at
+	// once; 0 means DefaultMaxAgents.
+	MaxAgents int `json:"max_agents,omitempty"`
+
 	extra [][2]string // keys this version does not know, kept as written
+}
+
+// SpawnRoute is a host's spawn key.
+type SpawnRoute string
+
+const (
+	SpawnOff      SpawnRoute = "off"      // no spawn (also "")
+	SpawnAuto     SpawnRoute = "auto"     // tmux when usable, else the terminal route, said before starting
+	SpawnTmux     SpawnRoute = "tmux"     // only in tmux on the host
+	SpawnTerminal SpawnRoute = "terminal" // only in a local terminal over ssh -t
+)
+
+// Valid reports whether r is one of the four routes, or unset.
+func (r SpawnRoute) Valid() bool {
+	switch r {
+	case "", SpawnOff, SpawnAuto, SpawnTmux, SpawnTerminal:
+		return true
+	}
+	return false
+}
+
+// DefaultMaxAgents is max_agents when a host does not set it.
+const DefaultMaxAgents = 4
+
+// MaxSpawned is the host's max_agents, or the default.
+func (h Host) MaxSpawned() int {
+	if h.MaxAgents > 0 {
+		return h.MaxAgents
+	}
+	return DefaultMaxAgents
+}
+
+// SpawnAllowed says whether the host's own entry lets Den start agents on
+// it at all, and if not why, in words fit for the human.
+func (h Host) SpawnAllowed() error {
+	switch {
+	case h.Spawn == "" || h.Spawn == SpawnOff:
+		return fmt.Errorf("spawn is off for %s; set spawn = \"tmux\" (or auto) for it in remotes.toml", h.Label)
+	case len(h.SpawnDirs) == 0:
+		return fmt.Errorf("%s lists no spawn_dirs in remotes.toml, so no folder there is allowed", h.Label)
+	case h.Policy.rank() < Approve.rank():
+		return fmt.Errorf("%s; nothing was started", ObserveNote(h.Label))
+	}
+	return nil
 }
 
 // Config is remotes.toml: which hosts Den connects to and how.
@@ -102,6 +161,10 @@ type Host struct {
 //	labels = true                # send badge role and task (capped at 80 characters)
 //	den_path = "/opt/den/bin/den" # optional; else a login shell's PATH plus ~/.local/bin
 //	enabled = true
+//	spawn = "tmux"               # auto | tmux | terminal | off (default off)
+//	spawn_dirs = ["~/src"]       # where agents may start; none means no spawn
+//	orchestrator = false         # may the orchestrator act here
+//	max_agents = 4               # agents Den started, alive at once
 //
 // `den remote add|remove|enable|disable` rewrite the file: values and keys
 // Den does not know are kept, comments are not.
@@ -246,6 +309,17 @@ func (c Config) Validate() error {
 		if err := CheckDenPath(h.DenPath); err != nil {
 			return fmt.Errorf("[hosts.%s]: %v", h.Label, err)
 		}
+		if !h.Spawn.Valid() {
+			return fmt.Errorf("[hosts.%s]: spawn %q is not auto, tmux, terminal or off", h.Label, h.Spawn)
+		}
+		if h.MaxAgents < 0 || h.MaxAgents > 64 {
+			return fmt.Errorf("[hosts.%s]: max_agents %d is not between 1 and 64", h.Label, h.MaxAgents)
+		}
+		for _, d := range h.SpawnDirs {
+			if err := CheckSpawnDir(d); err != nil {
+				return fmt.Errorf("[hosts.%s]: spawn_dirs: %v", h.Label, err)
+			}
+		}
 	}
 	return nil
 }
@@ -324,6 +398,16 @@ func parseConfig(raw []byte) (Config, error) {
 			cur.Labels, err = strconv.ParseBool(v)
 		case "enabled":
 			cur.Enabled, err = strconv.ParseBool(v)
+		case "spawn":
+			var s string
+			s, err = str(v)
+			cur.Spawn = SpawnRoute(s)
+		case "spawn_dirs":
+			cur.SpawnDirs, err = config.StringList(v)
+		case "orchestrator":
+			cur.Orchestrator, err = strconv.ParseBool(v)
+		case "max_agents":
+			cur.MaxAgents, err = strconv.Atoi(v)
 		default:
 			cur.extra = append(cur.extra, [2]string{k, v})
 		}
@@ -385,6 +469,22 @@ func (c Config) Marshal() []byte {
 		}
 		if !h.Enabled {
 			b.WriteString("enabled = false\n")
+		}
+		if h.Spawn != "" {
+			fmt.Fprintf(&b, "spawn = %q\n", string(h.Spawn))
+		}
+		if h.SpawnDirs != nil {
+			q := make([]string, len(h.SpawnDirs))
+			for i, d := range h.SpawnDirs {
+				q[i] = strconv.Quote(d)
+			}
+			fmt.Fprintf(&b, "spawn_dirs = [%s]\n", strings.Join(q, ", "))
+		}
+		if h.Orchestrator {
+			b.WriteString("orchestrator = true\n")
+		}
+		if h.MaxAgents != 0 {
+			fmt.Fprintf(&b, "max_agents = %d\n", h.MaxAgents)
 		}
 		for _, kv := range h.extra {
 			fmt.Fprintf(&b, "%s = %s\n", kv[0], kv[1])

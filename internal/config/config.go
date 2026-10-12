@@ -4,6 +4,7 @@ package config
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -45,6 +46,17 @@ type Config struct {
 	}
 	Events struct {
 		Log bool // den hook appends metadata-only events to events.jsonl
+	}
+	// Remote holds this machine's own say over remote spawn. Spawn and
+	// SpawnDirs apply when a Den elsewhere starts agents here over ssh: the
+	// owner of this machine can refuse spawn outright or narrow the folders
+	// to SpawnDirs, whatever that Den's remotes.toml allows (nil: no limit
+	// of its own). OpenWindow applies when this Den starts an agent on
+	// another host: open a terminal attached to it (docs/REMOTE.md).
+	Remote struct {
+		Spawn      bool
+		SpawnDirs  []string
+		OpenWindow bool
 	}
 	// On holds a shell command per event kind, run by Den with the event's
 	// metadata. Empty runs nothing.
@@ -96,6 +108,8 @@ func Defaults() Config {
 	c.Stuck.Stalled = 20
 	c.Stuck.ToolFailures = 3
 	c.Events.Log = true
+	c.Remote.Spawn = true
+	c.Remote.OpenWindow = true
 	return c
 }
 
@@ -183,6 +197,16 @@ func (c *Config) apply(kv map[string]string) {
 	count(&c.Stuck.Stalled, "stuck.stalled")
 	count(&c.Stuck.ToolFailures, "stuck.tool_failures")
 	boolean(&c.Events.Log, "events.log")
+	boolean(&c.Remote.Spawn, "remote.spawn")
+	boolean(&c.Remote.OpenWindow, "remote.open_window")
+	if v, ok := kv["remote.spawn_dirs"]; ok {
+		if dirs, err := StringList(v); err == nil {
+			c.Remote.SpawnDirs = dirs
+		} else {
+			// Unreadable: allow no folder rather than guess at the owner's intent.
+			c.Remote.SpawnDirs = []string{}
+		}
+	}
 	for key, dst := range map[string]*string{
 		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
 		"done": &c.On.Done, "needs_you": &c.On.NeedsYou, "idle": &c.On.Idle, "turn_failed": &c.On.TurnFailed,
@@ -215,6 +239,49 @@ func (c *Config) env() {
 		c.Notify.NeedsYou, c.Notify.Done, c.Notify.Failed, c.Notify.Stalled, c.Notify.WithoutDen = false, false, false, false, false
 		c.Notify.Remind = 0
 	}
+}
+
+// StringList reads a TOML array of basic strings on one line,
+// ["a", "b"]; [] is an empty, non-nil list.
+func StringList(v string) ([]string, error) {
+	v = strings.TrimSpace(v)
+	if len(v) < 2 || v[0] != '[' || v[len(v)-1] != ']' {
+		return nil, fmt.Errorf("%s is not a list of quoted strings", v)
+	}
+	out := []string{}
+	rest := strings.TrimSpace(v[1 : len(v)-1])
+	for rest != "" {
+		if rest[0] != '"' {
+			return nil, fmt.Errorf("%s is not a list of quoted strings", v)
+		}
+		end := 1
+		for ; end < len(rest); end++ {
+			if rest[end] == '\\' {
+				end++
+				continue
+			}
+			if rest[end] == '"' {
+				break
+			}
+		}
+		if end >= len(rest) {
+			return nil, fmt.Errorf("%s has an unterminated string", v)
+		}
+		s, err := strconv.Unquote(rest[:end+1])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", v, err)
+		}
+		out = append(out, s)
+		rest = strings.TrimSpace(rest[end+1:])
+		if rest == "" {
+			break
+		}
+		if rest[0] != ',' {
+			return nil, fmt.Errorf("%s is not a list of quoted strings", v)
+		}
+		rest = strings.TrimSpace(rest[1:])
+	}
+	return out, nil
 }
 
 // parse reads a flat TOML subset: [section] headers and key = value lines
@@ -296,6 +363,13 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 # turn_failed tool_failed stalled still_waiting. See docs/EVENTS.md.
 [on]
 # needs_you = "ntfy publish my-den-topic \"$DEN_AGENT needs you\""
+
+# Remote hosts (docs/REMOTE.md). spawn and spawn_dirs apply when a Den on
+# another machine starts agents on this one: a veto of this machine's own.
+[remote]
+spawn = true                # false: no Den elsewhere may start agents here
+# spawn_dirs = ["~/src"]    # set: agents may start only under these folders here
+open_window = true          # open a terminal attached to an agent this Den starts on a host
 
 # The cost estimate prices tokens from a built-in table (taken 2026-09-25).
 # Override a model, by id prefix, in dollars per million tokens:

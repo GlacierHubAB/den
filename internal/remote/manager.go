@@ -52,6 +52,13 @@ type HostStatus struct {
 	Flags    []string  // what the host sent that Den dropped: unknown types or fields, flooding
 	Dropped  int       // events Den dropped from the host since it started (gate)
 	Hint     string    // what the human can do, for needs attention and version mismatch
+
+	// From remotes.toml: who may act on the host and how agents start there.
+	Orchestrator bool
+	Spawn        SpawnRoute
+	// SpawnCap is what the host said it can do for a spawn in its last
+	// hello; nil when its den is too old to start agents.
+	SpawnCap *SpawnCap
 }
 
 // UpdateKind says what an Update carries.
@@ -538,6 +545,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 	cur := m.state[h.Label].known.Cursor
 	m.mu.Unlock()
 	req := Request{Type: TypeHello, Proto: Proto, Den: m.o.Version, Policy: h.Policy, Labels: h.Labels, Cursor: cur, Controller: m.o.Controller}
+	if h.SpawnAllowed() == nil {
+		req.Spawn = &SpawnPolicy{Route: h.Spawn, Dirs: h.SpawnDirs, Max: h.MaxSpawned()}
+	}
 	var wmu sync.Mutex
 	write := func(v any) error {
 		wmu.Lock()
@@ -683,6 +693,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			st.status.Hostname = sanitize.Label(hm.Hostname, 64)
 			st.status.Den = sanitize.Label(hm.Den, 40)
 			st.status.Claude = sanitize.Label(hm.Claude, 40)
+			st.status.SpawnCap = cleanSpawnCap(hm.Spawn)
 			st.status.Offset = hm.RemoteNow.Sub(in.at)
 			st.status.LastSeen = in.at
 			st.known.Hostname, st.known.Den, st.known.Claude = st.status.Hostname, st.status.Den, st.status.Claude
@@ -852,6 +863,21 @@ func attachedReason(label string, a *Attached, now time.Time) string {
 		r += ")"
 	}
 	return r
+}
+
+// cleanSpawnCap sanitises what a host says it can do for a spawn.
+func cleanSpawnCap(c *SpawnCap) *SpawnCap {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.Tmux, out.NoTmux = sanitize.Label(c.Tmux, 40), sanitize.Label(c.NoTmux, 120)
+	out.Claude, out.Veto = sanitize.Label(c.Claude, 40), sanitize.Label(c.Veto, 160)
+	out.Running = max(0, min(c.Running, 1000))
+	if CheckDenPath(c.Window) != nil || !strings.HasPrefix(c.Window, "/") || sanitize.Line(c.Window) != c.Window {
+		out.Window = ""
+	}
+	return &out
 }
 
 // cleanMeta sanitises every string a host sent in a projection.
