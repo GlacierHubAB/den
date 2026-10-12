@@ -216,6 +216,9 @@ func workFromDiff(key, host string, d *remote.Diff) []work {
 			f.Owner = append(f.Owner, own)
 		}
 		added, removed := ownedCounts(f, key)
+		if df.Unsafe {
+			added, removed = df.Added, df.Removed // its lines stay on the host
+		}
 		w.Added += added
 		w.Removed += removed
 		w.Files = append(w.Files, f)

@@ -476,8 +476,8 @@ func TestRemoteAgentsWithoutWorkAreListedUnderTheirOwnProject(t *testing.T) {
 // A remote file whose name has control characters keeps that mark, so
 // Review says its content is not shown.
 func TestRemoteUnsafeNameIsMarked(t *testing.T) {
-	ws := workFromDiff("s@devbox", "devbox", &remote.Diff{Root: "/home/user/den", Files: []remote.DiffFile{{Path: "evilname.txt", Created: true, Unsafe: true}}})
-	if len(ws) != 1 || len(ws[0].Files) != 1 || !ws[0].Files[0].Unsafe || len(ws[0].Files[0].Hunks) > 0 {
+	ws := workFromDiff("s@devbox", "devbox", &remote.Diff{Root: "/home/user/den", Files: []remote.DiffFile{{Path: "evilname.txt", Created: true, Unsafe: true, Added: 4, Removed: 1}}})
+	if len(ws) != 1 || len(ws[0].Files) != 1 || !ws[0].Files[0].Unsafe || len(ws[0].Files[0].Hunks) > 0 || ws[0].Added != 4 || ws[0].Removed != 1 {
 		t.Errorf("works = %+v", ws)
 	}
 }
