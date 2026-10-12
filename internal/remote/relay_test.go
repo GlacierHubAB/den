@@ -755,7 +755,7 @@ func TestLinkLostItemIsNotAnswerable(t *testing.T) {
 	it := store.Apply(g.next(t))
 	g.d.cut()
 	<-g.gone
-	store.LetGo()
+	store.LetGo(0)
 	if it.Answerable() || it.State != inbox.InTerminal || !strings.Contains(it.Resolved, "link lost") {
 		t.Errorf("item after drop = %+v", it)
 	}
