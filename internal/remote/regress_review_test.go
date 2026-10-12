@@ -17,7 +17,7 @@ import (
 // its cleaned name and marked, with no content, rather than left out; files
 // with unusual but harmless names are shown in full and not marked.
 func TestRegressUnsafeNamesAreListedNotShown(t *testing.T) {
-	odd := []string{"esc\x1b[2Jname.txt", "new\nline.txt", "bidi‮exe.txt", "sep arator.txt", "para graph.txt", "bell\a.txt"}
+	odd := []string{"esc\x1b[2Jname.txt", "new\nline.txt", "bidi\u202eexe.txt", "sep\u2028arator.txt", "para\u2029graph.txt", "bell\a.txt"}
 	plain := []string{"trailing space .txt", "-leading-dash.txt", "café.txt"}
 	d, err, _ := attackDiff(t, func(t *testing.T, g *rig) scene {
 		repo := mkRepo(t, g, "work")
