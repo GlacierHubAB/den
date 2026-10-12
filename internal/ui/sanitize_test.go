@@ -67,10 +67,10 @@ func TestHookInjectionNeverReachesTheFrame(t *testing.T) {
 	}
 }
 
-// TestSpike8RendererOutput is spike 8 of the remote design: a role with an
+// TestRendererDropsInjectedSequences: a role with an
 // OSC 52 clipboard write and a screen clear, rendered through bubbletea's
 // real renderer into a buffer, must not reach the terminal.
-func TestSpike8RendererOutput(t *testing.T) {
+func TestRendererDropsInjectedSequences(t *testing.T) {
 	m := injectedModel(120, 30)
 	m.tab = tabInbox
 	var out bytes.Buffer
