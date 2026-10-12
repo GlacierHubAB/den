@@ -114,6 +114,7 @@ type Model struct {
 	closing    map[string]closer.Plan     // close questions in the inbox, by item id
 	offers     map[string]skills.Approval // skills offers in the inbox, by item id
 	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
+	sends      map[string]askedSend       // den send questions in the inbox, by item id
 	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard      *closer.Guard              // agents a close must leave alone or only propose when named
@@ -522,6 +523,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installDoneMsg:
 		return m, m.finishInstall(msg)
+	case askedSentMsg:
+		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
 		return m, m.finishRestore(msg)
 	case serverClosedMsg:
@@ -1113,7 +1116,7 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.ID == m.shown.id && !m.shown.since.IsZero() && answerNow().Sub(m.shown.since) < answerSettle {
 		m.shown.since = time.Time{}
-		return m.say("A new request just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press again to answer it.", true)
+		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
@@ -1140,6 +1143,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Cleanup {
 		return m.decideCleanup(it, verb)
+	}
+	if it.Kind == inbox.Message {
+		return m.decideSend(it, verb)
 	}
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)

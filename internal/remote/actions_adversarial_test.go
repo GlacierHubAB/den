@@ -762,9 +762,31 @@ func TestAdvCLISendThroughDen(t *testing.T) {
 	tm := l.Local.StartTUI(200, 56, []string{"DEN_ORCHESTRATOR_SPAWN=off", "DEN_RESTORE=off"})
 	tm.WaitFor(30*time.Second, "3 agents")
 	delivered := func(in *inbox) bool { _, ok := in.text(700 * time.Millisecond); return ok }
+	// A send to an agent on a host is one inbox question: the command waits
+	// until the human presses ^Y (a request that just came up asks for it
+	// twice). A send that is refused before that, or goes to this machine,
+	// ends on its own, so ^Y is only pressed while the command still waits.
 	run := func(want int, args ...string) string {
 		t.Helper()
-		out, code := g.den(args...)
+		type res struct {
+			out  string
+			code int
+		}
+		done := make(chan res, 1)
+		go func() { o, c := g.den(args...); done <- res{o, c} }()
+		var r res
+		for deadline := time.After(40 * time.Second); ; {
+			select {
+			case r = <-done:
+			case <-deadline:
+				t.Fatalf("den %v never finished", args)
+			case <-time.After(1200 * time.Millisecond):
+				tm.Keys("C-y")
+				continue
+			}
+			break
+		}
+		out, code := r.out, r.code
 		t.Logf("den %s -> exit %d: %s", strings.Join(args, " "), code, strings.TrimSpace(out))
 		if (code == 0) != (want == 0) {
 			t.Errorf("den %v: exit %d, want %d: %s", args, code, want, out)

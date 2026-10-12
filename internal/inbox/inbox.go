@@ -34,6 +34,7 @@ const (
 	Merge                  // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
 	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
 	Install                // Den asks: copy this den to a remote host? y/n answer it
+	Message                // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -68,6 +69,8 @@ func (k Kind) String() string {
 		return "cleanup"
 	case Install:
 		return "install"
+	case Message:
+		return "message"
 	}
 	return "?"
 }
@@ -126,7 +129,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -629,6 +632,12 @@ func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
 // its label; req is the request of the den remote command that asked.
 func (s *Store) AddInstall(host, title string, body []string, req *bridge.Request) *Item {
 	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
+}
+
+// AddMessageOn adds Den's question: send this text to an agent on host?
+// req is the request of the den send that asked; it gets the outcome.
+func (s *Store) AddMessageOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Message, Tool: "den_send", Title: title, Body: body, req: req})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's

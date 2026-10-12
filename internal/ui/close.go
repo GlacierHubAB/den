@@ -46,16 +46,56 @@ func idleFor(a fleet.Agent, now time.Time) (time.Duration, bool) {
 	return now.Sub(a.LastActive), true
 }
 
+// guardNames are the names the guard knows an agent by: its critter and
+// peer names, and for an agent on a host also both written "name@host",
+// so "/protect Mossy Lemur@devbox" covers that host's agent alone while a
+// bare name covers every agent called so.
+func guardNames(a fleet.Agent) []string {
+	names := []string{a.Name, a.Session.Name}
+	if a.Host != "" {
+		names = append(names, a.Name+"@"+a.Host)
+		if a.Session.Name != "" {
+			names = append(names, a.Session.Name+"@"+a.Host)
+		}
+	}
+	return names
+}
+
 // guardReason says why the guard keeps an agent out of a bulk close.
 func (m Model) guardReason(a fleet.Agent) string {
 	if m.guard == nil {
 		return ""
 	}
+	if n := m.guard.ProtectedName(guardNames(a)...); n != "" {
+		return "protected (" + n + ")"
+	}
 	// Folder rules are folders on this machine: an agent on a host has no
 	// path here, so only a rule by name, or by a task that mentions the
 	// folder's name, can protect it.
 	dirs := append([]string{a.Session.CWD}, rootsOf(a)...)
-	return m.guard.Protected(a.Name, a.Session.Name, dirs, a.Labels.Task)
+	return m.guard.Protected("", "", dirs, a.Labels.Task)
+}
+
+// unprotectHint says how the human lets a protected agent be closed: the
+// name rule that holds it, or the folder in protected.json.
+func (m Model) unprotectHint(a fleet.Agent) string {
+	if n := m.guard.ProtectedName(guardNames(a)...); n != "" {
+		return "/unprotect " + n + " to allow it"
+	}
+	return "remove its folder from protected.json to allow it"
+}
+
+// guardHeld is the flag note of a flagged agent, by any of its names.
+func (m Model) guardHeld(a fleet.Agent) (string, bool) {
+	for _, n := range guardNames(a) {
+		if n == "" {
+			continue
+		}
+		if note, ok := m.guard.Held(n, ""); ok {
+			return note, true
+		}
+	}
+	return "", false
 }
 
 // staleAgents picks the agents idle for at least d: idle by status, with a
@@ -80,7 +120,7 @@ func (m Model) staleAgents(d time.Duration, among map[string]bool, remotes bool)
 			skipped = append(skipped, closer.Refusal{Target: m.closeTarget(a), Why: why})
 			continue
 		}
-		if note, ok := m.guard.Held(a.Name, a.Session.Name); ok {
+		if note, ok := m.guardHeld(a); ok {
 			held = append(held, closer.Refusal{Target: m.closeTarget(a), Why: note})
 			continue
 		}
@@ -170,9 +210,10 @@ func (m *Model) proposePlan(cands []fleet.Agent, force bool, from, reason string
 			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: "it is the orchestrator"})
 			continue
 		}
-		// Protected agents are never proposed, even by name.
+		// Protected agents are never proposed, even by name, on this machine
+		// or on a host.
 		if why := m.guardReason(a); why != "" {
-			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: why + " · /unprotect to allow"})
+			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: why + " · " + m.unprotectHint(a)})
 			continue
 		}
 		if a.Host != "" {
@@ -331,9 +372,7 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 			name, note = strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+1:])
 		}
 	}
-	if a, ok := m.agentNamed(name); ok {
-		name = a.Name
-	}
+	name = m.guardName(name)
 	var msg string
 	switch verb {
 	case "/protect":
@@ -359,6 +398,36 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 		return m.say(msg+" (not saved: "+err.Error()+")", true)
 	}
 	return m.say(msg, false)
+}
+
+// guardName is the name /protect, /unprotect, /flag and /unflag record
+// for what the human typed: an agent's critter name as Den writes it, with
+// its host when it was named "name@host" ("@local" is this machine). A
+// name that fits no agent is kept as typed, so an agent can be protected
+// before it starts.
+func (m Model) guardName(name string) string {
+	if i := strings.LastIndexByte(name, '@'); i > 0 {
+		if a, why := m.closeNamed(name); why == "" {
+			if a.Host == "" {
+				return a.Name
+			}
+			return a.Name + "@" + a.Host
+		}
+		host := strings.ToLower(strings.TrimSpace(name[i+1:]))
+		if host == "local" {
+			return strings.TrimSpace(name[:i])
+		}
+		return strings.TrimSpace(name[:i]) + "@" + host
+	}
+	if a, ok := m.agentNamed(name); ok {
+		return a.Name
+	}
+	for _, r := range m.remote.agents {
+		if strings.EqualFold(r.Name, name) {
+			return r.Name
+		}
+	}
+	return name
 }
 
 // askClose proposes and shows the question in the inbox.

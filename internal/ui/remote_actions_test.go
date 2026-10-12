@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/remote"
 )
 
 // Send and close in the UI: @mentions and closes reach a remote agent through
@@ -388,15 +390,47 @@ func TestSendRequestFromDenSockMessagesARemoteAgent(t *testing.T) {
 		pl, _ := json.Marshal(bridge.SendInput{Who: who, Text: text, AskedBy: "den send, pid 1"})
 		return bridge.TestRequest(bridge.Envelope{Event: bridge.SendEvent, Payload: pl})
 	}
-	r := ask("mossy@devbox", "run the tests")
-	cmd := m.handleRequest(r)
-	msg := firstMsg(t, cmd, func(x tea.Msg) bool { _, ok := x.(cliSentMsg); return ok }).(cliSentMsg)
-	m.applyCLISent(msg)
+	r := ask("mossy@devbox", "run the tests\nthen push")
+	if cmd := m.handleRequest(r); cmd != nil {
+		t.Fatal("a den send went out without asking")
+	}
+	// One question in the inbox, with the host, the agent and the full text.
+	var it *inbox.Item
+	for _, o := range m.store.Items() {
+		if o.Kind == inbox.Message {
+			it = o
+		}
+	}
+	if it == nil || !it.Answerable() || it.Host != "devbox" || it.SessionID != dupSession {
+		t.Fatalf("no send question: %+v", it)
+	}
+	text := it.Title + "\n" + strings.Join(it.Body, "\n")
+	for _, want := range []string{"Send a message to Mossy Lemur on devbox?", "on devbox · Mossy Lemur (user-devbox)", "asked by den send, pid 1", "run the tests\nthen push"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the question lacks %q:\n%s", want, text)
+		}
+	}
+	m.tab = tabInbox
+	m.selectItem(it)
+	if out := frame(m); !strings.Contains(out, "^Y send it  ^N do not send") || strings.Contains(out, "/always this session") {
+		t.Errorf("inbox view:\n%s", out)
+	}
+	if _, ok := r.Decided(); ok || len(feed.sent) != 0 {
+		t.Fatalf("answered or sent before ^Y: sent %q", feed.sent)
+	}
+	// /always is not an answer here; ^Y sends it once.
+	if mm, _ := m.answer("always"); len(feed.sent) != 0 || !it.Answerable() || !strings.Contains(mm.(Model).flash, "asked for once") {
+		t.Errorf("/always: sent %q, flash %q", feed.sent, mm.(Model).flash)
+	}
+	mm, cmd := m.answer("allow")
+	*m = mm.(Model)
+	msg := firstMsg(t, cmd, func(x tea.Msg) bool { _, ok := x.(askedSentMsg); return ok }).(askedSentMsg)
+	m.finishAskedSend(msg)
 	d, ok := r.Decided()
 	if !ok || d.Behavior != "allow" || !strings.Contains(d.Message, "delivered to Mossy Lemur on devbox") {
 		t.Errorf("reply = %+v", d)
 	}
-	if len(feed.sent) != 1 || feed.sent[0] != "devbox/"+dupSession+": run the tests" {
+	if len(feed.sent) != 1 || feed.sent[0] != "devbox/"+dupSession+": run the tests\nthen push" {
 		t.Errorf("feed.sent = %q", feed.sent)
 	}
 	for _, c := range []struct{ who, text, want string }{
@@ -459,5 +493,146 @@ func TestReviewRecipientIsHostAware(t *testing.T) {
 	msg := deliverReview(m.sender(), a, "comment", inbox.New().SentOn("devbox", dupSession, "x", ""), []string{"c1"})()
 	if s := msg.(sentMsg); s.err != nil || len(feed.sent) != 1 || !strings.HasPrefix(feed.sent[0], "devbox/"+dupSession+": ") {
 		t.Errorf("sent %v err %v", feed.sent, s.err)
+	}
+}
+
+func TestProtectNameAtHostHoldsForEveryClosePath(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	remoteIdle(m, feed)
+	m.ensureGuard()
+	m.guardPath = filepath.Join(t.TempDir(), "protected.json")
+	g := func(mm tea.Model, _ tea.Cmd) Model { return mm.(Model) }
+	remoteProposed := func(m Model) bool {
+		for _, it := range closeItems(m) {
+			if it.Answerable() && strings.Contains(strings.Join(it.Body, "\n"), "SIGTERM there") {
+				return true
+			}
+		}
+		return false
+	}
+
+	// By peer name and host: recorded as the critter name on that host.
+	*m = g(m.guardCommand("/protect", []string{"user-devbox@devbox"}))
+	if len(m.guard.Names) != 1 || m.guard.Names[0] != "Mossy Lemur@devbox" || !strings.Contains(m.flash, "Mossy Lemur@devbox is protected") {
+		t.Fatalf("names %q flash %q", m.guard.Names, m.flash)
+	}
+	// /close Name@host: refused, saying how to allow it.
+	got := g(m.closeCommand([]string{"Mossy", "Lemur@devbox"}))
+	if remoteProposed(got) || !strings.Contains(got.flash, "Mossy Lemur: protected (Mossy Lemur@devbox) · /unprotect Mossy Lemur@devbox to allow it") {
+		t.Errorf("named close of a protected remote agent: flash %q", got.flash)
+	}
+	// ^X on it.
+	a, ok := m.agentFor(dupSession + "@devbox")
+	if !ok {
+		t.Fatal("no remote agent")
+	}
+	if got = g(m.askClose([]fleet.Agent{a}, true, nil)); remoteProposed(got) || !strings.Contains(got.flash, "protected (Mossy Lemur@devbox)") {
+		t.Errorf("^X on a protected remote agent: flash %q", got.flash)
+	}
+	// /close idle: skipped and listed; the local Mossy Lemur is not protected.
+	got = g(m.closeCommand([]string{"idle"}))
+	it := openClose(got)
+	if it == nil || remoteProposed(got) {
+		t.Fatalf("idle close: item %v flash %q", it, got.flash)
+	}
+	if body := strings.Join(it.Body, "\n"); !strings.Contains(body, "Skipped Mossy Lemur: protected (Mossy Lemur@devbox)") {
+		t.Errorf("idle close does not list the protected remote agent:\n%s", body)
+	}
+	// The orchestrator's idle_for never reaches it either.
+	pl, _ := json.Marshal(bridge.CloseInput{IdleFor: "30m", Reason: "idle"})
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.CloseEvent, SessionID: "orch", Payload: pl})
+	m.handleCloseRequest(r)
+	if remoteProposed(*m) {
+		t.Error("the orchestrator's idle close proposed the protected remote agent")
+	}
+	for _, it := range closeItems(*m) {
+		m.store.Settle(it, false, "kept")
+	}
+	m.refresh()
+
+	// /unprotect takes the same form back; then the named close is offered.
+	*m = g(m.guardCommand("/unprotect", []string{"Mossy Lemur@devbox"}))
+	if len(m.guard.Names) != 0 {
+		t.Fatalf("unprotect left %q", m.guard.Names)
+	}
+	if got = g(m.closeCommand([]string{"Mossy Lemur@devbox"})); !remoteProposed(got) {
+		t.Errorf("unprotected remote agent not offered: flash %q", got.flash)
+	}
+}
+
+func TestProtectBareNameCoversLocalAndRemote(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	remoteIdle(m, feed)
+	m.ensureGuard()
+	m.guardPath = filepath.Join(t.TempDir(), "protected.json")
+	// "@local" is this machine's agent, recorded by its bare name, which
+	// also covers an agent called so on any host.
+	mm, _ := m.guardCommand("/protect", []string{"mossy lemur@local"})
+	*m = mm.(Model)
+	if len(m.guard.Names) != 1 || m.guard.Names[0] != "Mossy Lemur" {
+		t.Fatalf("names %q", m.guard.Names)
+	}
+	for _, name := range []string{"Mossy Lemur@local", "Mossy Lemur@devbox"} {
+		mm, _ = m.closeCommand([]string{name})
+		if got := mm.(Model); openClose(got) != nil || !strings.Contains(got.flash, "protected (Mossy Lemur) · /unprotect Mossy Lemur to allow it") {
+			t.Errorf("/close %s: flash %q", name, got.flash)
+		}
+	}
+	// The orchestrator naming the local one by peer: refused.
+	pl, _ := json.Marshal(bridge.CloseInput{Peers: []string{"user-aa"}, Reason: "tidy"})
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.CloseEvent, SessionID: "orch", Payload: pl})
+	m.handleCloseRequest(r)
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "/unprotect Mossy Lemur to allow it") {
+		t.Errorf("close_agent of a protected agent: %+v %v", d, ok)
+	}
+	// Flags by name@host hold too.
+	m.guard.Names = nil
+	m.guard.SetFlag("Mossy Lemur@devbox", "keep")
+	mm, _ = m.closeCommand([]string{"idle"})
+	if it := openClose(mm.(Model)); it == nil || !strings.Contains(strings.Join(it.Body, "\n"), "Holds context, not selected: Mossy Lemur (keep)") || strings.Contains(strings.Join(it.Body, "\n"), "SIGTERM there") {
+		t.Errorf("flagged remote agent in an idle close: %+v", it)
+	}
+}
+
+func TestSendQuestionDeclinedGivenUpOrLinkLost(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	m.tab = tabInbox
+	ask := func() (*bridge.Request, *inbox.Item) {
+		pl, _ := json.Marshal(bridge.SendInput{Who: "mossy@devbox", Text: "rm -rf build", AskedBy: "den send, pid 2"})
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.SendEvent, Payload: pl})
+		m.handleRequest(r)
+		for _, o := range m.store.Items() {
+			if o.Kind == inbox.Message && o.Answerable() {
+				m.selectItem(o)
+				return r, o
+			}
+		}
+		t.Fatal("no send question")
+		return nil, nil
+	}
+	// ^N: nothing sent, the command told so.
+	r, _ := ask()
+	mm, _ := m.answer("deny")
+	*m = mm.(Model)
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "declined in Den; nothing was sent") || len(feed.sent) != 0 {
+		t.Errorf("^N: %+v, sent %q", d, feed.sent)
+	}
+	// The den send that asked gave up: ^Y sends nothing.
+	r, it := ask()
+	bridge.TestHangUp(r)
+	mm, _ = m.answer("allow")
+	*m = mm.(Model)
+	if len(feed.sent) != 0 || it.State != inbox.Resolved || !strings.Contains(it.Resolved, "gave up") {
+		t.Errorf("after hang-up: sent %q, item %v %q", feed.sent, it.State, it.Resolved)
+	}
+	// The link drops while it waits: released and refused.
+	r, it = ask()
+	feed.setState("devbox", remote.Offline)
+	m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HostChanged, Host: "devbox"}, ok: true})
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "nothing was sent") || it.Answerable() {
+		t.Errorf("link lost: %+v, item %v", d, it.State)
+	}
+	if len(feed.sent) != 0 {
+		t.Errorf("sent %q", feed.sent)
 	}
 }

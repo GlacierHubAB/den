@@ -269,16 +269,27 @@ On an `approve` host:
   agents. `den send name@host` needs an exact name, a peer name or a unique
   prefix on that host, and lists the candidates otherwise. The text goes down
   the ssh session to the agent's inbox on the host, never in an argument list.
-  Sending needs no confirmation, as for local agents. A message too large once
+  Typed in Den (`@Name@devbox text`), sending needs no confirmation, as for
+  local agents. `den send name@devbox` can be run by any process on this
+  machine, agents included, so Den asks first: one inbox question, "Send a
+  message to Mossy Lemur on devbox?", with the host, the agent, who ran the
+  command and the full text; `Ctrl+Y` sends it, `Ctrl+N` does not, and there is
+  no "always". The command waits for that answer (up to 30 minutes) and says
+  what happened; if it gave up meanwhile, `Ctrl+Y` sends nothing, and a lost
+  link declines it. A message too large once
   encoded says so, and the host refuses a messaging socket that is a symlink
   or not the agent's own. A host that is offline gets nothing: "devbox is
   offline; nothing was sent".
 - **Closing.** `Ctrl+X`, `/close`, `/close Name@devbox` and `/close idle`
   include remote agents. The question names the host: "Close Mossy Lemur on
   devbox?", "on devbox · SIGTERM there, no window", and "! uncommitted changes
-  in its checkout on devbox". Every close needs `Ctrl+Y`. `/protect <Name>`
-  and `/flag` apply to remote agents too, but a protected folder in
-  `protected.json` only protects agents on this machine.
+  in its checkout on devbox". Every close needs `Ctrl+Y`. `/protect` and
+  `/flag` apply to remote agents too: `/protect Name@devbox` keeps that
+  host's agent out of every close, by name or not, and a bare
+  `/protect <Name>` covers every agent of that name, here and on every host.
+  A close of a protected agent is refused with the `/unprotect` that allows
+  it. A protected folder in `protected.json` only protects agents on this
+  machine.
 
   On the host, `serve` closes only a live Claude Code session, refuses a
   working agent without `--force`, sends SIGTERM and only with `--force`
@@ -353,7 +364,8 @@ on this machine.
   run `den remote install devbox`.
 - **Version mismatch.** `den` on the host is missing or too old for
   `remote serve`: `den remote install devbox`, or install a matching release
-  there by hand.
+  there by hand. Den connects again by itself once an install approved in its
+  inbox succeeds; after an install by hand, `/remote connect devbox`.
 - **Agents appear but no events or requests.** Den's hooks are not installed on
   the host: run `den install-hooks` there. Only sessions started afterwards
   report.
