@@ -11,8 +11,8 @@ one agent with an `@mention` or to an orchestrator that speaks to all of them.
 It also draws who directs whom, keeps standing goals as missions, and shows what
 each agent changed as a diff you can comment on and send back to the agent,
 and adds up what the work cost. Over ssh it shows the agents on your other
-machines in the same Fleet, inbox and cost totals ([Remote agents](#remote-agents),
-[docs/REMOTE.md](docs/REMOTE.md)).
+machines in the same Fleet, inbox and cost totals, and answers their requests
+from here ([Remote agents](#remote-agents), [docs/REMOTE.md](docs/REMOTE.md)).
 
 Den is Linux software. It reads `/proc` and `~/.claude/sessions`, brings
 terminals to the front through Hyprland, and starts new ones through
@@ -910,17 +910,20 @@ the hosts. Each host has a **policy** in `~/.config/den/remotes.toml`
 | Policy | What the host sends, and what you can do |
 | --- | --- |
 | `observe` (default) | Metadata only: status, names, role and task (not with `labels = false`), repository name and branch, context, tokens by model. You see the agents, get notified, and see the cost. |
-| `approve`, `full` | Not yet: this version applies `observe` to every host, whatever is set. |
+| `approve` | Plus the body of a waiting permission, plan or question. You answer it in the inbox with `Ctrl+Y`, `Ctrl+N` and `/always`. |
+| `full` | Today the same as `approve`; recent activity and Review of a remote agent's diff are not part of this version. |
 
 What runs where: Den starts one system `ssh` per host while it runs, and on the
 host that session runs `den remote serve --proto 1`, which exits when the
-session does. There is no daemon, no network listener and no socket on the host.
-Den uses your `~/.ssh/config` and keys, stores no secret, runs every
+session does. There is no daemon and no network listener; under `approve` and
+`full` it also listens on a Unix socket on the host, only while a Den is
+attached. Den uses your `~/.ssh/config` and keys, stores no secret, runs every
 connection with `BatchMode=yes` and `StrictHostKeyChecking=yes`, forwards
 nothing, and never answers an ssh prompt, so you run `ssh <target>` once by
 hand. Den never installs itself on a host without your `Ctrl+Y` on the plan in
 its inbox, and never installs hooks there: run `den install-hooks` on the
-host.
+host. A permission it relays fails open: if the link drops or anything is
+doubtful, the terminal on the host asks, as if Den were not running.
 
 An unreachable host is one row, "devbox · offline since 14:02 · 3 agents (last
 known)", its agents dimmed and never counted as working or needing you. A
@@ -928,8 +931,7 @@ silent link is noticed in 45 to 60 seconds. `den list -json` carries a `Host`
 field (and `Stale` when the link is down), `den events -json` a `host` field,
 and `[on]` commands get `DEN_HOST`.
 
-Limits today: you answer a remote agent's requests in the terminal on the
-host, and Den cannot message, close or review a remote agent; Linux hosts and Claude Code agents only (no macOS, no Codex);
+Limits today: Den cannot message, close or review a remote agent; Linux hosts and Claude Code agents only (no macOS, no Codex);
 Den cannot spawn agents on a host, missions cannot use remote agents, and the
 orchestrator lists them but cannot message or close them; `Enter` and `/open`
 cannot raise a terminal on another machine, they print `ssh -t <target>`;
@@ -957,6 +959,9 @@ there, without its colours; Den's own colours are not affected.
 
 ### Other safety changes, for local agents too
 
+- **The inbox lists flags that change a call.** A Bash call with
+  `dangerouslyDisableSandbox`, an Edit with `replace_all`, a MultiEdit's edits
+  and the like are shown on the request, not hidden behind the command.
 - **Den's socket.** With `XDG_RUNTIME_DIR` unset, `den.sock` is now
   `den-<uid>/den.sock` under `$TMPDIR`, a directory only you may use, checked at
   each use; it used to be `/tmp/den-<uid>.sock`. Every connection to it, in
@@ -1057,6 +1062,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `reviews.json` | Review comments |
 | `colors.json` | the colour of each session |
 | `remote/<label>.json` | per remote host: its state, the agents it last reported (metadata only) and where its event stream was read up to; readable only by you |
+| `remote/controller` | a random id that tells a host which Den is attached (an identity marker, not a secret) |
 | `attachments/` | images pasted from the clipboard |
 
 Templates you save go to `~/.config/den/templates.json`, and the remote hosts
@@ -1137,14 +1143,15 @@ What Den does that is its own:
 - **The agent badge:** a name, critter, role and task for each session.
 - **One Fleet across your machines,** over plain ssh with no daemon and no
   listener: agents on other hosts, their requests and their cost beside the
-  local ones, metadata only by default. Read-only in this release. (Herdr
-  also connects machines.)
+  local ones, metadata only by default; per host you can let Den answer their
+  permissions. (Herdr and agent-deck also connect machines.)
 
 Where the others go further: Herdr keeps agents running when you close the
 client or lose SSH. Den restores conversations, the tree and missions after a
 restart with one question, but it does not keep processes alive. Herdr also
-works across several machines with full control of the panes there, where Den's
-remote hosts are read-only for now; it supports many agent CLIs and runs on
+works across several machines with full control of the panes there, where Den
+shows remote agents and answers their requests but never types into their
+terminals; it supports many agent CLIs and runs on
 macOS and Windows. OpenRig gives agent teams persistent roles,
 addresses and a work queue, and runs Claude Code and Codex side by side.
 
