@@ -16,7 +16,7 @@ import (
 )
 
 // clockTicks is USER_HZ, the unit of a process's start time in
-// /proc/<pid>/stat: 100 on every Linux architecture Den builds for.
+// /proc/<pid>/stat: 100 on every Linux architecture that Den builds for.
 const clockTicks = 100
 
 // Hold opens the target's pid as a pidfd, then checks through /proc that

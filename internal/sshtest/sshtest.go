@@ -196,7 +196,7 @@ func (l *Lab) Cmd(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 // StrictOptions are the options Den adds to every background connection
-// (design §3.2), without ConnectTimeout so a test can choose its own.
+// (remote.SSH's options), without ConnectTimeout so a test can choose its own.
 func StrictOptions() []string {
 	return []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
 		"-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes"}

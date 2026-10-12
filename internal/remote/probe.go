@@ -21,7 +21,7 @@ type Probe struct {
 	ClaudePath    string
 	ClaudeVersion string // claude --version, when it answered within 5 s
 	Hooks         bool   // Claude Code's settings.json on the host runs den hook
-	RuntimeDir    bool   // XDG_RUNTIME_DIR is set there (slice 2 needs it)
+	RuntimeDir    bool   // XDG_RUNTIME_DIR is set there (approve needs it)
 }
 
 // probeScript is the fixed remote command of the checks. It only reads:

@@ -19,8 +19,8 @@ type Policy string
 
 const (
 	Observe Policy = "observe" // metadata only
-	Approve Policy = "approve" // plus the body of a held permission, plan or question (slice 2)
-	Full    Policy = "full"    // plus Tail, titles, cwd and diffs (slice 4)
+	Approve Policy = "approve" // plus the body of a held permission, plan or question
+	Full    Policy = "full"    // plus Tail, titles, cwd and diffs (remote Review)
 )
 
 // rank orders policies by how much they let through; 0 is unknown.

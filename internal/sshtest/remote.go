@@ -26,7 +26,8 @@ type Remote struct {
 	ConfigHome string // remote XDG_CONFIG_HOME
 	RuntimeDir string // remote XDG_RUNTIME_DIR, mode 0700
 	Socket     string // remote DEN_SOCKET (the local-to-remote Den socket)
-	// RemoteSock is where slice 2's den-remote.sock would live.
+	// RemoteSock is where den-remote.sock, for answering held requests, would
+	// live.
 	RemoteSock string
 	// KnownHosts is the client's known_hosts file for this host.
 	KnownHosts string
