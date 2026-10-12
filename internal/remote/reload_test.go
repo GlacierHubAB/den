@@ -2,6 +2,9 @@ package remote_test
 
 import (
 	"bytes"
+	"context"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,4 +110,62 @@ func TestRaisedPolicyWaitsForConnect(t *testing.T) {
 		return s.State == remote.Live && s.Applied == remote.Full && s.Pending == ""
 	})
 	g.wait("full content", 10*time.Second, func() bool { a := g.m.Agents(); return len(a) == 1 && a[0].Title == "SECRET-title" })
+}
+
+// remotes.toml pointing a host somewhere else is a raise: the link to the
+// old target ends at once, nothing dials the new one through the watch or a
+// Reconnect, and Connect, the human's /remote connect, dials it.
+func TestNewTargetWaitsForConnect(t *testing.T) {
+	g := newRig(t)
+	g.l.Local.WriteRemotes(g.l.RemotesTOML("approve"))
+	var mu sync.Mutex
+	var dialed []string
+	g.opts = func(o *remote.Options) {
+		o.Reload, o.Watch = remote.Load, 50*time.Millisecond
+		ssh := remote.SSHDialer(remote.DefaultSSH())
+		o.Dial = func(ctx context.Context, h remote.Host) (*remote.Conn, error) {
+			mu.Lock()
+			dialed = append(dialed, h.Target)
+			mu.Unlock()
+			return ssh(ctx, h)
+		}
+	}
+	dials := func(target string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := 0
+		for _, d := range dialed {
+			if d == target {
+				n++
+			}
+		}
+		return n
+	}
+	g.start()
+	g.live()
+
+	g.l.Local.WriteRemotes(strings.Replace(g.l.RemotesTOML("approve"), `target = "b"`, `target = "elsewhere"`, 1))
+	pending := "remotes.toml points b at elsewhere; /remote connect b to apply"
+	g.wait("the old link dropped and the change noted", 5*time.Second, func() bool {
+		s := g.status()
+		return s.State != remote.Live && s.State != remote.Connecting && s.Pending == pending
+	})
+	before := dials("b")
+	g.m.Reconnect("b")
+	time.Sleep(time.Second)
+	if n := dials("elsewhere"); n > 0 {
+		t.Fatalf("the new target was dialed %d times without /remote connect", n)
+	}
+	if n := dials("b"); n > before {
+		t.Errorf("the old target was dialed again after the file left it")
+	}
+	if s := g.status(); s.State == remote.Live || s.Target != "b" {
+		t.Errorf("status = %+v", s)
+	}
+
+	g.m.Connect("b")
+	g.wait("the new target dialed after /remote connect", 5*time.Second, func() bool { return dials("elsewhere") > 0 })
+	if s := g.status(); s.Pending != "" || s.Target != "elsewhere" {
+		t.Errorf("after Connect: %+v", s)
+	}
 }

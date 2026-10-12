@@ -116,14 +116,16 @@ type Options struct {
 	Now         func() time.Time
 
 	// Reload reads remotes.toml again (Den passes Load). What lowers trust
-	// in a host (a lower policy, labels off, another target or den_path,
-	// which go under the lower of the two policies) then applies before
-	// each connection, on Reconnect and, with Watch, within Watch of the
-	// file changing: the host is shown under it at once and its session
+	// in a host (a lower policy, labels off) then applies before each
+	// connection, on Reconnect and, with Watch, within Watch of the file
+	// changing: the host is shown under it at once and its session
 	// restarts, so a lowered policy never waits for a restart of Den. A
-	// raise only applies on Connect, the human's /remote connect, or when
-	// Den starts: anything that can write the file could ask for one.
-	// Until then the host's status says it is Pending. Adding, removing or
+	// raise (a higher policy, labels on, another target or den_path, which
+	// could point the host at any machine) only applies on Connect, the
+	// human's /remote connect, or when Den starts: anything that can write
+	// the file could ask for one. Until then the host's status says it is
+	// Pending, and a host whose target or den_path changed has its link
+	// ended and makes no other. Adding, removing or
 	// disabling a host still takes a restart. Nil keeps the Config
 	// NewManager was given.
 	Reload func() (Config, error)
@@ -267,6 +269,7 @@ type Manager struct {
 
 type hostState struct {
 	host      Host // as remotes.toml says now (Options.Reload)
+	held      bool // remotes.toml names another target or den_path: no connection until Connect
 	restart   chan struct{}
 	status    HostStatus
 	known     Known
@@ -360,24 +363,37 @@ func (m *Manager) reload(raise string) {
 			continue // removed or disabled: that takes a restart
 		}
 		old, asked := st.host, want
-		pending := ""
+		pending, held := "", false
 		if h.Label != raise {
+			// Another target or den_path could point the host at any
+			// machine: a raise too. The old link ends at once, and no
+			// new one is made until the human says so.
 			want.Policy, want.Labels = Min(old.Policy, asked.Policy), old.Labels && asked.Labels
-			switch up := asked.Labels && !want.Labels; {
-			case asked.Policy.rank() > want.Policy.rank() && up:
-				pending = fmt.Sprintf("remotes.toml asks for %s and labels on; /remote connect %s to apply", asked.Policy, h.Label)
-			case asked.Policy.rank() > want.Policy.rank():
-				pending = fmt.Sprintf("remotes.toml asks for %s; /remote connect %s to apply", asked.Policy, h.Label)
-			case up:
-				pending = fmt.Sprintf("remotes.toml turns labels on; /remote connect %s to apply", h.Label)
+			want.Target, want.DenPath = old.Target, old.DenPath
+			var asks []string
+			if asked.Policy.rank() > want.Policy.rank() {
+				asks = append(asks, "asks for "+string(asked.Policy))
+			}
+			if asked.Labels && !want.Labels {
+				asks = append(asks, "turns labels on")
+			}
+			if asked.Target != old.Target {
+				asks, held = append(asks, "points "+h.Label+" at "+sanitize.Label(asked.Target, 80)), true
+			}
+			if asked.DenPath != old.DenPath {
+				asks, held = append(asks, "sets "+h.Label+"'s den_path to "+sanitize.Label(asked.DenPath, 80)), true
+			}
+			if len(asks) > 0 {
+				pending = "remotes.toml " + strings.Join(asks, " and ") + "; /remote connect " + h.Label + " to apply"
 			}
 		}
-		changed := want.Policy != old.Policy || want.Labels != old.Labels || want.Target != old.Target || want.DenPath != old.DenPath
+		changed := want.Policy != old.Policy || want.Labels != old.Labels || want.Target != old.Target || want.DenPath != old.DenPath || held != st.held
 		if !changed && pending == st.status.Pending {
 			continue
 		}
 		st.status.Pending = pending
 		if changed {
+			st.held = held
 			st.host = want
 			st.status.Policy, st.status.Target = want.Policy, want.Target
 			select {
@@ -395,6 +411,20 @@ func (m *Manager) reload(raise string) {
 	for _, u := range ups {
 		m.send(u)
 	}
+}
+
+// isHeld says remotes.toml names another target or den_path for the host
+// than the one the human connected: nothing connects until Connect.
+func (m *Manager) isHeld(label string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].held
+}
+
+func (m *Manager) pending(label string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state[label].status.Pending
 }
 
 // hostNow is h as remotes.toml says now.
@@ -605,6 +635,15 @@ func (m *Manager) loop(h Host) {
 		select {
 		case <-st.restart: // the session this asked to end is over
 		default:
+		}
+		if m.isHeld(h.Label) {
+			m.setState(h, Offline, m.pending(h.Label))
+			select {
+			case <-m.ctx.Done():
+				return
+			case <-st.reconnect: // Connect lifts it; Reconnect finds it held still
+			}
+			continue
 		}
 		h = m.hostNow(h.Label)
 		// A host taken offline for an unread backlog waits for the reader.
