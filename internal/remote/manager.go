@@ -1162,6 +1162,9 @@ func cleanEvent(ev events.Event, host string) (events.Event, bool) {
 	ev.Session = l(ev.Session)
 	ev.Agent = badge.Name(ev.Session)
 	ev.Request, ev.Tool, ev.Error, ev.Reason = l(ev.Request), l(ev.Tool), l(ev.Error), l(ev.Reason)
+	if !ToolName(ev.Tool) {
+		ev.Tool = "" // not a tool name Claude Code uses: shown nowhere
+	}
 	ev.Host = host
 	return ev, true
 }

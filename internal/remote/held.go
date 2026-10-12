@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
-	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // heldSet is the held requests one session with a host has offered: each
@@ -121,7 +120,7 @@ func (s *heldSet) check(hm Held, configured, applied Policy) string {
 		return "a held request with a malformed id"
 	case !isSessionID(hm.Session):
 		return "a held request whose session id is not a UUID"
-	case !plainField(hm.Tool):
+	case !ToolName(hm.Tool):
 		return "a held request with a malformed tool"
 	case !checkBody(hm.Tool, hm.Body):
 		return "a held request whose body the policy does not allow"
@@ -233,10 +232,22 @@ func (s *heldSet) releaseAll() []*bridge.Request {
 	return out
 }
 
-// plainField is a session id or tool name as serve sends it: short, one
-// line, nothing sanitising would change.
-func plainField(s string) bool {
-	return s != "" && len(s) <= 80 && sanitize.Line(s) == s
+// ToolName reports whether s is a tool name as Claude Code names its
+// tools, MCP ones included ("Bash", "mcp__github__create_issue"): 1 to 80
+// letters, digits and _ . : -. A host's tool name is shown in the inbox
+// and in notification summaries, so nothing else, markup least of all.
+func ToolName(s string) bool {
+	if s == "" || len(s) > 80 {
+		return false
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '.', c == ':', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // isSessionID reports whether s is a Claude Code session id: a UUID in its

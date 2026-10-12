@@ -12,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -111,8 +112,10 @@ func (m *Model) attendItem(sid string, it *inbox.Item) tea.Cmd {
 		}
 		m.att.noted[sid] = it.ID
 		what = needsWhat(it.Kind)
-		if it.Tool != "" && it.Kind == inbox.Permission && hostOf(sid) != "" {
-			// A remote request carries the tool's name only (observe).
+		if remote.ToolName(it.Tool) && it.Kind == inbox.Permission && hostOf(sid) != "" {
+			// A remote request carries the tool's name only (observe). Only
+			// a name in Claude Code's charset goes in the summary, which
+			// some notification servers read as markup too.
 			what += " (" + it.Tool + ")"
 		}
 	case inbox.Done:

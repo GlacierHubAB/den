@@ -772,3 +772,16 @@ func TestAgesNeverNegativeOrAbsurd(t *testing.T) {
 		t.Error("a local agent's age changed")
 	}
 }
+
+// A host's tool name goes into a notification summary only when it is a
+// tool name as Claude Code names its tools: markup a notification server
+// might read there never does.
+func TestRemoteToolNameInSummaryIsAToolName(t *testing.T) {
+	m, _, sent := remoteModel(t)
+	ev := events.New(events.NeedsYou, dupSession)
+	ev.Request, ev.Tool, ev.Host = "permission", `<span size="1">x</span>`, "devbox"
+	runAll(m.remoteEvent(ev))
+	if len(*sent) != 1 || (*sent)[0] != "Mossy Lemur on devbox needs your permission" {
+		t.Errorf("notifications = %q", *sent)
+	}
+}

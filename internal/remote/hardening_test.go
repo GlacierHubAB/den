@@ -234,3 +234,33 @@ func TestHeldRequestOutlastsQuickSnapshots(t *testing.T) {
 		t.Errorf("refused before parkGrace: decisions %+v, flags %q", ds, state(m).Flags)
 	}
 }
+
+// A host's tool name must be one as Claude Code names its tools: a held
+// request with markup or anything else for a tool is refused and flagged,
+// and an event's such tool name is dropped.
+func TestHostToolNamesAreToolNames(t *testing.T) {
+	list := Snapshot{Type: TypeSnapshot, RemoteNow: time.Now(), Agents: []fleet.Meta{{Session: sidA, Status: "idle"}}}
+	ev := events.New(events.NeedsYou, sidA)
+	ev.Request, ev.Tool = "permission", `<span size="1">x</span>`
+	held := heldFor(strings.Repeat("a", 32), sidA, "ls")
+	held.Tool = "<b>Bash</b>"
+	mcp := heldFor(strings.Repeat("b", 32), sidA, "ls")
+	mcp.Tool, mcp.Body = "mcp__git-hub__list_issues", json.RawMessage(`{}`)
+	m, ups := hostileRun(t, list, Event{Type: TypeEvent, Cursor: events.Cursor{Ino: 1, Off: 10}, Event: ev}, held, mcp)
+	for _, u := range ups {
+		if u.Kind == HeldArrived && u.Request.Input.ToolName != "mcp__git-hub__list_issues" {
+			t.Errorf("a held request with tool %q arrived", u.Request.Input.ToolName)
+		}
+		if u.Kind == EventArrived && u.Event.Kind == events.NeedsYou && u.Event.Tool != "" {
+			t.Errorf("an event's tool %q kept", u.Event.Tool)
+		}
+	}
+	if !hasFlag(m, "a held request with a malformed tool") {
+		t.Errorf("flags %q", state(m).Flags)
+	}
+	for _, name := range []string{"Bash", "ExitPlanMode", "mcp__github__create_issue", "mcp__my-server__do.it"} {
+		if !ToolName(name) {
+			t.Errorf("%q refused", name)
+		}
+	}
+}
