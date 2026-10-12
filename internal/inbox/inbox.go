@@ -240,15 +240,19 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{})
 			return nil
 		}
-		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[agentKey(host, in.SessionID)][key] {
+		_, approvable := bridge.PlanApproval(in.ToolInput)
+		if key := allowKey(in.ToolName, in.ToolInput); key != "" && s.always[agentKey(host, in.SessionID)][key] && (in.ToolName != bridge.PlanTool || approvable) {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
 		it := s.add(&Item{Host: host, SessionID: in.SessionID, Tool: in.ToolName, req: r})
-		if in.ToolName == "ExitPlanMode" {
+		if in.ToolName == bridge.PlanTool {
 			it.Kind = Plan
 			it.Title = "Plan ready for review"
 			it.Body = append(planExcerpt(in.ToolInput), extraLines(in.ToolName, in.ToolInput)...)
+			if !approvable {
+				s.Release(it, CannotApprovePlan) // not held: the terminal is the only place to answer it
+			}
 		} else {
 			it.Kind = Permission
 			it.Title, it.Intent, it.Body = describeTool(in.ToolName, in.ToolInput)
@@ -569,10 +573,24 @@ func (s *Store) SetStatus(it *Item, status string, final bool) {
 	}
 }
 
+// CannotApprovePlan is why a plan Den cannot approve went back to its
+// terminal.
+const CannotApprovePlan = "Den cannot approve this plan: answer it in the terminal"
+
 // Answer resolves an answerable item. verb is "allow", "deny" or "always".
+// It reports whether the answer went to the hook; a plan whose call Den
+// cannot approve goes back to the terminal instead (CannotApprovePlan).
 func (s *Store) Answer(it *Item, verb string) bool {
 	if !it.Answerable() || it.DenAsks() || it.Kind == Question {
 		return false // Den's own questions are carried out by Den, an agent's question takes an answer
+	}
+	if it.Kind == Plan && verb != "deny" {
+		if _, ok := bridge.PlanApproval(it.req.Input.ToolInput); !ok {
+			// The hook could only answer with a bare allow, which Claude
+			// Code ignores: never say a plan was approved when it was not.
+			s.Release(it, CannotApprovePlan)
+			return false
+		}
 	}
 	switch verb {
 	case "allow":

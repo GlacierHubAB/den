@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -130,6 +132,59 @@ func TestHookBinaryAlwaysExitsZero(t *testing.T) {
 		out, err := cmd.Output()
 		if err != nil || len(out) != 0 {
 			t.Errorf("input %q: err %v, stdout %q", in, err, out)
+		}
+	}
+}
+
+// Claude Code 2.1.289 keeps its plan dialog open on a bare allow for
+// ExitPlanMode: the approval must carry the call's own input as
+// updatedInput. A deny keeps its message.
+func TestPermissionOutputForPlans(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "inbox", "testdata", "claude-2.1.289", "permission-exitplanmode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var in bridge.HookInput
+	if err := json.Unmarshal(raw, &in); err != nil {
+		t.Fatal(err)
+	}
+	var cfg config.Config
+	var got struct {
+		HookSpecificOutput struct {
+			HookEventName string `json:"hookEventName"`
+			Decision      struct {
+				Behavior     string          `json:"behavior"`
+				Message      *string         `json:"message"`
+				UpdatedInput json.RawMessage `json:"updatedInput"`
+			} `json:"decision"`
+		} `json:"hookSpecificOutput"`
+	}
+	out := permissionOutput(in, bridge.Decision{Behavior: "allow"}, cfg)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("allow = %s: %v", out, err)
+	}
+	d := got.HookSpecificOutput.Decision
+	if got.HookSpecificOutput.HookEventName != "PermissionRequest" || d.Behavior != "allow" || d.Message != nil {
+		t.Errorf("allow = %s", out)
+	}
+	var want, have any
+	json.Unmarshal(in.ToolInput, &want)
+	json.Unmarshal(d.UpdatedInput, &have)
+	if !reflect.DeepEqual(want, have) {
+		t.Errorf("updatedInput = %s, want the call's input %s", d.UpdatedInput, in.ToolInput)
+	}
+
+	deny := string(permissionOutput(in, bridge.Decision{Behavior: "deny", Message: "Denied from den by the user."}, cfg))
+	if deny != `{"hookSpecificOutput":{"decision":{"behavior":"deny","message":"Denied from den by the user."},"hookEventName":"PermissionRequest"}}`+"\n" {
+		t.Errorf("deny = %s", deny)
+	}
+
+	// A call Den cannot echo is left to the terminal, never a bare allow.
+	for name, input := range map[string]string{"no plan": `{"planFilePath":"/work/p.md"}`, "not an object": `"x"`, "none": ``} {
+		bad := in
+		bad.ToolInput = json.RawMessage(input)
+		if out := permissionOutput(bad, bridge.Decision{Behavior: "allow"}, cfg); out != nil {
+			t.Errorf("%s: printed %s", name, out)
 		}
 	}
 }
