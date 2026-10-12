@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLookupMainAndWorktree(t *testing.T) {
@@ -29,5 +30,22 @@ func TestLookupMainAndWorktree(t *testing.T) {
 	}
 	if _, ok := Lookup(t.TempDir()); ok {
 		t.Error("expected no repo")
+	}
+}
+
+// A relative folder has no git info, and the walk ends: filepath.Dir maps
+// ".." to "." and "." to ".", which looped forever before.
+func TestLookupRelativeEnds(t *testing.T) {
+	for _, dir := range []string{"..", "../..", ".", "a/b", "./x/.."} {
+		done := make(chan bool, 1)
+		go func() { _, ok := Lookup(dir); done <- ok }()
+		select {
+		case ok := <-done:
+			if ok {
+				t.Errorf("Lookup(%q) found git info", dir)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("Lookup(%q) does not end", dir)
+		}
 	}
 }
