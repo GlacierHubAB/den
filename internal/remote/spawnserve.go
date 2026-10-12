@@ -22,6 +22,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/gitsafe"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // serve's half of remote spawn (docs/REMOTE.md). A spawn starts Claude Code
@@ -42,6 +43,14 @@ import (
 // MinClaudeSpawn is the oldest Claude Code a host may start agents with:
 // the first known to take --session-id with --name and --worktree.
 var MinClaudeSpawn = "2.1.289"
+
+// testedTmux is the oldest tmux remote spawn was tested on; older ones
+// work as far as is known, with a warning.
+const testedTmux = "3.4"
+
+// plainPath is a den path tmux may run with no shell in sight: an older tmux
+// that ran the command through one would still read nothing in it.
+var plainPath = regexp.MustCompile(`^/[A-Za-z0-9/._+-]+$`)
 
 // minTmux is the oldest tmux whose new-session takes -e and runs a command
 // of several arguments without a shell.
@@ -211,7 +220,7 @@ func tmuxEnv() []string {
 			"DEN_CONFIG", "DEN_TMUX_SERVER", "DEN_SSHTEST", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "NO_PROXY", "no_proxy":
 			return true
 		}
-		for _, p := range []string{"LC_", "XDG_", "ANTHROPIC_", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+		for _, p := range []string{"LC_", "XDG_RUNTIME_DIR", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "ANTHROPIC_", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
 			if strings.HasPrefix(k, p) {
 				return true
 			}
@@ -351,7 +360,7 @@ func (hs *hostSpawn) resolve(ctx context.Context, c SpawnCmd) (spawnPlan, string
 	case cap.Veto != "":
 		return p, "", cap.Veto
 	case hs.claude == "":
-		return p, "", "claude is not installed on this host"
+		return p, "", "claude not found on this host (looked in PATH, ~/.local/bin, /usr/local/bin and /usr/bin)"
 	case cap.Claude == "" || versionLess(cap.Claude, MinClaudeSpawn):
 		v := cap.Claude
 		if v == "" {
@@ -362,6 +371,11 @@ func (hs *hostSpawn) resolve(ctx context.Context, c SpawnCmd) (spawnPlan, string
 		return p, "no_tmux", "no usable tmux on this host: " + cap.NoTmux
 	case hs.den == "" || !filepath.IsAbs(hs.den):
 		return p, "", "serve cannot tell where its own den binary is"
+	case !plainPath.MatchString(hs.den):
+		return p, "", "den's path on this host holds characters a shell would read; install den under a plain path such as ~/.local/bin/den"
+	}
+	if versionLess(strings.TrimRightFunc(cap.Tmux, func(r rune) bool { return r >= 'a' && r <= 'z' }), testedTmux) {
+		p.warn = fmt.Sprintf("tmux %s on this host is older than tested (%s)", cap.Tmux, testedTmux)
 	}
 	if c.Worktree != "" {
 		if why := worktreeFree(ctx, dir, c.Worktree); why != "" {
@@ -389,7 +403,7 @@ func (hs *hostSpawn) resolve(ctx context.Context, c SpawnCmd) (spawnPlan, string
 	}
 	if !spawn.Trusted(dir) {
 		p.untr = true
-		p.warn = "Claude Code has not been told to trust this folder here; it asks in the agent's window first"
+		p.warn = strings.TrimPrefix(p.warn+"; Claude Code has not been told to trust this folder here; it asks in the agent's window first", "; ")
 	}
 	return p, "", ""
 }
@@ -535,13 +549,17 @@ func (hs *hostSpawn) start(ctx context.Context, p spawnPlan) Result {
 		undo()
 		return Result{Error: "could not record the spawn"}
 	}
-	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// Once begun, the start runs to its end whatever happens to Den's link:
+	// a tmux client killed halfway could leave a session it reports failed.
+	tctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	var stderr bytes.Buffer
-	cmd := hs.tmux(tctx, "new-session", "-d", "-s", c.TmuxName, "-c", p.dir, "-x", "200", "-y", "50",
+	var stdout bytes.Buffer
+	cmd := hs.tmux(tctx, "new-session", "-d", "-P", "-F", "#{session_name}", "-s", c.TmuxName, "-c", p.dir, "-x", "200", "-y", "50",
 		"-e", "DEN_PEER="+c.Peer, "-e", "DEN_SPAWN="+c.SessionID, "-e", "DEN_SPAWN_DIR="+stage,
 		"--", hs.den, "remote", "agent", c.SessionID)
 	cmd.Stderr = &limitWriter{w: &stderr, n: 4 << 10}
+	cmd.Stdout = &limitWriter{w: &stdout, n: 4 << 10}
 	if err := cmd.Run(); err != nil {
 		undo()
 		hs.ledgerDrop(c.SessionID)
@@ -551,6 +569,14 @@ func (hs *hostSpawn) start(ctx context.Context, p spawnPlan) Result {
 		return Result{Error: "tmux could not start the session: " + sanitize.Label(lastLines(stderr.String(), 1), 120)}
 	}
 	hs.ledgerUpdate(c.SessionID, func(e *spawnEntry) { e.Started = true })
+	if got := strings.TrimSpace(stdout.String()); got != c.TmuxName {
+		// This tmux changed the name: Den could never find the session
+		// again by it. End it by the name tmux gave, if that is safe to name.
+		if tmuxRe.MatchString(got) {
+			hs.tmux(tctx, "kill-session", "-t", "="+got).Run()
+		}
+		return Result{Error: "tmux named the session otherwise than asked; it was ended"}
+	}
 	if err := hs.tmux(tctx, "set-option", "-t", "="+c.TmuxName+":", "@den_spawn", c.SessionID).Run(); err != nil {
 		// Untagged, Den would never attach to or clean it up: end it.
 		hs.tmux(tctx, "kill-session", "-t", "="+c.TmuxName).Run()
@@ -563,6 +589,9 @@ func (hs *hostSpawn) start(ctx context.Context, p spawnPlan) Result {
 		if ss, err := hs.sessions(); err == nil {
 			for _, s := range ss {
 				if s.SessionID == c.SessionID && s.Alive {
+					if loggedOut(ctx, c.SessionID) {
+						r.Warning = strings.TrimPrefix(r.Warning+"; Claude Code is not logged in on this host: open the agent's window and log in", "; ")
+					}
 					return r
 				}
 			}
@@ -586,6 +615,35 @@ func (hs *hostSpawn) start(ctx context.Context, p spawnPlan) Result {
 	}
 	r.OK, r.Error, r.Code = false, why, "no_session"
 	return r
+}
+
+// loggedOut watches a newly registered session's transcript for a few
+// seconds: logged out, Claude Code starts as usual and its first turn fails
+// at once with an authentication error. Any other first entry, or none,
+// says nothing either way.
+func loggedOut(ctx context.Context, sid string) bool {
+	for i := 0; i < 15; i++ {
+		if p := transcript.Path(sid); p != "" {
+			raw, _ := os.ReadFile(p)
+			for _, line := range bytes.Split(raw, []byte("\n")) {
+				var e struct {
+					Type     string `json:"type"`
+					APIError bool   `json:"isApiErrorMessage"`
+					Error    string `json:"error"`
+				}
+				if json.Unmarshal(line, &e) != nil || e.Type != "assistant" {
+					continue
+				}
+				return e.APIError && e.Error == "authentication_failed"
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return false
 }
 
 // cleanup ends a leftover: a tmux session Den started (tagged with this

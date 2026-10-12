@@ -71,6 +71,7 @@ const (
 	EventArrived                   // Event, already appended to the local events.jsonl
 	HeldArrived                    // Request: a held permission, plan or question to put in the inbox
 	HeldReleased                   // Request: no longer answerable (its Why says why)
+	SpawnNotice                    // Note: what became of a spawn whose outcome was not known
 )
 
 // Update is one change, sent on Manager.Updates.
@@ -84,6 +85,7 @@ type Update struct {
 	// Its Host is the connection's label and its Reply goes back down that
 	// connection, only while it is live. Never queued behind a coalesce.
 	Request *bridge.Request
+	Note    string // SpawnNotice
 }
 
 // Conn is one running session with `den remote serve`.
@@ -120,6 +122,9 @@ type Options struct {
 	SendWait    time.Duration // how long Send waits for the host's result; default 10 s
 	CloseWait   time.Duration // how long Close waits for it; default 15 s
 	DiffWait    time.Duration // how long Diff waits for it; default 30 s
+	CheckWait   time.Duration // how long a spawn's check waits for it; default 30 s
+	SpawnWait   time.Duration // how long a spawn waits for it; default the host's 45 s plus 20 s
+	SSH         *SSH          // runs ssh for attach windows; default DefaultSSH
 	Now         func() time.Time
 }
 
@@ -181,6 +186,12 @@ func (o *Options) defaults() {
 	if o.DiffWait == 0 {
 		o.DiffWait = defaultDiffWait
 	}
+	if o.CheckWait == 0 {
+		o.CheckWait = 30 * time.Second
+	}
+	if o.SpawnWait == 0 {
+		o.SpawnWait = defaultSpawnWait() + 20*time.Second
+	}
 	if o.Now == nil {
 		o.Now = time.Now
 	}
@@ -238,6 +249,7 @@ func SSHDialer(s SSH) Dialer {
 // views what changed. It never installs or changes anything on a host.
 type Manager struct {
 	o       Options
+	ssh     SSH
 	hosts   []Host
 	updates chan Update
 
@@ -262,9 +274,11 @@ type hostState struct {
 	status    HostStatus
 	known     Known
 	reconnect chan struct{}
-	link      *link        // the live session's way to carry actions, nil without one
-	gate      *gate        // which of its events Den takes; used by its session only
-	answered  *answeredIDs // held ids answered on any of the host's sessions
+	link      *link                    // the live session's way to carry actions, nil without one
+	gate      *gate                    // which of its events Den takes; used by its session only
+	answered  *answeredIDs             // held ids answered on any of the host's sessions
+	spawned   []Spawned                // Den's tmux sessions there, from the last snapshot
+	pending   map[string]*pendingSpawn // spawns Den asked for, not in the fleet yet
 }
 
 // NewManager prepares sessions for cfg's enabled hosts, starting from what
@@ -272,7 +286,11 @@ type hostState struct {
 // connects.
 func NewManager(cfg Config, o Options) *Manager {
 	o.defaults()
-	m := &Manager{o: o, hosts: cfg.Enabled(), updates: make(chan Update), state: map[string]*hostState{},
+	ssh := DefaultSSH()
+	if o.SSH != nil {
+		ssh = *o.SSH
+	}
+	m := &Manager{o: o, ssh: ssh, hosts: cfg.Enabled(), updates: make(chan Update), state: map[string]*hostState{},
 		backlog: map[string]int{}, qsig: make(chan struct{}, 1), qdone: make(chan struct{})}
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	go m.dispatch()
@@ -361,6 +379,11 @@ func (m *Manager) agentsLocked(h Host) []fleet.Agent {
 		meta, _ = recheck(meta, h, st.known.Policy)
 		a := fleet.FromMeta(meta, h.Label, st.known.Received, m.o.Prices)
 		a.HostState, a.Stale = string(st.status.State), st.status.State != Live && st.status.State != AttachedElsewhere
+		a.Tmux = st.tmuxOf(a.Session.SessionID)
+		out = append(out, a)
+	}
+	for _, a := range st.pendingAgents(h.Label) {
+		a.Stale = st.status.State != Live && st.status.State != AttachedElsewhere
 		out = append(out, a)
 	}
 	return out
@@ -707,6 +730,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			m.mu.Unlock()
 			live = true
 			g.begin(in.at)
+			for _, n := range m.reconcile(h, hm.Spawns) {
+				m.send(Update{Kind: SpawnNotice, Host: h.Label, Note: sanitize.Label(n, 300)})
+			}
 			if a := hm.Attached; a != nil {
 				// Another Den controls this host's held requests; ask again
 				// now and then, so this one takes over once it leaves.
@@ -728,6 +754,10 @@ func (m *Manager) session(h Host) (State, string, bool) {
 			m.mu.Lock()
 			st := m.state[h.Label]
 			st.known.Agents, st.known.Received, st.known.Heartbeat = agents, in.at, in.at
+			if len(sm.Spawned) > 0 && (applied.rank() < Approve.rank() || h.SpawnAllowed() != nil) {
+				sm.Spawned, overreach = nil, true
+			}
+			st.noteSpawned(sm.Spawned)
 			g.snapshot()
 			st.status.Agents, st.status.LastSeen = len(agents), in.at
 			if !sm.RemoteNow.IsZero() {

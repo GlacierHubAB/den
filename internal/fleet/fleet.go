@@ -110,6 +110,12 @@ type Agent struct {
 	// full policy. It is a path on another machine: Den shows it and never
 	// reads it.
 	RemoteCWD string `json:",omitempty"`
+	// Tmux is the tmux session on its host that Den started a remote agent
+	// in (`tmux -L den`), "" when Den did not start it there. Spawn says
+	// where a spawn Den asked for stands while the agent is not in the
+	// host's fleet yet: "starting", or why it is not known.
+	Tmux  string `json:",omitempty"`
+	Spawn string `json:",omitempty"`
 }
 
 // MarshalJSON adds StatusName, the status as a string, next to the integer

@@ -127,6 +127,10 @@ func nothingDone(verb string) string {
 		return "nothing was closed"
 	case "diff":
 		return "no diff was read"
+	case "spawn":
+		return "nothing was started"
+	case "cleanup":
+		return "nothing was cleaned up"
 	}
 	return "nothing was done"
 }

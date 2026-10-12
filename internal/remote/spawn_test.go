@@ -1,16 +1,21 @@
 package remote
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/sshtest"
 )
 
@@ -36,6 +41,10 @@ sid=""; name=""
 while [ $# -gt 0 ]; do case "$1" in --session-id) sid=$2; shift;; --name) name=$2; shift;; esac; shift; done
 now=$(date +%s)
 printf '{"pid":%d,"sessionId":"%s","cwd":"%s","startedAt":%s000,"status":"idle","statusUpdatedAt":%s000,"name":"%s","version":"2.1.289"}' $$ "$sid" "$PWD" "$now" "$now" "$name" > "$CLAUDE_CONFIG_DIR/sessions/$$.json"
+if [ -e "$HOME/loggedout" ]; then
+  d="$CLAUDE_CONFIG_DIR/projects/x"; mkdir -p "$d"
+  printf '{"type":"user","message":{"role":"user","content":"hi"}}\n{"type":"assistant","isApiErrorMessage":true,"error":"authentication_failed","message":{"content":[{"type":"text","text":"Not logged in"}]}}\n' > "$d/$sid.jsonl"
+fi
 exec sleep 300
 `
 
@@ -450,5 +459,247 @@ func (sv *served) drain() {
 		default:
 			return
 		}
+	}
+}
+
+// spawnManaged is a Manager attached to the in-process host, its spawn
+// notices collected.
+type spawnManaged struct {
+	m       *Manager
+	d       *pipeDialer
+	mu      sync.Mutex
+	notices []string
+}
+
+func (h *spawnHost) manage(t *testing.T, host Host, mod func(*ServeOptions)) *spawnManaged {
+	t.Helper()
+	d := &pipeDialer{opts: func() ServeOptions {
+		o := h.serveOptions()
+		o.Log = func(string) {}
+		no := false
+		o.Questions = &no
+		o.Owner = &OwnerSpawn{Spawn: true}
+		o.Executable = h.den
+		o.SpawnWait = 10 * time.Second
+		if mod != nil {
+			mod(&o)
+		}
+		return o
+	}}
+	ssh := SSH{Bin: "ssh"}
+	m := NewManager(Config{Hosts: []Host{host}}, Options{
+		Version: "v0.2.0", StateDir: h.stateDir, EventsPath: h.localEvts, Dial: d.dial, Controller: "ctl-local",
+		Backoff: 20 * time.Millisecond, MaxBackoff: 100 * time.Millisecond, Healthy: time.Second, SSH: &ssh, SpawnWait: 20 * time.Second,
+	})
+	g := &spawnManaged{m: m, d: d}
+	go func() {
+		for u := range m.Updates() {
+			if u.Kind == SpawnNotice {
+				g.mu.Lock()
+				g.notices = append(g.notices, u.Note)
+				g.mu.Unlock()
+			}
+		}
+	}()
+	m.Start()
+	t.Cleanup(m.Close)
+	if !sshtest.WaitFor(10*time.Second, func() bool { hs := m.Hosts(); return hs[0].State == Live && hs[0].SpawnCap != nil }) {
+		t.Fatalf("host = %+v", m.Hosts())
+	}
+	return g
+}
+
+func spawnHostEntry(mod func(*Host)) Host {
+	h := Host{Label: "b", Target: "b", Policy: Approve, Labels: true, Enabled: true, Spawn: SpawnTmux, SpawnDirs: []string{"~/src"}}
+	if mod != nil {
+		mod(&h)
+	}
+	return h
+}
+
+func TestManagerSpawnChecksThenStartsAndTheRowAppears(t *testing.T) {
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	g := h.manage(t, spawnHostEntry(nil), nil)
+	ctx := context.Background()
+	chk, err := g.m.Spawn(ctx, "b", SpawnRequest{Dir: dir, Peer: "API Worker", Check: true})
+	if err != nil || chk.Peer != "api-worker" || chk.Dir != filepath.Join(h.home, "src", "api") || chk.Critter == "" || chk.Route != "tmux" || !chk.Untrusted {
+		t.Fatalf("check = %+v, %v", chk, err)
+	}
+	if out, err := h.tmux("list-sessions"); err == nil && strings.TrimSpace(out) != "" {
+		t.Fatalf("a check started tmux: %s", out)
+	}
+	res, err := g.m.Spawn(ctx, "b", SpawnRequest{SessionID: chk.SessionID, Peer: chk.Peer, Dir: dir, Brief: "Fix it.", Model: "haiku"})
+	if err != nil || res.SessionID != chk.SessionID || res.TmuxName != TmuxName("api-worker", chk.SessionID) {
+		t.Fatalf("spawn = %+v, %v", res, err)
+	}
+	var row fleet.Agent
+	if !sshtest.WaitFor(10*time.Second, func() bool {
+		for _, a := range g.m.Agents() {
+			if a.Session.SessionID == res.SessionID && a.Spawn == "" && a.Tmux == res.TmuxName {
+				row = a
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("no row for the agent: %+v", g.m.Agents())
+	}
+	if row.Name != res.Critter || row.Host != "b" {
+		t.Errorf("row = %+v", row)
+	}
+	argv, err := g.m.AttachCommand("b", res.TmuxName)
+	want := "'" + h.den + "' remote attach " + res.TmuxName
+	if err != nil || argv[0] != "ssh" || argv[len(argv)-1] != want || argv[len(argv)-2] != "b" || argv[len(argv)-3] != "--" || argv[len(argv)-4] != "-t" ||
+		!slices.Contains(argv, "BatchMode=yes") || !slices.Contains(argv, "StrictHostKeyChecking=yes") {
+		t.Errorf("attach = %q %v", argv, err)
+	}
+	if _, err := g.m.AttachCommand("b", "den-x;rm-12345678"); err == nil {
+		t.Error("attach took a bad name")
+	}
+}
+
+func TestManagerSpawnRefusesLocally(t *testing.T) {
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	g := h.manage(t, spawnHostEntry(func(x *Host) { x.MaxAgents = 1 }), nil)
+	ctx := context.Background()
+	for name, req := range map[string]SpawnRequest{
+		"orchestrator": {Dir: dir, Brief: "x", Orchestrator: true},
+		"outside":      {Dir: "~/elsewhere", Brief: "x"},
+		"dotdot":       {Dir: "~/src/../x", Brief: "x"},
+		"brief":        {Dir: dir, Brief: "\x1b[2J"},
+		"model":        {Dir: dir, Brief: "x", Model: "gpt"},
+		"terminal":     {Dir: dir, Brief: "x", Route: "terminal"},
+	} {
+		if _, err := g.m.Spawn(ctx, "b", req); err == nil {
+			t.Errorf("%s: started", name)
+		} else if name == "orchestrator" && err.Error() != ProtectedNote("b") {
+			t.Errorf("protected: %v", err)
+		}
+	}
+	if _, err := g.m.Spawn(ctx, "b", SpawnRequest{Dir: dir, Brief: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.m.Spawn(ctx, "b", SpawnRequest{Dir: dir, Brief: "two"}); err == nil || !strings.Contains(err.Error(), "max_agents") {
+		t.Errorf("max_agents: %v", err)
+	}
+	if out, _ := h.tmux("list-sessions", "-F", "#{session_name}"); len(strings.Fields(out)) != 1 {
+		t.Errorf("sessions: %q", out)
+	}
+}
+
+func TestManagerSpawnOnAnOldHostSaysUpdate(t *testing.T) {
+	h := newSpawnHost(t)
+	g := &spawnManaged{}
+	d := &pipeDialer{opts: h.serveOptions}
+	d.setServe(func(ctx context.Context, in io.Reader, out io.Writer) error {
+		// A den from before spawn: it ignores the request's spawn key.
+		lr := newLineReader(in, MaxLine)
+		lr.next()
+		writeMsg(out, Hello{Type: TypeHello, Proto: Proto, Den: "v0.3.0", Policy: Approve, Labels: true})
+		writeMsg(out, Snapshot{Type: TypeSnapshot, Agents: []fleet.Meta{}})
+		<-ctx.Done()
+		return nil
+	})
+	g.m = NewManager(Config{Hosts: []Host{spawnHostEntry(nil)}}, Options{StateDir: h.stateDir, EventsPath: h.localEvts, Dial: d.dial, Controller: "c"})
+	go func() {
+		for range g.m.Updates() {
+		}
+	}()
+	g.m.Start()
+	t.Cleanup(g.m.Close)
+	sshtest.WaitFor(5*time.Second, func() bool { return g.m.Hosts()[0].State == Live })
+	_, err := g.m.Spawn(context.Background(), "b", SpawnRequest{Dir: "~/src", Brief: "x"})
+	if err == nil || !strings.Contains(err.Error(), "update it") {
+		t.Errorf("old host: %v", err)
+	}
+}
+
+func TestManagerSpawnDropMidSpawnIsNeverRepeated(t *testing.T) {
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	g := h.manage(t, spawnHostEntry(nil), func(o *ServeOptions) { o.SnapshotEvery = 300 * time.Millisecond })
+	// The link dies right after the spawn goes out, before its result.
+	var once sync.Once
+	g.d.mu.Lock()
+	kills := g.d.kills
+	g.d.mu.Unlock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := g.m.Spawn(context.Background(), "b", SpawnRequest{Dir: dir, Brief: "once only"})
+		done <- err
+	}()
+	sshtest.WaitFor(5*time.Second, func() bool {
+		out, _ := h.tmux("list-sessions", "-F", "#{session_name}")
+		if strings.TrimSpace(out) != "" {
+			once.Do(func() { kills[len(kills)-1]() })
+			return true
+		}
+		return false
+	})
+	if err := <-done; err == nil || !strings.Contains(err.Error(), "not known") {
+		t.Fatalf("spawn across a drop: %v", err)
+	}
+	var row fleet.Agent
+	sshtest.WaitFor(15*time.Second, func() bool {
+		for _, a := range g.m.Agents() {
+			if a.Host == "b" && a.Spawn == "" && a.Tmux != "" {
+				row = a
+				return true
+			}
+		}
+		return false
+	})
+	if row.Tmux == "" {
+		t.Fatalf("after the reconnect the agent was not found: %+v %q", g.m.Agents(), g.notices)
+	}
+	if n := len(h.claudeRuns(t)); n != 1 {
+		t.Errorf("claude ran %d times", n)
+	}
+	if out, _ := h.tmux("list-sessions", "-F", "#{session_name}"); len(strings.Fields(out)) != 1 {
+		t.Errorf("sessions after the drop: %q", out)
+	}
+}
+
+func TestManagerSpawnNeverStartedIsSaidOnce(t *testing.T) {
+	h := newSpawnHost(t)
+	g := h.manage(t, spawnHostEntry(nil), nil)
+	sid := NewSessionID()
+	g.m.setPending("b", SpawnCmd{SessionID: sid, Peer: "api", TmuxName: TmuxName("api", sid)}, "unknown")
+	g.m.Reconnect("b")
+	g.d.mu.Lock()
+	g.d.kills[len(g.d.kills)-1]()
+	g.d.mu.Unlock()
+	if !sshtest.WaitFor(10*time.Second, func() bool { g.mu.Lock(); defer g.mu.Unlock(); return len(g.notices) == 1 }) {
+		t.Fatalf("notices = %q", g.notices)
+	}
+	if !strings.Contains(g.notices[0], "was not started") {
+		t.Errorf("notice = %q", g.notices[0])
+	}
+	for _, a := range g.m.Agents() {
+		if a.Session.SessionID == sid {
+			t.Errorf("the row stayed: %+v", a)
+		}
+	}
+	if out, err := h.tmux("list-sessions"); err == nil && strings.TrimSpace(out) != "" {
+		t.Errorf("a spawn was repeated: %s", out)
+	}
+}
+
+// claudeRuns are the claude stand-in's runs so far.
+func (h *spawnHost) claudeRuns(t *testing.T) []string {
+	files, _ := filepath.Glob(filepath.Join(h.log, "argv.*"))
+	return files
+}
+
+func TestSpawnSaysWhenClaudeIsNotLoggedIn(t *testing.T) {
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	os.WriteFile(filepath.Join(h.home, "loggedout"), nil, 0o644)
+	sv, _ := h.serve(t, Approve, spawnPolicy(), nil)
+	r := sv.spawn(spawnCmd("n1", "api", dir, "hello"))
+	if !r.OK || !strings.Contains(r.Warning, "not logged in") {
+		t.Errorf("result = %+v", r)
 	}
 }
