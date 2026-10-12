@@ -1126,7 +1126,10 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Cleanup {
 		return m.decideCleanup(it, verb)
 	}
-	m.store.Answer(it, verb)
+	if !m.store.Answer(it, verb) {
+		m.refresh()
+		return m.say(m.nameFor(it.SessionID)+": "+it.Resolved, true)
+	}
 	m.refresh()
 	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
 }
