@@ -34,28 +34,50 @@ func TestSendViaDen(t *testing.T) {
 			if r.Event == bridge.SendEvent && r.WantsReply() {
 				got <- in
 			}
-			if strings.Contains(in.Text, "refuse") {
+			switch {
+			case strings.Contains(in.Text, "refuse"):
 				r.Reply(bridge.Decision{Behavior: "deny", Message: "devbox is offline; nothing was sent"})
+				continue
+			case strings.Contains(in.Text, "decline"):
+				r.Reply(bridge.Decision{Behavior: bridge.SendDeclined, Message: "declined in Den; nothing was sent"})
+				continue
+			case strings.Contains(in.Text, "session ended"):
+				r.Reply(bridge.Decision{Behavior: bridge.SendCancelled, Message: "the request was cancelled: the session on devbox ended; nothing was sent"})
+				continue
+			case strings.Contains(in.Text, "empty"):
+				r.Reply(bridge.Decision{})
 				continue
 			}
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "delivered to Mossy Lemur on devbox"})
 		}
 	}()
-	out, err := sendViaDen(sock, "mossy@devbox", "rebase `id` $(id)")
-	if err != nil || out != "delivered to Mossy Lemur on devbox" {
-		t.Fatalf("out %q err %v", out, err)
+	out, code, err := sendViaDen(sock, "mossy@devbox", "rebase `id` $(id)")
+	if err != nil || code != 0 || out != "delivered to Mossy Lemur on devbox" {
+		t.Fatalf("out %q code %d err %v", out, code, err)
 	}
 	if in := <-got; in.Who != "mossy@devbox" || in.Text != "rebase `id` $(id)" || !strings.Contains(in.AskedBy, "den send") {
 		t.Errorf("request = %+v", in)
 	}
-	if _, err := sendViaDen(sock, "mossy@devbox", "refuse"); err == nil || !strings.Contains(err.Error(), "offline; nothing was sent") {
-		t.Errorf("denied: %v", err)
+	for text, want := range map[string]struct {
+		code int
+		msg  string
+	}{
+		"refuse":        {sendNotSent, "den: devbox is offline; nothing was sent"},
+		"decline":       {sendDeclined, "den: declined in Den; nothing was sent"},
+		"session ended": {sendCancelled, "den: the request was cancelled: the session on devbox ended; nothing was sent"},
+		"empty":         {sendCancelled, "den: Den ended the request before you answered; nothing was sent"},
+	} {
+		_, code, err := sendViaDen(sock, "mossy@devbox", text)
+		<-got
+		if err == nil || code != want.code || err.Error() != want.msg {
+			t.Errorf("%s: exit %d, %v", text, code, err)
+		}
 	}
 }
 
 func TestSendViaDenWithoutDen(t *testing.T) {
-	_, err := sendViaDen(filepath.Join(t.TempDir(), "none.sock"), "mossy@devbox", "hi")
-	if err == nil || !strings.Contains(err.Error(), "Den is not attached to devbox") {
-		t.Errorf("err = %v", err)
+	_, code, err := sendViaDen(filepath.Join(t.TempDir(), "none.sock"), "mossy@devbox", "hi")
+	if err == nil || code != sendNoDen || !strings.Contains(err.Error(), "Den is not attached to devbox") {
+		t.Errorf("exit %d, err = %v", code, err)
 	}
 }

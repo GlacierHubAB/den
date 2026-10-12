@@ -84,6 +84,7 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		return add(&Item{Kind: Done, State: Resolved, Title: "Turn finished" + on + "."})
 	case events.SessionEnd:
 		delete(s.streak, agentKey(host, sid))
+		s.cancelMessages(host, sid)
 		s.resolveSession(host, sid, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
@@ -104,7 +105,7 @@ func (s *Store) ReleaseHost(host, why string) bool {
 		if it.Kind == Message {
 			it.Resolved = "the link to " + host + " was lost; nothing was sent"
 			if it.req != nil {
-				it.req.Reply(bridge.Decision{Behavior: "deny", Message: it.Resolved})
+				it.req.Reply(bridge.Decision{Behavior: bridge.SendCancelled, Message: "the request was cancelled: " + it.Resolved})
 			}
 		}
 		changed = true

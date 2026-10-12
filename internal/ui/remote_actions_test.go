@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/closer"
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/remote"
@@ -624,7 +625,7 @@ func TestSendQuestionDeclinedGivenUpOrLinkLost(t *testing.T) {
 	r, _ := ask()
 	mm, _ := m.answer("deny")
 	*m = mm.(Model)
-	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "declined in Den; nothing was sent") || len(feed.sent) != 0 {
+	if d, ok := r.Decided(); !ok || d.Behavior != bridge.SendDeclined || d.Message != "declined in Den; nothing was sent" || len(feed.sent) != 0 {
 		t.Errorf("^N: %+v, sent %q", d, feed.sent)
 	}
 	// The den send that asked gave up: ^Y sends nothing.
@@ -635,11 +636,37 @@ func TestSendQuestionDeclinedGivenUpOrLinkLost(t *testing.T) {
 	if len(feed.sent) != 0 || it.State != inbox.Resolved || !strings.Contains(it.Resolved, "gave up") {
 		t.Errorf("after hang-up: sent %q, item %v %q", feed.sent, it.State, it.Resolved)
 	}
+	// The agent's turns come and go while it waits: the question stays.
+	// When its session ends, it is cancelled, and the command hears why,
+	// never an empty answer.
+	r, it = ask()
+	event := func(kind string) {
+		runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.EventArrived, Host: "devbox", Event: events.Event{Kind: kind, Host: "devbox", Session: it.SessionID, Time: time.Now()}}, ok: true}))
+	}
+	for _, kind := range []string{events.TurnStart, events.Done, events.TurnStart, events.TurnFailed} {
+		if event(kind); !it.Answerable() || decided(r) {
+			t.Fatalf("after %s the question ended: %v %q", kind, it.State, it.Resolved)
+		}
+	}
+	event(events.SessionEnd)
+	if d, ok := r.Decided(); !ok || d.Behavior != bridge.SendCancelled || d.Message != "the request was cancelled: the session on devbox ended; nothing was sent" || it.Answerable() {
+		t.Errorf("session ended: %+v %v, item %v %q", d, ok, it.State, it.Resolved)
+	}
+	// After a new turn, ^Y still sends it.
+	r, it = ask()
+	event(events.TurnStart)
+	mm, cmd := m.answer("allow")
+	*m = mm.(Model)
+	m.finishAskedSend(firstMsg(t, cmd, func(x tea.Msg) bool { _, ok := x.(askedSentMsg); return ok }).(askedSentMsg))
+	if d, ok := r.Decided(); len(feed.sent) != 1 || !ok || d.Behavior != "allow" {
+		t.Errorf("^Y after a new turn: sent %q, answered %+v", feed.sent, d)
+	}
+	feed.sent = nil
 	// The link drops while it waits: released and refused.
 	r, it = ask()
 	feed.setState("devbox", remote.Offline)
 	m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HostChanged, Host: "devbox"}, ok: true})
-	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "nothing was sent") || it.Answerable() {
+	if d, ok := r.Decided(); !ok || d.Behavior != bridge.SendCancelled || d.Message != "the request was cancelled: the link to devbox was lost; nothing was sent" || it.Answerable() {
 		t.Errorf("link lost: %+v, item %v", d, it.State)
 	}
 	if len(feed.sent) != 0 {

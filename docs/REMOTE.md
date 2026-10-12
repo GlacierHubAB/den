@@ -290,11 +290,11 @@ On an `approve` host:
 - **Messaging.** `@Name@devbox text` messages an agent on a host (`Tab`
   completes to "Name @devbox"). `@Name@local` means the one on this machine
   when both have that name, and a bare `@Name` prefers agents on this machine.
-  From a script, `den send name@devbox "text"` goes through the running Den; it
-  exits 1 when Den is not attached, and `--wait` is not supported for remote
-  agents. `den send name@host` needs an exact name, a peer name or a unique
-  prefix on that host; otherwise it lists the agents the prefix fits, or,
-  when none does, the agents on that host. The text goes down
+  From a script, `den send name@devbox "text"` goes through the running Den
+  (exit codes below), and `--wait` is not supported for remote agents.
+  `den send name@host` needs an exact name, a peer name or a unique prefix on
+  that host; otherwise it lists the agents the prefix fits, or, when none
+  does, the agents on that host. The text goes down
   the ssh session to the agent's inbox on the host, never in an argument list.
   Typed in Den (`@Name@devbox text`), sending needs no confirmation, as for
   local agents. `den send name@devbox` can be run by any process on this
@@ -302,11 +302,22 @@ On an `approve` host:
   message to Mossy Lemur on devbox?", with the host, the agent, who ran the
   command and the full text; `Ctrl+Y` sends it, `Ctrl+N` does not, and there is
   no "always". The command waits for that answer (up to 30 minutes) and says
-  what happened; if it gave up meanwhile, `Ctrl+Y` sends nothing, and a lost
-  link declines it. A message too large once
+  what happened; if it gave up meanwhile, `Ctrl+Y` sends nothing. The question
+  stays open while the agent works through its turns; it is cancelled when
+  the agent's session ends before you answer ("the request was cancelled: the
+  session on devbox ended; nothing was sent") or the link to the host is lost. A message too large once
   encoded says so, and the host refuses a messaging socket that is a symlink
   or not the agent's own. A host that is offline gets nothing: "devbox is
-  offline; nothing was sent".
+  offline; nothing was sent". `den send name@host` exits with:
+
+  | Code | Means |
+  | --- | --- |
+  | 0 | sent |
+  | 1 | bad usage, no agent matches, or Den refused or failed to send it |
+  | 4 | you declined it in the inbox (`Ctrl+N`) |
+  | 5 | the question was cancelled before you answered: the agent's session ended, or the link was lost |
+  | 6 | no Den is running on this machine |
+  | 7 | no answer from Den: whether it was sent is not known |
 - **Closing.** `Ctrl+X`, `/close`, `/close Name@devbox` and `/close idle`
   include remote agents. The question names the host: "Close Mossy Lemur on
   devbox?", "on devbox · SIGTERM there, no window", and "! uncommitted changes

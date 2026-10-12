@@ -341,6 +341,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		s.resolveSession(host, in.SessionID, "turn finished", func(it *Item) bool { return it.Kind != Done })
 		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
 	case "SessionEnd":
+		s.cancelMessages(host, in.SessionID)
 		s.resolveSession(host, in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
@@ -878,13 +879,34 @@ func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 	return false
 }
 
+// resolveSession resolves what match picks of an agent's open items. A den
+// send question is never among them: whether a message may reach the agent
+// stays a question through its turns, until the human answers, the asker
+// gives up, the link is lost or the session ends (cancelMessages).
 func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && it.Kind != Message && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
 			it.State, it.Resolved = Resolved, why
+		}
+	}
+}
+
+// cancelMessages ends the den send questions for an agent whose session
+// ended; the den send that asked hears why, never an empty answer.
+func (s *Store) cancelMessages(host, sessionID string) {
+	where := "here"
+	if host != "" {
+		where = "on " + host
+	}
+	for _, it := range s.items {
+		if it.is(host, sessionID) && it.State != Resolved && it.Kind == Message {
+			it.State, it.Resolved = Resolved, "cancelled: the session "+where+" ended; nothing was sent"
+			if it.req != nil {
+				it.req.Reply(bridge.Decision{Behavior: bridge.SendCancelled, Message: "the request was " + it.Resolved})
+			}
 		}
 	}
 }
