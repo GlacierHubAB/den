@@ -730,3 +730,23 @@ func (sv *served) end() {
 		sv.t.Fatal("serve did not exit")
 	}
 }
+
+// Den's tmux sessions are listed under any locale: with none that is UTF-8,
+// as in an ssh session without LANG, tmux prints a tab in -F output as "_".
+func TestSpawnIsListedWhateverTheLocale(t *testing.T) {
+	t.Setenv("LC_ALL", "C")
+	h := newSpawnHost(t)
+	dir := h.project("api")
+	sv, _ := h.serve(t, Approve, spawnPolicy(), func(o *ServeOptions) { o.SnapshotEvery = 300 * time.Millisecond })
+	c := spawnCmd("l1", "api", dir, "fix it")
+	if r := sv.spawn(c); !r.OK {
+		t.Fatalf("spawn: %+v", r)
+	}
+	var snap Snapshot
+	if !sshtest.WaitFor(10*time.Second, func() bool {
+		json.Unmarshal(sv.next(TypeSnapshot), &snap)
+		return len(snap.Spawned) > 0
+	}) || snap.Spawned[0].TmuxName != c.TmuxName || !snap.Spawned[0].Live {
+		t.Errorf("spawned = %+v", snap.Spawned)
+	}
+}

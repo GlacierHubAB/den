@@ -263,7 +263,10 @@ func (hs *hostSpawn) spawned(ctx context.Context) []spawnedSession {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := hs.tmux(ctx, "list-panes", "-a", "-F", "#{session_name}\t#{@den_spawn}\t#{pane_dead}").Output()
+	// Spaces, not tabs: a tmux client with no UTF-8 locale prints a tab
+	// as "_". None of the three fields Den accepts holds a space, and a
+	// line of any other number of fields is not Den's.
+	out, err := hs.tmux(ctx, "list-panes", "-a", "-F", "#{session_name} #{@den_spawn} #{pane_dead}").Output()
 	if err != nil {
 		return nil // no server yet
 	}
@@ -278,7 +281,7 @@ func (hs *hostSpawn) spawned(ctx context.Context) []spawnedSession {
 	seen := map[string]int{}
 	var res []spawnedSession
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Split(line, "\t")
+		f := strings.Split(line, " ")
 		if len(f) != 3 || CheckSessionID(f[1]) != nil || CheckTmuxName(f[0], f[1]) != nil {
 			continue
 		}
