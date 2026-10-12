@@ -12,6 +12,18 @@ import (
 	"testing"
 )
 
+// realEnv is the environment as the test process started, before Local.Apply
+// swaps HOME and friends for scratch values: go build must keep using the real
+// module and build caches, not fill a scratch home.
+var realEnv = os.Environ()
+
+// realHome is the human's home as the test process started, captured before
+// Local.Apply can change HOME. Isolation checks compare against it.
+var realHome, _ = os.UserHomeDir()
+
+// RealHome is the real home directory that no test may touch.
+func RealHome() string { return realHome }
+
 var (
 	buildOnce sync.Once
 	buildPath string
@@ -51,7 +63,7 @@ func buildDen() (string, error) {
 	}
 	out := filepath.Join(dir, "den")
 	cmd := exec.Command("go", "build", "-tags", "sshtest", "-o", out, "-ldflags", "-X main.version=sshtest-"+strconv.Itoa(os.Getpid()), "./cmd/den")
-	cmd.Dir = root
+	cmd.Dir, cmd.Env = root, realEnv
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("go build ./cmd/den: %v\n%s", err, b)
 	}
@@ -102,4 +114,44 @@ func moduleRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// BuildDenAt builds cmd/den as it was at a git revision (from the module's
+// own repository), for a before/after comparison. The build is removed with
+// the test. It skips the test when git or the revision is unavailable.
+func BuildDenAt(t testing.TB, rev string) string {
+	t.Helper()
+	root, err := moduleRoot()
+	if err != nil {
+		t.Fatalf("sshtest: %v", err)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("sshtest: git not found")
+	}
+	if err := exec.Command("git", "-C", root, "cat-file", "-e", rev+"^{commit}").Run(); err != nil {
+		t.Skipf("sshtest: revision %s is not in this clone (shallow checkout?)", rev)
+	}
+	base := filepath.Join("/tmp", fmt.Sprintf("den-test-%d", os.Getuid()))
+	dir, err := os.MkdirTemp(base, "sta")
+	if err != nil {
+		t.Fatalf("sshtest: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	src := filepath.Join(dir, "src")
+	os.MkdirAll(src, 0o755)
+	arch := exec.Command("sh", "-c", "git -C "+shq(root)+" archive "+shq(rev)+" | tar -x -C "+shq(src))
+	if out, err := arch.CombinedOutput(); err != nil {
+		t.Fatalf("sshtest: git archive %s: %v: %s", rev, err, out)
+	}
+	// Files go:embed needs but git does not track (the mods' build output).
+	if out, err := exec.Command("cp", "-rn", filepath.Join(root, "mods")+"/.", filepath.Join(src, "mods")).CombinedOutput(); err != nil {
+		t.Fatalf("sshtest: copying mods: %v: %s", err, out)
+	}
+	out := filepath.Join(dir, "den")
+	cmd := exec.Command("go", "build", "-o", out, "./cmd/den")
+	cmd.Dir, cmd.Env = src, realEnv
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("sshtest: building %s: %v\n%s", rev, err, b)
+	}
+	return out
 }

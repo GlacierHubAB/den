@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -39,7 +41,7 @@ type Remote struct {
 	flagCap  string
 	capOut   string
 	capIn    string
-	sessions []*Session
+	seed     *seedDir
 	keygen   string
 }
 
@@ -59,6 +61,7 @@ func newRemote(l *Lab, name, keygen, clientKey, sftp string) *Remote {
 	r.RemoteSock = filepath.Join(r.RuntimeDir, "den-remote.sock")
 	r.KnownHosts = filepath.Join(r.Dir, "known_hosts")
 	r.DenPath = filepath.Join(r.Home, ".local", "bin", "den")
+	r.seed = &seedDir{lab: l, claudeDir: r.ClaudeDir, runtimeDir: r.RuntimeDir}
 	r.hostKey = filepath.Join(r.Dir, "hk")
 	r.sshdConf = filepath.Join(r.Dir, "sshd_config")
 	r.sshdLog = filepath.Join(r.Dir, "sshd.log")
@@ -96,7 +99,6 @@ AllowTcpForwarding no
 AllowStreamLocalForwarding no
 X11Forwarding no
 PrintMotd no
-PrintLastLog no
 UseDNS no
 LogLevel INFO
 ForceCommand %s
@@ -125,6 +127,8 @@ PATH=%[7]s:/usr/local/bin:/usr/bin:/bin
 DEN_SSHTEST=%[8]s
 export HOME CLAUDE_CONFIG_DIR XDG_STATE_HOME XDG_CONFIG_HOME XDG_RUNTIME_DIR DEN_SOCKET PATH DEN_SSHTEST
 unset XDG_DATA_HOME XDG_CACHE_HOME DEN_CONFIG TMUX HYPRLAND_INSTANCE_SIGNATURE
+[ -f %[12]s ] && . %[12]s
+[ -e %[13]s ] && PATH=/usr/local/bin:/usr/bin:/bin
 cd "$HOME" || exit 1
 unset OLDPWD
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then exec sh; fi
@@ -134,7 +138,7 @@ if [ -e %[9]s ]; then
   read -r st < "$rc"; rm -f "$rc"; exit "$st"
 fi
 exec sh -c "$SSH_ORIGINAL_COMMAND"
-`, r.Home, r.ClaudeDir, r.StateHome, r.ConfigHome, r.RuntimeDir, r.Socket, r.lab.Bin, r.lab.Dir, r.flagCap, r.capIn, r.capOut)
+`, r.Home, r.ClaudeDir, r.StateHome, r.ConfigHome, r.RuntimeDir, r.Socket, r.lab.Bin, r.lab.Dir, r.flagCap, r.capIn, r.capOut, filepath.Join(r.Dir, "extra.env"), filepath.Join(r.Dir, "noden"))
 	must(r.lab.t, os.WriteFile(p, []byte(body), 0o755))
 	return p
 }
@@ -352,4 +356,78 @@ func (r *Remote) pidsOf(kind string) []int {
 		out = append(out, recorded(f)...)
 	}
 	return out
+}
+
+// SetEnv exports k=v in the environment of every remote command from now on
+// (for example DEN_TEST_REMOTE_NOW_OFFSET=10m to skew a test build's clock).
+func (r *Remote) SetEnv(k, v string) {
+	f, err := os.OpenFile(filepath.Join(r.Dir, "extra.env"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	must(r.lab.t, err)
+	defer f.Close()
+	fmt.Fprintf(f, "%s=%s; export %s\n", k, shq(v), k)
+}
+
+// WithoutDen makes den vanish from the host: the installed copy is deleted and
+// the test-built directory leaves the remote PATH, so `den` is not found.
+// Install tests start from here.
+func (r *Remote) WithoutDen() {
+	os.Remove(r.DenPath)
+	must(r.lab.t, os.WriteFile(filepath.Join(r.Dir, "noden"), nil, 0o600))
+}
+
+// Env is the remote environment as a full env list, for running a command on
+// the "remote" directly, without ssh.
+func (r *Remote) Env() []string {
+	return []string{"PATH=" + r.lab.Bin + ":/usr/local/bin:/usr/bin:/bin", "HOME=" + r.Home,
+		"CLAUDE_CONFIG_DIR=" + r.ClaudeDir, "XDG_STATE_HOME=" + r.StateHome, "XDG_CONFIG_HOME=" + r.ConfigHome,
+		"XDG_RUNTIME_DIR=" + r.RuntimeDir, "DEN_SOCKET=" + r.Socket, "DEN_SSHTEST=" + r.lab.Dir}
+}
+
+// HookLocal is Hook run directly on this machine in the remote's environment,
+// not through ssh: it works while the host is Down, to make events happen
+// "on the host" while the link is cut.
+func (r *Remote) HookLocal(event string, fields map[string]any) {
+	r.lab.t.Helper()
+	m := map[string]any{"session_id": SessionA, "hook_event_name": event, "cwd": "/home/user/proj"}
+	for k, v := range fields {
+		m[k] = v
+	}
+	b, _ := json.Marshal(m)
+	c := exec.Command(r.lab.Den, "hook")
+	c.Dir, c.Env, c.Stdin = r.Home, r.Env(), strings.NewReader(string(b))
+	if out, err := c.CombinedOutput(); err != nil {
+		r.lab.t.Fatalf("sshtest: den hook: %v: %s", err, out)
+	}
+}
+
+// Connections is how many times a private sshd was started for this host,
+// i.e. how many connection attempts reached the proxy (a refused host key
+// still counts: the key check happens after the connection is made).
+func (r *Remote) Connections() int {
+	files, _ := filepath.Glob(filepath.Join(r.lab.pids, "sshd-"+r.Label+".*"))
+	return len(files)
+}
+
+// Sessions lists the sessions seeded on this host so far.
+func (r *Remote) Sessions() []*Session { return r.seed.sessions }
+
+// Freeze stops this host's private sshd and everything under it (SIGSTOP):
+// the link stays open but carries no bytes, as when a network path goes
+// silent without a reset. The client only finds out through its keepalives.
+// Thaw continues them. Cleanup kills frozen processes too.
+func (r *Remote) Freeze() int { return r.signalSSHD(syscall.SIGSTOP) }
+
+// Thaw continues what Freeze stopped.
+func (r *Remote) Thaw() int { return r.signalSSHD(syscall.SIGCONT) }
+
+func (r *Remote) signalSSHD(sig syscall.Signal) int {
+	n := 0
+	files, _ := filepath.Glob(filepath.Join(r.lab.pids, "sshd-"+r.Label+".*"))
+	for _, f := range files {
+		for _, pid := range recorded(f) {
+			signalTree(pid, sig)
+			n++
+		}
+	}
+	return n
 }

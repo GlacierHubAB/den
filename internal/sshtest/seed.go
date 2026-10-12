@@ -43,15 +43,35 @@ type Session struct {
 	ID   string
 	PID  int
 	File string // ~/.claude/sessions/<pid>.json
-	r    *Remote
+	h    *seedDir
 	opts SessionOpts
 	proc *exec.Cmd
+}
+
+// seedDir is a fake ~/.claude that sessions are written into: a remote's or
+// the local side's.
+type seedDir struct {
+	lab        *Lab
+	claudeDir  string
+	runtimeDir string
+	sessions   []*Session
 }
 
 // SeedSession starts a dummy process and writes the session file, and when
 // asked a transcript and a badge store entry, into the remote's fake ~/.claude.
 func (r *Remote) SeedSession(o SessionOpts) *Session {
-	t := r.lab.t
+	r.lab.t.Helper()
+	return r.seed.add(o)
+}
+
+// SeedSession is Remote.SeedSession for the local side's fake ~/.claude.
+func (lo *Local) SeedSession(o SessionOpts) *Session {
+	lo.lab.t.Helper()
+	return lo.seed.add(o)
+}
+
+func (h *seedDir) add(o SessionOpts) *Session {
+	t := h.lab.t
 	t.Helper()
 	if o.ID == "" {
 		o.ID = SessionA
@@ -63,12 +83,12 @@ func (r *Remote) SeedSession(o SessionOpts) *Session {
 		o.Status = "idle"
 	}
 	cmd := exec.Command("sleep", "3600")
-	cmd.Env = append(os.Environ(), "DEN_SSHTEST="+r.lab.Dir)
+	cmd.Env = append(os.Environ(), "DEN_SSHTEST="+h.lab.Dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	must(t, cmd.Start())
-	s := &Session{ID: o.ID, PID: cmd.Process.Pid, r: r, opts: o, proc: cmd}
-	r.sessions = append(r.sessions, s)
-	s.File = filepath.Join(r.ClaudeDir, "sessions", fmt.Sprintf("%d.json", s.PID))
+	s := &Session{ID: o.ID, PID: cmd.Process.Pid, h: h, opts: o, proc: cmd}
+	h.sessions = append(h.sessions, s)
+	s.File = filepath.Join(h.claudeDir, "sessions", fmt.Sprintf("%d.json", s.PID))
 	s.writeFile(o.Status)
 
 	if o.Prompt != "" || o.Reply != "" || o.Command != "" || o.Title != "" {
@@ -86,12 +106,12 @@ func (s *Session) writeFile(status string) {
 		"pid": s.PID, "sessionId": s.ID, "cwd": s.opts.CWD, "startedAt": now - 60_000,
 		"version": "2.1.289", "kind": "interactive", "entrypoint": "cli", "name": s.opts.Name,
 		"status": status, "updatedAt": now, "statusUpdatedAt": now,
-		"messagingSocketPath": filepath.Join(s.r.RuntimeDir, fmt.Sprintf("msg-%d.sock", s.PID)),
+		"messagingSocketPath": filepath.Join(s.h.runtimeDir, fmt.Sprintf("msg-%d.sock", s.PID)),
 		"peerFeatures":        []string{},
 	})
 	tmp := s.File + ".tmp"
-	must(s.r.lab.t, os.WriteFile(tmp, b, 0o644))
-	must(s.r.lab.t, os.Rename(tmp, s.File)) // atomic, like Claude Code's writes
+	must(s.h.lab.t, os.WriteFile(tmp, b, 0o644))
+	must(s.h.lab.t, os.Rename(tmp, s.File)) // atomic, like Claude Code's writes
 }
 
 // SetStatus rewrites the session file with a new busy/idle status.
@@ -101,8 +121,8 @@ var nonAlnum = regexp.MustCompile(`[^A-Za-z0-9]`)
 
 func (s *Session) writeTranscript() {
 	o := s.opts
-	dir := filepath.Join(s.r.ClaudeDir, "projects", nonAlnum.ReplaceAllString(o.CWD, "-"))
-	must(s.r.lab.t, os.MkdirAll(dir, 0o755))
+	dir := filepath.Join(s.h.claudeDir, "projects", nonAlnum.ReplaceAllString(o.CWD, "-"))
+	must(s.h.lab.t, os.MkdirAll(dir, 0o755))
 	var b strings.Builder
 	line := func(v any) { j, _ := json.Marshal(v); b.Write(j); b.WriteByte('\n') }
 	if o.Prompt != "" {
@@ -123,12 +143,12 @@ func (s *Session) writeTranscript() {
 	if o.Title != "" {
 		line(map[string]any{"type": "ai-title", "aiTitle": o.Title, "sessionId": s.ID})
 	}
-	must(s.r.lab.t, os.WriteFile(filepath.Join(dir, s.ID+".jsonl"), []byte(b.String()), 0o644))
+	must(s.h.lab.t, os.WriteFile(filepath.Join(dir, s.ID+".jsonl"), []byte(b.String()), 0o644))
 }
 
 func (s *Session) writeBadge() {
-	dir := filepath.Join(s.r.ClaudeDir, "plugins", "store")
-	must(s.r.lab.t, os.MkdirAll(dir, 0o755))
+	dir := filepath.Join(s.h.claudeDir, "plugins", "store")
+	must(s.h.lab.t, os.MkdirAll(dir, 0o755))
 	p := filepath.Join(dir, "agent-badge_test.json")
 	store := map[string]any{}
 	if b, err := os.ReadFile(p); err == nil {
@@ -136,7 +156,7 @@ func (s *Session) writeBadge() {
 	}
 	store["badge:"+s.ID] = map[string]any{"role": s.opts.Role, "task": s.opts.Task, "history": []string{}}
 	b, _ := json.Marshal(store)
-	must(s.r.lab.t, os.WriteFile(p, b, 0o644))
+	must(s.h.lab.t, os.WriteFile(p, b, 0o644))
 }
 
 // SetBadge rewrites the badge store entry (use it to put hostile text in a role).
@@ -163,8 +183,8 @@ func (s *Session) Remove() {
 	os.Remove(s.File)
 }
 
-func (r *Remote) stopSessions() {
-	for _, s := range r.sessions {
+func (h *seedDir) stop() {
+	for _, s := range h.sessions {
 		s.Stop()
 	}
 }

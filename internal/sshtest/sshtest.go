@@ -78,7 +78,7 @@ func New(t *testing.T, labels ...string) *Lab {
 		labels = []string{"devbox"}
 	}
 	l := &Lab{t: t, Remotes: map[string]*Remote{}}
-	l.realHome, _ = os.UserHomeDir()
+	l.realHome = realHome
 	for _, p := range []struct {
 		dst  *string
 		name string
@@ -106,9 +106,21 @@ func New(t *testing.T, labels ...string) *Lab {
 	t.Cleanup(func() {
 		l.killAll()
 		for _, r := range l.Remotes {
-			r.stopSessions()
+			r.seed.stop()
 		}
-		os.RemoveAll(dir)
+		l.Local.seed.stop()
+		if _, err := os.Stat(filepath.Join(l.Local.Home, "go")); err == nil {
+			t.Errorf("sshtest: a go command ran with the scratch HOME and filled it with a module cache")
+			filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error { // read-only module files
+				if err == nil && fi.IsDir() {
+					os.Chmod(p, 0o700)
+				}
+				return nil
+			})
+		}
+		for i := 0; i < 10 && os.RemoveAll(dir) != nil; i++ { // a dying process may still be writing
+			time.Sleep(100 * time.Millisecond)
+		}
 	})
 
 	l.Den = BuildDen(t)
@@ -412,7 +424,10 @@ func startTime(pid int) string {
 }
 
 // killTree SIGKILLs pid and its descendants (found through /proc).
-func killTree(pid int) {
+func killTree(pid int) { signalTree(pid, syscall.SIGKILL) }
+
+// signalTree sends sig to pid and its descendants, children first.
+func signalTree(pid int, sig syscall.Signal) {
 	children := map[int][]int{}
 	entries, _ := os.ReadDir("/proc")
 	for _, e := range entries {
@@ -442,7 +457,7 @@ func killTree(pid int) {
 		for _, c := range children[p] {
 			kill(c)
 		}
-		syscall.Kill(p, syscall.SIGKILL)
+		syscall.Kill(p, sig)
 	}
 	kill(pid)
 }

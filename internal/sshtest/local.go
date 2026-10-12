@@ -12,7 +12,8 @@ import (
 // beside it), a private tmux socket name, and a notify-send stub that records
 // its arguments.
 type Local struct {
-	lab *Lab
+	lab  *Lab
+	seed *seedDir
 
 	Home       string
 	ClaudeDir  string
@@ -31,14 +32,20 @@ type Local struct {
 
 func newLocal(l *Lab) *Local {
 	t := l.t
-	d := filepath.Join(l.Dir, "local")
+	d := filepath.Join(l.Dir, "l")
 	lo := &Local{lab: l, Home: filepath.Join(d, "home")}
 	lo.ClaudeDir = filepath.Join(lo.Home, ".claude")
 	lo.StateHome = filepath.Join(lo.Home, ".local", "state")
 	lo.ConfigHome = filepath.Join(lo.Home, ".config")
-	lo.RuntimeDir = filepath.Join(lo.Home, "run")
+	// Short: ssh's ControlPath (<runtime>/den/ssh/<40 chars>, plus ssh's 17
+	// character temporary suffix) must stay under a Unix socket's 108 bytes.
+	lo.RuntimeDir = filepath.Join(l.Dir, "lr")
 	lo.Socket = filepath.Join(lo.RuntimeDir, "den.sock")
 	lo.Config = filepath.Join(lo.ConfigHome, "den", "config.toml")
+	lo.seed = &seedDir{lab: l, claudeDir: lo.ClaudeDir, runtimeDir: lo.RuntimeDir}
+	if n := len(lo.RuntimeDir) + len("/den/ssh/") + 40 + 17; n > 104 {
+		t.Fatalf("sshtest: the local ControlPath would be %d bytes, over the Unix socket limit", n)
+	}
 	lo.TmuxSocket = "dt" + filepath.Base(l.Dir)
 	lo.Stubs = filepath.Join(d, "stubs")
 	lo.NotifyLog = filepath.Join(d, "notify.log")
