@@ -763,11 +763,18 @@ func TestAdvCLISendThroughDen(t *testing.T) {
 	tm.WaitFor(30*time.Second, "3 agents")
 	delivered := func(in *inbox) bool { _, ok := in.text(700 * time.Millisecond); return ok }
 	// A send to an agent on a host is one inbox question: the command waits
-	// until the human presses ^Y (a request that just came up asks for it
-	// twice). A send that is refused before that, or goes to this machine,
-	// ends on its own, so ^Y is only pressed while the command still waits.
+	// until the human presses ^Y. Each send starts from the Fleet view, where
+	// ^Y opens the Inbox on the question (the view does not show it whole)
+	// and the next ^Y answers it; a request that just came up asks for it
+	// once more. A send that is refused before that, or goes to this
+	// machine, ends on its own, so ^Y is only pressed while it still waits.
 	run := func(want int, args ...string) string {
 		t.Helper()
+		tm.Keys("Escape")
+		time.Sleep(300 * time.Millisecond)
+		tm.Type("/fleet")
+		tm.Keys("Enter")
+		tm.WaitFor(15*time.Second, "┌─ Agents")
 		type res struct {
 			out  string
 			code int
