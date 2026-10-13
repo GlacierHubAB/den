@@ -82,8 +82,8 @@ var hostileCode = map[string]string{
 	"js": "`${", "python": `'''\`, "bash": `$("${`, "c": "/*", "perl": `s/\/`,
 }
 
-// TestHighlightLimits: chroma sees a block only when it is 8 KB or less,
-// and one frame colours at most 32 KB; the rest is drawn plain.
+// TestHighlightLimits: chroma sees a block only when it is 4 KB or less,
+// and one frame colours at most 16 KB; the rest is drawn plain.
 func TestHighlightLimits(t *testing.T) {
 	m := Model{st: newStyles(theme.Deepharness)}
 	block := func(lang, unit string, n int) string {
@@ -99,10 +99,21 @@ func TestHighlightLimits(t *testing.T) {
 			t.Errorf("%s: the block should still be drawn as code", lang)
 		}
 	}
-	// Five 7 KB blocks in one reply: four fit the frame's 32 KB.
+	// The cap is on the block's size: 4 KB is coloured, a byte more is not.
+	for _, c := range []struct {
+		n     int
+		lexed int64
+	}{{hlBlockMax, 1}, {hlBlockMax + 1, 0}} {
+		before := mdLexed.Load()
+		Model{st: m.st}.markdownLines(block("go", "y", c.n), 100)
+		if got := mdLexed.Load() - before; got != c.lexed {
+			t.Errorf("a %d byte block: lexed %d, want %d", c.n, got, c.lexed)
+		}
+	}
+	// Five 3.5 KB blocks in one reply: four fit the frame's 16 KB.
 	var reply []string
 	for i := range 5 {
-		reply = append(reply, block("go", "x := 1 // "+string(rune('a'+i))+"\n", 7<<10))
+		reply = append(reply, block("go", "x := 1 // "+string(rune('a'+i))+"\n", 3584))
 	}
 	before := mdLexed.Load()
 	m.markdownLines(strings.Join(reply, "\n\n"), 100)
@@ -177,7 +188,7 @@ func TestRemoteCodeIsNotLexed(t *testing.T) {
 		t.Error("a local agent's code should be coloured")
 	}
 	// Even a local tail of hostile blocks lexes no more than the frame's
-	// budget: eight of the twenty 4 KB blocks.
+	// budget: four of the twenty 4 KB blocks.
 	m.hl = newHLBudget()
 	local.Tail = tail
 	for i := range local.Tail {

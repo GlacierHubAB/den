@@ -407,12 +407,12 @@ func wrapPlain(spans []mdSpan, width int, hard bool) [][]mdSpan {
 }
 
 // Some chroma lexers are quadratic on hostile input (a Rust raw string
-// opener repeated takes seconds at 64 KB), and the view is drawn on every
-// key press. So a block is coloured only when it is small, the colouring
+// opener repeated takes seconds at 64 KB, about 45 ms at 4 KB), and the
+// view is drawn on every key press. So a block is coloured only when it is small, the colouring
 // in one frame is capped, and what is drawn is kept.
 const (
-	hlBlockMax  = 8 << 10  // the largest block coloured
-	hlFrameMax  = 32 << 10 // the code coloured in one frame
+	hlBlockMax  = 4 << 10  // the largest block coloured
+	hlFrameMax  = 16 << 10 // the code coloured in one frame
 	mdCacheMax  = 256      // rendered texts kept
 	mdCacheSize = 8 << 20  // and their total size
 )
