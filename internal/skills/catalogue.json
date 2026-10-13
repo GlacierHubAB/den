@@ -33,6 +33,14 @@
       "commit_date": "2026-10-09T11:56:49+01:00",
       "license": "MIT",
       "maintenance": "Latest commit 2026-10-09; 203 commits since 2026-08-01; not archived (gh api). Ships as a Claude Code plugin (.claude-plugin/plugin.json) of SKILL.md folders."
+    },
+    {
+      "id": "DietrichGebert/ponytail",
+      "url": "https://github.com/DietrichGebert/ponytail",
+      "commit": "2961b52fc1fe6a5a87c7a959a79512e5c2f3ffe5",
+      "commit_date": "2026-10-13T03:46:20+02:00",
+      "license": "MIT",
+      "maintenance": "Pinned at the v5.2.0 release commit (2026-10-13). The repository also ships a Claude Code plugin with hooks; Den takes only skills/ponytail/SKILL.md and the repository LICENSE."
     }
   ],
   "skills": [
@@ -256,6 +264,33 @@
           "source": "LICENSE",
           "sha256": "7abe19ec9bb73b36141b999b861d24ad855e808bafe0f81e84cce28556f6c297",
           "size": 20131
+        }
+      ]
+    },
+    {
+      "name": "ponytail",
+      "repo": "DietrichGebert/ponytail",
+      "commit": "2961b52fc1fe6a5a87c7a959a79512e5c2f3ffe5",
+      "path": "skills/ponytail",
+      "license": "MIT",
+      "license_source": "LICENSE",
+      "roles": [
+        "coding"
+      ],
+      "reason": "Keeps coding changes small: the least new code that fully solves the task, and a short reply that names what was skipped or left unchecked.",
+      "checks": "Vetted as pinned SKILL.md text only, never the repository's Claude Code plugin (.claude-plugin) or its hooks: Den installs SKILL.md and the repository LICENSE, nothing else. Read SKILL.md in full. Frontmatter has name, description, argument-hint and license only: no hooks/allowed-tools/context/agent/model keys, and no !`cmd`/```! injection. No curl/wget/network instructions, credential access, binaries or prompt injection found. Repo LICENSE is MIT. Den adds the repo's LICENSE as LICENSE in the installed folder, for attribution. Notes: persona text ('lazy senior developer'); stays on for the session until 'stop ponytail', with lite/full/ultra levels.",
+      "unverified": "",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c",
+          "size": 3492
+        },
+        {
+          "path": "LICENSE",
+          "source": "LICENSE",
+          "sha256": "fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab",
+          "size": 1071
         }
       ]
     }

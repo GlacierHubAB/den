@@ -469,6 +469,35 @@ The chat persists: every entry and card state is appended to
 The orchestrator resumes its previous session; if that fails, Den starts a fresh
 one and replays the last exchanges.
 
+### Guidance
+
+`guidance` under `[orchestrator]` gives the orchestrator text of yours on how
+to shape its answers. It is off unless you set it: `"i-have-adhd"` is the
+[i-have-adhd](https://github.com/ayghri/i-have-adhd) skill (v0.4.1, MIT),
+shipped inside Den with four edits so it never hides what waits on you, never
+answers for you, never counts as an approval and never trims where text came
+from (`internal/orch/guidance/i-have-adhd`). An absolute path names a file of
+your own instead. Den never fetches guidance over the network and never sends
+it to a host. It drops a leading frontmatter block and refuses, with a note,
+text over 8192 bytes after that, a file that does not read, is not yours, is
+writable by others, is a symlink, has other hard links or lies in Den's state
+folder, `/proc`, `/sys`, `/dev` or a kernel pseudo filesystem, and text with
+control, bidi or invisible characters.
+
+Nothing loads until you approve it. The first time, and whenever the text's
+SHA-256 changes, the inbox asks, showing the whole text and its hash; `Ctrl+Y`
+counts once you have read it to the end. Den then records that hash, and only
+that, in `~/.local/state/den/guidance.json`. Approved text goes into the
+orchestrator's prompt in a `<human_guidance>` block after Den's own rules,
+which it cannot relax or override. Den reads the key again every few seconds:
+turning it off, or text that fails its checks, takes it out of the prompt once
+the orchestrator is idle, and turning it on or changing it asks first and,
+once you approve, puts it in once the orchestrator is idle. A turn in progress
+is never cut short: the orchestrator resumes its session with the new prompt
+at your next message. Other keys leave the approval alone. A process running as your user can change the config, the
+file and the approval together, so Den's checks guard against mistakes and
+other users, not against your own processes.
+
 ### Dispatch cards
 
 When the orchestrator hands a brief to an agent, that agent's turn shows up in
@@ -659,7 +688,7 @@ The catalogue is `internal/skills/catalogue.json`, built into the binary. Every
 entry names a GitHub repository, a full commit SHA (never a branch), an
 allowed license, its role tags, a one-line reason, what was checked before it
 was admitted, and every file with its SHA-256. `den skills catalogue` prints it.
-It holds six skills from four repositories:
+It holds seven skills from five repositories:
 
 | Skill | Roles | Repository @ commit | License |
 | --- | --- | --- | --- |
@@ -669,12 +698,15 @@ It holds six skills from four repositories:
 | diagnosing-bugs | coding | mattpocock/skills @ 49dd158d1076 | MIT |
 | vulnerability-triage-brocards | security | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
 | property-based-testing | testing | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
+| ponytail | coding | DietrichGebert/ponytail @ 2961b52fc1fe | MIT |
 
 The writing, devops and research tags have no skills yet. Roles are free text
 ("coding agent", "ui designer", "sysadmin"), so Den matches them word by word
 to the tags coding, frontend, design, writing, testing, security, devops and
-research, and offers at most three skills; a role with no known word gets
-nothing. `den skills match "<role>"` shows what a role would be offered.
+research, and offers at most four skills; a role with no known word gets
+nothing. `den skills match "<role>"` shows what a role would be offered. A
+request that names skills (`skills` on `spawn_agent` or `propose_skills`) can
+also have a catalogue skill past those four, if its tags fit the role.
 
 **Two ways in.** `spawn_agent` takes a `role`: Den offers the matching skills
 for that agent only and waits for your answer before starting it. On `Ctrl+Y`
@@ -689,7 +721,7 @@ an agent with a role, or when you ask; a lead can pass a role to the agents it
 starts.
 
 **What Den checks at install.** It looks the skills up again in its own
-catalogue (a request can only narrow the role's matches), downloads each file
+catalogue (a request can only name skills whose tags fit the role), downloads each file
 from `raw.githubusercontent.com/<repo>/<commit>/…`, and refuses the skill if
 any file's size or SHA-256 differs from the catalogue, if any markdown file's
 frontmatter sets `hooks` or `allowed-tools`, if it runs a shell command when
@@ -1056,6 +1088,8 @@ set; `DEN_CONFIG` overrides the path):
 model = "sonnet"            # any claude --model value, or "off" for Claude Code's default
 name = "den-orchestrator"   # how the orchestrator session names itself to peers
 spawn = true                # may open terminals and start agents on the workspace you are on
+guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
+                            # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
 
 [inbox]
 history = 100               # finished turns kept as history
@@ -1127,6 +1161,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `skills/agents/` | skills installed for one agent only |
 | `overview.json` | the picked and pinned projects |
 | `reviews.json` | Review comments |
+| `guidance.json` | the SHA-256 of the orchestrator guidance you approved, nothing else |
 | `colors.json` | the colour of each session |
 | `remote/<label>.json` | per remote host: its state, the agents it last reported (metadata only) and where its event stream was read up to; readable only by you |
 | `remote/controller` | a random id that tells a host which Den is attached (an identity marker, not a secret) |

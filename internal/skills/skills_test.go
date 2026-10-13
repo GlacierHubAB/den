@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -258,10 +259,109 @@ func TestCodingRoleGetsDiagnosingBugsNotSystematicDebugging(t *testing.T) {
 		got = append(got, m.Name)
 	}
 	want := []string{"test-driven-development", "verification-before-completion", "diagnosing-bugs"}
+	if len(got) > len(want) {
+		got = got[:len(want)] // ponytail comes fourth (TestCodingRoleGetsFourInOrder)
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("coding agent → %v, want %v", got, want)
 	}
 	if _, ok := c.Skill("systematic-debugging"); ok {
 		t.Error("systematic-debugging yielded to diagnosing-bugs and must not ship")
+	}
+}
+
+// A role whose default offer the cap fills before ponytail can still be
+// offered it by name, since its tags fit; a skill whose tags do not fit is
+// still refused, and the default offers stay as they were.
+func TestPickTakesAFittingSkillPastTheCap(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := map[string][]string{
+		"fullstack developer": {"frontend-design", "test-driven-development", "verification-before-completion", "diagnosing-bugs"},
+		"frontend developer":  {"frontend-design", "test-driven-development", "verification-before-completion", "diagnosing-bugs"},
+		"test engineer":       {"test-driven-development", "verification-before-completion", "diagnosing-bugs", "property-based-testing"},
+		"security engineer":   {"test-driven-development", "verification-before-completion", "diagnosing-bugs", "vulnerability-triage-brocards"},
+		"backend developer":   {"test-driven-development", "verification-before-completion", "diagnosing-bugs", "ponytail"},
+	}
+	for role, want := range defaults {
+		var got []string
+		for _, m := range c.Match(role) {
+			got = append(got, m.Name)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s default offer → %v, want %v", role, got, want)
+		}
+		picked, err := c.Pick(role, []string{"ponytail"})
+		if err != nil || len(picked) != 1 || picked[0].Name != "ponytail" || !reflect.DeepEqual(picked[0].Matched, []string{"coding"}) {
+			t.Errorf("%s: Pick(ponytail) = %v, %v", role, picked, err)
+		}
+	}
+	if picked, err := c.Pick("fullstack developer", []string{"diagnosing-bugs", "ponytail"}); err != nil || len(picked) != 2 {
+		t.Errorf("fullstack developer: Pick(diagnosing-bugs, ponytail) = %v, %v", picked, err)
+	}
+	for role, skill := range map[string]string{
+		"fullstack developer": "vulnerability-triage-brocards",
+		"ui designer":         "ponytail",
+		"security auditor":    "ponytail",
+		"qa tester":           "frontend-design",
+	} {
+		if _, err := c.Pick(role, []string{skill}); err == nil || !strings.Contains(err.Error(), "does not fit the role") {
+			t.Errorf("%s: Pick(%s) = %v, want a refusal", role, skill, err)
+		}
+	}
+	if _, err := c.Pick("fullstack developer", []string{"ponytail-plugin"}); err == nil || !strings.Contains(err.Error(), "not in Den's skills catalogue") {
+		t.Errorf("a name outside the catalogue: %v", err)
+	}
+}
+
+// A name given twice is offered once, and a request naming more than
+// MaxNamed skills is refused before any is looked up.
+func TestPickDedupesAndCapsNames(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	picked, err := c.Pick("coding agent", []string{"ponytail", "diagnosing-bugs", "ponytail", "ponytail"})
+	if err != nil || len(picked) != 2 || picked[0].Name != "ponytail" || picked[1].Name != "diagnosing-bugs" {
+		t.Errorf("duplicates: %v, %v", picked, err)
+	}
+	many := []string{"ponytail"}
+	for i := 0; i < MaxNamed; i++ {
+		many = append(many, fmt.Sprintf("made-up-%d", i))
+	}
+	if _, err := c.Pick("coding agent", many); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("at most %d can be offered", MaxNamed)) {
+		t.Errorf("%d names: %v", len(many), err)
+	}
+	same := make([]string, 50)
+	for i := range same {
+		same[i] = "ponytail"
+	}
+	if picked, err := c.Pick("coding agent", same); err != nil || len(picked) != 1 {
+		t.Errorf("one name 50 times: %v, %v", picked, err)
+	}
+}
+
+// Every coding role is offered ponytail as well, fourth, after the three
+// it was offered before.
+func TestCodingRoleGetsFourInOrder(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"test-driven-development", "verification-before-completion", "diagnosing-bugs", "ponytail"}
+	for _, role := range []string{"coding agent", "coder", "software engineer", "backend developer"} {
+		var got []string
+		for _, m := range c.Match(role) {
+			got = append(got, m.Name)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s → %v, want %v", role, got, want)
+		}
+	}
+	p, ok := c.Skill("ponytail")
+	if !ok || len(p.Files) != 2 || p.Files[0].Path != "SKILL.md" || p.Files[0].SHA256 != "ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c" || p.Files[1].Path != "LICENSE" || p.Files[1].Source != "LICENSE" {
+		t.Errorf("ponytail must pin its SKILL.md and the repository LICENSE, nothing else: %+v", p.Files)
 	}
 }

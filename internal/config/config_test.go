@@ -55,6 +55,30 @@ func TestExampleParsesToDefaults(t *testing.T) {
 	}
 }
 
+func TestGuidanceSetting(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	if g, err := GuidanceSetting(); g != "" || err != nil {
+		t.Errorf("no file: %q %v, want off", g, err)
+	}
+	os.WriteFile(p, []byte("[orchestrator]\nmodel = \"opus\"\nguidance = \"i-have-adhd\"  # on\n"), 0o644)
+	if g, err := GuidanceSetting(); g != "i-have-adhd" || err != nil {
+		t.Errorf("set: %q %v", g, err)
+	}
+	if c := Load(); c.Orchestrator.Guidance != "i-have-adhd" {
+		t.Errorf("Load: %q", c.Orchestrator.Guidance)
+	}
+	os.WriteFile(p, []byte("[orchestrator]\nmodel = \"opus\"\n[inbox]\nguidance = \"i-have-adhd\"\n"), 0o644)
+	if g, err := GuidanceSetting(); g != "" || err != nil {
+		t.Errorf("key removed (another section's does not count): %q %v", g, err)
+	}
+	t.Setenv("DEN_CONFIG", dir) // a directory: there, but does not read
+	if _, err := GuidanceSetting(); err == nil {
+		t.Error("a config that does not read must be an error, so the setting in use stays")
+	}
+}
+
 func TestRestoreAsk(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config.toml")
