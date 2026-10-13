@@ -4,6 +4,9 @@ package config
 
 import (
 	"bufio"
+	"errors"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +19,10 @@ type Config struct {
 		Model string // claude --model; "off" keeps Claude Code's default
 		Name  string // the orchestrator session's display name
 		Spawn bool   // let it open terminals and start agents on your workspace
+		// Guidance is text that shapes the orchestrator's answers: "i-have-adhd"
+		// (shipped with Den) or the absolute path of a file of your own. Off
+		// when empty. It loads only once you approve its SHA-256 in Den.
+		Guidance string
 	}
 	Inbox struct {
 		History int // finished turns kept as history
@@ -168,6 +175,7 @@ func (c *Config) apply(kv map[string]string) {
 	str(&c.Orchestrator.Model, "orchestrator.model")
 	str(&c.Orchestrator.Name, "orchestrator.name")
 	boolean(&c.Orchestrator.Spawn, "orchestrator.spawn")
+	str(&c.Orchestrator.Guidance, "orchestrator.guidance")
 	num(&c.Inbox.History, "inbox.history")
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
@@ -217,6 +225,26 @@ func (c *Config) env() {
 	}
 }
 
+// GuidanceSetting reads orchestrator.guidance from the file as it is now,
+// for Den's watch on it: "" when the key or the file is gone. A file that
+// is there but does not read is an error, and the setting in use stays.
+// No environment variable sets it.
+func GuidanceSetting() (string, error) {
+	f, err := os.Open(Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	kv, err := parseFrom(f)
+	if err != nil {
+		return "", err
+	}
+	return kv["orchestrator.guidance"], nil
+}
+
 // parse reads a flat TOML subset: [section] headers and key = value lines
 // with string, integer or boolean values. Keys come back as section.key.
 func parse(path string) map[string]string {
@@ -226,8 +254,15 @@ func parse(path string) map[string]string {
 		return out
 	}
 	defer f.Close()
+	out, _ = parseFrom(f)
+	return out
+}
+
+// parseFrom is parse on an open file; the error is the read's.
+func parseFrom(r io.Reader) (map[string]string, error) {
+	out := map[string]string{}
 	section := ""
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := strings.TrimSpace(stripComment(sc.Text()))
 		if line == "" {
@@ -250,7 +285,7 @@ func parse(path string) map[string]string {
 		}
 		out[k] = v
 	}
-	return out
+	return out, sc.Err()
 }
 
 // Example is the documented starting point written by `den config init`.
@@ -260,6 +295,8 @@ const Example = `# Den configuration. Every key is optional; these are the defau
 model = "sonnet"            # any claude --model value, or "off" for Claude Code's default
 name = "den-orchestrator"   # how the orchestrator session names itself to peers
 spawn = true                # may open terminals and start agents on the workspace you are on
+guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
+                            # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
 
 [inbox]
 history = 100               # finished turns kept as history

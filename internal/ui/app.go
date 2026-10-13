@@ -163,6 +163,8 @@ type Model struct {
 	att attention // desktop notifications, reminders and stalls
 
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
+
+	guide guidanceState // orchestrator guidance and its approval (guidance.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -200,6 +202,7 @@ func New(cfg config.Config) Model {
 	m.input.Focus()
 	m.fitInput()
 	m.openRemote(cfg)
+	m.startGuidance(cfg.Orchestrator.Guidance)
 	return m
 }
 
@@ -468,7 +471,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now())}
+		m.restartForGuidance()
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -509,6 +513,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil // a process that was restarted away; its tail is noise
 		}
 		cmd := m.handleOrchEvent(msg.ev)
+		m.restartForGuidance()
+		m.refresh()
+		return m, cmd
+	case guidanceReadMsg:
+		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
 	case cliSentMsg:
@@ -1245,6 +1254,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.Guidance {
+		return m.decideGuidance(it, verb)
+	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
 			return m.say(why, true)
@@ -1432,6 +1444,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
+	}
+	if sessionID == inbox.GuidanceSession {
+		return "Den"
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
 		if ms := m.missions.Get(id); ms != nil {
