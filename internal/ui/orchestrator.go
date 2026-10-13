@@ -312,6 +312,16 @@ func (m *Model) addChat(e chatEntry) chatEntry {
 	return e
 }
 
+// addUnthreaded appends an entry that belongs to no mission, whatever the
+// latest message was about: Den's own notes, such as den-api.sock's.
+func (m *Model) addUnthreaded(e chatEntry) chatEntry {
+	thread := m.orch.thread
+	m.orch.thread = ""
+	e = m.addChat(e)
+	m.orch.thread = thread
+	return e
+}
+
 // streaming is the index of the entry whose text is still arriving, -1 for
 // none. The human may have typed since it began, so it need not be last.
 func (o orchState) streaming() int {

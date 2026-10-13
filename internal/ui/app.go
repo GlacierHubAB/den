@@ -570,7 +570,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.from != m.api.srv {
 			return m, nil
 		}
-		m.logEntry(m.addChat(chatEntry{role: "note", text: sanitize.Text(msg.text), at: time.Now()}))
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: sanitize.Text(msg.text), at: time.Now()}))
 		return m, waitAPINote(msg.from)
 	case cliSentMsg:
 		m.applyCLISent(msg)

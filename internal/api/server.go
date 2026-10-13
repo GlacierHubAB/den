@@ -69,7 +69,7 @@ type Server struct {
 	conns     map[*conn]bool
 	lastFleet []byte
 	seenExe   map[string]bool
-	refused   map[int]bool
+	refusals  map[string]*refusal // by exe and reason
 }
 
 // Listen binds den-api.sock and starts serving it.
@@ -84,7 +84,7 @@ func Listen(o Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{opts: o, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refused: map[int]bool{}}
+	s := &Server{opts: o, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refusals: map[string]*refusal{}}
 	s.grants, s.acts, s.lastConn = newGrants(), make(chan Act, 64), map[string]time.Time{}
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
@@ -209,6 +209,68 @@ func (s *Server) note(text string) {
 	case s.notes <- text:
 	default:
 	}
+}
+
+// refusedAgent is why a process under one of Den's agents is refused.
+const refusedAgent = "an agent's process"
+
+// refusalEvery is how often the chat hears again about refusals of one
+// program for one reason: a test run that retries under new pids gives one
+// note, then a count at most this often. /api has every count.
+const refusalEvery = time.Minute
+
+// refusal counts the refused connections of one program for one reason.
+type refusal struct {
+	Refusal
+	unsaid int       // refused since the last note
+	said   time.Time // when the last note went up
+}
+
+// Refusal is what /api lists about refused connections: of one program
+// (the executable Den read), for one reason.
+type Refusal struct {
+	Exe    string
+	Reason string
+	Count  int
+	First  time.Time
+	Last   time.Time
+}
+
+// refuse counts a refused connection and returns the chat note it earns:
+// the first of its program and reason, then at most one a refusalEvery
+// saying how many more; "" for none.
+func (s *Server) refuse(p Peer, reason string, now time.Time) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := p.Exe + "\x00" + reason
+	r := s.refusals[key]
+	exe := sanitize.Label(p.Label(), 40)
+	if r == nil {
+		s.refusals[key] = &refusal{Refusal: Refusal{Exe: p.Exe, Reason: reason, Count: 1, First: now, Last: now}, said: now}
+		return reason + " (" + exe + ", pid " + itoa(p.PID) + ") tried den-api.sock: refused. /api counts any more."
+	}
+	r.Count++
+	r.Last = now
+	r.unsaid++
+	if now.Sub(r.said) < refusalEvery {
+		return ""
+	}
+	text := fmt.Sprintf("%d more refused from %s (%s) since %s", r.unsaid, exe, reason, r.said.Format("15:04"))
+	r.unsaid, r.said = 0, now
+	return text
+}
+
+// Refusals lists the refused connections by program and reason, the most
+// recent first.
+func (s *Server) Refusals() []Refusal {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Refusal, 0, len(s.refusals))
+	for _, r := range s.refusals {
+		out = append(out, r.Refusal)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Last.After(out[j].Last) })
+	return out
 }
 
 // Healthy reports whether the path still holds Den's socket.
@@ -633,12 +695,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		}
 		c.mu.Unlock()
 		if isAgent {
-			s.mu.Lock()
-			told := s.refused[c.peer.PID]
-			s.refused[c.peer.PID] = true
-			s.mu.Unlock()
-			if !told {
-				s.note("an agent's process (" + sanitize.Label(c.peer.Label(), 40) + ", pid " + itoa(c.peer.PID) + ") tried den-api.sock: refused")
+			if text := s.refuse(c.peer, refusedAgent, time.Now()); text != "" {
+				s.note(text)
 			}
 		} else if first {
 			s.note("an app connected to den-api.sock: " + sanitize.Label(c.peer.Exe, 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")

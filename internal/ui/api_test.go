@@ -287,3 +287,21 @@ func TestAPIOnDeclined(t *testing.T) {
 		t.Error("^N turned the API on")
 	}
 }
+
+// den-api.sock's notes belong to no mission, whatever the chat was last
+// about.
+func TestAPINotesHaveNoMission(t *testing.T) {
+	apiEnv(t)
+	m := testModel(120, 40)
+	apiOn(t, &m)
+	m.orch.thread = "m-ci"
+	mm, _ := m.Update(apiNoteMsg{text: "an agent's process (drey-probe, pid 9) tried den-api.sock: refused", from: m.api.srv})
+	m = mm.(Model)
+	last := m.orch.chat[len(m.orch.chat)-1]
+	if last.mission != "" || !strings.Contains(last.text, "refused") {
+		t.Errorf("note %+v", last)
+	}
+	if m.orch.thread != "m-ci" {
+		t.Errorf("the chat's thread changed to %q", m.orch.thread)
+	}
+}

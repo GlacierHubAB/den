@@ -414,6 +414,9 @@ func (m Model) apiReport() string {
 		}
 		b.WriteString(line)
 	}
+	for _, r := range m.api.srv.Refusals() {
+		b.WriteString(fmt.Sprintf("\nrefused: %s · %s · %d since %s, last %s", sanitize.Label(r.Exe, 120), r.Reason, r.Count, r.First.Format("15:04"), r.Last.Format("15:04:05")))
+	}
 	ls := m.api.srv.LaneState()
 	b.WriteString("\nread-only lane: " + laneWords(ls))
 	b.WriteString(fmt.Sprintf(" · spent today %.2f of %.2f dollars", ls.SpentUSD, m.cfg.API.AskBudgetUSD))

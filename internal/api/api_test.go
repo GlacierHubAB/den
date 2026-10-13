@@ -249,6 +249,62 @@ func TestAgentProcessIsRefused(t *testing.T) {
 	}
 }
 
+// A test run under an agent that retries with new pids gives Den's chat
+// one note, not one per pid: 50 refusals from three pids of one program
+// are one note and a count in /api.
+func TestAgentRefusalsCoalesce(t *testing.T) {
+	h := newHarness(t, 2)
+	pids := []int{9001, 9002, 9003}
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentPIDs: pids}))
+	old := identifyHook
+	defer func() { identifyHook = old }()
+	for i := 0; i < 50; i++ {
+		pid := pids[i%3]
+		identifyHook = func(p Peer) Peer { p.PID, p.Exe = pid, "/usr/bin/drey-probe"; return p }
+		c := h.dial()
+		c.hello()
+		c.nc.Close()
+	}
+	var notes []string
+	for done := false; !done; {
+		select {
+		case n := <-h.s.Notes():
+			notes = append(notes, n)
+		case <-time.After(300 * time.Millisecond):
+			done = true
+		}
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "an agent's process") {
+		t.Errorf("notes %q", notes)
+	}
+	rs := h.s.Refusals()
+	if len(rs) != 1 || rs[0].Count != 50 || rs[0].Exe != "/usr/bin/drey-probe" || rs[0].Reason != refusedAgent {
+		t.Errorf("refusals %+v", rs)
+	}
+}
+
+// After the first note, more refusals earn one count note a minute.
+func TestRefusalCountNote(t *testing.T) {
+	s := &Server{refusals: map[string]*refusal{}}
+	p := Peer{PID: 7, Exe: "/usr/bin/drey-probe"}
+	t0 := time.Date(2026, 10, 13, 9, 0, 0, 0, time.Local)
+	if n := s.refuse(p, refusedAgent, t0); !strings.Contains(n, "tried den-api.sock") {
+		t.Errorf("first note %q", n)
+	}
+	for i := 1; i <= 5; i++ {
+		if n := s.refuse(p, refusedAgent, t0.Add(time.Duration(i)*time.Second)); n != "" {
+			t.Errorf("a note within the minute: %q", n)
+		}
+	}
+	n := s.refuse(p, refusedAgent, t0.Add(61*time.Second))
+	if !strings.HasPrefix(n, "6 more refused from ") || !strings.HasSuffix(n, "since 09:00") {
+		t.Errorf("count note %q", n)
+	}
+	if n := s.refuse(Peer{PID: 8, Exe: "/usr/bin/other"}, refusedAgent, t0.Add(62*time.Second)); !strings.Contains(n, "tried den-api.sock") {
+		t.Errorf("another program's first note %q", n)
+	}
+}
+
 func discoverSession(id string, pid int) discover.Session {
 	return discover.Session{SessionID: id, PID: pid, Alive: true}
 }
