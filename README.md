@@ -552,6 +552,15 @@ other users, not against your own processes.
 `den ask` from the command line starts a fresh orchestrator and doesn't load
 guidance.
 
+### Apps (den-api.sock)
+
+Den can serve a local API to apps on your machine, Drey first among them: the
+fleet, inbox digests, missions, and questions to a read-only orchestrator
+that has no tools and cannot act. It is off until you type `/api on` and
+confirm with `Ctrl+Y`; `/api off` turns it off at once, and `/api` lists the
+apps connected. Agents' own processes are refused. See
+[docs/DREY-API.md](docs/DREY-API.md).
+
 ### Dispatch cards
 
 When the orchestrator hands a brief to an agent, that agent's turn shows up in
@@ -1224,6 +1233,10 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
 
+[api]
+enabled = false             # den-api.sock for apps such as Drey; turn it on with /api on in Den
+ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.
 # Kinds: session_start session_end turn_start done needs_you idle
@@ -1266,6 +1279,8 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `overview.json` | the picked and pinned projects, and whether the Fleet is grouped by project |
 | `reviews.json` | Review comments |
 | `guidance.json` | the SHA-256 of the orchestrator guidance you approved, nothing else |
+| `drey-chat.jsonl` | apps' questions to the read-only orchestrator and its replies, by ask session (den-api.sock) |
+| `drey-lane/` | the read-only orchestrator's own empty working folder |
 | `colors.json` | the colour of each session |
 | `remote/<label>.json` | per remote host: its state, the agents it last reported (metadata only) and where its event stream was read up to; readable only by you |
 | `remote/controller` | a random id that tells a host which Den is attached (an identity marker, not a secret) |

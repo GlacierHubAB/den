@@ -166,6 +166,9 @@ func (m Model) header(w int) []string {
 	if m.srvErr != nil {
 		sys = append(sys, s.err.Render("bridge: "+m.srvErr.Error()))
 	}
+	if chip := m.apiChip(); chip != "" {
+		sys = append(sys, chip)
+	}
 	sysLine := s.muted.Render(strings.Join(sys, " · "))
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
@@ -648,6 +651,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "load it")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.UsageResume:
 		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
+	case it.Answerable() && it.Kind == inbox.APIOn:
+		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -890,6 +895,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.UsageResume {
 			acts = key("^Y", "let the fleet go on") + sp + sp + key("^N", "stay stopped")
+		}
+		if it.Kind == inbox.APIOn {
+			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")

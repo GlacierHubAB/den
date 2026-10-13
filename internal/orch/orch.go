@@ -43,6 +43,10 @@ type Event struct {
 	Stderr string
 	// Peer is set on Blocked for a peer's envelope.
 	Peer bool
+	// Tools and MCPServers are what the process has, on Started (the init
+	// event): the lane must start with neither (LaneInitOK).
+	Tools      []string
+	MCPServers []string
 }
 
 // maxStderrLine caps a line of the process's stderr in an event.
@@ -329,6 +333,17 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 	// The user settings' env (copiedEnv) in place of their settings files,
 	// then Den's marker last, so nothing overrides it.
 	cmd.Env = append(append(os.Environ(), copiedEnv()...), "DEN_ORCHESTRATOR=1")
+	exe := denExecutable(o)
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	return startCmd(ctx, cmd, o.SettingsFile, exe)
+}
+
+// startCmd starts a prepared stream-json claude command; settings is a
+// settings file of Den's to remove when it exits ("" for none), exe the
+// den binary its hooks and MCP server run ("" for none).
+func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string) (*Orchestrator, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -345,11 +360,7 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 		stdin.Close()
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
-	exe := denExecutable(o)
-	if r, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = r
-	}
-	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
+	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: settings, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
 	read, readErr := make(chan struct{}), make(chan struct{})
 	go func() {
 		// A line too long for the scanner, or a read error, leaves Den
@@ -495,6 +506,27 @@ func (o *Orchestrator) Tripped() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.tripped
+
+}
+
+// Kill stops the process at once (SIGKILL), with no chance to finish a
+// turn, and waits for it to be reaped.
+func (o *Orchestrator) Kill() {
+	o.mu.Lock()
+	if !o.closed && o.quit != nil {
+		close(o.quit) // as Close does: a Backstop or Exited waiting for room gives up
+	}
+	o.closed = true
+	if o.cmd == nil || o.cmd.Process == nil {
+		o.mu.Unlock()
+		return
+	}
+	o.cmd.Process.Kill()
+	o.mu.Unlock()
+	select {
+	case <-o.done:
+	case <-time.After(5 * time.Second):
+	}
 }
 
 // Close ends the conversation and stops the process.
@@ -570,7 +602,12 @@ type line struct {
 	Outcome   string `json:"outcome"`
 	Content   string `json:"content"`
 	IsReplay  bool   `json:"isReplay"`
-	Message   struct {
+	// Tools and MCPServers are on the init event: what the process has.
+	Tools      []string `json:"tools"`
+	MCPServers []struct {
+		Name string `json:"name"`
+	} `json:"mcp_servers"`
+	Message struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
@@ -622,7 +659,11 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 			switch l.Subtype {
 			case "init":
 				o.SessionID, o.Model = l.SessionID, l.Model
-				o.emit(Event{Kind: Started, SessionID: l.SessionID, Model: l.Model})
+				e := Event{Kind: Started, SessionID: l.SessionID, Model: l.Model, Tools: append([]string{}, l.Tools...)}
+				for _, s := range l.MCPServers {
+					e.MCPServers = append(e.MCPServers, s.Name)
+				}
+				o.emit(e)
 			case "hook_response":
 				if l.HookEvent != "UserPromptSubmit" {
 					break

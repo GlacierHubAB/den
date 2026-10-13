@@ -30,6 +30,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -183,6 +184,8 @@ type Model struct {
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
 
 	guide guidanceState // orchestrator guidance and its approval (guidance.go)
+
+	api apiState // den-api.sock (api.go); zero while the API is off
 }
 
 // New returns the root model and starts listening for hook events.
@@ -223,6 +226,14 @@ func New(cfg config.Config) Model {
 	m.fitInput()
 	m.openRemote(cfg)
 	m.startGuidance(cfg.Orchestrator.Guidance)
+	if cfg.API.Enabled {
+		// Only the Den that holds den.sock serves the API too.
+		if m.srv != nil {
+			m.startAPI()
+		} else {
+			m.api.err = "another Den is running"
+		}
+	}
 	return m
 }
 
@@ -236,12 +247,16 @@ func (m Model) Close() {
 		m.remote.feed.Close()
 	}
 	m.closeOrchestrator()
+	m.closeAPI()
 }
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
+	}
+	if m.api.srv != nil {
+		cmds = append(cmds, waitAPINote(m.api.srv))
 	}
 	if m.remote.feed != nil {
 		m.remote.pump.start(m.remote.feed)
@@ -442,6 +457,7 @@ func (m *Model) refresh() {
 			m.cursor = i
 		}
 	}
+	m.publishAPI()
 	m.followSelection()
 	if t := m.answerTarget(); t != nil && t.ID != m.shown.id {
 		m.shown = shownTarget{id: t.ID, since: answerNow()}
@@ -543,6 +559,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
+	case apiNoteMsg:
+		if msg.from != m.api.srv {
+			return m, nil
+		}
+		m.logEntry(m.addChat(chatEntry{role: "note", text: sanitize.Text(msg.text), at: time.Now()}))
+		return m, waitAPINote(msg.from)
 	case cliSentMsg:
 		m.applyCLISent(msg)
 		m.refresh()
@@ -1310,6 +1332,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.APIOn {
+		return m.decideAPIOn(it, verb)
+	}
 	if it.Kind == inbox.Guidance {
 		return m.decideGuidance(it, verb)
 	}
@@ -1368,6 +1393,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m.say(questionHint(it), true)
 		}
 		return m.answerQuestion(it, text)
+	case "/api":
+		return m.apiCommand(fields[1:])
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":
@@ -1526,7 +1553,7 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession {
 		return "Den"
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {

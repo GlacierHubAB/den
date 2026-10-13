@@ -186,14 +186,19 @@ func waitOrch(o *orch.Orchestrator) tea.Cmd {
 
 // isOrchestrator reports whether a discovered session is Den's own orchestrator.
 func (m Model) isOrchestrator(a fleet.Agent) bool {
-	if a.Session.Name == OrchestratorName {
-		return true
+	if a.Session.Name == OrchestratorName || m.isLane(a) {
+		return true // the API's read-only lane is never a fleet member either
 	}
 	return m.orch.proc != nil && (a.Session.PID == m.orch.proc.PID || (m.orch.proc.SessionID != "" && a.Session.SessionID == m.orch.proc.SessionID))
 }
 
 // roster describes the fleet for the orchestrator.
-func (m Model) roster() []orch.RosterAgent {
+func (m Model) roster() []orch.RosterAgent { return m.rosterFor(false) }
+
+// rosterFor builds the roster. lane is the read-only lane's: no recent
+// words or tool calls, no earlier tasks, and waiting lines with the kind
+// and title only, never a body line.
+func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 	var out []orch.RosterAgent
 	for _, a := range m.agents {
 		if a.Status == fleet.Gone {
@@ -220,7 +225,7 @@ func (m Model) roster() []orch.RosterAgent {
 		for _, it := range m.store.Items() {
 			if itemKey(it) == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
 				line := it.Kind.String() + ": " + it.Title
-				if len(it.Body) > 0 {
+				if len(it.Body) > 0 && !lane {
 					line += " " + it.Body[0]
 				}
 				if a.Host != "" {
@@ -236,6 +241,9 @@ func (m Model) roster() []orch.RosterAgent {
 				}
 				r.Waiting = append(r.Waiting, line)
 			}
+		}
+		if lane {
+			r.Recent, r.Earlier = nil, nil
 		}
 		out = append(out, r)
 	}
