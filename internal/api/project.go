@@ -29,9 +29,10 @@ type Snapshot struct {
 	// Roster is the lane's roster: orch roster entries with no recent
 	// activity, no earlier tasks and waiting lines of kind and title only.
 	Roster []orch.RosterAgent
-	// AgentPIDs are the pids of every local Claude session Den sees,
-	// the orchestrator's and the lane's: a client under one is an agent.
-	AgentPIDs []int
+	// AgentProcs are the processes of every live Claude session on this
+	// machine Den sees, the orchestrator's and the lane's: a client under
+	// one is an agent's.
+	AgentProcs []AgentProc
 	// Guidance is the approved orchestrator guidance, "" for none.
 	Guidance string
 }
@@ -43,8 +44,19 @@ type View struct {
 	Bodies    map[string]Body // local items only
 	Missions  []Mission
 	Roster    []orch.RosterAgent
-	AgentPIDs map[int]bool
-	Guidance  string
+	AgentProcs map[int]AgentProc
+	Guidance   string
+}
+
+// AgentProc is one agent's process: its pid, and its start time in clock
+// ticks since boot (field 22 of /proc/<pid>/stat), so that another process
+// that got the pid later is not taken for it. Start 0 is a process of Den's
+// own (the orchestrator, the lane), whose pid cannot be reused while Den
+// holds it. Name says which agent, for the refusal note.
+type AgentProc struct {
+	PID   int
+	Start uint64
+	Name  string
 }
 
 // labelMax caps names, roles, tasks, worktrees, models and titles.
@@ -61,11 +73,13 @@ func Project(s Snapshot) *View {
 		Bodies:    map[string]Body{},
 		Missions:  []Mission{},
 		Roster:    append([]orch.RosterAgent(nil), s.Roster...),
-		AgentPIDs: map[int]bool{},
-		Guidance:  s.Guidance,
+		AgentProcs: map[int]AgentProc{},
+		Guidance:   s.Guidance,
 	}
-	for _, p := range s.AgentPIDs {
-		v.AgentPIDs[p] = true
+	for _, p := range s.AgentProcs {
+		if p.PID > 1 {
+			v.AgentProcs[p.PID] = p
+		}
 	}
 	waiting := map[string]string{}
 	for _, it := range s.Items {

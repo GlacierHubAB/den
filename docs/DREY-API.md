@@ -40,7 +40,11 @@ ask_budget_usd = 2   # what apps' questions may spend a day
   `{"id":0,"ok":false,"error":{"code":"forbidden"}}`, and a close.
 - **Not agents.** A client whose process runs under one of Den's agents, its
   orchestrator or its read-only lane gets `forbidden` for every verb after
-  `hello`, and Den notes it. (Any program running as you can still connect;
+  `hello`. Den walks the client's parents and matches each against the live
+  Claude sessions on this machine by pid and start time, so a pid an ended
+  or remote session once had never counts. Den's chat notes the first
+  refusal of each program, naming the agent it runs under, then at most one
+  count a minute; `/api` lists them all. (Any program running as you can still connect;
   every verb is built to be safe for that.)
 - JSON lines, UTF-8, one object per line. A line over 1 MiB gets
   `{"id":0,"ok":false,"error":{"code":"too_large"}}` and a close.

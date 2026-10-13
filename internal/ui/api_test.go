@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 )
@@ -303,5 +304,27 @@ func TestAPINotesHaveNoMission(t *testing.T) {
 	}
 	if m.orch.thread != "m-ci" {
 		t.Errorf("the chat's thread changed to %q", m.orch.thread)
+	}
+}
+
+// Only live sessions on this machine are agents for den-api.sock: one on
+// another machine, or one that ended, has a pid that may be any process
+// here (the human's drey-host, or its systemd --user).
+func TestAgentProcsAreLocalAndLive(t *testing.T) {
+	defer func(f func(int, int64, string) (api.AgentProc, bool)) { sessionProc = f }(sessionProc)
+	sessionProc = func(pid int, startedAt int64, name string) (api.AgentProc, bool) {
+		return api.AgentProc{PID: pid, Start: 7, Name: name}, pid != 5555 // 5555: reused since
+	}
+	m := testModel(120, 40)
+	m.base = []fleet.Agent{
+		{Name: "Far Otter", Host: "vm1", Status: fleet.Idle, Session: discover.Session{PID: 1079, Alive: true}},
+		{Name: "Old Otter", Status: fleet.Gone, Session: discover.Session{PID: 1481230}},
+		{Name: "Reused", Status: fleet.Idle, Session: discover.Session{PID: 5555, Alive: true}},
+		{Name: "Busy Otter", Status: fleet.Working, Session: discover.Session{PID: 4242, Name: "worker-a", Alive: true}},
+	}
+	m.agents = nil
+	got := m.agentProcs()
+	if len(got) != 1 || got[0].PID != 4242 || got[0].Name != "agent Busy Otter [worker-a]" {
+		t.Errorf("agent processes %+v", got)
 	}
 }

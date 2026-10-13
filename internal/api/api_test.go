@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -233,7 +234,7 @@ func TestOtherUserIsRefused(t *testing.T) {
 
 func TestAgentProcessIsRefused(t *testing.T) {
 	h := newHarness(t, 2)
-	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentPIDs: []int{os.Getppid()}}))
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: os.Getppid(), Name: "agent Test"}}}))
 	c := h.dial()
 	c.hello()
 	if l := c.call("fleet.snapshot", nil); code(l) != CodeForbidden {
@@ -241,7 +242,7 @@ func TestAgentProcessIsRefused(t *testing.T) {
 	}
 	select {
 	case n := <-h.s.Notes():
-		if !strings.Contains(n, "an agent's process") {
+		if !strings.Contains(n, "an agent's process") || !strings.Contains(n, "runs under agent Test (pid ") {
 			t.Errorf("note %q", n)
 		}
 	case <-time.After(2 * time.Second):
@@ -255,7 +256,7 @@ func TestAgentProcessIsRefused(t *testing.T) {
 func TestAgentRefusalsCoalesce(t *testing.T) {
 	h := newHarness(t, 2)
 	pids := []int{9001, 9002, 9003}
-	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentPIDs: pids}))
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: 9001}, {PID: 9002}, {PID: 9003}}}))
 	old := identifyHook
 	defer func() { identifyHook = old }()
 	for i := 0; i < 50; i++ {
@@ -288,20 +289,94 @@ func TestRefusalCountNote(t *testing.T) {
 	s := &Server{refusals: map[string]*refusal{}}
 	p := Peer{PID: 7, Exe: "/usr/bin/drey-probe"}
 	t0 := time.Date(2026, 10, 13, 9, 0, 0, 0, time.Local)
-	if n := s.refuse(p, refusedAgent, t0); !strings.Contains(n, "tried den-api.sock") {
+	if n := s.refuse(p, refusedAgent, "", t0); !strings.Contains(n, "tried den-api.sock") {
 		t.Errorf("first note %q", n)
 	}
 	for i := 1; i <= 5; i++ {
-		if n := s.refuse(p, refusedAgent, t0.Add(time.Duration(i)*time.Second)); n != "" {
+		if n := s.refuse(p, refusedAgent, "", t0.Add(time.Duration(i)*time.Second)); n != "" {
 			t.Errorf("a note within the minute: %q", n)
 		}
 	}
-	n := s.refuse(p, refusedAgent, t0.Add(61*time.Second))
+	n := s.refuse(p, refusedAgent, "", t0.Add(61*time.Second))
 	if !strings.HasPrefix(n, "6 more refused from ") || !strings.HasSuffix(n, "since 09:00") {
 		t.Errorf("count note %q", n)
 	}
-	if n := s.refuse(Peer{PID: 8, Exe: "/usr/bin/other"}, refusedAgent, t0.Add(62*time.Second)); !strings.Contains(n, "tried den-api.sock") {
+	if n := s.refuse(Peer{PID: 8, Exe: "/usr/bin/other"}, refusedAgent, "", t0.Add(62*time.Second)); !strings.Contains(n, "tried den-api.sock") {
 		t.Errorf("another program's first note %q", n)
+	}
+}
+
+// procTree replaces /proc for underAgent: pid -> {start, ppid}.
+func procTree(t *testing.T, tree map[int][2]uint64) {
+	t.Helper()
+	old := procStatFn
+	t.Cleanup(func() { procStatFn = old })
+	procStatFn = func(pid int) (uint64, int, error) {
+		p, ok := tree[pid]
+		if !ok {
+			return 0, 0, errors.New("no such process")
+		}
+		return p[0], int(p[1]), nil
+	}
+}
+
+// drey -> drey-host -> systemd --user -> init, as the human runs Drey: no
+// agent anywhere. A session that once had drey-host's pid (another start)
+// does not make it an agent's; the real session with that pid and start
+// does, and the note names it.
+func TestDreyHostChainIsNotAnAgent(t *testing.T) {
+	procTree(t, map[int][2]uint64{
+		1508796: {9_000_000, 1481230}, // drey, a child of drey-host
+		1481230: {8_000_000, 1079},    // drey-host
+		1079:    {2_000, 1},           // systemd --user
+	})
+	old := identifyHook
+	defer func() { identifyHook = old }()
+	identifyHook = func(p Peer) Peer { p.PID, p.Exe = 1508796, "/home/u/.local/bin/drey"; return p }
+	for name, agents := range map[string][]AgentProc{
+		"no agents":          nil,
+		"reused session pid": {{PID: 1481230, Start: 3_000_000, Name: "agent Old Otter"}},
+		"reused systemd pid": {{PID: 1079, Start: 7_000, Name: "agent Far Away"}},
+		"agents elsewhere":   {{PID: 4242, Start: 1, Name: "agent Busy"}},
+	} {
+		h := newHarness(t, 2)
+		h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: agents}))
+		c := h.dial()
+		c.hello()
+		if l := c.call("fleet.snapshot", nil); !l.OK {
+			t.Errorf("%s: drey under drey-host was refused: %+v", name, l.Error)
+		}
+	}
+	h := newHarness(t, 2)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: 1481230, Start: 8_000_000, Name: "agent Real Otter"}}}))
+	c := h.dial()
+	c.hello()
+	if l := c.call("fleet.snapshot", nil); code(l) != CodeForbidden {
+		t.Errorf("under a real agent: %+v", l)
+	}
+	select {
+	case n := <-h.s.Notes():
+		if !strings.Contains(n, "runs under agent Real Otter (pid 1481230)") {
+			t.Errorf("note %q", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("no note")
+	}
+}
+
+// A session's pid counts only while its process is the one that started
+// with the session.
+func TestSessionProcRefusesALaterProcess(t *testing.T) {
+	procTree(t, map[int][2]uint64{4242: {100 * 3600, 1}}) // started an hour after boot
+	oldBoot := bootTime
+	defer func() { bootTime = oldBoot }()
+	boot := time.Date(2026, 10, 13, 6, 0, 0, 0, time.UTC)
+	bootTime = func() (time.Time, error) { return boot, nil }
+	if _, ok := SessionProc(4242, boot.Add(time.Hour).Add(-2*time.Second).UnixMilli(), "x"); !ok {
+		t.Error("the session's own process")
+	}
+	if _, ok := SessionProc(4242, boot.Add(10*time.Minute).UnixMilli(), "x"); ok {
+		t.Error("a process that started 50 minutes after the session counts as its")
 	}
 }
 

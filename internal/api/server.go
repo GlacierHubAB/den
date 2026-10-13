@@ -237,9 +237,9 @@ type Refusal struct {
 }
 
 // refuse counts a refused connection and returns the chat note it earns:
-// the first of its program and reason, then at most one a refusalEvery
-// saying how many more; "" for none.
-func (s *Server) refuse(p Peer, reason string, now time.Time) string {
+// the first of its program and reason, with detail (what it matched), then
+// at most one a refusalEvery saying how many more; "" for none.
+func (s *Server) refuse(p Peer, reason, detail string, now time.Time) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := p.Exe + "\x00" + reason
@@ -247,7 +247,11 @@ func (s *Server) refuse(p Peer, reason string, now time.Time) string {
 	exe := sanitize.Label(p.Label(), 40)
 	if r == nil {
 		s.refusals[key] = &refusal{Refusal: Refusal{Exe: p.Exe, Reason: reason, Count: 1, First: now, Last: now}, said: now}
-		return reason + " (" + exe + ", pid " + itoa(p.PID) + ") tried den-api.sock: refused. /api counts any more."
+		text := reason + " (" + exe + ", pid " + itoa(p.PID) + ") tried den-api.sock: refused"
+		if detail != "" {
+			text += "; " + detail
+		}
+		return text + ". /api counts any more."
 	}
 	r.Count++
 	r.Last = now
@@ -682,9 +686,9 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 			return
 		}
 		host, _ := os.Hostname()
-		isAgent := false
+		isAgent, match := false, AgentProc{}
 		if view := s.view.Load(); view != nil {
-			isAgent = underAgent(c.peer.PID, view.AgentPIDs)
+			match, isAgent = underAgent(c.peer.PID, view.AgentProcs)
 		}
 		c.mu.Lock()
 		c.hello, c.agent = true, isAgent
@@ -695,7 +699,7 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		}
 		c.mu.Unlock()
 		if isAgent {
-			if text := s.refuse(c.peer, refusedAgent, time.Now()); text != "" {
+			if text := s.refuse(c.peer, refusedAgent, "it runs under "+sanitize.Label(match.Name, 60)+" (pid "+itoa(match.PID)+")", time.Now()); text != "" {
 				s.note(text)
 			}
 		} else if first {

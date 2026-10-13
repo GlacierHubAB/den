@@ -244,21 +244,8 @@ func (m *Model) publishAPI() {
 	for _, a := range m.agents {
 		snap.Agents = append(snap.Agents, a)
 		snap.Names[a.Session.SessionID] = a.Name
-		if a.Host == "" && a.Session.PID > 0 {
-			snap.AgentPIDs = append(snap.AgentPIDs, a.Session.PID)
-		}
 	}
-	for _, a := range m.base {
-		if a.Session.PID > 0 {
-			snap.AgentPIDs = append(snap.AgentPIDs, a.Session.PID) // the orchestrator and the lane too
-		}
-	}
-	if m.orch.proc != nil {
-		snap.AgentPIDs = append(snap.AgentPIDs, m.orch.proc.PID)
-	}
-	if p := m.lanePID(); p > 0 {
-		snap.AgentPIDs = append(snap.AgentPIDs, p)
-	}
+	snap.AgentProcs = m.agentProcs()
 	for _, h := range m.remote.hosts {
 		if string(h.Applied) == "full" {
 			snap.FullHosts[h.Label] = true
@@ -524,3 +511,44 @@ func (m Model) isLane(a fleet.Agent) bool {
 	p := m.lanePID()
 	return p > 0 && a.Session.PID == p
 }
+
+// agentProcs are the processes whose descendants den-api.sock refuses:
+// every live Claude session on this machine (the orchestrator's and the
+// lane's included), each by pid and start time, and Den's own orchestrator
+// and lane processes. A session on another machine, or one that has ended,
+// is never one: its pid may be any process here.
+func (m Model) agentProcs() []api.AgentProc {
+	seen := map[int]bool{}
+	var out []api.AgentProc
+	add := func(a fleet.Agent) {
+		pid := a.Session.PID
+		if a.Host != "" || !a.Session.Alive || a.Status == fleet.Gone || pid <= 1 || seen[pid] {
+			return
+		}
+		name := a.Name
+		if a.Session.Name != "" {
+			name += " [" + a.Session.Name + "]"
+		}
+		if p, ok := sessionProc(pid, a.Session.StartedAt, "agent "+name); ok {
+			seen[pid] = true
+			out = append(out, p)
+		}
+	}
+	for _, a := range m.base {
+		add(a)
+	}
+	for _, a := range m.agents {
+		add(a)
+	}
+	if m.orch.proc != nil && !seen[m.orch.proc.PID] {
+		seen[m.orch.proc.PID] = true
+		out = append(out, api.AgentProc{PID: m.orch.proc.PID, Name: "the orchestrator"})
+	}
+	if p := m.lanePID(); p > 0 && !seen[p] {
+		out = append(out, api.AgentProc{PID: p, Name: "Den's read-only lane"})
+	}
+	return out
+}
+
+// sessionProc is api.SessionProc; tests replace it.
+var sessionProc = api.SessionProc
