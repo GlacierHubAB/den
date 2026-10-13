@@ -70,7 +70,7 @@ func TestCloseIdleListsExactlyTheIdleAgents(t *testing.T) {
 		t.Fatalf("items = %+v", items)
 	}
 	body := strings.Join(items[0].Body, "\n")
-	for _, want := range []string{"Fuzzy Sprite (fuzzy) · idle · pid 50002", "Maple Owl (maple) · idle · pid 50003", "no window found, only the process ends", "graceful stop first"} {
+	for _, want := range []string{"Fuzzy Sprite (fuzzy) · idle · pid 50002", "Maple Owl (maple) · idle · pid 50003", "window: no window marked for it: if Den started it, its terminal closes with it; otherwise close it yourself", "graceful stop first"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}

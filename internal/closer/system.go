@@ -21,7 +21,39 @@ func (System) Alive(pid int) bool {
 	return err == nil || err == syscall.EPERM
 }
 
+// Windows lists Hyprland's windows, none when it is not running.
+func (System) Windows() ([]Window, error) {
+	if !hypr.Available() {
+		return nil, nil
+	}
+	cs, err := hypr.Clients()
+	var out []Window
+	for _, c := range cs {
+		out = append(out, Window{Address: c.Address, Class: c.InitialClass, PID: c.PID})
+	}
+	return out, err
+}
+
+// Focused is the address of the window in front.
+func (System) Focused() string {
+	if !hypr.Available() {
+		return ""
+	}
+	return hypr.ActiveAddress()
+}
+
 func (System) CloseWindow(address string) error { return hypr.CloseWindow(address) }
+
+// AncestorPIDs lists the pids above pid, for Locate and OwnWindow.
+func AncestorPIDs(pid int) []int {
+	var out []int
+	for _, p := range procs.Ancestors(pid) {
+		if p.PID != pid {
+			out = append(out, p.PID)
+		}
+	}
+	return out
+}
 
 // DenSelf is Self for the running Den: its process, the orchestrator's
 // session and the window it runs in.

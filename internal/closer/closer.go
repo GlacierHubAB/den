@@ -1,5 +1,5 @@
-// Package closer ends Claude Code agents and closes their terminal windows,
-// on purpose and with a plan the human sees first. A plan says exactly which
+// Package closer ends Claude Code agents, and the terminal windows of the
+// ones Den spawned, on purpose and with a plan the human sees first. A plan says exactly which
 // agents close, which are refused and why, and what to watch out for; Run
 // carries it out: a graceful stop, a short wait, and a hard kill only when
 // the human forced it. Nothing here decides on its own; the UI asks.
@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,13 +28,11 @@ type Target struct {
 	// Started is when its Claude Code session started (startedAt), for
 	// System's check that PID is still that process; zero looks it up in
 	// this machine's sessions files by SessionID.
-	Started   time.Time
-	Status    string   // "working", "needs you", "idle", "unknown", "gone"
-	Window    string   // Hyprland address of its terminal, "" when unknown
-	WindowHow string   // how the window was matched: "title", "cwd", "herdr"
-	Dir       string   // working directory, for the uncommitted-changes check
-	Children  []string // names of the agents it directs
-	Dirty     []string // uncommitted paths in Dir, filled by Inspect
+	Started  time.Time
+	Status   string   // "working", "needs you", "idle", "unknown", "gone"
+	Dir      string   // working directory, for the uncommitted-changes check
+	Children []string // names of the agents it directs
+	Dirty    []string // uncommitted paths in Dir, filled by Inspect
 	// Host is the remote host the agent runs on, "" for this machine. A
 	// remote target has no pid, window or checkout path here: its host
 	// signals the process, and RemoteDirty is what the host last said about
@@ -43,6 +42,14 @@ type Target struct {
 	// Idle is how long since the agent's last activity (its last change
 	// of busy/idle status as Claude Code recorded it), 0 when unknown.
 	Idle time.Duration
+	// Marker is the window class Den gave its terminal at spawn. Window
+	// and WindowPID are the one window carrying it, run by a process
+	// above the agent's, as Locate found it; "" and 0 when there is no
+	// such window, and WindowNote says why.
+	Marker     string
+	Window     string
+	WindowPID  int
+	WindowNote string
 }
 
 // Refusal is a target the plan will not close.
@@ -56,7 +63,7 @@ type Refusal struct {
 type Self struct {
 	PID          int
 	Orchestrator string             // the orchestrator's session id, "" when not running
-	Window       string             // Hyprland address of the window Den runs in, "" when unknown
+	Window       string             // the window Den runs in, "" when not known for sure
 	IsAncestor   func(pid int) bool // reports whether pid is above Den's process
 }
 
@@ -124,8 +131,8 @@ func (p Plan) Title() string {
 	}
 }
 
-// Lines spells the plan out: one line per agent with its process and
-// window, the warnings that matter, and what was refused.
+// Lines spells the plan out: one line per agent with its process and what
+// happens to its window, the warnings that matter, and what was refused.
 func (p Plan) Lines() []string {
 	var out []string
 	if p.From == "orchestrator" {
@@ -147,13 +154,13 @@ func (p Plan) Lines() []string {
 		if t.Idle > 0 {
 			line = fmt.Sprintf("%s (%s) · idle %s · pid %d", t.Name, t.Peer, roundIdle(t.Idle), t.PID)
 		}
+		out = append(out, line)
 		switch {
 		case t.Window != "":
-			line += " · window " + t.Window + " closes"
-		default:
-			line += " · no window found, only the process ends"
+			out = append(out, "  window "+t.Marker+" closes with its process; Den closes it if it stays open")
+		case t.WindowNote != "":
+			out = append(out, "  window: "+t.WindowNote)
 		}
-		out = append(out, line)
 		if len(t.Dirty) > 0 {
 			out = append(out, fmt.Sprintf("  ! %d uncommitted change(s) in %s: %s", len(t.Dirty), t.Dir, strings.Join(limit(t.Dirty, 4), ", ")))
 		}
@@ -247,7 +254,7 @@ func ParseIdle(s string) (time.Duration, error) {
 
 // Summary is the one-line outcome after Run.
 func Summary(results []Result) string {
-	var ended, killed, left, windows []string
+	var ended, killed, left, windows, notes []string
 	for _, r := range results {
 		switch {
 		case r.Killed:
@@ -263,6 +270,9 @@ func Summary(results []Result) string {
 		}
 		if r.WindowClosed {
 			windows = append(windows, r.Target.Name)
+		}
+		if r.WindowNote != "" {
+			notes = append(notes, r.Target.Name+": "+r.WindowNote)
 		}
 	}
 	var parts []string
@@ -280,7 +290,10 @@ func Summary(results []Result) string {
 	}
 	s := strings.Join(parts, " · ")
 	if len(windows) > 0 {
-		s += fmt.Sprintf(" · %d window(s) closed", len(windows))
+		s += fmt.Sprintf(" · Den closed %d window(s) left open", len(windows))
+	}
+	if len(notes) > 0 {
+		s += " · " + strings.Join(notes, " · ")
 	}
 	return s
 }
@@ -322,39 +335,67 @@ func Checkout(ctx context.Context, dir string) (paths []string, ok bool) {
 	return paths, true
 }
 
-// Ops is what Run needs from the system; tests fake it.
+// Ops is what Run needs from the system; tests fake it. Windows are closed
+// only through WindowOps, when Ops also has it.
 type Ops interface {
 	Signal(pid int, sig syscall.Signal) error
 	Alive(pid int) bool
-	CloseWindow(address string) error
 }
 
-// Waits, shortened in tests.
+// Waits, shortened in tests. Between is the pause between two targets, so
+// terminals do not tear down all at once; WindowWait is how long a window
+// gets to close by itself after its process ended.
 var (
-	StopWait  = 5 * time.Second
-	KillWait  = 2 * time.Second
-	pollEvery = 100 * time.Millisecond
+	StopWait   = 5 * time.Second
+	KillWait   = 2 * time.Second
+	Between    = 500 * time.Millisecond
+	WindowWait = 2 * time.Second
+	pollEvery  = 100 * time.Millisecond
 )
+
+// The clock, the pause between targets and the window poll; tests replace
+// them.
+var (
+	timeNow  = time.Now
+	sleepFor = time.Sleep
+	pause    = func(ctx context.Context, d time.Duration) {
+		select {
+		case <-ctx.Done():
+		case <-time.After(d):
+		}
+	}
+)
+
+// running serialises closes: two plans approved together take turns.
+var runMu sync.Mutex
 
 // Result is what happened to one target.
 type Result struct {
 	Target       Target
-	Ended        bool // the process is gone
-	Killed       bool // it needed SIGKILL
-	WindowClosed bool
+	Ended        bool   // the process is gone
+	Killed       bool   // it needed SIGKILL
+	WindowClosed bool   // Den closed its window, left open after the process
+	WindowNote   string // why its window may still be open, for the human
 	Err          error
 }
 
-// Run carries the plan out: SIGTERM, a wait, SIGKILL only when forced, then
-// the window. A window that is Den's own is never touched. With Ops that
-// verify (System), each process is first checked to be the agent's Claude
-// Code and held by a pidfd, and a target that fails the check is not
-// signalled at all. When ctx ends during the wait, nothing is escalated:
-// the target is reported with ErrNotKnown, never killed.
+// Run carries the plan out, one target at a time with a pause between:
+// SIGTERM, a wait, SIGKILL only when forced, then the window if it did not
+// close with the process (see leftOpen). Only the agent's own process is
+// signalled, never its terminal. With Ops that verify (System), each
+// process is first checked to be the agent's Claude Code and held by a
+// pidfd, and a target that fails the check is not signalled at all. When
+// ctx ends during the wait, nothing is escalated: the target is reported
+// with ErrNotKnown, never killed. Runs never overlap.
 func Run(ctx context.Context, p Plan, self Self, ops Ops) []Result {
+	runMu.Lock()
+	defer runMu.Unlock()
 	var out []Result
 	v, verify := ops.(Verifier)
-	for _, t := range p.Targets {
+	for i, t := range p.Targets {
+		if i > 0 {
+			pause(ctx, Between)
+		}
 		out = append(out, runOne(ctx, p, self, ops, v, verify, t))
 	}
 	return out
@@ -402,16 +443,13 @@ func runOne(ctx context.Context, p Plan, self Self, ops Ops, v Verifier, verify 
 	return r
 }
 
-// closeWindow closes an ended target's window, never Den's own.
+// closeWindow sees to an ended target's window, when Ops can.
 func closeWindow(r *Result, t Target, self Self, ops Ops) {
-	if !r.Ended || t.Window == "" || t.Window == self.Window {
+	wo, ok := ops.(WindowOps)
+	if !r.Ended || !ok {
 		return
 	}
-	if err := ops.CloseWindow(t.Window); err == nil {
-		r.WindowClosed = true
-	} else if !strings.Contains(err.Error(), "not found") {
-		r.Err = err
-	}
+	leftOpen(r, t, self, wo)
 }
 
 // waitGone waits up to wait for the process to be gone. cut says ctx
