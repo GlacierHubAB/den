@@ -35,6 +35,25 @@ type Event struct {
 	SessionID string
 	Model     string
 	CostUSD   float64 // result
+	// Stderr is the first line the process wrote to stderr, on Exited:
+	// one sanitised line of at most maxStderrLine characters.
+	Stderr string
+}
+
+// maxStderrLine caps a line of the process's stderr in an event.
+const maxStderrLine = 200
+
+// UnknownFlag reports whether claude's first stderr line refuses an
+// option on its command line, as a version older than Den needs does.
+func UnknownFlag(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "unknown option") || strings.Contains(s, "unknown argument") || strings.Contains(s, "unrecognized option")
+}
+
+// TooOld is what Den says when claude refused one of its flags; stderr is
+// Event.Stderr, already one sanitised, capped line.
+func TooOld(stderr string) string {
+	return "the orchestrator couldn't start: " + stderr + "; Den needs Claude Code 2.1.289 or newer"
 }
 
 // Kind classifies events.
@@ -210,8 +229,13 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
 		var tail []string
+		first := ""
 		for sc.Scan() {
-			tail = append(tail, sc.Text())
+			line := sanitize.Label(sc.Text(), maxStderrLine)
+			if first == "" {
+				first = line
+			}
+			tail = append(tail, line)
 			if len(tail) > 5 {
 				tail = tail[1:]
 			}
@@ -229,7 +253,7 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 		if len(tail) > 0 {
 			msg += " · " + strings.Join(tail, " | ")
 		}
-		orc.emit(Event{Kind: Exited, Text: msg})
+		orc.emit(Event{Kind: Exited, Text: msg, Stderr: first})
 		close(orc.events)
 		close(orc.done)
 	}()

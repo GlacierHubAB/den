@@ -371,6 +371,31 @@ func TestGuidanceRestartWaitsForIdle(t *testing.T) {
 	}
 }
 
+// A claude too old for Den's flags exits before its init event with an
+// unknown-option error: the chat says so plainly, and the resumable
+// session is kept rather than given up as unresumable.
+func TestOrchestratorTooOldForAFlag(t *testing.T) {
+	guidanceEnv(t)
+	m := testModel(140, 50)
+	m.orch.resume = "sess-1"
+	cmd := m.handleOrchEvent(orch.Event{Kind: orch.Exited, Text: "orchestrator exited: exit status 1", Stderr: "error: unknown option '--system-prompt-snapshot'"})
+	if cmd != nil {
+		t.Error("a refused flag started another launch")
+	}
+	want := "the orchestrator couldn't start: error: unknown option '--system-prompt-snapshot'; Den needs Claude Code 2.1.289 or newer"
+	if lastNote(&m) != want {
+		t.Errorf("note %q, want %q", lastNote(&m), want)
+	}
+	if m.orch.resume != "sess-1" || m.orch.status != "stopped" {
+		t.Errorf("resume %q, status %q", m.orch.resume, m.orch.status)
+	}
+	// Any other early exit still counts as a session that would not resume.
+	m.handleOrchEvent(orch.Event{Kind: orch.Exited, Text: "orchestrator exited: exit status 1", Stderr: "No conversation found with session ID"})
+	if m.orch.resume != "" {
+		t.Error("an unresumable session was kept")
+	}
+}
+
 // After guidance is turned off, changed or turned on, the next launch
 // resumes the session with that prompt and --system-prompt-snapshot off,
 // so Claude Code sends it rather than the prompt it recorded before.

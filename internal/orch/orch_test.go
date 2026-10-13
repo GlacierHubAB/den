@@ -114,6 +114,45 @@ func TestArgv(t *testing.T) {
 	}
 }
 
+// A claude that refuses one of Den's flags exits before its init event;
+// Exited carries its first stderr line, sanitised and capped.
+func TestExitedCarriesFirstStderrLine(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	long := strings.Repeat("x", 500)
+	body := "#!/bin/sh\nprintf 'error: unknown option \\047--system-prompt-snapshot\\047\\033[31m\\n" + long + "\\n' >&2\nexit 1\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	o, err := Start(ctx, Options{Command: []string{script}, Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer o.Close()
+	for {
+		select {
+		case e, ok := <-o.Events():
+			if !ok {
+				t.Fatal("events closed without Exited")
+			}
+			if e.Kind != Exited {
+				continue
+			}
+			if e.Stderr != "error: unknown option '--system-prompt-snapshot'" {
+				t.Errorf("first stderr line %q", e.Stderr)
+			}
+			if strings.Contains(e.Text, long) || strings.ContainsRune(e.Text, 0x1b) {
+				t.Errorf("Exited text is not capped and sanitised: %d bytes", len(e.Text))
+			}
+			return
+		case <-ctx.Done():
+			t.Fatal("timeout")
+		}
+	}
+}
+
 func TestSpawnInputWorktree(t *testing.T) {
 	for in, want := range map[string]spawn.Worktree{
 		`{"dir":"/r","worktree":true}`:      spawn.WorktreeAuto,
