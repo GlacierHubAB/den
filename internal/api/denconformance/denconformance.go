@@ -46,6 +46,10 @@ type Options struct {
 	// DialAsOtherUser, when set, opens a connection the server must refuse
 	// (a different uid). Left nil, the peer-credential subtest is skipped.
 	DialAsOtherUser Dialer
+	// DialAsOtherExe, when set, opens a connection as the same user from a
+	// different program, whose ask.cancel of this program's turn must be
+	// not_found. Left nil, that check of the ask.cancel subtest is skipped.
+	DialAsOtherExe Dialer
 	// Timeout bounds each subtest. Default 5 s.
 	Timeout time.Duration
 	// Focusable is an agent id or name, or an inbox item id, focus must
@@ -60,7 +64,7 @@ type Options struct {
 var Subtests = []string{
 	"hello", "hello first", "unknown verb", "oversized line",
 	"fleet.snapshot", "inbox.list", "inbox.body", "focus",
-	"ask", "chat.sessions", "chat.history",
+	"ask", "ask.cancel", "chat.sessions", "chat.history",
 	"mission.list", "mission.start", "mission.drop",
 	"view.data", "grant.request", "grant.events", "theme.get",
 	"fleet.events", "inbox.events", "second client", "peer credentials",
@@ -221,9 +225,18 @@ func Run(t *testing.T, o Options) {
 	})
 
 	run("ask", func(t *testing.T, ctx context.Context, cl *client) {
-		chunks, err := cl.ask(ctx, "what did this week cost?")
+		id, chunks, err := cl.ask(ctx, "what did this week cost?")
 		if err != nil {
 			t.Fatal(err)
+		}
+		if !askIDRe.MatchString(id) {
+			t.Errorf("the ask reply's id %q is not \"a-\" and 32 lowercase hex digits", id)
+		}
+		for _, ch := range chunks {
+			if ch.Ask != id {
+				t.Errorf("a %s chunk names ask %q, not its own %q", ch.Type, ch.Ask, id)
+				break
+			}
 		}
 		lastSeq, askID, cleared := 0, "", false
 		var types []string
@@ -261,6 +274,155 @@ func Run(t *testing.T, o Options) {
 		if lastSeq > 0 && !cleared {
 			t.Error("a status line was left standing at done; send an empty status first")
 		}
+	})
+
+	run("ask.cancel", func(t *testing.T, ctx context.Context, cl *client) {
+		// Turns read by ask id: every chunk names its ask, and one
+		// connection may carry two (a newer one supersedes the first).
+		type turn struct {
+			c  *conn
+			id string
+		}
+		ask := func(c *conn, text string) turn {
+			t.Helper()
+			var rep struct {
+				Ask string `json:"ask"`
+			}
+			if err := c.call(ctx, "ask", map[string]string{"text": text}, &rep); err != nil {
+				t.Fatal(err)
+			}
+			if !askIDRe.MatchString(rep.Ask) {
+				t.Fatalf("the ask reply's id %q is not \"a-\" and 32 lowercase hex digits", rep.Ask)
+			}
+			return turn{c, rep.Ask}
+		}
+		dial := func(group string) *conn {
+			t.Helper()
+			c, _, err := openGroup(ctx, o.Dial, group)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return c
+		}
+		// end reads tr's stream to its last chunk, which must be done or
+		// error: the connection may not just close. Other asks' chunks on
+		// the same connection are skipped.
+		end := func(tr turn) chunk {
+			t.Helper()
+			for {
+				l, err := tr.c.read()
+				if err != nil {
+					t.Fatalf("the stream of %s ended without done or error: %v", tr.id, err)
+				}
+				if l.Event != "chat" {
+					continue
+				}
+				var ch chunk
+				if err := json.Unmarshal(l.Data, &ch); err != nil {
+					t.Fatalf("a chat event that is not a chunk: %s", l.Data)
+				}
+				if ch.Ask != tr.id {
+					continue
+				}
+				if ch.Type == "done" || ch.Type == "error" {
+					return ch
+				}
+			}
+		}
+		cancel := func(id string) (bool, error) {
+			var r struct {
+				Cancelled bool `json:"cancelled"`
+			}
+			err := cl.call(ctx, "ask.cancel", map[string]string{"ask": id}, &r)
+			return r.Cancelled, err
+		}
+		mustCancel := func(tr turn) {
+			t.Helper()
+			if ok, err := cancel(tr.id); err != nil || !ok {
+				t.Fatalf("ask.cancel of %s: cancelled %v, %v", tr.id, ok, err)
+			}
+			if last := end(tr); last.Type != "error" || last.Message != "cancelled" {
+				t.Errorf("a cancelled turn must end with the error \"cancelled\": %+v", last)
+			}
+		}
+		superseded := func(tr turn) {
+			t.Helper()
+			if last := end(tr); last.Type != "error" || last.Message != "superseded by a newer question" {
+				t.Errorf("a superseded turn must end with the error \"superseded by a newer question\": %+v", last)
+			}
+		}
+		group := func(b byte) string { return strings.Repeat(string("0123456789abcdef"[b%16]), 32) }
+
+		// Bad requests and unknown ids.
+		if _, err := cancel(""); codeOf(err) != CodeBadRequest {
+			t.Errorf("ask.cancel with no id must be %s: %v", CodeBadRequest, err)
+		}
+		if _, err := cancel("a-" + strings.Repeat("0", 32)); codeOf(err) != CodeNotFound {
+			t.Errorf("ask.cancel of an unknown id must be %s: %v", CodeNotFound, err)
+		}
+		for _, bad := range []string{strings.Repeat("A", 32), "abc", strings.Repeat("g", 32)} {
+			if _, _, err := openGroup(ctx, o.Dial, bad); codeOf(err) != CodeBadRequest {
+				t.Errorf("hello with group %q must be %s: %v", bad, CodeBadRequest, err)
+			}
+		}
+
+		// Cancelling this program's turn from another connection: the
+		// reply, the stream's end, and not_found after. Another program
+		// may not.
+		a := dial("")
+		defer a.close()
+		tr := ask(a, "what did this week cost?")
+		if o.DialAsOtherExe != nil {
+			other := &client{dial: o.DialAsOtherExe}
+			defer other.close()
+			if err := other.call(ctx, "ask.cancel", map[string]string{"ask": tr.id}, nil); codeOf(err) != CodeNotFound {
+				t.Errorf("another program's ask.cancel must be %s: %v", CodeNotFound, err)
+			}
+		}
+		mustCancel(tr)
+		if _, err := cancel(tr.id); codeOf(err) != CodeNotFound {
+			t.Errorf("ask.cancel of a turn already over must be %s: %v", CodeNotFound, err)
+		}
+
+		// A second ask on the same connection supersedes the first.
+		first := ask(a, "what is running?")
+		second := ask(a, "and what did it cost?")
+		superseded(first)
+		mustCancel(second)
+
+		// So does one from another connection in the same group.
+		g1, g2 := dial(group(1)), dial(group(1))
+		defer g1.close()
+		defer g2.close()
+		first = ask(g1, "what is running?")
+		second = ask(g2, "and what did it cost?")
+		superseded(first)
+		mustCancel(second)
+
+		// Two clients of the same program in different groups touch
+		// nothing of each other's: no supersede, and the fleet shows the
+		// other's ask without its ids.
+		x, y := dial(group(2)), dial(group(3))
+		defer x.close()
+		defer y.close()
+		mine := ask(x, "what is running?")
+		theirs := ask(y, "and what did it cost?")
+		var fl struct {
+			Asks []struct {
+				Ask     string `json:"ask"`
+				Session string `json:"session"`
+			} `json:"asks"`
+		}
+		if err := y.call(ctx, "fleet.snapshot", nil, &fl); err != nil {
+			t.Fatal(err)
+		}
+		for _, st := range fl.Asks {
+			if st.Ask == mine.id {
+				t.Errorf("another group's fleet.snapshot shows ask id %s", mine.id)
+			}
+		}
+		mustCancel(mine) // still running or waiting: it was not superseded
+		mustCancel(theirs)
 	})
 
 	run("chat.sessions", func(t *testing.T, ctx context.Context, cl *client) {

@@ -18,10 +18,10 @@ import (
 // The conformance copy is byte-identical to the pinned upstream files.
 func TestConformanceCopyIsPinned(t *testing.T) {
 	want := map[string]string{
-		"client.go":         "e88342cbd6fa22e3098983510cb29af3880e75777e4a7a1d04fa20136f35b04e",
+		"client.go":         "00a38c499b49839a11f7d4aa22644fe8d9b494cf725a60f897c4b0f8d1484372",
 		"d1.go":             "e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416",
-		"denconformance.go": "a68ac91f305453d488fe0e5b4542ff5974d8579a79b63125d05114e52a299281",
-		"README.md":         "b9684e76585c1baa962147f2377a4e39904a807a8eca3feecc4a8dfefe576190",
+		"denconformance.go": "31ee8a6292ced9dbed6eeb98ebb67dd01766ea62c192592259a62d0e0669ed65",
+		"README.md":         "261c539f402d07a1ddf69f6cbb78f3bc88e5f008d50a3f1ccf24cd0fa5eddbfb",
 	}
 	var sums strings.Builder
 	var goFiles []string
@@ -48,7 +48,7 @@ func TestConformanceCopyIsPinned(t *testing.T) {
 		fmt.Fprintf(&sums, "%s  %s\n", want[name], name)
 	}
 	h := sha256.Sum256([]byte(sums.String()))
-	if got := hex.EncodeToString(h[:]); got != "eee23b2b37bc0eb53479e56c6305041818f53ff1fbb65207e1f075b15bd0f6c3" {
+	if got := hex.EncodeToString(h[:]); got != "d251218a9b2f46804bbca41e47439d2e783b990a5711aa979b1f5e9bb40b075f" {
 		t.Errorf("package hash %s", got)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
@@ -38,6 +39,7 @@ const (
 const (
 	CodeUnsupported = "unsupported"
 	CodeNotFound    = "not_found"
+	CodeBadRequest  = "bad_request"
 	CodeHelloFirst  = "hello_first"
 	CodeTooLarge    = "too_large"
 )
@@ -161,13 +163,22 @@ func (c *conn) call(ctx context.Context, op string, params, result any) error {
 
 // open dials and says hello.
 func open(ctx context.Context, dial Dialer) (*conn, info, error) {
+	return openGroup(ctx, dial, "")
+}
+
+// openGroup dials and says hello with a group ("" sends none).
+func openGroup(ctx context.Context, dial Dialer, group string) (*conn, info, error) {
 	nc, err := dial(ctx)
 	if err != nil {
 		return nil, info{}, err
 	}
 	c := &conn{nc: nc, r: bufio.NewReaderSize(nc, 64*1024)}
 	var in info
-	if err := c.call(ctx, "hello", map[string]any{"v": V, "client": "conformance", "version": "test"}, &in); err != nil {
+	params := map[string]any{"v": V, "client": "conformance", "version": "test"}
+	if group != "" {
+		params["group"] = group
+	}
+	if err := c.call(ctx, "hello", params, &in); err != nil {
 		c.close()
 		return nil, info{}, err
 	}
@@ -232,38 +243,45 @@ func (cl *client) subscribe(ctx context.Context, op string, params any) (<-chan 
 	return out, nil
 }
 
-// ask sends a turn and collects its chunks until done or error.
-func (cl *client) ask(ctx context.Context, text string) ([]chunk, error) {
+// ask sends a turn and collects its chunks until done or error; id is
+// the ask id the reply named.
+func (cl *client) ask(ctx context.Context, text string) (id string, out []chunk, err error) {
 	c, _, err := open(ctx, cl.dial)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	defer c.close()
-	if err := c.call(ctx, "ask", map[string]string{"text": text}, nil); err != nil {
-		return nil, err
+	var rep struct {
+		Ask string `json:"ask"`
 	}
-	var out []chunk
+	if err := c.call(ctx, "ask", map[string]string{"text": text}, &rep); err != nil {
+		return "", nil, err
+	}
+	id = rep.Ask
 	for {
 		l, err := c.read()
 		if errors.Is(err, io.EOF) {
-			return out, fmt.Errorf("the connection closed before done")
+			return id, out, fmt.Errorf("the connection closed before done")
 		}
 		if err != nil {
-			return out, err
+			return id, out, err
 		}
 		if l.Event != "chat" {
 			continue
 		}
 		var ch chunk
 		if err := json.Unmarshal(l.Data, &ch); err != nil {
-			return out, fmt.Errorf("a chat event that is not a chunk: %s", l.Data)
+			return id, out, fmt.Errorf("a chat event that is not a chunk: %s", l.Data)
 		}
 		out = append(out, ch)
 		if ch.Type == "done" || ch.Type == "error" {
-			return out, nil
+			return id, out, nil
 		}
 	}
 }
+
+// AskIDPattern is the shape of an ask id: "a-" and 128 random bits.
+var askIDRe = regexp.MustCompile(`^a-[0-9a-f]{32}$`)
 
 // The parts of the wire types the suite checks.
 type info struct {

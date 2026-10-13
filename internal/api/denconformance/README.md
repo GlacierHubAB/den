@@ -6,7 +6,7 @@ inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
 Source: github.com/GlacierHubAB/drey, `pkg/denconformance`.
-Exported at Drey commit `ae23efd08225`, package SHA-256 `eee23b2b37bc0eb53479e56c6305041818f53ff1fbb65207e1f075b15bd0f6c3`.
+Exported at Drey commit `613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0`, package SHA-256 `d251218a9b2f46804bbca41e47439d2e783b990a5711aa979b1f5e9bb40b075f`.
 
 The package SHA-256 is computed over the Go files in name order:
 
@@ -35,6 +35,9 @@ func TestDreyInterface(t *testing.T) {
 
 Options: `Dial` (required), `DialAsOtherUser` (a connection the server
 must refuse; the peer-credential subtest is skipped without it),
+`DialAsOtherExe` (a connection from another program of the same user,
+whose `ask.cancel` of this program's turn must be `not_found`; that check
+is skipped without it),
 `Timeout` (per subtest, default 5 s), `Focusable` (an agent or item id
 focus must accept; found from the fleet otherwise) and `Skip` (subtest
 names; `Subtests` lists them all). Each subtest is named after the verb
