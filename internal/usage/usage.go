@@ -94,6 +94,9 @@ type State struct {
 	// LastReset is the newest weekly reset seen, to start the week's
 	// warnings over and to bound a figure set by hand.
 	LastReset time.Time `json:"last_reset,omitzero"`
+	// LastSeen is when Den last had a statusline reading: before the
+	// first, there is nothing to say "unknown" about.
+	LastSeen time.Time `json:"last_seen,omitzero"`
 	// Warned holds, per threshold, the reset it was warned for.
 	Warned map[string]time.Time `json:"warned,omitempty"`
 	// Stopped is set while the fleet is stopped; Den refuses to start
@@ -182,6 +185,9 @@ func (s *State) Current(fresh Reading, haveFresh bool, spent, weeklyUSD float64,
 		if !fresh.Resets.IsZero() && fresh.Resets.After(s.LastReset) {
 			s.LastReset = fresh.Resets
 		}
+		if fresh.At.After(s.LastSeen) {
+			s.LastSeen = fresh.At
+		}
 		return fresh, true
 	}
 	if s.SetPercent != nil && now.Before(s.SetUntil) {
@@ -231,6 +237,13 @@ func (s *State) Due(r Reading, now time.Time) []int {
 // cost estimate.
 func ShouldStop(r Reading, stopPercent int) bool {
 	return stopPercent > 0 && r.Source != Budget && r.Percent >= float64(stopPercent)
+}
+
+// Shown reports whether the header has anything to say about usage: a
+// reading or estimate, a stop, a warning given, or a reading once seen
+// that has gone stale. Before Den ever had one, it stays quiet.
+func Shown(ok bool, s State) bool {
+	return ok || s.Stopped || !s.LastSeen.IsZero() || len(s.Warned) > 0
 }
 
 // Label is the one-line state for the top bar.

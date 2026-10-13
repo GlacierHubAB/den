@@ -146,12 +146,14 @@ func (m Model) header(w int) []string {
 		}
 	}
 	switch label := usage.Label(m.use.reading, m.use.ok, m.use.st, time.Now()); {
+	case !usage.Shown(m.use.ok, m.use.st):
+		// Never a reading, a figure or a stop: nothing to say.
 	case m.use.st.Stopped:
 		links = append(links, s.err.Render(label))
 	case m.use.ok && m.use.reading.Percent >= 80:
 		links = append(links, s.attn.Render(label))
 	default:
-		links = append(links, label) // "usage unknown" when there is no reading
+		links = append(links, label) // "usage unknown" once a reading has gone stale
 	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 

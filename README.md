@@ -1136,8 +1136,10 @@ there, without its colours; Den's own colours are not affected.
 
 The header shows how much of the account's weekly limit is used, as Claude
 Code reports it to the agent-badge statusline in your sessions on this
-machine: the newest reading and how old it is (`usage 63% · 2m ago`). With no
-reading in the last 15 minutes it says `usage unknown`. Two stand-ins, always
+machine: the newest reading and how old it is (`usage 63% · 2m ago`). Once
+it has had one, no reading in the last 15 minutes shows as `usage unknown`;
+before Den ever had a figure, a warning or a stop, the header says nothing
+about usage. Two stand-ins, always
 labelled estimates: a figure you set (`/usage set 87`, good until the next
 weekly reset; `/usage clear` drops it), or, with `weekly_usd` set under
 `[usage]`, Den's own cost estimate for the week against that budget.

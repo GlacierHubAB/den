@@ -67,10 +67,18 @@ func TestUsageInTheHeader(t *testing.T) {
 	if out := ansi.Strip(m.View().Content); !strings.Contains(out, "usage 63% · 2m ago") {
 		t.Errorf("header:\n%s", out)
 	}
-	m = usageModel(t, 63, 20*time.Minute, 0) // too old
+	// The reading goes stale: unknown, once Den has had one.
+	p := 63.0
+	m.base[0].Limits.SevenDay, m.base[0].Limits.Now = &p, time.Now().Add(-20*time.Minute).UnixMilli()
 	m.checkUsage(time.Now())
 	if out := ansi.Strip(m.View().Content); !strings.Contains(out, "usage unknown") {
 		t.Errorf("a stale reading:\n%s", out)
+	}
+	// Never a reading: the header says nothing about usage.
+	m = usageModel(t, 63, 20*time.Minute, 0)
+	m.checkUsage(time.Now())
+	if out := ansi.Strip(m.View().Content); strings.Contains(out, "usage") {
+		t.Errorf("no reading ever:\n%s", out)
 	}
 	m = usageModel(t, -1, 0, 0)
 	m.cfg.Usage.WeeklyUSD = 100
