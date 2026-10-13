@@ -96,20 +96,24 @@ type flashClearMsg struct{}
 
 // Model is the root bubbletea model.
 type Model struct {
-	st       styles
-	base     []fleet.Agent // as discovered, before inbox state is applied
-	agents   []fleet.Agent // base with "needs you" applied and re-sorted
-	cursor   int
-	tab      tab
-	width    int
-	height   int
-	err      error
-	flash    string
-	flashErr bool
-	help     bool
-	costs    costState // cost figures kept by the tick
-	watch    <-chan struct{}
-	lastScan time.Time
+	// hl is the code colouring this frame may still do, set by View;
+	// plainCode draws fenced code uncoloured (remote agents' text).
+	hl        *hlBudget
+	plainCode bool
+	st        styles
+	base      []fleet.Agent // as discovered, before inbox state is applied
+	agents    []fleet.Agent // base with "needs you" applied and re-sorted
+	cursor    int
+	tab       tab
+	width     int
+	height    int
+	err       error
+	flash     string
+	flashErr  bool
+	help      bool
+	costs     costState // cost figures kept by the tick
+	watch     <-chan struct{}
+	lastScan  time.Time
 
 	srv        *bridge.Server
 	closing    map[string]closer.Plan     // close questions in the inbox, by item id

@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -29,14 +32,34 @@ func (m Model) codeBlockN(text string, width, n int) []string {
 	s := m.st
 	inner := max(8, width-2)
 	var out []string
-	for _, raw := range strings.Split(text, "\n") {
-		for _, l := range strings.Split(ansi.Wrap(raw, inner, ""), "\n") {
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\t", "    "), "\n") {
+		for _, l := range fitLines(strings.Split(ansi.Wrap(raw, inner, ""), "\n"), inner) {
 			if n > 0 && len(out) == n {
 				last := out[n-1]
 				out[n-1] = ansi.Truncate(last, inner+2-1, "") + s.muted.Render("…")
 				return out
 			}
 			out = append(out, s.muted.Render("┃ ")+s.code.Render(l))
+		}
+	}
+	return out
+}
+
+// fitLines cuts any line still wider than w (a wide space ansi.Wrap does
+// not break at, say) into pieces that fit.
+func fitLines(lines []string, w int) []string {
+	var out []string
+	for _, l := range lines {
+		if ansi.StringWidth(l) <= w {
+			out = append(out, l)
+			continue
+		}
+		for _, piece := range wrapPlain([]mdSpan{{text: l}}, w, true) {
+			var b strings.Builder
+			for _, sp := range piece {
+				b.WriteString(sp.text)
+			}
+			out = append(out, b.String())
 		}
 	}
 	return out
@@ -121,6 +144,26 @@ func (m Model) plainLines(text string, width int, style lipgloss.Style) []string
 // text is sanitised first, so the only escapes in the result are Den's.
 func (m Model) markdownLines(text string, width int) []string {
 	width = max(1, width)
+	if m.hl == nil {
+		m.hl = newHLBudget()
+	}
+	key := m.mdKey(text, width)
+	if lines, ok := mdCache.get(key); ok {
+		return lines
+	}
+	short, left := m.hl.short, m.hl.left
+	out := m.renderMarkdown(text, width)
+	// A text that found the frame's budget already spent is not kept: a
+	// later frame, with the rest cached, colours it. One that spent some
+	// is kept as drawn, so its colouring is paid for once.
+	if m.hl.short == short || m.hl.left < left {
+		mdCache.put(key, out)
+	}
+	return append([]string(nil), out...)
+}
+
+// renderMarkdown is markdownLines without the cache.
+func (m Model) renderMarkdown(text string, width int) []string {
 	src := strings.Split(sanitize.Text(text), "\n")
 	var out []string
 	for i := 0; i < len(src); i++ {
@@ -217,8 +260,6 @@ func (m Model) spanStyle(a mdAttr, base lipgloss.Style) lipgloss.Style {
 		st = m.st.code
 	case a.url:
 		st = m.st.muted
-	case a.link:
-		st = st.Underline(true)
 	}
 	if a.bold {
 		st = st.Bold(true)
@@ -226,10 +267,26 @@ func (m Model) spanStyle(a mdAttr, base lipgloss.Style) lipgloss.Style {
 	if a.italic {
 		st = st.Italic(true)
 	}
-	if a.strike {
-		st = st.Strikethrough(true)
-	}
 	return st
+}
+
+// renderSpan styles one run of text. Underline (a link) and strikethrough
+// are set around the whole run here: lipgloss draws them a rune at a
+// time, which splits an emoji sequence and widens the line.
+func (m Model) renderSpan(a mdAttr, base lipgloss.Style, text string) string {
+	out := m.spanStyle(a, base).Render(text)
+	var sgr string
+	if a.link && !a.code && !a.url {
+		sgr += "\x1b[4m"
+	}
+	if a.strike {
+		sgr += "\x1b[9m"
+	}
+	if sgr == "" {
+		return out
+	}
+	// The run's own style ends with a reset, which clears these too.
+	return sgr + out + "\x1b[m"
 }
 
 // renderSpans styles a line's spans; each line stands alone, so markup
@@ -241,7 +298,7 @@ func (m Model) renderSpans(spans []mdSpan, base lipgloss.Style) string {
 		for ; j < len(spans) && spans[j].a == spans[i].a; j++ {
 			text += spans[j].text
 		}
-		b.WriteString(m.spanStyle(spans[i].a, base).Render(text))
+		b.WriteString(m.renderSpan(spans[i].a, base, text))
 		i = j
 	}
 	return b.String()
@@ -319,23 +376,27 @@ func wrapPlain(spans []mdSpan, width int, hard bool) [][]mdSpan {
 		gap, gapW = nil, 0
 		for _, p := range w.parts {
 			for p.text != "" {
-				pw := ansi.StringWidth(p.text)
-				if curW+pw <= width {
-					cur, curW = append(cur, p), curW+pw
-					break
-				}
-				// Truncate reads the whole string; give it only as much
-				// as the room could hold, so a long word costs its length.
+				// Measure and cut only as much as the room could hold, so
+				// a long word costs its length, not its length per line.
 				room := width - curW
-				head := ansi.Truncate(runePrefix(p.text, 32*(room+1)), room, "")
+				prefix := runePrefix(p.text, 32*(room+1))
+				if len(prefix) == len(p.text) {
+					if pw := ansi.StringWidth(p.text); curW+pw <= width {
+						cur, curW = append(cur, p), curW+pw
+						break
+					}
+				}
+				head := ansi.Truncate(prefix, room, "")
 				if head == "" && curW == 0 { // one character wider than the line
 					head = string([]rune(p.text)[:1])
 				}
 				if head != "" {
-					cur = append(cur, mdSpan{head, p.a})
+					cur, curW = append(cur, mdSpan{head, p.a}), curW+ansi.StringWidth(head)
 					p.text = p.text[len(head):]
 				}
-				newline()
+				if head == "" || len(head) < len(prefix) { // the line is full
+					newline()
+				}
 			}
 		}
 	}
@@ -343,6 +404,91 @@ func wrapPlain(spans []mdSpan, width int, hard bool) [][]mdSpan {
 		lines = append(lines, cur)
 	}
 	return lines
+}
+
+// Some chroma lexers are quadratic on hostile input (a Rust raw string
+// opener repeated takes seconds at 64 KB), and the view is drawn on every
+// key press. So a block is coloured only when it is small, the colouring
+// in one frame is capped, and what is drawn is kept.
+const (
+	hlBlockMax  = 8 << 10  // the largest block coloured
+	hlFrameMax  = 32 << 10 // the code coloured in one frame
+	mdCacheMax  = 256      // rendered texts kept
+	mdCacheSize = 8 << 20  // and their total size
+)
+
+// hlBudget is the colouring one frame may still do. short is set once a
+// block was drawn plain for want of it.
+type hlBudget struct {
+	left  int
+	short bool
+}
+
+func newHLBudget() *hlBudget { return &hlBudget{left: hlFrameMax} }
+
+func (b *hlBudget) take(n int) bool {
+	if n > b.left {
+		b.short = true
+		return false
+	}
+	b.left -= n
+	return true
+}
+
+// mdLexed counts fenced blocks handed to chroma, for the tests.
+var mdLexed atomic.Int64
+
+// mdKey identifies a rendering: the text, the width, and everything about
+// the model that changes how it looks.
+func (m Model) mdKey(text string, width int) string {
+	h := sha256.Sum256([]byte(text))
+	return fmt.Sprintf("%x|%d|%v|%v|%v", h, width, m.st.pal, m.st.code.GetForeground(), m.plainCode)
+}
+
+// mdCache keeps rendered markdown, so a long chat or a detail pane full of
+// replies is laid out once, not on every frame.
+var mdCache = &renderCache{m: map[string][]string{}}
+
+type renderCache struct {
+	sync.Mutex
+	m    map[string][]string
+	size int
+}
+
+func (c *renderCache) get(key string) ([]string, bool) {
+	c.Lock()
+	defer c.Unlock()
+	lines, ok := c.m[key]
+	if !ok {
+		return nil, false
+	}
+	return append([]string(nil), lines...), true
+}
+
+func (c *renderCache) put(key string, lines []string) {
+	n := 0
+	for _, l := range lines {
+		n += len(l)
+	}
+	if n > mdCacheSize/4 {
+		return // too big to be worth keeping
+	}
+	c.Lock()
+	defer c.Unlock()
+	if _, ok := c.m[key]; ok {
+		return
+	}
+	for k, old := range c.m { // map order is random: evict any
+		if len(c.m) < mdCacheMax && c.size+n <= mdCacheSize {
+			break
+		}
+		for _, l := range old {
+			c.size -= len(l)
+		}
+		delete(c.m, k)
+	}
+	c.m[key] = append([]string(nil), lines...)
+	c.size += n
 }
 
 // runePrefix is at most n bytes of s, cut at a rune boundary.
@@ -359,10 +505,17 @@ func runePrefix(s string, n int) string {
 // fencedBlock draws a fenced block: in the code colour, or coloured by
 // token when chroma knows the language.
 func (m Model) fencedBlock(code, lang string, width int) []string {
-	lexer := lexers.Get(lang)
-	if lang == "" || lexer == nil || len(code) > synMaxBytes {
+	if lang == "" || m.plainCode || len(code) > hlBlockMax {
 		return m.codeBlock(code, width)
 	}
+	lexer := lexers.Get(lang)
+	if lexer == nil {
+		return m.codeBlock(code, width)
+	}
+	if !m.hl.take(len(code)) {
+		return m.codeBlock(code, width)
+	}
+	mdLexed.Add(1)
 	it, err := chroma.Coalesce(lexer).Tokenise(nil, code)
 	if err != nil {
 		return m.codeBlock(code, width)
@@ -435,6 +588,7 @@ func splitRow(line string) []string {
 	if strings.HasSuffix(t, "|") && !strings.HasSuffix(t, `\|`) {
 		t = t[:len(t)-1]
 	}
+	ix := newLineIndex(t)
 	var cells []string
 	var b strings.Builder
 	for i := 0; i < len(t); i++ {
@@ -444,7 +598,7 @@ func splitRow(line string) []string {
 			i++
 		case t[i] == '`':
 			n := runLen(t, i, '`')
-			end := closingTicks(t, i+n, n)
+			end := ix.closingTicks(i+n, n)
 			if end < 0 {
 				end = i
 			}
@@ -499,7 +653,7 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 	}
 	sepW := 3 * (cols - 1)
 	room := width - sepW
-	if room < 4*cols {
+	perRow := func() []string {
 		var out []string
 		for r, row := range rows {
 			base := s.fg
@@ -509,6 +663,9 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 			out = append(out, m.wrapSpans(parseInline(strings.Join(row, " · ")), base, width, "", "", 0)...)
 		}
 		return out
+	}
+	if room < 4*cols {
+		return perRow()
 	}
 	// Share the room: narrow columns keep their width, the rest split
 	// what is left evenly.
@@ -593,6 +750,13 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 				b.WriteString(strings.Repeat("─", w))
 			}
 			out = append(out, s.muted.Render(b.String()))
+		}
+	}
+	// Cells the columns could not hold (a character wider than its
+	// column) would push the row past the pane: draw it a row to a line.
+	for _, l := range out {
+		if ansi.StringWidth(l) > width {
+			return perRow()
 		}
 	}
 	return out

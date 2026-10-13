@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -38,8 +39,15 @@ type mdNode struct {
 	bold, italic, strike int
 }
 
+// mdInlineMax is the longest line given inline markup; a longer one is
+// shown as it is. The parser is linear, this keeps it cheap as well.
+const mdInlineMax = 8 << 10
+
 // parseInline turns one line of markdown into styled spans.
 func parseInline(s string) []mdSpan {
+	if len(s) > mdInlineMax {
+		return []mdSpan{{text: s}}
+	}
 	var out []mdSpan
 	var text []string // the pieces of the last span, joined at the end
 	for _, n := range inlineNodes(s, mdAttr{}) {
@@ -73,6 +81,7 @@ func parseInline(s string) []mdSpan {
 // inlineNodes splits s into nodes with emphasis resolved. Every node takes
 // attr as its starting markup (a link's text is parsed with link set).
 func inlineNodes(s string, attr mdAttr) []mdNode {
+	ix := newLineIndex(s)
 	var nodes []mdNode
 	var text strings.Builder
 	flush := func() {
@@ -90,7 +99,7 @@ func inlineNodes(s string, attr mdAttr) []mdNode {
 			continue
 		case c == '`':
 			n := runLen(s, i, '`')
-			if end := closingTicks(s, i+n, n); end >= 0 {
+			if end := ix.closingTicks(i+n, n); end >= 0 {
 				flush()
 				a := attr
 				a.code = true
@@ -106,7 +115,7 @@ func inlineNodes(s string, attr mdAttr) []mdNode {
 			if c == '!' {
 				start++
 			}
-			if label, url, end, ok := parseLink(s, start); ok && !attr.link {
+			if label, url, end, ok := ix.parseLink(start); ok && !attr.link {
 				flush()
 				la := attr
 				la.link = true
@@ -124,7 +133,7 @@ func inlineNodes(s string, attr mdAttr) []mdNode {
 				continue
 			}
 		case c == '<':
-			if end := strings.IndexByte(s[i:], '>'); end > 0 && isAutolink(s[i+1:i+end]) {
+			if end := ix.autolinkEnd(i); end > 0 && isAutolink(s[i+1:i+end]) {
 				flush()
 				a := attr
 				a.link = true
@@ -247,60 +256,131 @@ func resolveEmphasis(nodes []mdNode) {
 	}
 }
 
+// lineIndex holds what the inline parser looks ahead for, found in one
+// pass over the line, so no construct rescans the rest of it: a line of
+// thousands of [ or < or backtick runs costs its length, not its square.
+type lineIndex struct {
+	s string
+	// ticks lists the starts of the backtick runs of each length, in order.
+	ticks map[int][]int
+	// bracket and paren map an opening [ or ( to its match.
+	bracket, paren map[int]int
+	// nextLT and nextGT give, for each position, the next < or > at or
+	// after it (len(s) for none); built only when the line has a <.
+	nextLT, nextGT []int32
+}
+
+func newLineIndex(s string) *lineIndex {
+	ix := &lineIndex{s: s}
+	if strings.IndexByte(s, '`') >= 0 {
+		ix.ticks = map[int][]int{}
+		for i := 0; i < len(s); {
+			if s[i] != '`' {
+				i++
+				continue
+			}
+			n := runLen(s, i, '`')
+			ix.ticks[n] = append(ix.ticks[n], i)
+			i += n
+		}
+	}
+	if strings.IndexByte(s, '[') >= 0 {
+		// Brackets pair as the parser reads them: escapes and code spans
+		// hide them.
+		ix.bracket = map[int]int{}
+		var stack []int
+		for i := 0; i < len(s); i++ {
+			switch s[i] {
+			case '\\':
+				i++
+			case '`':
+				n := runLen(s, i, '`')
+				if e := ix.closingTicks(i+n, n); e >= 0 {
+					i = e + n - 1
+				} else {
+					i += n - 1
+				}
+			case '[':
+				stack = append(stack, i)
+			case ']':
+				if k := len(stack) - 1; k >= 0 {
+					ix.bracket[stack[k]] = i
+					stack = stack[:k]
+				}
+			}
+		}
+		ix.paren = map[int]int{}
+		stack = stack[:0]
+		for i := 0; i < len(s); i++ {
+			switch s[i] {
+			case '\\':
+				i++
+			case '(':
+				stack = append(stack, i)
+			case ')':
+				if k := len(stack) - 1; k >= 0 {
+					ix.paren[stack[k]] = i
+					stack = stack[:k]
+				}
+			}
+		}
+	}
+	if strings.IndexByte(s, '<') >= 0 {
+		ix.nextLT, ix.nextGT = make([]int32, len(s)+1), make([]int32, len(s)+1)
+		ix.nextLT[len(s)], ix.nextGT[len(s)] = int32(len(s)), int32(len(s))
+		for i := len(s) - 1; i >= 0; i-- {
+			ix.nextLT[i], ix.nextGT[i] = ix.nextLT[i+1], ix.nextGT[i+1]
+			switch s[i] {
+			case '<':
+				ix.nextLT[i] = int32(i)
+			case '>':
+				ix.nextGT[i] = int32(i)
+			}
+		}
+	}
+	return ix
+}
+
+// closingTicks is the start of the first run of exactly n backticks at or
+// after i, -1 for none.
+func (ix *lineIndex) closingTicks(i, n int) int {
+	runs := ix.ticks[n]
+	k := sort.SearchInts(runs, i)
+	if k == len(runs) {
+		return -1
+	}
+	return runs[k]
+}
+
+// autolinkEnd is the offset from the < at i to the > that closes it, with
+// no other < between; 0 for none.
+func (ix *lineIndex) autolinkEnd(i int) int {
+	if ix.nextGT == nil {
+		return 0
+	}
+	gt := int(ix.nextGT[i+1])
+	if gt >= len(ix.s) || int(ix.nextLT[i+1]) < gt {
+		return 0
+	}
+	return gt - i
+}
+
 // parseLink reads [label](url) at s[i]. end is just past the closing
 // parenthesis. A title after the url is dropped.
-func parseLink(s string, i int) (label, url string, end int, ok bool) {
+func (ix *lineIndex) parseLink(i int) (label, url string, end int, ok bool) {
+	s := ix.s
 	if i >= len(s) || s[i] != '[' {
 		return "", "", 0, false
 	}
-	depth := 0
-	j := i
-	for ; j < len(s); j++ {
-		switch s[j] {
-		case '\\':
-			j++
-			continue
-		case '`':
-			n := runLen(s, j, '`')
-			if e := closingTicks(s, j+n, n); e >= 0 {
-				j = e + n - 1
-			} else {
-				j += n - 1
-			}
-			continue
-		case '[':
-			depth++
-		case ']':
-			depth--
-		}
-		if depth == 0 {
-			break
-		}
+	j, found := ix.bracket[i]
+	if !found || j+1 >= len(s) || s[j+1] != '(' {
+		return "", "", 0, false
 	}
-	if j >= len(s) || j+1 >= len(s) || s[j+1] != '(' {
+	k, found := ix.paren[j+1]
+	if !found {
 		return "", "", 0, false
 	}
 	label = s[i+1 : j]
-	k := j + 2
-	paren := 0
-	for ; k < len(s); k++ {
-		if s[k] == '\\' {
-			k++
-			continue
-		}
-		if s[k] == '(' {
-			paren++
-		}
-		if s[k] == ')' {
-			if paren == 0 {
-				break
-			}
-			paren--
-		}
-	}
-	if k >= len(s) {
-		return "", "", 0, false
-	}
 	dest := strings.TrimSpace(s[j+2 : k])
 	if f := strings.Fields(dest); len(f) > 0 {
 		dest = f[0]
@@ -333,24 +413,6 @@ func codeContent(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
-}
-
-// closingTicks is the index of the next run of exactly n backticks from i,
-// -1 for none.
-func closingTicks(s string, i, n int) int {
-	for i < len(s) {
-		j := strings.IndexByte(s[i:], '`')
-		if j < 0 {
-			return -1
-		}
-		j += i
-		m := runLen(s, j, '`')
-		if m == n {
-			return j
-		}
-		i = j + m
-	}
-	return -1
 }
 
 func runLen(s string, i int, c byte) int {

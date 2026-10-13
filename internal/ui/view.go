@@ -22,6 +22,7 @@ import (
 )
 
 func (m Model) View() tea.View {
+	m.hl = newHLBudget()
 	w, h := m.width, m.height
 	if w <= 0 {
 		w = 120
@@ -1276,6 +1277,9 @@ func (m Model) inAgentColor(a fleet.Agent) Model {
 func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, newestFirst bool) []string {
 	s := m.st
 	m = m.inAgentColor(a)
+	// A remote host's text is never handed to a lexer: the bytes are the
+	// host's to choose, and a lexer can be made slow.
+	m.plainCode = m.plainCode || a.Host != ""
 	textW = max(12, textW)
 	var out []string
 	prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {
