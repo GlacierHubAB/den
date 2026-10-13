@@ -135,7 +135,10 @@ func fakeWith(t *testing.T, perTurn ...string) (Options, string) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "claude")
 	var b strings.Builder
-	b.WriteString("#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\",\"model\":\"m\"}'\nwhile IFS= read -r line; do\n")
+	// The loop body starts with ":" so that it is never empty: with no
+	// lines, "do" straight followed by "done" is a syntax error, and the
+	// fake would exit right after its init line, racing the test's Send.
+	b.WriteString("#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\",\"model\":\"m\"}'\nwhile IFS= read -r line; do\n  :\n")
 	for _, l := range perTurn {
 		b.WriteString("  echo '" + l + "'\n")
 	}
@@ -295,6 +298,40 @@ func TestSettingsFileLastsAsLongAsTheProcess(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(settingsDir()); len(ents) != 0 {
 		t.Errorf("settings left after exit: %v", ents)
+	}
+}
+
+// TestFakeStaysUpUntilStdinCloses: the fake claude with no lines per turn
+// lives as long as its stdin is open, as Claude Code does; one that died
+// at once made Send race its exit (a broken pipe now and then).
+func TestFakeStaysUpUntilStdinCloses(t *testing.T) {
+	o, _ := fakeWith(t)
+	proc, err := Start(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Close()
+	for e := range proc.Events() {
+		if e.Kind == Started {
+			break
+		}
+		if e.Kind == Exited {
+			t.Fatalf("exited before its init event: %s", e.Text)
+		}
+	}
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case e := <-proc.Events():
+			if e.Kind == Exited {
+				t.Fatalf("the fake exited with its stdin open: %s", e.Text)
+			}
+		case <-deadline:
+			if err := proc.Send("still there?"); err != nil {
+				t.Fatalf("send: %v", err)
+			}
+			return
+		}
 	}
 }
 
