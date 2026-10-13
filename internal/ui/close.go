@@ -16,6 +16,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/tree"
+	"github.com/GlacierHubAB/den/internal/winmark"
 )
 
 // Closing agents. The human (^X, /close) or the orchestrator (close_agent)
@@ -152,6 +153,9 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 		PID:       a.Session.PID,
 		Dir:       a.Session.CWD,
 	}
+	// Only the marker Den recorded when it spawned this session ties a
+	// window to it; none for an agent Den did not start.
+	t.Marker = winmark.For(a.Session.SessionID)
 	if a.Host != "" {
 		// SessionID stays the UI's key (session id and host); the host does
 		// the signalling, so there is no pid, window or checkout path here.

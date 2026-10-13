@@ -617,10 +617,13 @@ wait; only `--force` sends SIGKILL to one that does not stop, and nothing is
 forced from the orchestrator's side. Only the agent's own process is
 signalled, never its terminal. A terminal Den opened for the agent runs it
 as its command, as a Ghostty process of its own with a window class Den
-chose (`io.glacierhub.den.<peer>`), and closes with it. Den closes a window
-itself only when it is still open after the agent ended and is still the one
-window with that class, run by the agent's terminal: never one matched by
-title or folder, never the window in front or its own. The question says,
+chose (`io.glacierhub.den.<peer>`, recorded in Den's state with the
+agent's session), and closes with it. Den closes a window itself only when
+it is still open after the agent ended, is still the one window with the
+class recorded for that session, is run by the agent's terminal, and has
+nothing else running in it (no shell in another tab, no second claude):
+never a window of an agent Den did not spawn, never one matched by title or
+folder, never the window in front or its own. The question says,
 agent by agent, which window closes and how, or why Den will not close it.
 Closed agents leave Den's state at once: their open inbox items are
 resolved, they drop out of the tree, and the roster rescans.

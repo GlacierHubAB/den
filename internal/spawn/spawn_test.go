@@ -11,6 +11,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/winmark"
 )
 
 func TestPeerName(t *testing.T) {
@@ -315,6 +316,7 @@ func TestTitleIsSanitised(t *testing.T) {
 // window is not reused.
 func TestAgentWindowMarker(t *testing.T) {
 	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	cfgDir := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
 	dir := t.TempDir()
@@ -332,12 +334,27 @@ func TestAgentWindowMarker(t *testing.T) {
 	if len(got) != 2 || got[0] != "io.glacierhub.den.helper" || got[1] != "" {
 		t.Errorf("markers = %q", got)
 	}
-	live := []hypr.Client{{Address: "0x1", InitialClass: "io.glacierhub.den.helper"}}
-	if m := freeMarker("helper", live); m != "" {
-		t.Errorf("a live marker was reused: %q", m)
+	// The spawn's marker is recorded, for its session to be bound to.
+	winmark.Bind("helper", "s-helper")
+	if got := winmark.For("s-helper"); got != "io.glacierhub.den.helper" {
+		t.Errorf("recorded marker = %q", got)
 	}
-	if m := freeMarker("other", live); m != "io.glacierhub.den.other" {
+	live := []hypr.Client{{Address: "0x1", InitialClass: "io.glacierhub.den.helper"}}
+	if m := freeMarker("helper", live, nil); m != "" {
+		t.Errorf("a live window's marker was reused: %q", m)
+	}
+	if m := freeMarker("other", live, nil); m != "io.glacierhub.den.other" {
 		t.Errorf("free marker = %q", m)
+	}
+	// A marker a live session Den spawned holds is not given out again,
+	// even with no window showing it; once that session ends, it is.
+	sessions := []discover.Session{{SessionID: "s-helper", Name: "helper", Alive: true}}
+	if m := freeMarker("helper", nil, sessions); m != "" {
+		t.Errorf("a live recorded session's marker was reused: %q", m)
+	}
+	sessions[0].Alive = false
+	if m := freeMarker("helper", nil, sessions); m != "io.glacierhub.den.helper" {
+		t.Errorf("an ended session's marker = %q", m)
 	}
 }
 

@@ -3,18 +3,16 @@ package closer
 import (
 	"fmt"
 	"slices"
-
-	"github.com/GlacierHubAB/den/internal/hypr"
 )
 
 // Windows. An agent Den spawned runs as its terminal's command, so the
 // terminal closes by itself when the agent's process ends; that is the
 // normal way a window goes. Den closes a window itself only when it is
 // still open after its agent ended, and only one it can tie to the agent:
-// the single window whose class is the marker Den gave the agent's
-// terminal at spawn (hypr.Marker), run by a process above the agent's own.
-// A window found any other way (by title or working directory, which other
-// agents share) is never closed.
+// the single window whose class is the marker Den recorded for the agent's
+// session at spawn (winmark), run by a process above the agent's own, and
+// with nothing else left running in it. A window found any other way (by
+// title or working directory, which other agents share) is never closed.
 
 // Window is one compositor window as the closer sees it. Class is the class
 // it was created with.
@@ -25,28 +23,33 @@ type Window struct {
 }
 
 // WindowOps is what Run needs to close a window still open after its agent
-// ended. System has it; with Ops that lack it, Run closes no window.
+// ended. System has it; with Ops that lack it, Run closes no window. Busy
+// reports whether a process still has live children (a shell in another
+// tab, a second claude), or cannot tell.
 type WindowOps interface {
 	Windows() ([]Window, error)
 	Focused() string
 	CloseWindow(address string) error
+	Busy(pid int) bool
 }
 
-// Locate ties each target on this machine to its window by marker, for the
-// plan to show and Run to check again. ancestors lists the pids above a
-// process.
+// Locate ties each target on this machine to its window, for the plan to
+// show and Run to check again. A target's Marker is the one Den recorded
+// for its session at spawn, "" for an agent Den did not spawn; it is never
+// worked out again from a name. ancestors lists the pids above a process.
 func Locate(p *Plan, ws []Window, ancestors func(pid int) []int) {
 	for i := range p.Targets {
 		t := &p.Targets[i]
 		if t.Host != "" || t.PID == 0 {
 			continue
 		}
-		t.Marker = hypr.Marker(t.Peer)
 		t.Window, t.WindowPID, t.WindowNote = "", 0, ""
 		hits := marked(ws, t.Marker)
 		switch {
-		case t.Marker == "" || len(hits) == 0:
-			t.WindowNote = "no window marked for it: if Den started it, its terminal closes with it; otherwise close it yourself"
+		case t.Marker == "":
+			t.WindowNote = "Den did not open a marked window for it: if its terminal stays open, close it yourself"
+		case len(hits) == 0:
+			t.WindowNote = "no window marked for it: if its terminal stays open, close it yourself"
 		case len(hits) > 1:
 			t.WindowNote = fmt.Sprintf("%d windows carry its marker, so Den closes none of them: close its terminal yourself if it stays open", len(hits))
 		case !slices.Contains(ancestors(t.PID), hits[0].PID):
@@ -125,6 +128,10 @@ func leftOpen(r *Result, t Target, self Self, wo WindowOps) {
 	}
 	if t.Window == wo.Focused() || t.Window == self.Window {
 		r.WindowNote = "its window is still open; Den does not close the window in front or its own: close it yourself"
+		return
+	}
+	if wo.Busy(t.WindowPID) {
+		r.WindowNote = "its window is still open with something else running in it: close it yourself"
 		return
 	}
 	if err := wo.CloseWindow(t.Window); err != nil {

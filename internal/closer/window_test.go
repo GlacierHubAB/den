@@ -20,6 +20,7 @@ type winOps struct {
 	*fakeOps
 	ws      []winRec
 	focused string
+	busy    map[int]bool // terminal pids with something else still running
 }
 
 type winRec struct {
@@ -43,6 +44,8 @@ func (o *winOps) Windows() ([]Window, error) {
 }
 
 func (o *winOps) Focused() string { return o.focused }
+
+func (o *winOps) Busy(pid int) bool { return o.busy[pid] }
 
 func (o *winOps) CloseWindow(a string) error {
 	o.record("close " + a)
@@ -77,29 +80,34 @@ const (
 	mkB = "io.glacierhub.den.agent-b"
 )
 
+// targetsAB are two agents Den spawned, with the markers it recorded.
 func targetsAB() []Target {
-	return []Target{{Name: "A", Peer: "agent-a", PID: 1, Status: "idle"}, {Name: "B", Peer: "agent-b", PID: 2, Status: "idle"}}
+	return []Target{{Name: "A", Peer: "agent-a", PID: 1, Status: "idle", Marker: mkA}, {Name: "B", Peer: "agent-b", PID: 2, Status: "idle", Marker: mkB}}
 }
 
 // TestLocateByMarkerOnly: a window is tied to an agent only by the marker
-// Den gave it, held by a process above the agent's. Lookalikes by title or
-// working directory, two windows with one marker, or a marked window run
-// by someone else are never tied.
+// Den recorded for it, held by a process above the agent's. Lookalikes by
+// title or working directory, two windows with one marker, a marked window
+// run by someone else, or an agent Den has no record for are never tied.
 func TestLocateByMarkerOnly(t *testing.T) {
 	plain := "com.mitchellh.ghostty"
 	for _, c := range []struct {
 		name   string
+		marker string // what Den recorded for the agent
 		ws     []Window
 		window string
 		note   string
 	}{
-		{"marker match", []Window{{"0xa", mkA, terminal(1)}}, "0xa", ""},
-		{"no marked window", []Window{{"0xa", plain, terminal(1)}}, "", "no window marked for it"},
-		{"two marked windows", []Window{{"0xa", mkA, terminal(1)}, {"0xb", mkA, terminal(1)}}, "", "2 windows carry its marker"},
-		{"marked but not its terminal", []Window{{"0xa", mkA, 777}}, "", "does not run its process"},
-		{"another agent's marker", []Window{{"0xb", mkB, terminal(1)}}, "", "no window marked for it"},
+		{"marker match", mkA, []Window{{"0xa", mkA, terminal(1)}}, "0xa", ""},
+		{"no marked window", mkA, []Window{{"0xa", plain, terminal(1)}}, "", "no window marked for it"},
+		{"two marked windows", mkA, []Window{{"0xa", mkA, terminal(1)}, {"0xb", mkA, terminal(1)}}, "", "2 windows carry its marker"},
+		{"marked but not its terminal", mkA, []Window{{"0xa", mkA, 777}}, "", "does not run its process"},
+		{"another agent's marker", mkA, []Window{{"0xb", mkB, terminal(1)}}, "", "no window marked for it"},
+		// An agent Den did not spawn has no record, even when a window's
+		// class is what its name would fold to ("Den" and "den").
+		{"unrecorded agent", "", []Window{{"0xa", "io.glacierhub.den.den", terminal(1)}}, "", "Den did not open a marked window"},
 	} {
-		p := Plan{Targets: []Target{{Name: "A", Peer: "agent-a", PID: 1}}}
+		p := Plan{Targets: []Target{{Name: "A", Peer: "Den", PID: 1, Marker: c.marker}}}
 		Locate(&p, c.ws, ancestorsOf)
 		got := p.Targets[0]
 		if got.Window != c.window || !strings.Contains(got.WindowNote, c.note) {
@@ -178,6 +186,21 @@ func TestNeverClosesTheWrongWindow(t *testing.T) {
 		if s := Summary(res); !strings.Contains(s, "A: its window") {
 			t.Errorf("%s: summary should tell the human: %q", c.name, s)
 		}
+	}
+}
+
+// TestBusyWindowIsNotClosed: a left-open window whose terminal still runs
+// something else (a shell in a tab or split, a second claude) is left to
+// the human, whose work it holds.
+func TestBusyWindowIsNotClosed(t *testing.T) {
+	ops := &winOps{fakeOps: &fakeOps{alive: map[int]bool{1: true}}, ws: []winRec{{w: Window{"0xa", mkA, terminal(1)}, agent: 1, holdOn: true}}, busy: map[int]bool{terminal(1): true}}
+	fastWaits(t, ops.fakeOps)
+	p := Plan{Targets: targetsAB()[:1]}
+	ws, _ := ops.Windows()
+	Locate(&p, ws, ancestorsOf)
+	res := Run(context.Background(), p, Self{}, ops)
+	if res[0].WindowClosed || len(ops.closes()) != 0 || !strings.Contains(res[0].WindowNote, "something else running") {
+		t.Errorf("result %+v, closes %v", res[0], ops.closes())
 	}
 }
 

@@ -29,6 +29,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/winmark"
 	"github.com/GlacierHubAB/den/internal/worktree"
 )
 
@@ -159,6 +160,7 @@ var Launch = launch
 // register so the caller can name it.
 func Run(ctx context.Context, req Request) (Result, error) {
 	var res Result
+	var sessions []discover.Session
 	dir, err := ExpandDir(req.Dir)
 	if err != nil {
 		return res, err
@@ -173,7 +175,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		if req.Model != "" && req.Resume == "" && !ValidModel(req.Model) {
 			return res, fmt.Errorf("unknown model %q: pick one of %s", req.Model, strings.Join(ModelNames(), ", "))
 		}
-		sessions, _ := discover.Scan()
+		sessions, _ = discover.Scan()
 		res.Name = PeerName(req.Name, dir, sessions)
 		res.Model = req.Model
 		if req.Worktree != "" {
@@ -216,11 +218,16 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	// could not tell the two apart.
 	marker := ""
 	if req.Agent {
-		marker = freeMarker(res.Name, before)
+		marker = freeMarker(res.Name, before, sessions)
 	}
 	started := time.Now()
 	if err := Launch(dir, title, marker, command, env); err != nil {
 		return res, err
+	}
+	// Closing trusts only a marker recorded here and bound to the session
+	// below; without the record, Den never closes the window.
+	if marker != "" {
+		_ = winmark.Record(res.Name, marker)
 	}
 
 	if hyprOK {
@@ -260,6 +267,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 				res.SessionID = s.SessionID
 				res.Critter = badge.Name(s.SessionID)
 				res.Registered = true
+				_ = winmark.Bind(res.Name, s.SessionID)
 				return res, nil
 			}
 		}
@@ -547,13 +555,24 @@ func launch(dir, title, marker string, command, extra []string) error {
 }
 
 // freeMarker is the window class for the agent named name, or "" when a
-// live window already has it.
-func freeMarker(name string, live []hypr.Client) string {
+// live window already has it or a live session Den spawned holds it.
+func freeMarker(name string, live []hypr.Client, sessions []discover.Session) string {
 	marker := hypr.Marker(name)
 	for _, c := range live {
 		if c.InitialClass == marker {
 			return ""
 		}
+	}
+	alive := func(id string) bool {
+		for _, s := range sessions {
+			if s.SessionID == id && s.Alive {
+				return true
+			}
+		}
+		return false
+	}
+	if winmark.Held(marker, alive) {
+		return ""
 	}
 	return marker
 }

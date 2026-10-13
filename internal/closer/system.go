@@ -1,7 +1,10 @@
 package closer
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"github.com/GlacierHubAB/den/internal/hypr"
@@ -43,6 +46,39 @@ func (System) Focused() string {
 }
 
 func (System) CloseWindow(address string) error { return hypr.CloseWindow(address) }
+
+// Busy reports whether pid has a live child process, from
+// /proc/<pid>/task/*/children; zombies do not count. Anything it cannot
+// read counts as busy.
+func (System) Busy(pid int) bool {
+	if pid <= 0 {
+		return true
+	}
+	tasks, err := filepath.Glob(fmt.Sprintf("/proc/%d/task/*/children", pid))
+	if err != nil || len(tasks) == 0 {
+		return true
+	}
+	for _, f := range tasks {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return true
+		}
+		for _, c := range strings.Fields(string(raw)) {
+			stat, err := os.ReadFile("/proc/" + c + "/stat")
+			if err != nil {
+				continue // gone since
+			}
+			// The state follows the parenthesised command, which may hold
+			// spaces and parentheses itself.
+			s := string(stat)
+			if i := strings.LastIndexByte(s, ')'); i >= 0 && i+2 < len(s) && s[i+2] == 'Z' {
+				continue
+			}
+			return true
+		}
+	}
+	return false
+}
 
 // AncestorPIDs lists the pids above pid, for Locate and OwnWindow.
 func AncestorPIDs(pid int) []int {
