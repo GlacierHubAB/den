@@ -61,9 +61,34 @@ type askJob struct {
 	once      sync.Once
 	mu        sync.Mutex // seq and ended: statuses come from two goroutines
 	ended     bool       // a done or error chunk was sent
+	reason    string     // why it was cancelled
 }
 
-func (j *askJob) cancel() { j.once.Do(func() { close(j.cancelled) }) }
+func (j *askJob) cancel() { j.cancelWith("cancelled") }
+
+// superseded is why an ask ends when the same program asks again.
+const superseded = "superseded by a newer question"
+
+// cancelWith stops the ask; the first reason given is the one its stream
+// ends with.
+func (j *askJob) cancelWith(reason string) {
+	j.once.Do(func() {
+		j.mu.Lock()
+		j.reason = reason
+		j.mu.Unlock()
+		close(j.cancelled)
+	})
+}
+
+// why is the reason the ask was stopped.
+func (j *askJob) why() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.reason == "" {
+		return "cancelled"
+	}
+	return j.reason
+}
 
 func (j *askJob) isCancelled() bool {
 	select {
@@ -307,12 +332,12 @@ func (l *lane) enqueue(j *askJob) error {
 	l.statuses[j.id] = askState{AskStatus: AskStatus{Ask: j.id, Session: j.session}, exe: j.exe}
 	l.mu.Unlock()
 	for _, o := range old {
-		o.cancel()
+		o.cancelWith(superseded)
 	}
 	// Queued, removed asks end here; the running one ends in serve.
 	for _, o := range old {
 		if o != l.current() {
-			l.finish(o, "superseded by a newer question")
+			l.finish(o, superseded)
 		}
 	}
 	if ahead > 0 {
@@ -468,7 +493,7 @@ func (l *lane) run() {
 			l.setStatus(q, statusQueued(i+1))
 		}
 		if j.isCancelled() {
-			l.finish(j, "cancelled")
+			l.finish(j, j.why())
 		} else {
 			var errMsg string
 			p, errMsg = l.serve(p, j)
@@ -531,7 +556,7 @@ func (l *lane) serve(p *laneProc, j *askJob) (*laneProc, string) {
 		var err error
 		p, err = l.start(j)
 		if err != nil {
-			if err.Error() != "cancelled" {
+			if !j.isCancelled() {
 				l.startFailed(err.Error())
 			}
 			l.setState("failed: " + err.Error())
@@ -567,7 +592,7 @@ func (l *lane) serve(p *laneProc, j *askJob) (*laneProc, string) {
 			// The app cancelled, asked anew, or its connection went: the
 			// turn stops and the next ask resumes the session.
 			p.kill()
-			return nil, "cancelled"
+			return nil, j.why()
 		case e, ok := <-p.o.Events():
 			if !ok {
 				return nil, "the read-only lane stopped"
@@ -704,7 +729,7 @@ func (l *lane) start(j *askJob) (*laneProc, error) {
 			return nil, errors.New("the read-only orchestrator did not answer Den's checks")
 		case <-j.cancelled:
 			p.kill()
-			return nil, errors.New("cancelled")
+			return nil, errors.New(j.why())
 		case e, ok := <-proc.Events():
 			if !ok || e.Kind == orch.Exited {
 				p.kill()

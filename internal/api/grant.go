@@ -46,6 +46,7 @@ type GrantAnswer struct {
 // Grant is a request Den puts in its inbox for the human: the act the UI
 // gets. Body is stored verbatim and never changes.
 type Grant struct {
+	At           time.Time
 	ID           string
 	Exe          string
 	PID          int
@@ -121,7 +122,7 @@ func (g *grants) request(raw json.RawMessage, peer Peer) (*Grant, error) {
 	if strings.TrimSpace(m.Name) == "" || len(m.Capabilities) == 0 || len(m.Capabilities) > 32 {
 		return nil, errAsk{CodeBadRequest, "a manifest needs a name and 1 to 32 capabilities"}
 	}
-	gr := &Grant{ID: grantID(), Exe: peer.Exe, PID: peer.PID, Name: sanitize.Label(m.Name, 40), Version: m.Version, Body: m.Body, Hash: HashOf(m.Body)}
+	gr := &Grant{At: time.Now().UTC(), ID: grantID(), Exe: peer.Exe, PID: peer.PID, Name: sanitize.Label(m.Name, 40), Version: m.Version, Body: m.Body, Hash: HashOf(m.Body)}
 	for _, c := range m.Capabilities {
 		gr.Capabilities = append(gr.Capabilities, sanitize.Label(c, 80))
 	}
@@ -147,6 +148,24 @@ func (g *grants) request(raw json.RawMessage, peer Peer) (*Grant, error) {
 	return gr, nil
 }
 
+// item is a pending grant as inbox.list shows it to the app that asked.
+func (gr *Grant) item(since time.Time) Item {
+	return Item{ID: gr.ID, Kind: KindGrant, Agent: gr.Name, Since: since, Title: sanitize.Label("App grant · "+gr.Name, labelMax), Digest: digest(gr.Body)}
+}
+
+// mine lists an exe's pending grants: only the app that asked sees them.
+func (g *grants) mine(exe string) []*Grant {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var out []*Grant
+	for _, gr := range g.pending {
+		if gr.Exe == exe {
+			out = append(out, gr)
+		}
+	}
+	return out
+}
+
 // cancel drops a grant the UI could not take.
 func (g *grants) cancel(id string) {
 	g.mu.Lock()
@@ -159,19 +178,19 @@ func (g *grants) cancel(id string) {
 
 // answer settles a pending grant and returns the event and the exe it goes
 // to; ok is false for a grant that is not pending (expired, unknown).
-func (g *grants) answer(id, answer string) (GrantAnswer, string, bool) {
+func (g *grants) answer(id, answer string) (GrantAnswer, *Grant, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	gr := g.pending[id]
 	if gr == nil {
-		return GrantAnswer{}, "", false
+		return GrantAnswer{}, nil, false
 	}
 	delete(g.pending, id)
 	if answer == "denied" {
 		g.declined[gr.Hash] = true
 	}
 	ev := GrantAnswer{ID: gr.ID, Answer: answer, Version: gr.Version, Hash: gr.Hash}
-	return ev, gr.Exe, true
+	return ev, gr, true
 }
 
 // retain keeps an answer for an app that is not subscribed now.
@@ -195,10 +214,11 @@ func (g *grants) take(exe string) []GrantAnswer {
 }
 
 // expire ends the pending grants of the exes for which keep is false.
-func (g *grants) expire(keep func(exe string) bool) []GrantAnswer {
+func (g *grants) expire(keep func(exe string) bool) ([]GrantAnswer, []*Grant) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	var out []GrantAnswer
+	var gone []*Grant
 	for id, gr := range g.pending {
 		if keep(gr.Exe) {
 			continue
@@ -206,11 +226,12 @@ func (g *grants) expire(keep func(exe string) bool) []GrantAnswer {
 		delete(g.pending, id)
 		ev := GrantAnswer{ID: gr.ID, Answer: "expired", Version: gr.Version, Hash: gr.Hash}
 		out = append(out, ev)
+		gone = append(gone, gr)
 		r := append(g.retained[gr.Exe], ev)
 		if len(r) > maxRetained {
 			r = r[len(r)-maxRetained:]
 		}
 		g.retained[gr.Exe] = r
 	}
-	return out
+	return out, gone
 }

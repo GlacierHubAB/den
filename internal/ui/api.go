@@ -42,6 +42,10 @@ const focusQuiet = 1500 * time.Millisecond
 // focusAgent brings an agent's terminal to the front; tests replace it.
 var focusAgent = fleet.Focus
 
+// laneCommand is the claude the read-only lane runs, nil for claude on
+// PATH; tests set a fake.
+var laneCommand []string
+
 type apiActMsg struct {
 	act  api.Act
 	from *api.Server
@@ -182,6 +186,7 @@ func (m *Model) startAPI() tea.Cmd {
 		Version: Version,
 		ChatLog: filepath.Join(state, "drey-chat.jsonl"),
 		Lane: api.LaneConfig{
+			Command:   laneCommand,
 			Dir:       lane,
 			SpendPath: filepath.Join(state, "drey-spend.json"),
 			Model:     func() string { return cfg.Orchestrator.Model },

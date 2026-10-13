@@ -622,7 +622,7 @@ func TestNewAskSupersedesAStuckOne(t *testing.T) {
 	if ch := askEnds(t, h, "fresh", 8*time.Second); ch.Type != "done" {
 		t.Fatalf("the newer ask: %+v", ch)
 	}
-	if ch := waitChunk(t, a, "error"); !strings.Contains(ch.Message, "cancelled") && !strings.Contains(ch.Message, "superseded") {
+	if ch := waitChunk(t, a, "error"); ch.Message != "superseded by a newer question" {
 		t.Errorf("the stuck ask ended with %q", ch.Message)
 	}
 }

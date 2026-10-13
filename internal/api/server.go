@@ -102,11 +102,28 @@ func (s *Server) Acts() <-chan Act { return s.acts }
 // card. The answer goes to the app that asked, never to another: to its
 // subscribed connections, or kept until it subscribes again.
 func (s *Server) GrantAnswered(id, answer string) {
-	ev, exe, ok := s.grants.answer(id, answer)
+	ev, gr, ok := s.grants.answer(id, answer)
 	if !ok {
 		return
 	}
-	s.deliverGrant(exe, ev)
+	s.grantCard(gr, "answered")
+	s.deliverGrant(gr.Exe, ev)
+}
+
+// grantCard tells the asking app's inbox subscribers that its card came
+// or went; no other app hears of it.
+func (s *Server) grantCard(gr *Grant, change string) {
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		if c.peer.Exe == gr.Exe && c.subscribed(EventInbox) {
+			c.push(Event{Event: EventInbox, Data: InboxChange{Change: change, Item: gr.item(gr.At)}}, true)
+		}
+	}
 }
 
 func (s *Server) deliverGrant(exe string, ev GrantAnswer) {
@@ -156,9 +173,12 @@ func (s *Server) expireLoop() {
 
 // expire ends grants whose app is gone, and tells the UI.
 func (s *Server) expire(keep func(string) bool) {
-	evs := s.grants.expire(keep)
+	evs, gone := s.grants.expire(keep)
 	if len(evs) == 0 {
 		return
+	}
+	for _, gr := range gone {
+		s.grantCard(gr, "expired")
 	}
 	var ids []string
 	for _, ev := range evs {
@@ -619,7 +639,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 	case "inbox.list":
 		items := []Item{}
 		if v := s.view.Load(); v != nil {
-			items = v.Items
+			items = append(items, v.Items...)
+		}
+		for _, gr := range s.grants.mine(c.peer.Exe) {
+			items = append(items, gr.item(gr.At))
 		}
 		c.reply(req.ID, items)
 	case "inbox.events":
@@ -634,6 +657,12 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		if json.Unmarshal(req.Params, &p) != nil || p.ID == "" {
 			c.fail(req.ID, CodeBadRequest, "id")
 			return
+		}
+		for _, gr := range s.grants.mine(c.peer.Exe) {
+			if gr.ID == p.ID {
+				c.reply(req.ID, Body{ID: gr.ID, Kind: KindGrant, Text: gr.Body, Hash: gr.Hash})
+				return
+			}
 		}
 		v := s.view.Load()
 		if v == nil {
@@ -704,6 +733,7 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		select {
 		case s.acts <- Act{Grant: gr}:
 			c.reply(req.ID, map[string]string{"id": gr.ID})
+			s.grantCard(gr, "added")
 		default:
 			s.grants.cancel(gr.ID)
 			c.fail(req.ID, CodeUnavailable, "Den is busy; ask again")

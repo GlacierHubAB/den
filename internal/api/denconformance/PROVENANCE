@@ -1,0 +1,23 @@
+The Den API conformance suite, as Den carries it
+
+This folder is a byte-identical copy of the conformance suite for
+den-api.sock (docs/DREY-API.md), written by Drey's authors, who check their
+client against the same suite. Den changes nothing in it: a finding is fixed
+upstream and the copy pinned again.
+
+Source        the Drey repository, pkg/denconformance
+Code          client.go, d1.go, denconformance.go at commit
+              ae23efd082259801fce10581408f1ce6d8f1f2d7
+              client.go         e88342cbd6fa22e3098983510cb29af3880e75777e4a7a1d04fa20136f35b04e
+              d1.go             e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416
+              denconformance.go a68ac91f305453d488fe0e5b4542ff5974d8579a79b63125d05114e52a299281
+              package hash (sha256sum of the .go files in name order, hashed)
+                                eee23b2b37bc0eb53479e56c6305041818f53ff1fbb65207e1f075b15bd0f6c3
+README.md     at commit 786a327, the one that records the pin above
+              b9684e76585c1baa962147f2377a4e39904a807a8eca3feecc4a8dfefe576190
+License       MIT, in README.md and the files' own headers
+
+It is test-only. It imports nothing but the standard library, only
+internal/ui's conformance test imports it, and internal/api's
+TestConformanceCopyStaysOutOfTheBinary fails if `go list -deps ./cmd/den`
+ever lists it. TestConformanceCopyIsPinned checks every hash above.

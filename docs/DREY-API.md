@@ -164,8 +164,10 @@ roster the orchestrator reads (without agents' recent words and tool calls,
 and with what waits on you named by kind and title only). A question with a
 control, bidi or invisible character, or over 16 KiB, is refused with
 `bad_request`. One question runs at a time and up to four wait; a waiting
-question gets a status saying how many are ahead. A newer question from the
-same app replaces its earlier one, which ends with an error. When the
+question gets a status saying how many are ahead. Each app has one question
+at a time: a newer question from the same app always replaces its earlier
+one, running or waiting, whose stream ends with the error
+`"superseded by a newer question"`. When the
 connection that asked closes, or stops reading, its turn stops and the next
 question runs. Every ask stream ends with a `done` or an `error` chunk; when
 the lane cannot start (a release the spike has not passed, a failed check, the
