@@ -458,9 +458,10 @@ func (m Model) orchPane(w, h int) string {
 	s := m.st
 	var lines []string
 	if len(m.orch.chat) == 0 {
-		lines = append(lines, "", " "+s.dim.Render("Type without an @ to talk to the orchestrator."), "")
-		for _, l := range strings.Split(ansi.Wrap("It sees every agent's name, state, task and what is waiting on you, and it can message agents for you. It cannot approve anything; you do that in the inbox. The first message starts it, which takes a few seconds.", w-2, ""), "\n") {
-			lines = append(lines, " "+s.muted.Render(l))
+		pad := chatPad(w)
+		lines = append(lines, "", pad+s.dim.Render("Type without an @ to talk to the orchestrator."), "")
+		for _, l := range strings.Split(ansi.Wrap("It sees every agent's name, state, task and what is waiting on you, and it can message agents for you. It cannot approve anything; you do that in the inbox. The first message starts it, which takes a few seconds.", w-2*len(pad), ""), "\n") {
+			lines = append(lines, pad+s.muted.Render(l))
 		}
 		return strings.Join(lines, "\n")
 	}
@@ -487,6 +488,15 @@ func (m Model) orchPane(w, h int) string {
 	return strings.Join(append(strip, lines...), "\n")
 }
 
+// chatPad is the chat's inner margin, either side of the text: two
+// columns, one when the pane is narrow.
+func chatPad(w int) string {
+	if w < 40 {
+		return " "
+	}
+	return "  "
+}
+
 // chatLines renders the conversation entries keep picks, streaming text
 // with its cursor, and the thinking line while the orchestrator works on
 // their thread. The Orchestrator tab shows every entry, a mission pane its
@@ -495,7 +505,8 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 	s := m.st
 	// The speaker's name sits on its own line above the text, so the text
 	// has the pane's width less a margin.
-	bodyW := max(10, w-2)
+	pad := chatPad(w)
+	bodyW := max(10, w-2*len(pad))
 	// The orchestrator's code highlights carry its own colour, the way an
 	// agent's do in the detail pane.
 	orchColor := s.pal.Bright
@@ -514,12 +525,12 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 		var body []string
 		if e.card != nil {
 			focused := i == m.orch.cardCur
-			cl := m.cardLines(e.card, w-2, focused, now)
+			cl := m.cardLines(e.card, bodyW, focused, now)
 			if focused {
 				focusStart, focusEnd = len(lines), len(lines)+len(cl)
 			}
 			for _, l := range cl {
-				lines = append(lines, " "+l)
+				lines = append(lines, pad+l)
 			}
 			lines = append(lines, "")
 			continue
@@ -583,10 +594,10 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 			}
 		}
 		if from != "" {
-			lines = append(lines, " "+from)
+			lines = append(lines, pad+from)
 		}
 		for _, l := range body {
-			lines = append(lines, " "+l)
+			lines = append(lines, pad+l)
 		}
 		lines = append(lines, "")
 	}
@@ -601,7 +612,7 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 		} else if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
 			think = "thinking… " + humanAge(q)
 		}
-		lines = append(lines, " "+s.dim.Render(think))
+		lines = append(lines, pad+s.dim.Render(think))
 	}
 	return lines, focusStart, focusEnd
 }
