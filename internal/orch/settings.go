@@ -104,6 +104,11 @@ func denSettings(o Options) map[string]any {
 			"type": "command", "command": shellJoin([]string{denExecutable(o), "hook", "--socket", socketPath(o)}), "timeout": 600,
 		}}}},
 	}
+	if o.Control {
+		// Den answers permission prompts itself, on stdio (control.go); a
+		// hook answering first would take that from it.
+		delete(s["hooks"].(map[string]any), "PermissionRequest")
+	}
 	return s
 }
 

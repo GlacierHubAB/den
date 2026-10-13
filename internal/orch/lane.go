@@ -129,7 +129,7 @@ func StartLane(ctx context.Context, o LaneOptions) (*Orchestrator, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	cmd.Dir = o.Dir
 	cmd.Env = LaneEnviron()
-	return startCmd(ctx, cmd, "", "")
+	return startCmd(ctx, cmd, "", "", nil)
 }
 
 // LaneVerified are the Claude Code releases scripts/lane-spike.sh passed

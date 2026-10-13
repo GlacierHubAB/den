@@ -53,6 +53,9 @@ type Event struct {
 	// and its response object ("" and nil for an error, in Text).
 	RequestID string
 	Response  json.RawMessage
+	// Turn is the app turn (SendApp) a PermissionAsk or
+	// PermissionExpired belongs to, and that a Result ends.
+	Turn string
 }
 
 // maxStderrLine caps a line of the process's stderr in an event.
@@ -93,6 +96,11 @@ const (
 	// process has been killed and its session must never be resumed.
 	Backstop
 	Control // the answer to a control request (RequestID, Response)
+	// PermissionAsk: in an app's turn the orchestrator wants a tool
+	// (Tool, Input); Den's human answers (AnswerPermission). It is denied
+	// after PermissionDeadline: PermissionExpired.
+	PermissionAsk
+	PermissionExpired
 )
 
 // SystemPrompt is appended to Claude Code's default prompt.
@@ -160,6 +168,10 @@ type Options struct {
 	SettingsFile string
 	// Socket is den.sock for the hooks, default bridge.SocketPath().
 	Socket string
+	// Control runs the orchestrator for a paired app: manual mode, its
+	// permission prompts answered by Den, send_message for SendMessage
+	// (control.go).
+	Control bool
 }
 
 // Orchestrator is a running orchestrator process.
@@ -185,6 +197,8 @@ type Orchestrator struct {
 	// settings is the settings file, removed once read (at init) and on
 	// exit.
 	settings string
+	// ctl is control's state, nil without Options.Control.
+	ctl *control
 
 	SessionID string
 	Model     string
@@ -229,6 +243,12 @@ func Argv(o Options) []string {
 		args = []string{"claude"}
 	}
 	allowed := "ListAgents,SendMessage"
+	tools, mode := "ListAgents,SendMessage", "dontAsk"
+	if o.Control {
+		// SendMessage never asks permission, so it could not be held for
+		// the human: Den's send_message takes its place.
+		allowed, tools, mode = "ListAgents", "ListAgents", "manual"
+	}
 	args = append(args,
 		"-p",
 		"--input-format", "stream-json",
@@ -236,7 +256,7 @@ func Argv(o Options) []string {
 		"--include-partial-messages",
 		"--verbose",
 		"--name", o.Name,
-		"--tools", "ListAgents,SendMessage",
+		"--tools", tools,
 		"--append-system-prompt", Prompt(o.Guidance),
 		// Claude Code records a session's system prompt and, by default,
 		// sends that record again on every resume, whatever a later launch
@@ -252,8 +272,9 @@ func Argv(o Options) []string {
 		"--setting-sources", "",
 		"--settings", o.SettingsFile,
 		// With no settings sources the mode would be Claude Code's default;
-		// dontAsk runs the allowed tools and refuses anything else.
-		"--permission-mode", "dontAsk",
+		// dontAsk runs the allowed tools and refuses anything else. With
+		// control, manual sends every other tool's request to Den.
+		"--permission-mode", mode,
 		"--include-hook-events",
 		"--replay-user-messages",
 	)
@@ -262,13 +283,20 @@ func Argv(o Options) []string {
 		// orchestrator tools it must not have. Missions are always updated
 		// through it; opening terminals and starting agents only with
 		// Spawn.
-		if o.Spawn {
+		switch {
+		case o.Control:
+			// Every Den tool asks Den first (control.go).
+			args = append(args, "--mcp-config", controlMCPConfig(exe, o.Spawn), "--strict-mcp-config")
+		case o.Spawn:
 			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
-			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool
-		} else {
+			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool
+		default:
 			args = append(args, "--mcp-config", missionsMCPConfig(exe), "--strict-mcp-config")
+			allowed += "," + MissionTool
 		}
-		allowed += "," + MissionTool
+	}
+	if o.Control {
+		args = append(args, "--permission-prompt-tool", "stdio", "--disallowedTools", "SendMessage")
 	}
 	args = append(args, "--allowedTools", allowed)
 	if o.Resume != "" {
@@ -344,13 +372,17 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 	if r, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = r
 	}
-	return startCmd(ctx, cmd, o.SettingsFile, exe)
+	var ctl *control
+	if o.Control {
+		ctl = &control{human: humanTools(o), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}}
+	}
+	return startCmd(ctx, cmd, o.SettingsFile, exe, ctl)
 }
 
 // startCmd starts a prepared stream-json claude command; settings is a
 // settings file of Den's to remove when it exits ("" for none), exe the
 // den binary its hooks and MCP server run ("" for none).
-func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string) (*Orchestrator, error) {
+func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string, ctl *control) (*Orchestrator, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -367,7 +399,7 @@ func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string) (*Orches
 		stdin.Close()
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
-	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: settings, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
+	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: settings, start: procs.StartTicks(cmd.Process.Pid), exe: exe, ctl: ctl}
 	read, readErr := make(chan struct{}), make(chan struct{})
 	go func() {
 		// A line too long for the scanner, or a read error, leaves Den
@@ -446,6 +478,11 @@ func (o *Orchestrator) Send(content string) error {
 		}
 	}
 	o.sent[peermsg.Hash(content)] = now
+	return o.writeUser(content)
+}
+
+// writeUser writes one user turn; o.mu is held.
+func (o *Orchestrator) writeUser(content string) error {
 	line, err := json.Marshal(map[string]any{
 		"type":    "user",
 		"message": map[string]any{"role": "user", "content": content},
@@ -640,6 +677,14 @@ type line struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+	// RequestID and Request are a control_request's (can_use_tool).
+	RequestID string `json:"request_id"`
+	Request   struct {
+		Subtype   string          `json:"subtype"`
+		ToolName  string          `json:"tool_name"`
+		ToolUseID string          `json:"tool_use_id"`
+		Input     json.RawMessage `json:"input"`
+	} `json:"request"`
 	// Response is a control_response's.
 	Response struct {
 		Subtype   string          `json:"subtype"`
@@ -733,13 +778,18 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 						o.emit(Event{Kind: Text, Text: b.Text})
 					}
 				case "tool_use":
+					o.controlToolUse(b.ID, b.Name)
 					o.emit(Event{Kind: ToolUse, Tool: b.Name, ToolUseID: b.ID, Input: b.Input})
 				}
 			}
 		case "user":
+			if l.IsReplay {
+				o.controlReplay(l.Message.Content)
+			}
 			for _, b := range blocks(l.Message.Content) {
 				switch {
 				case b.Type == "tool_result":
+					o.controlToolResult(b.ToolUseID, b.IsError)
 					o.emit(Event{Kind: ToolResult, ToolUseID: b.ToolUseID, Text: resultText(b.Content), IsError: b.IsError})
 				case l.IsReplay && b.Type == "text" && peermsg.HasEnvelope(b.Text):
 					// A turn the model will see holds a peer's envelope:
@@ -756,7 +806,11 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 				o.emit(Event{Kind: Blocked, Peer: o.blockedPeer, CostUSD: l.CostUSD})
 				break
 			}
-			o.emit(Event{Kind: Result, Text: l.Result, IsError: l.IsError, CostUSD: l.CostUSD})
+			o.emit(Event{Kind: Result, Text: l.Result, IsError: l.IsError, CostUSD: l.CostUSD, Turn: o.controlResult()})
+		case "control_request":
+			if l.Request.Subtype == "can_use_tool" {
+				o.canUseTool(l.RequestID, l.Request.ToolName, l.Request.ToolUseID, l.Request.Input)
+			}
 		case "control_response":
 			e := Event{Kind: Control, RequestID: l.Response.RequestID}
 			if l.Response.Subtype == "success" {

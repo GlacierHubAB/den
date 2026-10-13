@@ -1,0 +1,259 @@
+package orch
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/GlacierHubAB/den/internal/peermsg"
+)
+
+// stdinBuf records what Den writes to the process.
+type stdinBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *stdinBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *stdinBuf) Close() error { return nil }
+
+// answers are the can_use_tool answers written, by request id.
+func (s *stdinBuf) answers() map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]string{}
+	for _, l := range strings.Split(s.b.String(), "\n") {
+		var r struct {
+			Type     string `json:"type"`
+			Response struct {
+				RequestID string `json:"request_id"`
+				Response  struct {
+					Behavior string `json:"behavior"`
+				} `json:"response"`
+			} `json:"response"`
+		}
+		if json.Unmarshal([]byte(l), &r) == nil && r.Type == "control_response" {
+			out[r.Response.RequestID] = r.Response.Response.Behavior
+		}
+	}
+	return out
+}
+
+func controlOrch(spawn bool) (*Orchestrator, *stdinBuf) {
+	in := &stdinBuf{}
+	o := &Orchestrator{stdin: in, events: make(chan Event, 64), done: make(chan struct{}), sent: map[string]time.Time{},
+		ctl: &control{human: humanTools(Options{Spawn: spawn}), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}}}
+	return o, in
+}
+
+func feed(o *Orchestrator, lines ...string) { o.readStdout(strings.NewReader(strings.Join(lines, "\n") + "\n")) }
+
+func canUse(id, tool, useID string) string {
+	return `{"type":"control_request","request_id":"` + id + `","request":{"subtype":"can_use_tool","tool_name":"` + tool + `","tool_use_id":"` + useID + `","input":{"x":1}}}`
+}
+
+func replayOf(content string) string {
+	b, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}, "isReplay": true})
+	return string(b)
+}
+
+func toolUse(id, tool string) string {
+	return `{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"` + id + `","name":"` + tool + `","input":{}}]}}`
+}
+
+func toolResult(id string, isErr bool) string {
+	e := "false"
+	if isErr {
+		e = "true"
+	}
+	return `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"` + id + `","content":"ok","is_error":` + e + `}]}}`
+}
+
+const resultLine = `{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":2}`
+
+func drain(o *Orchestrator) []Event {
+	var out []Event
+	for {
+		select {
+		case e := <-o.events:
+			out = append(out, e)
+		default:
+			return out
+		}
+	}
+}
+
+// With control the orchestrator asks Den for every tool but ListAgents,
+// has no SendMessage, and Den's settings leave its permission prompts to
+// Den.
+func TestControlArgv(t *testing.T) {
+	o := Options{Command: []string{"claude"}, Executable: "/usr/bin/den", Spawn: true, Control: true, SettingsFile: "/x"}
+	args := strings.Join(Argv(o), "\x00")
+	for _, want := range []string{
+		"--tools\x00ListAgents\x00", "--permission-mode\x00manual\x00", "--permission-prompt-tool\x00stdio\x00",
+		"--disallowedTools\x00SendMessage\x00", "--allowedTools\x00ListAgents\x00", `"args":["mcp","--control"]`,
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("argv lacks %q: %q", want, args)
+		}
+	}
+	if strings.Contains(args, "dontAsk") || strings.Contains(args, "\x00SendMessage,") {
+		t.Errorf("argv %q", args)
+	}
+	o.Spawn = false
+	if !strings.Contains(strings.Join(Argv(o), " "), `"args":["mcp","--missions-only","--control"]`) {
+		t.Error("without spawn, control's den mcp offers missions only")
+	}
+	if _, ok := denSettings(o)["hooks"].(map[string]any)["PermissionRequest"]; ok {
+		t.Error("a PermissionRequest hook would answer before Den")
+	}
+	if _, ok := denSettings(Options{})["hooks"].(map[string]any)["PermissionRequest"]; !ok {
+		t.Error("without control the PermissionRequest hook stays")
+	}
+}
+
+// Outside an app's turn Den answers at once: its own tools yes, others no.
+func TestControlHumanTurnAnswersAtOnce(t *testing.T) {
+	o, in := controlOrch(true)
+	feed(o, canUse("r1", SpawnAgentTool, "u1"), canUse("r2", "Bash", "u2"), canUse("r3", SendMessageTool, "u3"), canUse("r4", "WebFetch", "u4"))
+	got := in.answers()
+	want := map[string]string{"r1": "allow", "r2": "deny", "r3": "allow", "r4": "deny"}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s: %q, want %q", id, got[id], w)
+		}
+	}
+	for _, e := range drain(o) {
+		if e.Kind == PermissionAsk {
+			t.Errorf("a human turn's request reached Den's human: %+v", e)
+		}
+	}
+	o2, in2 := controlOrch(false)
+	feed(o2, canUse("r1", SpawnAgentTool, "u1"), canUse("r2", MissionTool, "u2"))
+	if a := in2.answers(); a["r1"] != "deny" || a["r2"] != "allow" {
+		t.Errorf("without spawn: %v", a)
+	}
+}
+
+// In an app's turn every request waits for Den's human; the turn ends on
+// its own result, after its prompt was replayed.
+func TestControlAppTurnAsksTheHuman(t *testing.T) {
+	o, in := controlOrch(true)
+	if err := o.SendApp("t-1", "fixed preface\n\nwho is busy?"); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.SendApp("t-2", "again"); err != ErrAppTurn {
+		t.Errorf("a second app turn: %v", err)
+	}
+	content := peermsg.Defuse("fixed preface\n\nwho is busy?")
+	feed(o, replayOf(content), toolUse("u1", SpawnAgentTool), canUse("r1", SpawnAgentTool, "u1"))
+	if a := in.answers(); a["r1"] != "" {
+		t.Fatalf("answered before the human: %v", a)
+	}
+	var ask *Event
+	for _, e := range drain(o) {
+		if e.Kind == PermissionAsk {
+			e := e
+			ask = &e
+		}
+	}
+	if ask == nil || ask.Tool != SpawnAgentTool || ask.Turn != "t-1" || ask.RequestID != "r1" {
+		t.Fatalf("ask %+v", ask)
+	}
+	if !o.AnswerPermission("r1", true, "") || o.AnswerPermission("r1", false, "late") {
+		t.Error("an answer counts once")
+	}
+	feed(o, toolResult("u1", false), resultLine)
+	var res *Event
+	for _, e := range drain(o) {
+		if e.Kind == Backstop {
+			t.Fatalf("an allowed tool tripped the backstop: %s", e.Text)
+		}
+		if e.Kind == Result {
+			e := e
+			res = &e
+		}
+	}
+	if res == nil || res.Turn != "t-1" || o.AppTurn() != "" {
+		t.Errorf("result %+v, open turn %q", res, o.AppTurn())
+	}
+	if a := in.answers(); a["r1"] != "allow" {
+		t.Errorf("answers %v", a)
+	}
+}
+
+// A result before the app's prompt was replayed, or a refused prompt's,
+// does not end the app's turn: what cannot be placed counts as the app's.
+func TestControlAppTurnEndsOnlyOnItsOwnResult(t *testing.T) {
+	o, in := controlOrch(true)
+	o.SendApp("t-1", "hello")
+	feed(o, resultLine, `{"type":"result","subtype":"success","is_error":false,"result":"blocked","num_turns":0}`)
+	if o.AppTurn() != "t-1" {
+		t.Fatal("an earlier result closed the app's turn")
+	}
+	feed(o, canUse("r1", SkillsTool, "u1"))
+	if a := in.answers(); a["r1"] != "" {
+		t.Errorf("a request after a stray result was answered as a human turn's: %v", a)
+	}
+	feed(o, replayOf("other text"), resultLine)
+	if o.AppTurn() != "t-1" {
+		t.Error("another prompt's replay ended the app's turn")
+	}
+	feed(o, replayOf("hello"), resultLine)
+	if o.AppTurn() != "" {
+		t.Error("the app's own result did not end its turn")
+	}
+	if a := in.answers(); a["r1"] != "deny" {
+		t.Errorf("a request left open at the turn's end: %v", a)
+	}
+}
+
+// A request nobody answers is denied after the deadline.
+func TestControlUnansweredIsDenied(t *testing.T) {
+	defer func(d time.Duration) { PermissionDeadline = d }(PermissionDeadline)
+	PermissionDeadline = 50 * time.Millisecond
+	o, in := controlOrch(true)
+	o.SendApp("t-1", "hello")
+	feed(o, canUse("r1", CloseAgentTool, "u1"))
+	time.Sleep(200 * time.Millisecond)
+	if a := in.answers(); a["r1"] != "deny" {
+		t.Errorf("answers %v", a)
+	}
+	expired := false
+	for _, e := range drain(o) {
+		expired = expired || (e.Kind == PermissionExpired && e.RequestID == "r1")
+	}
+	if !expired {
+		t.Error("no PermissionExpired")
+	}
+}
+
+// In an app's turn a tool that ran without Den allowing it, or Claude
+// Code's own SendMessage, trips the backstop; ListAgents and denied calls
+// do not.
+func TestControlBackstop(t *testing.T) {
+	for name, lines := range map[string][]string{
+		"unasked tool ran": {toolUse("u1", SpawnAgentTool), toolResult("u1", false)},
+		"SendMessage":      {toolUse("u1", "SendMessage")},
+	} {
+		o, _ := controlOrch(true)
+		o.SendApp("t-1", "hello")
+		feed(o, append([]string{replayOf("hello")}, lines...)...)
+		if !o.Tripped() {
+			t.Errorf("%s: no trip", name)
+		}
+	}
+	o, _ := controlOrch(true)
+	o.SendApp("t-1", "hello")
+	feed(o, replayOf("hello"), toolUse("u1", "ListAgents"), toolResult("u1", false), toolUse("u2", CloseAgentTool), toolResult("u2", true))
+	if o.Tripped() {
+		t.Error("ListAgents or a denied call tripped the backstop")
+	}
+}
