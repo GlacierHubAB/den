@@ -66,7 +66,9 @@ func heldRun(t *testing.T, msgs ...any) (*Manager, []Update, func() []Decision) 
 	m.Start()
 	t.Cleanup(func() { m.Close(); <-done })
 	waitFor(t, "the marker event", func() bool {
-		return slices.ContainsFunc(localLines(t, s.localEvts), func(ev events.Event) bool { return ev.Session == sidA })
+		mu.Lock()
+		defer mu.Unlock()
+		return markerArrived(ups)
 	})
 	decisions := func() []Decision {
 		mu.Lock()
