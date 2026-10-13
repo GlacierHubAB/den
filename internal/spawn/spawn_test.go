@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/discover"
+	"github.com/GlacierHubAB/den/internal/hypr"
 )
 
 func TestPeerName(t *testing.T) {
@@ -66,7 +67,7 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	SessionWait = 0
 	var gotDir, gotTitle string
 	var gotCmd, gotEnv []string
-	Launch = func(d, title string, command, env []string) error {
+	Launch = func(d, title, marker string, command, env []string) error {
 		gotDir, gotTitle, gotCmd, gotEnv = d, title, command, env
 		return nil
 	}
@@ -181,7 +182,7 @@ func TestRunResumesWithoutBrief(t *testing.T) {
 	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
 	SessionWait = 0
 	var gotCmd, gotEnv []string
-	Launch = func(d, title string, command, env []string) error {
+	Launch = func(d, title, marker string, command, env []string) error {
 		gotCmd, gotEnv = command, env
 		return nil
 	}
@@ -235,7 +236,7 @@ func TestRunStartsAnAgentInItsOwnWorktree(t *testing.T) {
 	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+repo+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
 	SessionWait = 0
 	var gotCmd []string
-	Launch = func(d, title string, command, env []string) error { gotCmd = command; return nil }
+	Launch = func(d, title, marker string, command, env []string) error { gotCmd = command; return nil }
 	t.Cleanup(func() { Launch = launch })
 
 	// No commit yet: nothing to branch from.
@@ -298,7 +299,7 @@ func TestTitleIsSanitised(t *testing.T) {
 	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
 	SessionWait = 0
 	var gotTitle string
-	Launch = func(d, title string, command, env []string) error { gotTitle = title; return nil }
+	Launch = func(d, title, marker string, command, env []string) error { gotTitle = title; return nil }
 	t.Cleanup(func() { Launch = launch })
 
 	if _, err := Run(t.Context(), Request{Dir: dir, Agent: true, Name: "x\x1b]0;pwned\x07\u202e", Brief: "Fix."}); err != nil {
@@ -306,5 +307,46 @@ func TestTitleIsSanitised(t *testing.T) {
 	}
 	if strings.ContainsAny(gotTitle, "\x1b\x07\u202e") || strings.Contains(gotTitle, ";") {
 		t.Errorf("title = %q", gotTitle)
+	}
+}
+
+// TestAgentWindowMarker: an agent's terminal gets the marker class of its
+// peer name; a plain terminal gets none, and a class already on a live
+// window is not reused.
+func TestAgentWindowMarker(t *testing.T) {
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	cfgDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", cfgDir)
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(cfgDir, ".claude.json"), []byte(`{"projects":{"`+dir+`":{"hasTrustDialogAccepted":true}}}`), 0o644)
+	SessionWait = 0
+	var got []string
+	Launch = func(d, title, marker string, command, env []string) error { got = append(got, marker); return nil }
+	t.Cleanup(func() { Launch = launch })
+	if _, err := Run(t.Context(), Request{Dir: dir, Agent: true, Name: "helper", Brief: "Fix."}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(t.Context(), Request{Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "io.glacierhub.den.helper" || got[1] != "" {
+		t.Errorf("markers = %q", got)
+	}
+	live := []hypr.Client{{Address: "0x1", InitialClass: "io.glacierhub.den.helper"}}
+	if m := freeMarker("helper", live); m != "" {
+		t.Errorf("a live marker was reused: %q", m)
+	}
+	if m := freeMarker("other", live); m != "io.glacierhub.den.other" {
+		t.Errorf("free marker = %q", m)
+	}
+}
+
+// TestGhosttyArgs: Den's own Ghostty instance for the window, its marker as
+// the class, the command after -e.
+func TestGhosttyArgs(t *testing.T) {
+	got := strings.Join(ghosttyArgs("/usr/bin/ghostty", "/w", "den · helper", "io.glacierhub.den.helper", []string{"claude", "--name", "helper"}), " ")
+	want := "/usr/bin/ghostty --gtk-single-instance=false --class=io.glacierhub.den.helper --working-directory=/w --title=den · helper -e claude --name helper"
+	if got != want {
+		t.Errorf("argv\n got %s\nwant %s", got, want)
 	}
 }

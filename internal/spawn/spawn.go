@@ -150,8 +150,9 @@ var (
 )
 
 // Launch starts the terminal process; tests replace it. dir and title are
-// for the terminal, command is what runs inside it (empty for a shell) and
-// env is added to the process environment.
+// for the terminal, marker is the window class for an agent's terminal
+// ("" for none, see hypr.Marker), command is what runs inside it (empty
+// for a shell) and env is added to the process environment.
 var Launch = launch
 
 // Run opens the terminal and, for an agent, waits for its session to
@@ -209,8 +210,16 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		// title is shown by the terminal and the window manager.
 		title = sanitize.Line("den · " + res.Name)
 	}
+	// The agent's terminal carries a window class of its own, the one way
+	// Den may later tell its window from others with the same title or
+	// directory. A class already on a live window is not reused: Den
+	// could not tell the two apart.
+	marker := ""
+	if req.Agent {
+		marker = freeMarker(res.Name, before)
+	}
 	started := time.Now()
-	if err := Launch(dir, title, command, env); err != nil {
+	if err := Launch(dir, title, marker, command, env); err != nil {
 		return res, err
 	}
 
@@ -497,14 +506,22 @@ func PeerName(want, dir string, sessions []discover.Session) string {
 
 // launch runs the terminal detached, the way Omarchy's terminal keybinding
 // does: through uwsm-app when present, as its own session, with the default
-// terminal chosen by xdg-terminal-exec.
-func launch(dir, title string, command, extra []string) error {
+// terminal chosen by xdg-terminal-exec. When that is Ghostty and the window
+// has a marker, Ghostty is started directly, as a process of its own, so
+// the window takes its class and its teardown cannot take other windows
+// with it.
+func launch(dir, title, marker string, command, extra []string) error {
 	var argv []string
 	if p, err := exec.LookPath("uwsm-app"); err == nil {
 		argv = append(argv, p, "--")
 	}
-	if p, err := exec.LookPath("xdg-terminal-exec"); err == nil {
+	if g, ok := ghosttyChosen(); ok && marker != "" {
+		argv = append(argv, ghosttyArgs(g, dir, title, marker, command)...)
+	} else if p, err := exec.LookPath("xdg-terminal-exec"); err == nil {
 		argv = append(argv, p, "--dir="+dir, "--title="+title)
+		if marker != "" {
+			argv = append(argv, "--app-id="+marker)
+		}
 		if len(command) > 0 {
 			argv = append(argv, "--")
 			argv = append(argv, command...)
@@ -527,6 +544,50 @@ func launch(dir, title string, command, extra []string) error {
 	}
 	go cmd.Wait() // reap; the terminal outlives us either way
 	return nil
+}
+
+// freeMarker is the window class for the agent named name, or "" when a
+// live window already has it.
+func freeMarker(name string, live []hypr.Client) string {
+	marker := hypr.Marker(name)
+	for _, c := range live {
+		if c.InitialClass == marker {
+			return ""
+		}
+	}
+	return marker
+}
+
+// ghosttyArgs is the Ghostty command line for an agent's window: its own
+// instance, the marker as its class, then the command as xdg-terminal-exec
+// would have given it.
+func ghosttyArgs(ghostty, dir, title, marker string, command []string) []string {
+	argv := []string{ghostty, "--gtk-single-instance=false", "--class=" + marker, "--working-directory=" + dir, "--title=" + title}
+	if len(command) > 0 {
+		argv = append(argv, "-e")
+		argv = append(argv, command...)
+	}
+	return argv
+}
+
+// ghosttyChosen reports whether xdg-terminal-exec would open Ghostty, and
+// where Ghostty is; tests replace it.
+var ghosttyChosen = func() (string, bool) {
+	xte, err := exec.LookPath("xdg-terminal-exec")
+	if err != nil {
+		return "", false
+	}
+	g, err := exec.LookPath("ghostty")
+	if err != nil {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, xte, "--print-id").Output()
+	if err != nil || !strings.HasPrefix(strings.TrimSpace(string(out)), "com.mitchellh.ghostty") {
+		return "", false
+	}
+	return g, true
 }
 
 // inherited are the variables a Claude Code session sets for the processes

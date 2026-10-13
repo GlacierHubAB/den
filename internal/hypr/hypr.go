@@ -22,12 +22,15 @@ import (
 
 // Client is one Hyprland window.
 type Client struct {
-	Address   string `json:"address"`
-	PID       int    `json:"pid"`
-	Class     string `json:"class"`
-	Title     string `json:"title"`
-	FocusHist int    `json:"focusHistoryID"`
-	Workspace struct {
+	Address string `json:"address"`
+	PID     int    `json:"pid"`
+	Class   string `json:"class"`
+	// InitialClass is the class the window was created with; a program
+	// cannot change it afterwards, so Den's marker is read from here.
+	InitialClass string `json:"initialClass"`
+	Title        string `json:"title"`
+	FocusHist    int    `json:"focusHistoryID"`
+	Workspace    struct {
 		ID   int    `json:"id"`
 		Name string `json:"name"`
 	} `json:"workspace"`
@@ -114,6 +117,36 @@ func firstLine(s string) string {
 		return s[:i]
 	}
 	return s
+}
+
+// MarkerPrefix starts the window class Den gives the terminal of an agent
+// it spawns; the rest is the agent's peer name.
+const MarkerPrefix = "io.glacierhub.den."
+
+// Marker is the window class for the terminal of the agent with this peer
+// name: lower case letters, digits and dashes, at most 40 of them after
+// the prefix. "" when nothing is left of the name.
+func Marker(peer string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(peer) {
+		switch {
+		case r >= 'a' && r <= 'z' || r >= '0' && r <= '9':
+			b.WriteRune(r)
+			dash = false
+		case !dash && b.Len() > 0:
+			b.WriteByte('-')
+			dash = true
+		}
+	}
+	name := strings.TrimRight(b.String(), "-")
+	if len(name) > 40 {
+		name = strings.TrimRight(name[:40], "-")
+	}
+	if name == "" {
+		return ""
+	}
+	return MarkerPrefix + name
 }
 
 // ActiveAddress returns the focused window's address.
