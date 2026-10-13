@@ -275,7 +275,9 @@ func TestGuidanceReloads(t *testing.T) {
 	}
 }
 
-// Off applies at once: the key removed, set empty, or the text refused.
+// Off, by a removed key, an empty one or a refused text, drops the guidance
+// from the next start at once; a running orchestrator takes it out once idle
+// (TestGuidanceRestartWaitsForIdle).
 // A config that does not read keeps what is in use.
 func TestGuidanceOffAndUnreadable(t *testing.T) {
 	cfg := guidanceEnv(t)

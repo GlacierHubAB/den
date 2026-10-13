@@ -172,7 +172,7 @@ func (m *Model) applyGuidance(msg guidanceReadMsg) tea.Cmd {
 	if msg.setting == "" {
 		m.guide.refused = ""
 		m.dropGuidanceQuestion("orchestrator.guidance is off now")
-		m.setGuidance("", "", "orchestrator guidance is off")
+		m.setGuidance("", "", "orchestrator guidance is off; it leaves the orchestrator's prompt once the orchestrator is idle")
 		return nil
 	}
 	if msg.err != nil {

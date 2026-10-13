@@ -489,10 +489,11 @@ counts once you have read it to the end. Den then records that hash, and only
 that, in `~/.local/state/den/guidance.json`. Approved text goes into the
 orchestrator's prompt in a `<human_guidance>` block after Den's own rules,
 which it cannot relax or override. Den reads the key again every few seconds:
-turning it off, or text that fails its checks, unloads it, and turning it on
-or changing it asks first; either way a running orchestrator resumes its
-session with the new prompt once it is idle, never mid-turn. Other keys leave
-the approval alone. A process running as your user can change the config, the
+turning it off, or text that fails its checks, takes it out of the prompt once
+the orchestrator is idle, and turning it on or changing it asks first and,
+once you approve, puts it in once the orchestrator is idle. A turn in progress
+is never cut short: the orchestrator resumes its session with the new prompt
+at your next message. Other keys leave the approval alone. A process running as your user can change the config, the
 file and the approval together, so Den's checks guard against mistakes and
 other users, not against your own processes.
 
