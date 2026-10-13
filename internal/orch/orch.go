@@ -47,6 +47,8 @@ type Event struct {
 	// event): the lane must start with neither (LaneInitOK).
 	Tools      []string
 	MCPServers []string
+	// ClaudeVersion is the Claude Code release, on Started.
+	ClaudeVersion string
 }
 
 // maxStderrLine caps a line of the process's stderr in an event.
@@ -603,8 +605,9 @@ type line struct {
 	Content   string `json:"content"`
 	IsReplay  bool   `json:"isReplay"`
 	// Tools and MCPServers are on the init event: what the process has.
-	Tools      []string `json:"tools"`
-	MCPServers []struct {
+	Tools         []string `json:"tools"`
+	ClaudeVersion string   `json:"claude_code_version"`
+	MCPServers    []struct {
 		Name string `json:"name"`
 	} `json:"mcp_servers"`
 	Message struct {
@@ -659,7 +662,7 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 			switch l.Subtype {
 			case "init":
 				o.SessionID, o.Model = l.SessionID, l.Model
-				e := Event{Kind: Started, SessionID: l.SessionID, Model: l.Model, Tools: append([]string{}, l.Tools...)}
+				e := Event{Kind: Started, SessionID: l.SessionID, Model: l.Model, Tools: append([]string{}, l.Tools...), ClaudeVersion: l.ClaudeVersion}
 				for _, s := range l.MCPServers {
 					e.MCPServers = append(e.MCPServers, s.Name)
 				}

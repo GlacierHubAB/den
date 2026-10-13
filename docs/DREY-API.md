@@ -124,7 +124,12 @@ apps, apart from the orchestrator you talk to. It has no tools and no MCP
 servers, loads no skills, plugins, hooks, slash commands, `CLAUDE.md` or
 memory, refuses messages from other sessions, and runs in an empty folder of
 its own. Den checks what the process reports at start and stops it unless it
-has no tools and no MCP servers. Whatever an app asks, the lane can only write
+has no tools and no MCP servers and runs a Claude Code release that
+`scripts/lane-spike.sh` has passed: that script starts the lane offline with
+a hostile user config and checks that it gets no tools, MCP servers, skills,
+hooks or `CLAUDE.md`, and that a message from another session never reaches
+it. On any other release `ask` answers with an error until the spike is run
+and the release added. Whatever an app asks, the lane can only write
 text: it cannot message, start, close or approve anything, and nothing it
 writes changes Den's state.
 

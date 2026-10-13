@@ -131,11 +131,26 @@ func StartLane(ctx context.Context, o LaneOptions) (*Orchestrator, error) {
 	return startCmd(ctx, cmd, "", "")
 }
 
-// LaneInitOK checks the lane's init event: no tools and no MCP servers, or
-// the lane is not what Den asked for and must not get a turn.
+// LaneVerified are the Claude Code releases scripts/lane-spike.sh passed
+// on: the lane's command line gives no tools, MCP servers, skills or slash
+// commands, loads no user hook or CLAUDE.md, and keeps peer messages out.
+// The lane runs on no other release; re-run the spike on every Claude Code
+// release Den supports, and add the version it prints.
+var LaneVerified = []string{"2.1.289"}
+
+// LaneInitOK checks the lane's init event: a verified Claude Code, no tools
+// and no MCP servers, or the lane is not what Den asked for and must not
+// get a turn.
 func LaneInitOK(e Event) error {
 	if e.Kind != Started {
 		return errors.New("not an init event")
+	}
+	verified := false
+	for _, v := range LaneVerified {
+		verified = verified || e.ClaudeVersion == v
+	}
+	if !verified {
+		return fmt.Errorf("Claude Code %q is not verified for the read-only lane (scripts/lane-spike.sh)", e.ClaudeVersion)
 	}
 	if len(e.Tools) > 0 {
 		return fmt.Errorf("the lane started with tools (%s)", strings.Join(e.Tools, ", "))

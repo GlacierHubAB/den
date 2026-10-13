@@ -29,7 +29,9 @@ done
 echo "$@" > "$(dirname "$0")/argv.txt"
 tools='[]'
 if [ -e "$(dirname "$0")/with-tools" ]; then tools='["Bash"]'; fi
-echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","tools":'"$tools"',"mcp_servers":[]}'
+version=2.1.289
+if [ -e "$(dirname "$0")/unverified" ]; then version=9.9.9; fi
+echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"'"$version"'","tools":'"$tools"',"mcp_servers":[]}'
 while IFS= read -r line; do
   echo "$line" >> "$(dirname "$0")/turns.txt"
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Mossy is "}}}'
@@ -449,13 +451,51 @@ func TestLaneWithToolsGetsNoTurn(t *testing.T) {
 }
 
 func TestLaneInitOK(t *testing.T) {
-	if err := orch.LaneInitOK(orch.Event{Kind: orch.Started}); err != nil {
+	ok := orch.Event{Kind: orch.Started, ClaudeVersion: "2.1.289"}
+	if err := orch.LaneInitOK(ok); err != nil {
 		t.Error(err)
 	}
-	if orch.LaneInitOK(orch.Event{Kind: orch.Started, Tools: []string{"Read"}}) == nil {
-		t.Error("tools passed")
+	tools, mcp, unverified, none := ok, ok, ok, ok
+	tools.Tools = []string{"Read"}
+	mcp.MCPServers = []string{"gmail"}
+	unverified.ClaudeVersion = "2.1.290"
+	none.ClaudeVersion = ""
+	for name, e := range map[string]orch.Event{"tools": tools, "mcp": mcp, "unverified version": unverified, "no version": none} {
+		if orch.LaneInitOK(e) == nil {
+			t.Errorf("%s passed", name)
+		}
 	}
-	if orch.LaneInitOK(orch.Event{Kind: orch.Started, MCPServers: []string{"gmail"}}) == nil {
-		t.Error("an MCP server passed")
+}
+
+// A Claude Code release the lane spike has not passed gets no turn.
+func TestUnverifiedClaudeGetsNoTurn(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "unverified"), nil, 0o600)
+	c := h.dial()
+	c.hello()
+	c.call("ask", map[string]string{"text": "hi"})
+	for {
+		e := c.next()
+		var ch Chunk
+		json.Unmarshal(e.Data, &ch)
+		if ch.Type == "error" {
+			break
+		}
+		if ch.Type == "done" || ch.Type == "text" {
+			t.Fatal("an unverified Claude Code answered")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(h.lane, "turns.txt")); err == nil {
+		t.Error("an unverified Claude Code was sent a turn")
+	}
+	for {
+		select {
+		case n := <-h.s.Notes():
+			if strings.Contains(n, "not verified") {
+				return
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no note saying the release is not verified")
+		}
 	}
 }
