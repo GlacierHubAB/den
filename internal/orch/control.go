@@ -33,6 +33,23 @@ const SendMessageTool = "mcp__" + MCPServer + "__send_message"
 // ControlPrompt follows the system prompt with control on.
 const ControlPrompt = "SendMessage is not available in this session: message sessions with send_message instead, wherever these instructions say SendMessage. It reaches them the same way, and their reports come back to you as before. Den may ask the human before any tool runs."
 
+// SendVerified are the Claude Code releases on which Den's send_message
+// was checked to reach a session exactly as SendMessage does: the inbox
+// socket's line format and how the receiver shows it. Control runs, and
+// Den delivers, only when the orchestrator and the receiving session run
+// one of them.
+var SendVerified = []string{"2.1.289", "2.1.296"}
+
+// SendVerifiedVersion reports whether send_message may run on a release.
+func SendVerifiedVersion(v string) bool {
+	for _, ok := range SendVerified {
+		if v == ok {
+			return true
+		}
+	}
+	return false
+}
+
 // ControlFlag is the `den mcp` argument that adds send_message.
 const ControlFlag = "--control"
 

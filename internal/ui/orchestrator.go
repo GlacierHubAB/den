@@ -110,6 +110,8 @@ type orchState struct {
 	// mixed is set once a refused prompt could not be placed among the
 	// turns: from then on no turn counts as the human's alone.
 	mixed bool
+	// version is the Claude Code release the process reported at init.
+	version string
 }
 
 // Silence thresholds: the status line says so after stallWarn, and Den
@@ -384,6 +386,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	switch ev.Kind {
 	case orch.Started:
 		m.orch.started = true
+		m.orch.version = ev.ClaudeVersion
 		m.orch.status = "ready · " + prettyModel(ev.Model)
 		if ev.SessionID != "" && ev.SessionID != m.orch.resume {
 			m.orch.resume = ev.SessionID

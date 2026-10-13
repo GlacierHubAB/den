@@ -2,12 +2,16 @@ package ui
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/peer"
 	"github.com/GlacierHubAB/den/internal/peermsg"
 )
@@ -21,6 +25,10 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 	var in bridge.OrchSendInput
 	if json.Unmarshal(r.Envelope.Payload, &in) != nil || strings.TrimSpace(in.To) == "" || strings.TrimSpace(in.Message) == "" {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: "give to (a peer name) and message"})
+		return nil
+	}
+	if !orch.SendVerifiedVersion(m.orch.version) {
+		r.Reply(bridge.Decision{Behavior: "deny", Message: "send_message needs a Claude Code release Den has checked (" + strings.Join(orch.SendVerified, ", ") + "); this orchestrator runs " + m.orch.version})
 		return nil
 	}
 	self, ok := m.orchSession()
@@ -46,17 +54,38 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 }
 
 // orchSession is the orchestrator's own session in the fleet, with its
-// inbox socket.
+// inbox socket at the place Claude Code puts it.
 func (m Model) orchSession() (fleet.Agent, bool) {
 	if m.orch.proc == nil {
 		return fleet.Agent{}, false
 	}
 	for _, a := range m.base {
-		if a.Host == "" && a.Session.PID == m.orch.proc.PID && a.Session.Socket != "" {
+		if a.Host == "" && a.Session.PID == m.orch.proc.PID && inboxPath(a.Session.Socket, a.Session.PID) {
 			return a, true
 		}
 	}
 	return fleet.Agent{}, false
+}
+
+// inboxPath reports whether path is where Claude Code binds pid's inbox
+// socket for this user: <dir>/<pid>.sock in $XDG_RUNTIME_DIR/cc-socks,
+// /run/user/<uid>/cc-socks, /tmp/cc-socks-<uid> or /tmp/cc-socks. Den
+// writes to no other path.
+func inboxPath(path string, pid int) bool {
+	if pid <= 1 || filepath.Base(path) != strconv.Itoa(pid)+".sock" || filepath.Clean(path) != path {
+		return false
+	}
+	uid := strconv.Itoa(os.Getuid())
+	dirs := []string{"/run/user/" + uid + "/cc-socks", "/tmp/cc-socks-" + uid, "/tmp/cc-socks"}
+	if x := os.Getenv("XDG_RUNTIME_DIR"); x != "" {
+		dirs = append(dirs, filepath.Join(x, "cc-socks"))
+	}
+	for _, d := range dirs {
+		if filepath.Dir(path) == d {
+			return true
+		}
+	}
+	return false
 }
 
 // sendTarget is the live local session a send_message names by its peer
@@ -79,8 +108,13 @@ func (m Model) sendTarget(to string) (fleet.Agent, string) {
 		return fleet.Agent{}, "more than one session is named " + p
 	case m.isOrchestrator(hits[0]) || p == D1LaneName:
 		return fleet.Agent{}, "not to " + p
-	case hits[0].Session.Socket == "":
-		return fleet.Agent{}, p + " has no inbox socket"
+	case !inboxPath(hits[0].Session.Socket, hits[0].Session.PID):
+		return fleet.Agent{}, p + " has no inbox socket where Claude Code puts one"
+	case !orch.SendVerifiedVersion(hits[0].Session.Version):
+		return fleet.Agent{}, p + " runs a Claude Code release Den has not checked send_message on; use SendMessage's way (den send)"
+	}
+	if _, ok := sessionProc(hits[0].Session.PID, hits[0].Session.StartedAt, ""); !ok {
+		return fleet.Agent{}, p + "'s process is not the one its session started with"
 	}
 	return hits[0], ""
 }
