@@ -47,6 +47,10 @@ type chatEntry struct {
 	// rather than the message's first line.
 	tool       string
 	summarized bool
+	// memo keeps the entry's rendered text between frames; the chat draws
+	// every entry on every frame, so a long chat must not lean on the
+	// shared cache, which it would cycle through.
+	memo *mdMemo
 }
 
 type orchEventMsg struct {
@@ -255,6 +259,9 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 // it, for logging.
 func (m *Model) addChat(e chatEntry) chatEntry {
 	e.mission = m.orch.thread
+	if e.memo == nil {
+		e.memo = &mdMemo{}
+	}
 	if e.card != nil {
 		e.card.Thread = e.mission
 	}
@@ -572,7 +579,7 @@ func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string,
 			body = m.plainLines(e.text, bodyW, s.fg)
 		case "orchestrator":
 			from = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor)).Bold(true).Render("orchestrator")
-			body = mo.orchTextLines(e, bodyW)
+			body = mo.memoTextLines(e, bodyW)
 			if e.streaming {
 				if len(body) == 0 {
 					body = []string{""}

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -247,5 +248,48 @@ func TestActionSummary(t *testing.T) {
 	}
 	if _, ok := parseMessageCall("mcp__x__y", json.RawMessage(`{"to":"a"}`)); ok {
 		t.Error("no message, no summary line")
+	}
+}
+
+// TestLongChatIsRenderedOnce: the chat draws every entry on every frame,
+// so each entry keeps its own rendering; a chat longer than the shared
+// cache must not lay its replies out again on every frame. Counted, not
+// timed.
+func TestLongChatIsRenderedOnce(t *testing.T) {
+	st := newStyles(theme.Deepharness)
+	m := Model{st: st, agents: sample(), store: inbox.New(), tab: tabOrch, width: 100, height: 40, orch: orchState{cardCur: -1}}
+	m.input = newInput(st)
+	const n = 600
+	for i := range n {
+		m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: fmt.Sprintf("Reply %d, with **bold** and code:\n\n```go\nx := %d\n```", i, i)})
+	}
+	if n <= mdCacheMax {
+		t.Fatal("the chat must be longer than the shared cache")
+	}
+	m.View()
+	rendered, lexed := mdRendered.Load(), mdLexed.Load()
+	m.View()
+	if r, l := mdRendered.Load()-rendered, mdLexed.Load()-lexed; r != 0 || l != 0 {
+		t.Errorf("a second frame laid out %d texts and lexed %d blocks, want none", r, l)
+	}
+	// A new width lays each reply out once, and then not again.
+	m.width = 90
+	rendered = mdRendered.Load()
+	m.View()
+	if r := mdRendered.Load() - rendered; r != n {
+		t.Errorf("a width change laid out %d texts, want %d", r, n)
+	}
+	rendered, lexed = mdRendered.Load(), mdLexed.Load()
+	m.View()
+	if r, l := mdRendered.Load()-rendered, mdLexed.Load()-lexed; r != 0 || l != 0 {
+		t.Errorf("the frame after the width change laid out %d texts and lexed %d blocks", r, l)
+	}
+	// An entry whose text changes (a streamed reply) is laid out again,
+	// alone.
+	m.orch.chat[n-1].text += " more"
+	rendered = mdRendered.Load()
+	m.View()
+	if r := mdRendered.Load() - rendered; r != 1 {
+		t.Errorf("one changed entry laid out %d texts", r)
 	}
 }

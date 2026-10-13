@@ -69,8 +69,10 @@ const (
 	// repeated takes seconds at 64 KB), and lexing runs on the UI
 	// goroutine, the first time a file is drawn. So a hunk is lexed in
 	// pieces of whole lines up to synChunkMax, and a file gets synFileMax
-	// of lexing in all: about 180 ms at worst, once, as for markdown. The
-	// rest of a file, and any line longer than a piece, is drawn plain.
+	// of lexing in all: about 180 ms at worst, once, as for markdown.
+	// Once the budget is spent, the rest of the file is drawn plain. A
+	// line longer than a piece is drawn plain on its own, and lexing goes
+	// on with the lines after it.
 	synChunkMax = 4 << 10
 	synFileMax  = 16 << 10
 )
@@ -133,7 +135,7 @@ func lexDiff(path string, lines []diffLine) [][]synSpan {
 					size += len(lines[idx[q]].text) + 1
 					q++
 				}
-				if q == p { // one line longer than a piece: drawn plain
+				if q == p { // a line longer than a piece: that line plain, go on
 					p++
 					continue
 				}

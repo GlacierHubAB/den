@@ -158,7 +158,7 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread})
 			continue
 		}
-		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission})
+		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission, memo: &mdMemo{}})
 	}
 	// Streamed text is logged when its final block lands, which can be after
 	// the card for a dispatch made in the same turn; the screen order is by

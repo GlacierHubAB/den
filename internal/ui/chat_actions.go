@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -119,6 +120,38 @@ type proposalView struct {
 		State   string `json:"state"`
 		Summary string `json:"summary"`
 	} `json:"mission_update"`
+}
+
+// mdMemo is one chat entry's rendered text and what it was rendered from.
+type mdMemo struct {
+	text  string
+	width int
+	look  string // palette, code colour, plain mode and expanded state
+	lines []string
+}
+
+// memoTextLines is orchTextLines, kept on the entry until its text, the
+// width or the look changes. Entries made without a memo use the shared
+// cache alone.
+func (m Model) memoTextLines(e chatEntry, w int) []string {
+	if e.memo == nil {
+		return m.orchTextLines(e, w)
+	}
+	look := fmt.Sprintf("%v|%v|%v|%v", m.st.pal, m.st.code.GetForeground(), m.plainCode, e.expanded)
+	if mm := e.memo; mm.lines != nil && mm.width == w && mm.look == look && mm.text == e.text {
+		return append([]string(nil), mm.lines...)
+	}
+	if m.hl == nil {
+		m.hl = newHLBudget()
+	}
+	short, left := m.hl.short, m.hl.left
+	lines := m.orchTextLines(e, w)
+	// As for the shared cache: a text that found the frame's budget
+	// spent is drawn again next frame, when it can be coloured.
+	if m.hl.short == short || m.hl.left < left {
+		*e.memo = mdMemo{text: e.text, width: w, look: look, lines: append([]string(nil), lines...)}
+	}
+	return lines
 }
 
 // orchTextLines is an orchestrator reply: its words as markdown, and each

@@ -164,6 +164,7 @@ func (m Model) markdownLines(text string, width int) []string {
 
 // renderMarkdown is markdownLines without the cache.
 func (m Model) renderMarkdown(text string, width int) []string {
+	mdRendered.Add(1)
 	src := strings.Split(sanitize.Text(text), "\n")
 	var out []string
 	for i := 0; i < len(src); i++ {
@@ -435,8 +436,9 @@ func (b *hlBudget) take(n int) bool {
 	return true
 }
 
-// mdLexed counts fenced blocks handed to chroma, for the tests.
-var mdLexed atomic.Int64
+// mdLexed counts fenced blocks handed to chroma, and mdRendered texts
+// laid out afresh, for the tests.
+var mdLexed, mdRendered atomic.Int64
 
 // mdKey identifies a rendering: the text, the width, and everything about
 // the model that changes how it looks.
