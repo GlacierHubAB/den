@@ -1132,6 +1132,28 @@ there, without its colours; Den's own colours are not affected.
   hooks or merge drivers either; filter drivers still run there, as a checkout
   needs them (Git LFS is one).
 
+## Usage
+
+The header shows how much of the account's weekly limit is used, as Claude
+Code reports it to the agent-badge statusline in your sessions on this
+machine: the newest reading and how old it is (`usage 63% · 2m ago`). With no
+reading in the last 15 minutes it says `usage unknown`. Two stand-ins, always
+labelled estimates: a figure you set (`/usage set 87`, good until the next
+weekly reset; `/usage clear` drops it), or, with `weekly_usd` set under
+`[usage]`, Den's own cost estimate for the week against that budget.
+
+At 80% and again at 90% Den puts a card in the inbox and sends a desktop
+notification, once each per weekly reset. Nothing stops on its own unless you
+set `stop_percent` under `[usage]` (off by default). Then, at that share,
+or at once with `/usage stop`, Den sends `USAGE STOP` to every agent on this
+machine through the same path as a message you send, and to agents on hosts
+whose policy lets Den act on them (the others are listed as not reachable for
+stop). The header turns red (`usage stop`), and no agent is started (by the
+orchestrator or by a lead) and no mission run goes until you let the fleet go
+on: `/usage resume` puts the question in the inbox, and only your `Ctrl+Y`
+there answers it. Den's cost estimate never triggers a stop; Claude Code's
+figure or yours does.
+
 ## Configuration
 
 Everything has a default, so the file is optional. `den config init` writes

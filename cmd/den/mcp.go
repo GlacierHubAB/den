@@ -12,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/mcp"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/spawn"
+	"github.com/GlacierHubAB/den/internal/usage"
 )
 
 // runMCP is `den mcp`: the MCP server the orchestrator gets through
@@ -46,6 +47,9 @@ func runMCP() {
 				"required": []string{"dir", "brief"},
 			},
 			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+				if err := usageStop(); err != nil {
+					return "", err
+				}
 				in, ok := orch.ParseSpawn(args)
 				if !ok {
 					return "", errDir
@@ -125,6 +129,9 @@ func runMCP() {
 				"required":   []string{"dir"},
 			},
 			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+				if err := usageStop(); err != nil {
+					return "", err
+				}
 				in, ok := orch.ParseSpawn(args)
 				if !ok {
 					return "", errDir
@@ -193,6 +200,15 @@ func missionTool() mcp.Tool {
 			return d.Message, nil
 		},
 	}
+}
+
+// usageStop refuses to start anything while Den has the fleet stopped for
+// usage; the human lets it go on in Den.
+func usageStop() error {
+	if stopped, why := usage.Stopped(); stopped {
+		return errorString("Den has stopped the fleet for usage (" + why + "): nothing new starts until the human lets it go on in Den (/usage resume)")
+	}
+	return nil
 }
 
 var errDir = errorString("dir is required")
