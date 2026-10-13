@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -370,6 +371,9 @@ func (m Model) apiReport() string {
 		}
 		b.WriteString(line)
 	}
+	ls := m.api.srv.LaneState()
+	b.WriteString("\nread-only lane: " + laneWords(ls))
+	b.WriteString(fmt.Sprintf(" · spent today %.2f of %.2f dollars", ls.SpentUSD, m.cfg.API.AskBudgetUSD))
 	b.WriteString("\nlane sessions and asks: " + filepath.Join(stateDir(), "drey-chat.jsonl"))
 	return b.String()
 }
@@ -400,7 +404,11 @@ func (m Model) apiChip() string {
 		names[sanitize.Label(c.Label, 20)] = true
 		asking = asking || c.Asking
 	}
+	lane := laneChip(srv.LaneState())
 	if len(names) == 0 {
+		if lane != "" {
+			return "API on · " + lane
+		}
 		return "API on"
 	}
 	var list []string
@@ -412,7 +420,39 @@ func (m Model) apiChip() string {
 	if asking {
 		chip += " · asking"
 	}
+	if lane != "" {
+		chip += " · " + lane
+	}
 	return m.st.attn.Render(chip)
+}
+
+// laneWords is the lane's state for /api: off, starting, ready or failed
+// with why, then what is running and waiting.
+func laneWords(ls api.LaneState) string {
+	out := sanitize.Label(ls.State, 160)
+	if ls.Running {
+		out += " · 1 question running"
+	}
+	if ls.Queued > 0 {
+		out += " · " + strconv.Itoa(ls.Queued) + " queued"
+	}
+	return out
+}
+
+// laneChip is the lane's part of the header chip: only what is worth a
+// glance (starting, failed, a queue).
+func laneChip(ls api.LaneState) string {
+	var parts []string
+	switch {
+	case ls.State == "starting":
+		parts = append(parts, "lane starting")
+	case strings.HasPrefix(ls.State, "failed"):
+		parts = append(parts, sanitize.Label("lane "+ls.State, 60))
+	}
+	if ls.Queued > 0 {
+		parts = append(parts, strconv.Itoa(ls.Queued)+" queued")
+	}
+	return strings.Join(parts, " · ")
 }
 
 // isLane reports whether a discovered session is the API's read-only lane.

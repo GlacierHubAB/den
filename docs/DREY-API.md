@@ -81,6 +81,7 @@ host}`; a `v` Den does not serve gets `unsupported`. Added fields never change
 | `inbox.body` | `{id}` | `{id, kind, text, hash}` for a request on this machine; `unavailable` for one from another machine |
 | `mission.list` | | `[Mission]` |
 | `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk |
+| `ask.cancel` | `{ask}` | `{cancelled:true}`; the ask's stream ends with an `error` chunk `"cancelled"`. Only the app that asked may cancel it; any other ask is `not_found` |
 | `chat.history` | `{session}` | `[Message]` of an ask session |
 | `chat.sessions` | | `[{id, title, last, current}]`, newest first, exactly one current |
 | `grant.request` | `{manifest}` | `{id}`; the answer comes on `grant.events`, never here |
@@ -161,8 +162,16 @@ The question goes to the lane fenced as an app's request, after the same
 roster the orchestrator reads (without agents' recent words and tool calls,
 and with what waits on you named by kind and title only). A question with a
 control, bidi or invisible character, or over 16 KiB, is refused with
-`bad_request`. One question runs at a time; up to four wait, one per app. A
-reply is cut at 64 KiB or 3 minutes. Asks stop for the day once
+`bad_request`. One question runs at a time and up to four wait; a waiting
+question gets a status saying how many are ahead. A newer question from the
+same app replaces its earlier one, which ends with an error. When the
+connection that asked closes, or stops reading, its turn stops and the next
+question runs. Every ask stream ends with a `done` or an `error` chunk; when
+the lane cannot start (a release the spike has not passed, a failed check, the
+budget, claude not starting) the error says why within seconds. A reply is
+cut at 64 KiB or 3 minutes, and a lane silent for 90 seconds is stopped.
+`/api` shows the lane's state (off, starting, ready, failed and why), what
+runs, what waits and today's spend. Asks stop for the day once
 `api.ask_budget_usd` is spent. The lane stops after ten minutes without
 questions and resumes its session on the next one.
 

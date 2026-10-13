@@ -2,6 +2,7 @@ package orch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -137,6 +138,66 @@ func StartLane(ctx context.Context, o LaneOptions) (*Orchestrator, error) {
 // The lane runs on no other release; re-run the spike on every Claude Code
 // release Den supports, and add the version it prints.
 var LaneVerified = []string{"2.1.289"}
+
+// LaneVersion is the Claude Code release the lane would run: the first
+// word of `<claude> --version`.
+func LaneVersion(ctx context.Context, command []string) (string, error) {
+	args := append([]string(nil), command...)
+	if len(args) == 0 {
+		args = []string{"claude"}
+	}
+	cmd := exec.CommandContext(ctx, args[0], append(args[1:], "--version")...)
+	cmd.Env = LaneEnviron()
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("claude --version: %w", err)
+	}
+	f := strings.Fields(string(out))
+	if len(f) == 0 {
+		return "", errors.New("claude --version said nothing")
+	}
+	return f[0], nil
+}
+
+// LaneVerifiedVersion reports whether the lane may run on a release.
+func LaneVerifiedVersion(v string) bool {
+	for _, ok := range LaneVerified {
+		if v == ok {
+			return true
+		}
+	}
+	return false
+}
+
+// LaneControlOK checks what the lane says before any turn, in answer to
+// the initialize and mcp_status control requests: no slash commands, the
+// dontAsk permission mode, and no MCP servers. claude prints its init event
+// only once a turn arrives; these answers come first, with no model call.
+func LaneControlOK(initialize, mcpStatus json.RawMessage) error {
+	var in struct {
+		Commands []json.RawMessage `json:"commands"`
+		Mode     string            `json:"current_permission_mode"`
+	}
+	if json.Unmarshal(initialize, &in) != nil {
+		return errors.New("the lane's initialize answer does not read")
+	}
+	if len(in.Commands) > 0 {
+		return fmt.Errorf("the lane has %d slash commands", len(in.Commands))
+	}
+	if in.Mode != "dontAsk" {
+		return fmt.Errorf("the lane's permission mode is %q, not dontAsk", in.Mode)
+	}
+	var mcp struct {
+		Servers *[]json.RawMessage `json:"mcpServers"`
+	}
+	if json.Unmarshal(mcpStatus, &mcp) != nil || mcp.Servers == nil {
+		return errors.New("the lane's MCP status does not read")
+	}
+	if len(*mcp.Servers) > 0 {
+		return fmt.Errorf("the lane has %d MCP servers", len(*mcp.Servers))
+	}
+	return nil
+}
 
 // LaneInitOK checks the lane's init event: a verified Claude Code, no tools
 // and no MCP servers, or the lane is not what Den asked for and must not

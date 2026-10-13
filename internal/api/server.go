@@ -84,6 +84,7 @@ func Listen(o Options) (*Server, error) {
 	s := &Server{opts: o, b: b, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refused: map[int]bool{}}
 	s.grants, s.acts, s.lastConn = newGrants(), make(chan Act, 64), map[string]time.Time{}
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
+	s.lane.changed = s.asksChanged
 	go s.accept()
 	go s.expireLoop()
 	return s, nil
@@ -164,6 +165,9 @@ func (s *Server) expire(keep func(string) bool) {
 	default:
 	}
 }
+
+// LaneState is the read-only lane's state and the asks waiting.
+func (s *Server) LaneState() LaneState { return s.lane.State() }
 
 // LanePID is the read-only lane's pid, 0 when it is not running. Den
 // keeps it out of the fleet and refuses clients under it.
@@ -636,6 +640,19 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		c.reply(req.ID, h)
 	case "ask":
 		s.ask(c, req)
+	case "ask.cancel":
+		var p struct {
+			Ask string `json:"ask"`
+		}
+		if json.Unmarshal(req.Params, &p) != nil || p.Ask == "" {
+			c.fail(req.ID, CodeBadRequest, "ask")
+			return
+		}
+		if !s.lane.cancel(p.Ask, c.peer.Exe) {
+			c.fail(req.ID, CodeNotFound, "no such ask")
+			return
+		}
+		c.reply(req.ID, map[string]bool{"cancelled": true})
 	case "grant.request":
 		gr, err := s.grants.request(req.Params, c.peer)
 		if err != nil {
@@ -710,7 +727,15 @@ func (s *Server) ask(c *conn, req Request) {
 	}
 	c.asking = true
 	c.mu.Unlock()
-	j := &askJob{id: "a-" + newUUID()[:8], session: session, text: p.Text, exe: c.peer.Exe}
+	j := &askJob{id: "a-" + newUUID()[:8], session: session, text: p.Text, exe: c.peer.Exe, cancelled: make(chan struct{})}
+	// The asking connection going away stops the turn.
+	go func() {
+		select {
+		case <-c.done:
+			j.cancel()
+		case <-j.cancelled:
+		}
+	}()
 	j.send = func(ch Chunk) bool {
 		ok := c.push(Event{Event: EventChat, Data: ch}, true)
 		if ch.Type == "status" {
@@ -725,9 +750,8 @@ func (s *Server) ask(c *conn, req Request) {
 		return ok
 	}
 	c.reply(req.ID, map[string]string{"session": session, "ask": j.id})
-	j.status(StatusQueued)
 	if err := s.lane.enqueue(j); err != nil {
-		j.send(Chunk{Type: "error", Message: err.Error()})
+		j.end(err.Error())
 	}
 }
 

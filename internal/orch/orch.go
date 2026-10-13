@@ -49,6 +49,10 @@ type Event struct {
 	MCPServers []string
 	// ClaudeVersion is the Claude Code release, on Started.
 	ClaudeVersion string
+	// RequestID and Response are a Control event's: the request it answers
+	// and its response object ("" and nil for an error, in Text).
+	RequestID string
+	Response  json.RawMessage
 }
 
 // maxStderrLine caps a line of the process's stderr in an event.
@@ -88,6 +92,7 @@ const (
 	// block or Den's own pass, or a peer's message reached the model); the
 	// process has been killed and its session must never be resumed.
 	Backstop
+	Control // the answer to a control request (RequestID, Response)
 )
 
 // SystemPrompt is appended to Claude Code's default prompt.
@@ -531,6 +536,27 @@ func (o *Orchestrator) Kill() {
 	}
 }
 
+// ControlRequest sends a stream-json control request (initialize,
+// mcp_status, interrupt ...); its answer arrives as a Control event with
+// the same id.
+func (o *Orchestrator) ControlRequest(id, subtype string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return errors.New("orchestrator is closed")
+	}
+	line, err := json.Marshal(map[string]any{
+		"type":       "control_request",
+		"request_id": id,
+		"request":    map[string]any{"subtype": subtype},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = o.stdin.Write(append(line, '\n'))
+	return err
+}
+
 // Close ends the conversation and stops the process.
 func (o *Orchestrator) Close() {
 	o.mu.Lock()
@@ -614,6 +640,13 @@ type line struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+	// Response is a control_response's.
+	Response struct {
+		Subtype   string          `json:"subtype"`
+		RequestID string          `json:"request_id"`
+		Response  json.RawMessage `json:"response"`
+		Error     string          `json:"error"`
+	} `json:"response"`
 	Result    string  `json:"result"`
 	NumTurns  *int    `json:"num_turns"`
 	IsError   bool    `json:"is_error"`
@@ -724,6 +757,14 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 				break
 			}
 			o.emit(Event{Kind: Result, Text: l.Result, IsError: l.IsError, CostUSD: l.CostUSD})
+		case "control_response":
+			e := Event{Kind: Control, RequestID: l.Response.RequestID}
+			if l.Response.Subtype == "success" {
+				e.Response = l.Response.Response
+			} else {
+				e.Text = firstNonEmpty(l.Response.Error, "control request failed")
+			}
+			o.emit(e)
 		case "error":
 			o.emit(Event{Kind: Error, Text: firstNonEmpty(l.ErrorText, string(raw))})
 		}

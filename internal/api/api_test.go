@@ -16,24 +16,55 @@ import (
 	"github.com/GlacierHubAB/den/internal/orch"
 )
 
-// fakeLane is a claude that behaves like the lane: an init event with no
-// tools and no MCP servers, then for each turn a streamed reply and a
-// result. FAKE_LANE_TOOLS=1 makes its init list a tool.
+// fakeLane is a claude that behaves like the lane, as claude 2.1.289 does:
+// --version prints the release; control requests (initialize, mcp_status)
+// are answered before any turn; the init event comes only with the first
+// turn; each turn gets a streamed reply and a result. Files beside it
+// change it: unverified (another release), no-start (exits at once),
+// no-answer (ignores initialize), with-mcp, with-tools (in init), slow
+// (the next turn hangs after one delta).
 const fakeLane = `#!/bin/sh
+d="$(dirname "$0")"
+version=2.1.289
+if [ -e "$d/unverified" ]; then version=9.9.9; fi
+if [ "$1" = "--version" ]; then echo "$version (Claude Code)"; exit 0; fi
+if [ -e "$d/no-start" ]; then echo "error: the lane could not start" >&2; exit 1; fi
 sid=""
 prev=""
 for a in "$@"; do
   if [ "$prev" = "--session-id" ] || [ "$prev" = "--resume" ]; then sid="$a"; fi
   prev="$a"
 done
-echo "$@" > "$(dirname "$0")/argv.txt"
+echo "$@" > "$d/argv.txt"
 tools='[]'
-if [ -e "$(dirname "$0")/with-tools" ]; then tools='["Bash"]'; fi
-version=2.1.289
-if [ -e "$(dirname "$0")/unverified" ]; then version=9.9.9; fi
-echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"'"$version"'","tools":'"$tools"',"mcp_servers":[]}'
+if [ -e "$d/with-tools" ]; then tools='["Bash"]'; fi
+mcp='[]'
+if [ -e "$d/with-mcp" ]; then mcp='[{"name":"evil","status":"connected"}]'; fi
+inited=""
 while IFS= read -r line; do
-  echo "$line" >> "$(dirname "$0")/turns.txt"
+  case "$line" in
+    *'"control_request"'*)
+      id=$(echo "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+      case "$line" in
+        *'"initialize"'*)
+          if [ ! -e "$d/no-answer" ]; then
+            echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"commands":[],"current_permission_mode":"dontAsk"}}}'
+          fi ;;
+        *'"mcp_status"'*)
+          echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"mcpServers":'"$mcp"'}}}' ;;
+      esac
+      continue ;;
+  esac
+  echo "$line" >> "$d/turns.txt"
+  if [ -z "$inited" ]; then
+    echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"'"$version"'","tools":'"$tools"',"mcp_servers":[]}'
+    inited=1
+  fi
+  if [ -e "$d/slow" ]; then
+    echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"thinking"}}}'
+    rm -f "$(dirname "$0")/slow"
+    sleep 30
+  fi
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Mossy is "}}}'
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"working."}}}'
   echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Mossy is working."}]}}'
@@ -358,7 +389,7 @@ done:
 	if text.String() != "Mossy is working." {
 		t.Errorf("text %q", text.String())
 	}
-	want := []string{StatusQueued, StatusReading, StatusWriting, ""}
+	want := []string{StatusStarting, StatusReading, StatusWriting, ""}
 	if strings.Join(statuses, "|") != strings.Join(want, "|") {
 		t.Errorf("statuses %q, want %q", statuses, want)
 	}
@@ -427,8 +458,9 @@ func TestAskRefusals(t *testing.T) {
 	}
 }
 
-// A lane whose init lists a tool gets no turn and is stopped.
-func TestLaneWithToolsGetsNoTurn(t *testing.T) {
+// A lane whose init (which claude prints with the first turn) lists a
+// tool is stopped there: nothing it wrote reaches the app.
+func TestLaneWithToolsIsStoppedAtInit(t *testing.T) {
 	h := newHarness(t, 2)
 	os.WriteFile(filepath.Join(h.lane, "with-tools"), nil, 0o600)
 	c := h.dial()
@@ -445,8 +477,198 @@ func TestLaneWithToolsGetsNoTurn(t *testing.T) {
 			t.Fatal("a lane with tools answered")
 		}
 	}
-	if _, err := os.Stat(filepath.Join(h.lane, "turns.txt")); err == nil {
-		t.Error("a lane with tools was sent a turn")
+}
+
+// askEnds sends an ask on a fresh connection and returns its last chunk;
+// it fails unless the stream ends with done or error within limit.
+func askEnds(t *testing.T, h *harness, text string, limit time.Duration) Chunk {
+	t.Helper()
+	c := h.dial()
+	c.hello()
+	start := time.Now()
+	l := c.call("ask", map[string]string{"text": text})
+	if !l.OK {
+		t.Fatalf("ask refused: %+v", l.Error)
+	}
+	for {
+		e := c.next()
+		if e.Event != EventChat {
+			continue
+		}
+		var ch Chunk
+		json.Unmarshal(e.Data, &ch)
+		if ch.Type == "done" || ch.Type == "error" {
+			if time.Since(start) > limit {
+				t.Errorf("%q ended after %s", text, time.Since(start))
+			}
+			return ch
+		}
+	}
+}
+
+// The ping regression: claude prints its init only with the first turn,
+// and Den's first ask on a cold lane must still be answered.
+func TestFirstAskOnAColdLaneIsAnswered(t *testing.T) {
+	h := newHarness(t, 2)
+	if ch := askEnds(t, h, "ping", 5*time.Second); ch.Type != "done" {
+		t.Fatalf("first ask: %+v", ch)
+	}
+	if st := h.s.LaneState(); st.State != "ready" || st.Queued != 0 || st.Running {
+		t.Errorf("lane state after: %+v", st)
+	}
+}
+
+// Every way a lane can fail ends the ask with an error, within seconds,
+// with a plain reason, and frees the slot for the next ask.
+func TestEveryFailureEndsTheStream(t *testing.T) {
+	old := checkDeadline
+	checkDeadline = time.Second
+	defer func() { checkDeadline = old }()
+	for name, c := range map[string]struct{ file, why string }{
+		"cannot start":       {"no-start", "stopped at start"},
+		"no check answers":   {"no-answer", "did not answer Den's checks"},
+		"an MCP server":      {"with-mcp", "MCP servers"},
+		"unverified release": {"unverified", "not verified"},
+		"tools in init":      {"with-tools", "tools"},
+	} {
+		h := newHarness(t, 2)
+		os.WriteFile(filepath.Join(h.lane, c.file), nil, 0o600)
+		ch := askEnds(t, h, "ping", 5*time.Second)
+		if ch.Type != "error" || !strings.Contains(ch.Message, c.why) {
+			t.Errorf("%s: %+v", name, ch)
+		}
+		if st := h.s.LaneState(); !strings.HasPrefix(st.State, "failed") && name != "tools in init" {
+			t.Errorf("%s: lane state %q", name, st.State)
+		}
+		os.Remove(filepath.Join(h.lane, c.file))
+		if ch := askEnds(t, h, "again", 5*time.Second); ch.Type != "done" {
+			t.Errorf("%s: the next ask after the fault: %+v", name, ch)
+		}
+	}
+}
+
+// A newer ask from the same app supersedes its stuck one: the old stream
+// ends at once, and the new one is answered.
+func TestNewAskSupersedesAStuckOne(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
+	a := h.dial()
+	a.hello()
+	a.call("ask", map[string]string{"text": "stuck"})
+	waitChunk(t, a, "text")
+	os.Remove(filepath.Join(h.lane, "slow"))
+	if ch := askEnds(t, h, "fresh", 8*time.Second); ch.Type != "done" {
+		t.Fatalf("the newer ask: %+v", ch)
+	}
+	if ch := waitChunk(t, a, "error"); !strings.Contains(ch.Message, "cancelled") && !strings.Contains(ch.Message, "superseded") {
+		t.Errorf("the stuck ask ended with %q", ch.Message)
+	}
+}
+
+// Another app's ask waits its turn, told how many are ahead, and runs
+// once the slot frees.
+func TestQueuedAskNamesItsPosition(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
+	a := h.dial()
+	a.hello()
+	a.call("ask", map[string]string{"text": "slow"})
+	waitChunk(t, a, "text")
+	os.Remove(filepath.Join(h.lane, "slow"))
+	old := identifyHook
+	identifyHook = func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p }
+	b := h.dial()
+	b.hello()
+	identifyHook = old
+	b.call("ask", map[string]string{"text": "after"})
+	if ch := waitChunk(t, b, "status"); ch.Text != "Waiting for 1 earlier question…" {
+		t.Errorf("queued status %q", ch.Text)
+	}
+	if st := h.s.LaneState(); st.Queued != 1 || !st.Running {
+		t.Errorf("lane state %+v", st)
+	}
+	a.call("ask.cancel", map[string]string{"ask": "nope"})
+	a.nc.Close() // its turn stops, the slot frees
+	waitChunk(t, b, "done")
+}
+
+// waitChunk reads chat chunks until one of the given type.
+func waitChunk(t *testing.T, c *client, typ string) Chunk {
+	t.Helper()
+	for {
+		e := c.next()
+		if e.Event != EventChat {
+			continue
+		}
+		var ch Chunk
+		json.Unmarshal(e.Data, &ch)
+		if ch.Type == typ {
+			return ch
+		}
+		if ch.Type == "error" || ch.Type == "done" {
+			t.Fatalf("wanted %s, got %+v", typ, ch)
+		}
+	}
+}
+
+// ask.cancel stops the turn of an ask the same app made, ends its stream
+// with "cancelled" and frees the slot; another app cannot cancel it.
+func TestAskCancel(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
+	c := h.dial()
+	c.hello()
+	l := c.call("ask", map[string]string{"text": "slow one"})
+	var r struct{ Ask string }
+	json.Unmarshal(l.Result, &r)
+	waitChunk(t, c, "text") // the turn is running
+	os.Remove(filepath.Join(h.lane, "slow"))
+
+	old := identifyHook
+	identifyHook = func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p }
+	other := h.dial()
+	other.hello()
+	identifyHook = old
+	if l := other.call("ask.cancel", map[string]string{"ask": r.Ask}); code(l) != CodeNotFound {
+		t.Errorf("another app cancelled: %+v", l)
+	}
+
+	ctl := h.dial()
+	ctl.hello()
+	if l := ctl.call("ask.cancel", map[string]string{"ask": r.Ask}); !l.OK {
+		t.Fatalf("cancel: %+v", l)
+	}
+	if ch := waitChunk(t, c, "error"); ch.Message != "cancelled" {
+		t.Errorf("error chunk %q", ch.Message)
+	}
+	start := time.Now()
+	c.call("ask", map[string]string{"text": "next"})
+	waitChunk(t, c, "done")
+	if time.Since(start) > 10*time.Second {
+		t.Error("the slot was not freed")
+	}
+	if l := ctl.call("ask.cancel", map[string]string{"ask": "a-nope"}); code(l) != CodeNotFound {
+		t.Errorf("unknown ask: %+v", l)
+	}
+}
+
+// An asking connection that goes away stops its turn and frees the slot.
+func TestAskStopsWhenItsConnectionGoes(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
+	c := h.dial()
+	c.hello()
+	c.call("ask", map[string]string{"text": "slow one"})
+	waitChunk(t, c, "text")
+	os.Remove(filepath.Join(h.lane, "slow"))
+	c.nc.Close()
+	d := h.dial()
+	d.hello()
+	start := time.Now()
+	d.call("ask", map[string]string{"text": "next"})
+	waitChunk(t, d, "done")
+	if time.Since(start) > 10*time.Second {
+		t.Error("the gone connection's turn kept the slot")
 	}
 }
 

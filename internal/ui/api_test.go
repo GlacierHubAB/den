@@ -221,6 +221,22 @@ func TestGrantCardAndAnswer(t *testing.T) {
 	}
 }
 
+// /api and the chip say what the lane is doing and how many wait.
+func TestLaneStateWords(t *testing.T) {
+	if got := laneChip(api.LaneState{State: "ready"}); got != "" {
+		t.Errorf("ready: %q", got)
+	}
+	if got := laneChip(api.LaneState{State: "starting", Queued: 2}); got != "lane starting · 2 queued" {
+		t.Errorf("starting: %q", got)
+	}
+	if got := laneChip(api.LaneState{State: "failed: Claude Code 9.9.9 is not verified"}); !strings.HasPrefix(got, "lane failed: Claude Code 9.9.9") {
+		t.Errorf("failed: %q", got)
+	}
+	if got := laneWords(api.LaneState{State: "ready", Running: true, Queued: 1}); got != "ready · 1 question running · 1 queued" {
+		t.Errorf("/api: %q", got)
+	}
+}
+
 // ^N leaves the API off.
 func TestAPIOnDeclined(t *testing.T) {
 	apiEnv(t)
