@@ -105,6 +105,16 @@ jobs:
           check-latest: true
       - name: Download modules
         run: go mod download
+      # Acceptance test 8 builds Den at the last commit before remote support
+      # (preRemoteRev in internal/remote/accept_test.go), offline like the
+      # rest; its go.mod pins older modules than this tree's.
+      - name: Download modules of the pre-remote revision
+        run: |
+          rev="$(sed -n 's/^const preRemoteRev = "\([0-9a-f]*\)"$/\1/p' internal/remote/accept_test.go)"
+          [ -n "$rev" ] || { echo "::error::preRemoteRev not found in internal/remote/accept_test.go"; exit 1; }
+          git worktree add --detach "$RUNNER_TEMP/pre-remote" "$rev"
+          (cd "$RUNNER_TEMP/pre-remote" && go mod download)
+          git worktree remove --force "$RUNNER_TEMP/pre-remote"
       # The tests make their own git repositories and set their own identity,
       # and need no network: no global git config, no module proxy.
       - name: make test (vet, tests with -race)
