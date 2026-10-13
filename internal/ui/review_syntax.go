@@ -65,6 +65,14 @@ const (
 	// synMaxBytes is the largest diff lexed; bigger ones are drawn plain
 	// so a generated file never stalls the view.
 	synMaxBytes = 256 << 10
+	// Some lexers are quadratic on hostile input (a Rust raw string opener
+	// repeated takes seconds at 64 KB), and lexing runs on the UI
+	// goroutine, the first time a file is drawn. So a hunk is lexed in
+	// pieces of whole lines up to synChunkMax, and a file gets synFileMax
+	// of lexing in all: about 180 ms at worst, once, as for markdown. The
+	// rest of a file, and any line longer than a piece, is drawn plain.
+	synChunkMax = 4 << 10
+	synFileMax  = 16 << 10
 )
 
 // synLexer picks the lexer for a path, nil when chroma does not know it.
@@ -76,9 +84,11 @@ func synLexer(path string) chroma.Lexer {
 	return chroma.Coalesce(l)
 }
 
-// synLexed counts lexDiff runs that reached the lexer. Tests read it to show
-// a file is lexed once and then served from synCache, whatever the clock says.
-var synLexed atomic.Int64
+// synLexed counts lexDiff runs that reached the lexer, synChunks the
+// pieces handed to it and synChunkBytes their size. Tests read them to show a file is lexed once and
+// then served from synCache, and never past its budget, whatever the
+// clock says.
+var synLexed, synChunks, synChunkBytes atomic.Int64
 
 // lexDiff splits a file's diff lines into coloured spans. A line the lexer
 // gave nothing for (no lexer, an error, or an empty line) gets no spans.
@@ -95,6 +105,7 @@ func lexDiff(path string, lines []diffLine) [][]synSpan {
 		return nil
 	}
 	synLexed.Add(1)
+	budget := synFileMax
 	out := make([][]synSpan, len(lines))
 	for start := 0; start < len(lines); {
 		end := start
@@ -107,38 +118,65 @@ func lexDiff(path string, lines []diffLine) [][]synSpan {
 			// new side only.
 			var idx []int
 			var keep []bool
-			var b strings.Builder
 			for i := start; i < end; i++ {
 				if k := lines[i].kind; k == side || k == ' ' {
 					idx = append(idx, i)
 					keep = append(keep, k == side || side == '+')
-					b.WriteString(lines[i].text)
-					b.WriteByte('\n')
 				}
 			}
-			if len(idx) == 0 {
-				continue
-			}
-			it, err := lexer.Tokenise(nil, b.String())
-			if err != nil {
-				continue
-			}
-			row := 0
-			for _, tok := range it.Tokens() {
-				cls := synClassOf(tok.Type)
-				for pi, part := range strings.Split(tok.Value, "\n") {
-					if pi > 0 {
-						row++
-					}
-					if part != "" && row < len(idx) && keep[row] {
-						out[idx[row]] = append(out[idx[row]], synSpan{part, cls})
-					}
+			// Lex the side in pieces of whole lines, while the file's
+			// budget lasts; a piece starts the lexer afresh, which can
+			// misread a string or comment that spans the cut.
+			for p := 0; p < len(idx) && budget > 0; {
+				q, size := p, 0
+				for q < len(idx) && size+len(lines[idx[q]].text)+1 <= synChunkMax {
+					size += len(lines[idx[q]].text) + 1
+					q++
 				}
+				if q == p { // one line longer than a piece: drawn plain
+					p++
+					continue
+				}
+				if size > budget {
+					budget = 0
+					break
+				}
+				budget -= size
+				lexPiece(lexer, lines, idx[p:q], keep[p:q], out)
+				p = q
 			}
 		}
 		start = end
 	}
 	return out
+}
+
+// lexPiece lexes the lines at idx as one document and adds the spans of
+// the ones to keep to out.
+func lexPiece(lexer chroma.Lexer, lines []diffLine, idx []int, keep []bool, out [][]synSpan) {
+	var b strings.Builder
+	for _, i := range idx {
+		b.WriteString(lines[i].text)
+		b.WriteByte('\n')
+	}
+	synChunks.Add(1)
+	synChunkBytes.Add(int64(b.Len()))
+	it, err := lexer.Tokenise(nil, b.String())
+	if err != nil {
+		return
+	}
+	row := 0
+	for _, tok := range it.Tokens() {
+		cls := synClassOf(tok.Type)
+		for pi, part := range strings.Split(tok.Value, "\n") {
+			if pi > 0 {
+				row++
+			}
+			if part != "" && row < len(idx) && keep[row] {
+				out[idx[row]] = append(out[idx[row]], synSpan{part, cls})
+			}
+		}
+	}
 }
 
 func synClassOf(t chroma.TokenType) synClass {
