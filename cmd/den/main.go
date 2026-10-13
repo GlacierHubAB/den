@@ -12,6 +12,7 @@
 //	den mcp              used by the orchestrator to open terminals and start agents; not for humans
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
 //	den events           headless: print hook events as they arrive; -json follows the event stream
+//	den remote ...       the remote hosts Den connects to over ssh; see den remote help
 //	den hook             used by Claude Code's hooks; not for humans
 package main
 
@@ -30,6 +31,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/tree"
 	"github.com/GlacierHubAB/den/internal/ui"
@@ -39,6 +41,7 @@ import (
 var version = "dev"
 
 func main() {
+	remote.LocalVersion = version
 	if len(os.Args) < 2 {
 		runTUI()
 		return
@@ -88,6 +91,8 @@ func main() {
 			return
 		}
 		runEvents()
+	case "remote":
+		remoteCmd(os.Args[2:])
 	case "mods":
 		listMods()
 	case "install-mods":
@@ -95,13 +100,14 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
 }
 
 func runTUI() {
+	ui.Version = version
 	m := ui.New(config.Load())
 	defer m.Close()
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -115,6 +121,13 @@ func list(asJSON bool) {
 	if err != nil {
 		fail("den: %v", err)
 	}
+	// Remote hosts' agents as the running Den last saw them; Stale unless
+	// it holds the host live now. Nothing is added without remotes.toml.
+	rcfg, err := remote.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "den: %v\n", err)
+	}
+	agents = append(agents, remote.LastKnown(rcfg, fleet.Prices, time.Now())...)
 	if asJSON {
 		edges := tree.Load(tree.Path())
 		own := map[string]cost.Summary{}
@@ -134,8 +147,16 @@ func list(asJSON bool) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "STATUS\tNAME\tROLE\tTASK\tWHERE\tWINDOW\tPID\tSESSION")
 	for _, a := range agents {
-		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n",
-			a.Status, since(a.Since()), a.Name, a.Labels.Role, trunc(a.Task(), 48), a.Where(), a.Place(), a.Session.PID, sanitize.Line(a.Session.SessionID[:8]))
+		name, status, pid := a.Name, a.Status.String(), fmt.Sprint(a.Session.PID)
+		if a.Host != "" {
+			name += " @" + a.Host
+			pid = ""
+			if a.Stale {
+				status = "last known: " + status
+			}
+		}
+		fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			status, since(a.Since()), name, a.Labels.Role, trunc(a.Task(), 48), a.Where(), a.Place(), pid, sanitize.Line(short(a.Session.SessionID)))
 	}
 	tw.Flush()
 }
@@ -145,9 +166,9 @@ func explain(who string) {
 	if err != nil {
 		fail("den: %v", err)
 	}
-	a, ok := fleet.Find(agents, who)
-	if !ok {
-		fail("den: no agent matches %q", who)
+	a, err := fleet.Lookup(agents, who)
+	if err != nil {
+		fail("den: %v", err)
 	}
 	for _, l := range fleet.Explain(a) {
 		fmt.Println(l)
@@ -159,9 +180,9 @@ func focus(who string) {
 	if err != nil {
 		fail("den: %v", err)
 	}
-	a, ok := fleet.Find(agents, who)
-	if !ok {
-		fail("den: no agent matches %q", who)
+	a, err := fleet.Lookup(agents, who)
+	if err != nil {
+		fail("den: %v", err)
 	}
 	note, err := fleet.Focus(a)
 	if err != nil {

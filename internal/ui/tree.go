@@ -113,7 +113,7 @@ func (m *Model) learnPeer(sessionID, prompt string) {
 		parent = tree.Orchestrator
 	}
 	for _, a := range m.base {
-		if a.Session.PID != pid {
+		if a.Session.PID != pid || a.Host != "" {
 			continue
 		}
 		if m.isOrchestrator(a) {
@@ -319,6 +319,9 @@ func (m Model) rowFor(id string) rowMeta { return m.tree.rows[id] }
 // sectionOf names the agents pane section an agent belongs to: its tree's
 // root, or its status.
 func (m Model) sectionOf(a fleet.Agent) string {
+	if a.Stale {
+		return "@" + a.Host // under its host's row
+	}
 	if r, ok := m.tree.rows[a.Session.SessionID]; ok && r.section != "" {
 		return r.section
 	}
@@ -859,7 +862,7 @@ func (m Model) drawMapNode(c *canvas, n *mapNode, selected bool) {
 	c.put(textX-1, y, ansi.Truncate(line1, textW+1, "…"), min(textW+1, ansi.StringWidth(line1)))
 	task := ansi.Truncate("▸ "+a.Task(), textW, "…")
 	c.put(textX, y+1, s.dim.Render(task), ansi.StringWidth(task))
-	meta := humanAge(a.Since())
+	meta := agentAge(a, a.Session.StatusChanged())
 	if a.HasUsage {
 		meta += fmt.Sprintf(" · ctx %d%%", a.Usage.Percent())
 	}

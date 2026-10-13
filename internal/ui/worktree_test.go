@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/review"
 )
 
 // wtRepo is a repository on main with a worktree made the way Claude Code
@@ -314,7 +315,7 @@ func TestWorktreeBaseIsTheCommitTheWorktreeWasMadeFrom(t *testing.T) {
 	tr := worktreeTranscript(t, main, wt2, featureHead)
 
 	ctx := t.Context()
-	if got, err := worktreeBase(ctx, wt2, []string{tr}); err != nil || got != featureHead {
+	if got, err := review.WorktreeBase(ctx, wt2, []string{tr}); err != nil || got != featureHead {
 		t.Errorf("base = %q (%v), want %s", got, err, featureHead)
 	}
 	// A commit that is not in the worktree's history, a transcript from
@@ -325,7 +326,7 @@ func TestWorktreeBaseIsTheCommitTheWorktreeWasMadeFrom(t *testing.T) {
 		dir string
 		tr  []string
 	}{"unknown commit": {wt2, []string{bad}}, "other worktree": {wt2, []string{other}}, "not a worktree": {main, []string{tr}}, "no transcript": {wt2, nil}} {
-		if got, err := worktreeBase(ctx, c.dir, c.tr); err == nil {
+		if got, err := review.WorktreeBase(ctx, c.dir, c.tr); err == nil {
 			t.Errorf("%s: base = %q, want none", name, got)
 		}
 	}

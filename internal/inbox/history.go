@@ -11,6 +11,7 @@ import (
 // record is one finished turn on disk.
 type record struct {
 	At        time.Time `json:"at"`
+	Host      string    `json:"host,omitempty"` // "" for this machine
 	SessionID string    `json:"session"`
 	Role      string    `json:"role,omitempty"`
 	Task      string    `json:"task,omitempty"`
@@ -44,7 +45,7 @@ func AppendHistory(path string, it *Item) error {
 		return err
 	}
 	defer f.Close()
-	raw, err := json.Marshal(record{At: it.At, SessionID: it.SessionID, Role: it.Role, Task: it.Task, Title: it.Title})
+	raw, err := json.Marshal(record{At: it.At, Host: it.Host, SessionID: it.SessionID, Role: it.Role, Task: it.Task, Title: it.Title})
 	if err != nil {
 		return err
 	}
@@ -67,7 +68,7 @@ func LoadHistory(path string, n int) []*Item {
 		if json.Unmarshal(sc.Bytes(), &r) != nil || r.SessionID == "" {
 			continue
 		}
-		out = append(out, &Item{At: r.At, SessionID: r.SessionID, Role: r.Role, Task: r.Task, Title: r.Title, Kind: Done, State: Resolved})
+		out = append(out, &Item{At: r.At, Host: r.Host, SessionID: r.SessionID, Role: r.Role, Task: r.Task, Title: r.Title, Kind: Done, State: Resolved})
 	}
 	if len(out) > n {
 		out = out[len(out)-n:]

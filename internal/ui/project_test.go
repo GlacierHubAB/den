@@ -3,11 +3,14 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/mission"
 )
 
 func TestPinnedProjectIsListedWithNobodyOnIt(t *testing.T) {
@@ -69,5 +72,44 @@ func TestOldSideEditDoesNotKeepAgentOnProject(t *testing.T) {
 	}
 	if got := rootsAt(a, now.Add(-30*time.Minute)); len(got) != 2 {
 		t.Errorf("15 minutes on = %v, want both repos", got)
+	}
+}
+
+// An agent working in a checkout of its own (a scratch clone outside the
+// usual projects) still shows on the project of the mission it serves, as
+// well as on its own checkout's.
+func TestMissionAgentInOwnCheckoutShowsOnMissionProject(t *testing.T) {
+	home, clone := t.TempDir(), t.TempDir()
+	for _, r := range []string{home, clone} {
+		gitRun(t, r, "init", "-q", "-b", "main")
+	}
+	m := missionModel()
+	now := time.Now()
+	live := &mission.Mission{ID: "m-land", Project: home, Name: "Land", Shape: mission.Once, State: mission.Running, Created: now, Updated: now}
+	done := &mission.Mission{ID: "m-old", Project: home, Name: "Old", Shape: mission.Once, State: mission.Done, Created: now, Updated: now}
+	m.missions.Save(live)
+	m.missions.Save(done)
+	for _, a := range []struct{ id, mission string }{{"quiet-panda", "m-land"}, {"tiny-moth", "m-old"}} {
+		var ag fleet.Agent
+		ag.Session = discover.Session{SessionID: a.id, CWD: clone, StartedAt: now.UnixMilli(), Alive: true}
+		ag.HasGit = true
+		m.base = append(m.base, ag)
+		m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: &dispatch{ID: "c-" + a.id, SessionID: a.id, MissionID: a.mission, State: cardWorking}, at: now})
+	}
+	m.refresh()
+
+	on := func(root string) []string {
+		m.proj.cur = root
+		var ids []string
+		for _, a := range m.projectAgents() {
+			ids = append(ids, a.Session.SessionID)
+		}
+		return ids
+	}
+	if got := on(home); !slices.Contains(got, "quiet-panda") || slices.Contains(got, "tiny-moth") {
+		t.Errorf("mission project %s lists %v, want quiet-panda (live mission) and not tiny-moth (done)", home, got)
+	}
+	if got := on(clone); !slices.Contains(got, "quiet-panda") || !slices.Contains(got, "tiny-moth") {
+		t.Errorf("own checkout %s lists %v, want both", clone, got)
 	}
 }

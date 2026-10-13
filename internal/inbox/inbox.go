@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +37,8 @@ const (
 	Failed                 // a turn ended on an API error, or tool calls keep failing
 	Merge                  // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
 	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
+	Install                // Den asks: copy this den to a remote host? y/n answer it
+	Message                // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -68,6 +71,10 @@ func (k Kind) String() string {
 		return "merge"
 	case Cleanup:
 		return "cleanup"
+	case Install:
+		return "install"
+	case Message:
+		return "message"
 	}
 	return "?"
 }
@@ -84,6 +91,7 @@ const (
 // Item is one inbox entry.
 type Item struct {
 	ID        string
+	Host      string // the remote host label the agent runs on, "" for this machine
 	SessionID string
 	Kind      Kind
 	State     State
@@ -104,6 +112,7 @@ type Item struct {
 	Answers   map[string]string
 	Step      int
 	req       *bridge.Request
+	fromHost  bool // made by a remote host's event stream: counts towards its caps
 }
 
 // Answerable reports whether y/n/a act on this item.
@@ -111,7 +120,8 @@ func (it *Item) Answerable() bool {
 	if it.DenAsks() {
 		return it.State == Waiting
 	}
-	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan || it.Kind == Question) && it.req != nil && it.req.WantsReply()
+	return it.State == Waiting && (it.Kind == Permission || it.Kind == Plan || it.Kind == Question) && it.req != nil && it.req.WantsReply() &&
+		!(it.req.Host != "" && it.req.HungUp()) // a remote one let go: its link is lost or its hook gave up
 }
 
 // AsksInDen reports whether the item is an agent's question that Den holds
@@ -123,7 +133,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -138,11 +148,13 @@ func (it *Item) Request() *bridge.Request { return it.req }
 type Store struct {
 	history int            // see HistoryLimit
 	failing int            // see ToolFailureLimit
-	streak  map[string]int // sessionID -> tool calls failed in a row
+	streak  map[string]int // agentKey(host, session) -> tool calls failed in a row
 	items   []*Item
-	always  map[string]map[string]bool // sessionID -> allow key
+	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
-	asks    bool // hold AskUserQuestion permission requests to be answered here
+	asks    bool      // hold AskUserQuestion permission requests to be answered here
+	reoffer time.Time // when the item a request offered again replaces arrived
+	remote  remoteCaps
 }
 
 // New returns an empty store.
@@ -190,10 +202,15 @@ func (s *Store) Waiting() int {
 	return n
 }
 
-// SessionNeedsYou reports whether a session has anything waiting.
-func (s *Store) SessionNeedsYou(sessionID string) bool {
+// SessionNeedsYou reports whether a session on this machine has anything
+// waiting.
+func (s *Store) SessionNeedsYou(sessionID string) bool { return s.NeedsYouOn("", sessionID) }
+
+// NeedsYouOn reports whether a session on host ("" for this machine) has
+// anything waiting.
+func (s *Store) NeedsYouOn(host, sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.needsYou() {
+		if it.is(host, sessionID) && it.needsYou() {
 			return true
 		}
 	}
@@ -212,10 +229,12 @@ func (s *Store) Apply(r *bridge.Request) *Item {
 
 func (s *Store) apply(r *bridge.Request) *Item {
 	in := r.Input
+	host := r.Host
 	// Any sign of life ends a stall.
-	s.resolveSession(in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
+	s.resolveSession(host, in.SessionID, "active again", func(it *Item) bool { return it.Kind == Stalled })
 	switch r.Event {
 	case "PermissionRequest":
+		s.offeredAgain(r)
 		if it := s.holdQuestion(r); it != nil {
 			return it
 		}
@@ -225,15 +244,19 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			r.Reply(bridge.Decision{})
 			return nil
 		}
-		if key := allowKey(in); key != "" && s.always[in.SessionID][key] {
+		if key := allowKey(in, host); key != "" && s.always[agentKey(host, in.SessionID)][key] {
 			r.Reply(bridge.Decision{Behavior: "allow", Message: "den: allowed by your earlier always-allow"})
 			return nil
 		}
-		it := s.add(&Item{SessionID: in.SessionID, Tool: in.ToolName, req: r})
+		if host != "" && !s.heldFits(host) {
+			r.Reply(bridge.Decision{}) // to its terminal on the host
+			return nil
+		}
+		it := s.add(&Item{Host: host, SessionID: in.SessionID, Tool: in.ToolName, req: r})
 		if in.ToolName == bridge.PlanTool {
 			it.Kind = Plan
 			it.Title = "Plan ready for review"
-			it.Body = planExcerpt(in.ToolInput)
+			it.Body = append(planExcerpt(in.ToolInput), extraLines(in.ToolName, in.ToolInput)...)
 			if _, ok := bridge.PlanApproval(in.ToolInput); !ok {
 				s.Release(it, CannotApprovePlan) // not held: the terminal is the only place to answer it
 			}
@@ -241,9 +264,13 @@ func (s *Store) apply(r *bridge.Request) *Item {
 			it.Kind = Permission
 			it.Title, it.Intent, it.Body = describeTool(in.ToolName, in.ToolInput)
 		}
+		if host != "" {
+			it.Title += " on " + host
+			it.clean()
+		}
 		// Drop the soft "permission_prompt" notice for the same session.
 		for _, o := range s.items {
-			if o != it && o.SessionID == in.SessionID && o.Kind == Permission && o.req == nil && o.State != Resolved {
+			if o != it && o.is(host, in.SessionID) && (o.Kind == Permission || o.Kind == Plan) && o.req == nil && o.State != Resolved {
 				o.State, o.Resolved = Resolved, "superseded"
 			}
 		}
@@ -252,14 +279,14 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		if in.ToolName != question.Tool {
 			return nil
 		}
-		if s.holdsQuestion(in.SessionID) {
+		if s.holdsQuestion(host, in.SessionID) {
 			return nil // already held for Den
 		}
-		it := s.add(&Item{SessionID: in.SessionID, Kind: Question, State: InTerminal, Tool: in.ToolName})
+		it := s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Question, State: InTerminal, Tool: in.ToolName})
 		it.Title, it.Options = describeQuestion(in.ToolInput)
 		return it
 	case "PostToolUse":
-		s.resolveSession(in.SessionID, "answered in terminal", func(it *Item) bool {
+		s.resolveSession(host, in.SessionID, "answered in terminal", func(it *Item) bool {
 			return it.Kind == Question || (it.Kind <= Plan && it.State == InTerminal)
 		})
 		// The call Den still holds ran: its dialog was answered in the
@@ -267,11 +294,11 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		// call is matched by tool and input; other calls of the turn run
 		// beside a held one. A plan's PostToolUse comes with an empty input
 		// (the plan is in its response), and a session has one plan open.
-		s.resolveSession(in.SessionID, "answered in terminal", func(it *Item) bool {
+		s.resolveSession(host, in.SessionID, "answered in terminal", func(it *Item) bool {
 			return it.Kind <= Plan && it.State == Waiting && it.req != nil && it.req.Input.ToolName == in.ToolName && (it.Kind == Plan || sameJSON(it.req.Input.ToolInput, in.ToolInput))
 		})
-		delete(s.streak, in.SessionID)
-		s.resolveSession(in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
+		delete(s.streak, agentKey(host, in.SessionID))
+		s.resolveSession(host, in.SessionID, "a tool call worked again", func(it *Item) bool { return it.Kind == Failed && it.Tool != "" })
 		return nil
 	case "PostToolUseFailure":
 		// Failing commands are part of normal work; only a run of them is
@@ -280,48 +307,49 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		if in.IsInterrupt {
 			return nil
 		}
-		s.streak[in.SessionID]++
-		n := s.streak[in.SessionID]
+		s.streak[agentKey(host, in.SessionID)]++
+		n := s.streak[agentKey(host, in.SessionID)]
 		if s.failing <= 0 || n < s.failing {
 			return nil
 		}
 		title := fmt.Sprintf("%d tool calls failed in a row", n)
 		for _, it := range s.items {
-			if it.SessionID == in.SessionID && it.Kind == Failed && it.Tool != "" && it.State != Resolved {
+			if it.is(host, in.SessionID) && it.Kind == Failed && it.Tool != "" && it.State != Resolved {
 				it.Title, it.Tool = title, sanitize.Line(in.ToolName)
 				return nil
 			}
 		}
-		return s.add(&Item{SessionID: in.SessionID, Kind: Failed, Tool: in.ToolName, Title: title})
+		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Failed, Tool: in.ToolName, Title: title})
 	case "StopFailure":
-		s.resolveSession(in.SessionID, "turn failed", func(it *Item) bool { return it.Kind != Done && it.Kind != Failed })
-		return s.add(&Item{SessionID: in.SessionID, Kind: Failed, Title: FailureTitle(in.FailureType())})
+		s.resolveSession(host, in.SessionID, "turn failed", func(it *Item) bool { return it.Kind != Done && it.Kind != Failed })
+		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Failed, Title: FailureTitle(in.FailureType())})
 	case "Notification":
 		switch in.NotificationType {
 		case "permission_prompt":
-			if s.hasOpen(in.SessionID, Permission, Plan) || s.asking(in.SessionID) {
+			if s.hasOpen(host, in.SessionID, Permission, Plan) || s.asking(host, in.SessionID) {
 				return nil // Claude Code's notice for a dialog Den already shows
 			}
-			it := s.add(&Item{SessionID: in.SessionID, Kind: Permission, State: InTerminal, Title: firstNonEmpty(in.Message, "Waiting for your permission")})
+			it := s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Permission, State: InTerminal, Title: firstNonEmpty(in.Message, "Waiting for your permission")})
 			return it
 		case "idle_prompt":
-			if s.hasOpen(in.SessionID, Idle) {
+			if s.hasOpen(host, in.SessionID, Idle) {
 				return nil
 			}
-			return s.add(&Item{SessionID: in.SessionID, Kind: Idle, Title: firstNonEmpty(in.Message, "Waiting for your input")})
+			return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Idle, Title: firstNonEmpty(in.Message, "Waiting for your input")})
 		case "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog":
-			if s.hasOpen(in.SessionID, Question) {
+			if s.hasOpen(host, in.SessionID, Question) {
 				return nil
 			}
-			return s.add(&Item{SessionID: in.SessionID, Kind: Question, State: InTerminal, Title: firstNonEmpty(in.Message, "Needs your input")})
+			return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Question, State: InTerminal, Title: firstNonEmpty(in.Message, "Needs your input")})
 		}
 	case "UserPromptSubmit":
-		s.resolveSession(in.SessionID, "you replied", func(it *Item) bool { return it.Kind != Done })
+		s.resolveSession(host, in.SessionID, "you replied", func(it *Item) bool { return it.Kind != Done })
 	case "Stop":
-		s.resolveSession(in.SessionID, "turn finished", func(it *Item) bool { return it.Kind != Done })
-		return s.add(&Item{SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
+		s.resolveSession(host, in.SessionID, "turn finished", func(it *Item) bool { return it.Kind != Done })
+		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
 	case "SessionEnd":
-		s.resolveSession(in.SessionID, "session ended", func(it *Item) bool { return true })
+		s.cancelMessages(host, in.SessionID)
+		s.resolveSession(host, in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
 }
@@ -341,12 +369,12 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 	}
 	var it *Item
 	for _, o := range s.items {
-		if o.SessionID == in.SessionID && o.Kind == Question && o.State == InTerminal && o.req == nil && o.Tool == question.Tool {
+		if o.is(r.Host, in.SessionID) && o.Kind == Question && o.State == InTerminal && o.req == nil && o.Tool == question.Tool {
 			it = o
 		}
 	}
 	if it == nil {
-		it = s.add(&Item{SessionID: in.SessionID, Kind: Question, Tool: in.ToolName})
+		it = s.add(&Item{Host: r.Host, SessionID: in.SessionID, Kind: Question, Tool: in.ToolName})
 	}
 	it.State, it.Resolved, it.req = Waiting, "", r
 	it.Questions, it.Answers, it.Step = qs, map[string]string{}, 0
@@ -354,7 +382,7 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 	// Claude Code's "permission_prompt" notice is this dialog too, and an
 	// earlier question of the session is gone from its terminal by now.
 	for _, o := range s.items {
-		if o != it && o.SessionID == in.SessionID && o.State != Resolved && ((o.Kind == Permission && o.req == nil) || o.Kind == Question) {
+		if o != it && o.is(r.Host, in.SessionID) && o.State != Resolved && ((o.Kind == Permission && o.req == nil) || o.Kind == Question) {
 			o.State, o.Resolved = Resolved, "superseded"
 		}
 	}
@@ -363,9 +391,9 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 
 // asking reports whether an AskUserQuestion of the session is open, held
 // or in its terminal: Claude Code's permission notice is that dialog.
-func (s *Store) asking(sessionID string) bool {
+func (s *Store) asking(host, sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.Kind == Question && it.Tool == question.Tool && it.State != Resolved {
+		if it.is(host, sessionID) && it.Kind == Question && it.Tool == question.Tool && it.State != Resolved {
 			return true
 		}
 	}
@@ -373,9 +401,9 @@ func (s *Store) asking(sessionID string) bool {
 }
 
 // holdsQuestion reports whether a question of the session waits in Den.
-func (s *Store) holdsQuestion(sessionID string) bool {
+func (s *Store) holdsQuestion(host, sessionID string) bool {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.AsksInDen() {
+		if it.is(host, sessionID) && it.AsksInDen() {
 			return true
 		}
 	}
@@ -399,6 +427,9 @@ func (it *Item) describeStep() {
 	}
 	if q.Multi {
 		intent = append(intent, "choose one or more")
+	}
+	if it.Host != "" {
+		intent = append(intent, "on "+it.Host)
 	}
 	it.Intent = strings.Join(intent, " · ")
 	it.Options = nil
@@ -471,17 +502,22 @@ func (s *Store) AnswerQuestion(it *Item, typed string) (done, ok bool) {
 // a hook gone before wait (hooks.permission_wait) ran out means the
 // terminal settled it, and the item closes. One gone at the end of the
 // wait (or with wait unknown, 0) gave up itself; the dialog is still up
-// and the item says to answer it in the terminal. It reports whether any
-// changed.
+// and the item says to answer it in the terminal. A remote host's held
+// items go the same way when they are let go, saying why ("released to
+// the terminal on devbox (link lost)"). It reports whether any changed.
 func (s *Store) LetGo(wait time.Duration) bool {
 	changed := false
 	for _, it := range s.items {
 		if it.Kind > Question || it.State != Waiting || it.req == nil || !it.req.HungUp() {
 			continue
 		}
-		if wait > 0 && time.Since(it.At) < wait-letGoSlack {
+		switch {
+		case it.req.Host != "":
+			it.State, it.Resolved = InTerminal, firstNonEmpty(it.req.Why(), "no longer held on "+it.req.Host)
+			it.clean()
+		case wait > 0 && time.Since(it.At) < wait-letGoSlack:
 			it.State, it.Resolved = Resolved, ClosedInTerminal
-		} else {
+		default:
 			it.State, it.Resolved = InTerminal, "no longer held"
 		}
 		changed = true
@@ -497,10 +533,26 @@ const ClosedInTerminal = "answered or dismissed in the terminal"
 // still count as giving up itself rather than being ended by Claude Code.
 const letGoSlack = 5 * time.Second
 
+// offeredAgain drops the item of a remote request that its host offers
+// again under the same id (after Den reconnected), keeping its place, so
+// the new request takes over rather than showing twice.
+func (s *Store) offeredAgain(r *bridge.Request) {
+	if r.Host == "" || r.RemoteID == "" {
+		return
+	}
+	for i, it := range s.items {
+		if it.req != nil && it.req != r && it.req.Host == r.Host && it.req.RemoteID == r.RemoteID && it.State != Resolved {
+			s.items = append(s.items[:i], s.items[i+1:]...)
+			s.reoffer = it.At
+			return
+		}
+	}
+}
+
 // AddStalled adds a Stalled notice for a session that has been working
 // with no hook event for quiet. Any hook event from it resolves the notice.
 func (s *Store) AddStalled(sessionID string, quiet time.Duration) *Item {
-	if s.hasOpen(sessionID, Stalled) {
+	if s.hasOpen("", sessionID, Stalled) {
 		return nil
 	}
 	mins := int(quiet.Minutes())
@@ -533,7 +585,12 @@ func FailureTitle(errType string) string {
 // Sent records an outgoing message. status is shown as the trailer and can
 // be updated through SetStatus.
 func (s *Store) Sent(sessionID, text, status string) *Item {
-	return s.add(&Item{SessionID: sessionID, Kind: Sent, State: InTerminal, Title: "→ " + firstLine(text), Resolved: status})
+	return s.SentOn("", sessionID, text, status)
+}
+
+// SentOn is Sent to the agent on a remote host ("" for this machine).
+func (s *Store) SentOn(host, sessionID, text, status string) *Item {
+	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Sent, State: InTerminal, Title: "→ " + firstLine(text), Resolved: status})
 }
 
 // SetStatus updates a notice's trailer, marking it resolved when final.
@@ -583,11 +640,12 @@ func (s *Store) Answer(it *Item, verb string) bool {
 		if AlwaysRefusal(it) != "" {
 			return false
 		}
-		if key := allowKey(it.req.Input); key != "" {
-			if s.always[it.SessionID] == nil {
-				s.always[it.SessionID] = map[string]bool{}
+		if key := allowKey(it.req.Input, it.Host); key != "" {
+			k := agentKey(it.Host, it.SessionID)
+			if s.always[k] == nil {
+				s.always[k] = map[string]bool{}
 			}
-			s.always[it.SessionID][key] = true
+			s.always[k][key] = true
 		}
 		it.req.Reply(bridge.Decision{Behavior: "allow"})
 		it.State, it.Resolved = Resolved, "allowed, and again this session"
@@ -604,7 +662,13 @@ func (s *Store) Answer(it *Item, verb string) bool {
 // agent it concerns, or the asker's session for a bulk close. req is the
 // orchestrator's request to answer when it asked, nil when the human did.
 func (s *Store) AddClose(sessionID, title string, body []string, req *bridge.Request) *Item {
-	return s.add(&Item{SessionID: sessionID, Kind: Close, Tool: "close_agent", Title: title, Body: body, req: req})
+	return s.AddCloseOn("", sessionID, title, body, req)
+}
+
+// AddCloseOn is AddClose for a plan whose first agent runs on a remote host
+// ("" for this machine).
+func (s *Store) AddCloseOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Close, Tool: "close_agent", Title: title, Body: body, req: req})
 }
 
 // AddSkills adds Den's question: install these catalogue skills? req is
@@ -625,7 +689,22 @@ func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Restore, Tool: "restore", Title: title, Body: body})
 }
 
-// Settle resolves a Close, Skills, Budget or Restore item with the outcome and sends it to whoever
+// AddInstall adds Den's question: copy this den to a remote host? host is
+// its label; req is the request of the den remote command that asked.
+func (s *Store) AddInstall(host, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
+}
+
+// AddMessageOn adds Den's question: send this text to an agent on host?
+// req is the request of the den send that asked; it gets the outcome.
+func (s *Store) AddMessageOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Message, Tool: "den_send", Title: title, Body: body, req: req})
+}
+
+// HostPrefix makes a remote host's label an item's SessionID, for Den's
+// questions about the host rather than one of its agents.
+const HostPrefix = "host:"
+
 // AddMerge adds Den's question: merge this agent's worktree branch? sessionID
 // is the agent that works in the worktree.
 func (s *Store) AddMerge(sessionID, title string, body []string) *Item {
@@ -652,8 +731,11 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 }
 
 // SessionClosed resolves everything open for an agent Den closed.
-func (s *Store) SessionClosed(sessionID string) {
-	s.resolveSession(sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
+func (s *Store) SessionClosed(sessionID string) { s.SessionClosedOn("", sessionID) }
+
+// SessionClosedOn is SessionClosed for an agent on a remote host.
+func (s *Store) SessionClosedOn(host, sessionID string) {
+	s.resolveSession(host, sessionID, "agent closed", func(it *Item) bool { return !it.DenAsks() })
 }
 
 // Release hands a waiting permission back to the terminal dialog.
@@ -727,6 +809,12 @@ func (s *Store) Prune(keep time.Duration, maxNotices int) {
 		if it.State == Resolved && time.Since(it.At) > keep && !it.Unread {
 			continue
 		}
+		if it.State == InTerminal && it.Host != "" && time.Since(it.At) > keep && !it.Unread {
+			// A host's request it let go: only its terminal there answers
+			// it, and a host churning held requests would otherwise keep
+			// every one here for good.
+			continue
+		}
 		if it.Kind > Done {
 			notices++
 			if notices > maxNotices {
@@ -782,6 +870,10 @@ func (s *Store) add(it *Item) *Item {
 	it.clean()
 	s.seq++
 	it.ID = fmt.Sprintf("i%d", s.seq)
+	if it.At.IsZero() && !s.reoffer.IsZero() {
+		it.At = s.reoffer
+	}
+	s.reoffer = time.Time{}
 	if it.At.IsZero() {
 		it.At = time.Now()
 	}
@@ -789,9 +881,9 @@ func (s *Store) add(it *Item) *Item {
 	return it
 }
 
-func (s *Store) hasOpen(sessionID string, kinds ...Kind) bool {
+func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 	for _, it := range s.items {
-		if it.SessionID != sessionID || it.State == Resolved {
+		if !it.is(host, sessionID) || it.State == Resolved {
 			continue
 		}
 		for _, k := range kinds {
@@ -803,9 +895,13 @@ func (s *Store) hasOpen(sessionID string, kinds ...Kind) bool {
 	return false
 }
 
-func (s *Store) resolveSession(sessionID, why string, match func(*Item) bool) {
+// resolveSession resolves what match picks of an agent's open items. A den
+// send question is never among them: whether a message may reach the agent
+// stays a question through its turns, until the human answers, the asker
+// gives up, the link is lost or the session ends (cancelMessages).
+func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.SessionID == sessionID && it.State != Resolved && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && it.Kind != Message && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
@@ -813,6 +909,32 @@ func (s *Store) resolveSession(sessionID, why string, match func(*Item) bool) {
 		}
 	}
 }
+
+// cancelMessages ends the den send questions for an agent whose session
+// ended; the den send that asked hears why, never an empty answer.
+func (s *Store) cancelMessages(host, sessionID string) {
+	where := "here"
+	if host != "" {
+		where = "on " + host
+	}
+	for _, it := range s.items {
+		if it.is(host, sessionID) && it.State != Resolved && it.Kind == Message {
+			it.State, it.Resolved = Resolved, "cancelled: the session "+where+" ended; nothing was sent"
+			if it.req != nil {
+				it.req.Reply(bridge.Decision{Behavior: bridge.SendCancelled, Message: "the request was " + it.Resolved})
+			}
+		}
+	}
+}
+
+// is reports whether the item belongs to the agent with this session on
+// host ("" for this machine). Session ids are only unique per host.
+func (it *Item) is(host, sessionID string) bool {
+	return it.Host == host && it.SessionID == sessionID
+}
+
+// agentKey keys per-agent state by host and session.
+func agentKey(host, sessionID string) string { return host + "\x00" + sessionID }
 
 // shellOperators are what /always refuses in a command: each lets one
 // approved command carry another, or write where it was not shown to.
@@ -828,9 +950,11 @@ func AlwaysRefusal(it *Item) string {
 		return "plans are approved one at a time; ^Y approves this one"
 	case it.Kind != Permission || it.req == nil:
 		return "/always answers a permission only"
-	case editTools[it.Tool] != "" && allowKey(it.req.Input) == "":
+	case editTools[it.Tool] != "" && it.Host != "":
+		return "edits on " + it.Host + " are approved one at a time"
+	case editTools[it.Tool] != "" && allowKey(it.req.Input, it.Host) == "":
 		return "/always covers edits inside the agent's working directory, never this file: ^Y allows it once"
-	case allowKey(it.req.Input) == "":
+	case allowKey(it.req.Input, it.Host) == "":
 		return "/always cannot tell this call from others like it: ^Y allows it once"
 	case it.Tool != "Bash":
 		return ""
@@ -859,10 +983,15 @@ func AlwaysRefusal(it *Item) string {
 // URL's host. A plan or a question has none.
 // Anything else is the tool by its full name (an MCP tool with its
 // server), as Claude Code's own "allow during this session" is: AlwaysScope
-// says so when the rule is made.
-func allowKey(in bridge.HookInput) string {
+// says so when the rule is made. host is where the agent runs, "" for this
+// machine: an edit on a host takes no rule, as its paths and symlinks
+// cannot be resolved here. The rule itself is kept per host and session.
+func allowKey(in bridge.HookInput, host string) string {
 	tool, input := in.ToolName, in.ToolInput
 	if field := editTools[tool]; field != "" {
+		if host != "" {
+			return ""
+		}
 		var args map[string]any
 		json.Unmarshal(input, &args)
 		path, _ := args[field].(string)
@@ -913,7 +1042,7 @@ func AlwaysScope(it *Item) string {
 	if it.req == nil {
 		return ""
 	}
-	key := allowKey(it.req.Input)
+	key := allowKey(it.req.Input, it.Host)
 	switch {
 	case key == "":
 		return ""
@@ -934,11 +1063,62 @@ func AlwaysScope(it *Item) string {
 // Enough to decide on; the terminal has the rest.
 const bodyLimit = 40
 
+// laidOut are, per tool, the input keys describeTool shows in its own
+// layout. Every other key but the quiet ones is listed under the body
+// (extraLines), so a flag that changes what the call does (replace_all,
+// dangerouslyDisableSandbox, a subagent type) is never hidden.
+var laidOut = map[string][]string{
+	"Bash": {"command", "description"}, "Edit": {"file_path", "old_string", "new_string"},
+	"MultiEdit": {"file_path", "edits"}, "Write": {"file_path", "content"},
+	"NotebookEdit": {"notebook_path", "new_source"}, "Read": {"file_path"},
+	"WebFetch": {"url", "prompt"}, "WebSearch": {"query"},
+	"Agent": {"description", "prompt"}, "Task": {"description", "prompt"},
+	"SendMessage": {"to", "message"}, "ExitPlanMode": {"plan"},
+}
+
+// quietKeys change nothing worth asking about.
+var quietKeys = map[string]bool{"timeout": true, "run_in_background": true, "offset": true, "limit": true, "pages": true}
+
+// extraLines lists a call's arguments its tool's layout does not show, one
+// "key: value" line each, in key order.
+func extraLines(tool string, input json.RawMessage) []string {
+	shown, ok := laidOut[tool]
+	if !ok {
+		return nil // shown whole as JSON
+	}
+	var in map[string]any
+	json.Unmarshal(input, &in)
+	var keys []string
+	for k := range in {
+		if !quietKeys[k] && !slices.Contains(shown, k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		v, isStr := in[k].(string)
+		if !isStr {
+			b, _ := json.Marshal(in[k])
+			v = string(b)
+		}
+		out = append(out, sanitize.Line(k)+": "+sanitize.Line(v))
+	}
+	return out
+}
+
 // describeTool says what a permission request is for: a short title, the
 // agent's stated intent when the call carries one, and the thing being
 // decided in full, line by line, so the human can approve or reject
 // knowing exactly what runs.
 func describeTool(tool string, input json.RawMessage) (title, intent string, body []string) {
+	title, intent, body = describeLayout(tool, input)
+	return title, intent, append(body, extraLines(tool, input)...)
+}
+
+// describeLayout is describeTool without the arguments its layout leaves
+// out.
+func describeLayout(tool string, input json.RawMessage) (title, intent string, body []string) {
 	var in map[string]any
 	json.Unmarshal(input, &in)
 	// Sanitised before it is split into lines, so a carriage return
@@ -952,8 +1132,10 @@ func describeTool(tool string, input json.RawMessage) (title, intent string, bod
 	switch tool {
 	case "Bash":
 		return "Wants to run", str("description"), commandLines(str("command"))
-	case "Edit", "MultiEdit":
+	case "Edit":
 		return "Wants to edit " + str("file_path"), "", diffLines(str("old_string"), str("new_string"))
+	case "MultiEdit":
+		return "Wants to edit " + str("file_path"), "", multiEditLines(in["edits"])
 	case "Write":
 		return "Wants to write " + str("file_path"), "", limitLines(str("content"), bodyLimit)
 	case "NotebookEdit":
@@ -973,6 +1155,30 @@ func describeTool(tool string, input json.RawMessage) (title, intent string, bod
 		return "Wants to call " + name + " on " + server, "", jsonLines(in)
 	}
 	return "Wants to use " + tool, "", jsonLines(in)
+}
+
+// multiEditLines shows each of a MultiEdit's edits as a diff, numbered,
+// with its replace_all, within the body limit.
+func multiEditLines(v any) []string {
+	edits, _ := v.([]any)
+	var out []string
+	for i, e := range edits {
+		em, _ := e.(map[string]any)
+		s := func(k string) string {
+			str, _ := em[k].(string)
+			return sanitize.Text(str)
+		}
+		head := fmt.Sprintf("edit %d of %d", i+1, len(edits))
+		if all, _ := em["replace_all"].(bool); all {
+			head += " (replace_all: every occurrence)"
+		}
+		out = append(out, head)
+		out = append(out, diffLines(s("old_string"), s("new_string"))...)
+		if len(out) > bodyLimit {
+			return append(out[:bodyLimit], fmt.Sprintf("… %d more edits", len(edits)-i-1))
+		}
+	}
+	return out
 }
 
 // mcpTool splits an MCP tool name, mcp__server__tool, into its parts.

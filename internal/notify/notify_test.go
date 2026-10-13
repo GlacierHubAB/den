@@ -90,6 +90,19 @@ func TestBodyMarkupIsEscaped(t *testing.T) {
 	}
 }
 
+// An inert note (an agent on another machine) offers no click and does
+// not wait for one.
+func TestInertSendHasNoAction(t *testing.T) {
+	argsFile := fake(t, "echo default")
+	if Send(Note{Summary: "Den test", Inert: true}) {
+		t.Error("an inert note reported a click")
+	}
+	raw, _ := os.ReadFile(argsFile)
+	if s := string(raw); strings.Contains(s, "--action") || strings.Contains(s, "--wait") {
+		t.Errorf("args = %q", s)
+	}
+}
+
 // A tool name shaped as markup cannot restyle or hide the summary.
 func TestSummaryCarriesNoMarkup(t *testing.T) {
 	got := args(Note{Summary: `Mossy Lemur needs your permission (<span size="1">x</span>)`}, false)

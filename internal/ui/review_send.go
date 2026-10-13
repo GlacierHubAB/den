@@ -60,7 +60,15 @@ func (m Model) reviewRecipient(sessionID string) (fleet.Agent, bool) {
 		return fleet.Agent{}, false
 	}
 	a, ok := m.agentFor(sessionID)
-	if !ok || a.Status == fleet.Gone || a.Session.Socket == "" {
+	if !ok || a.Status == fleet.Gone {
+		return fleet.Agent{}, false
+	}
+	if a.Host != "" {
+		// A remote agent has no socket here: it is reachable while its host
+		// is live and allows actions.
+		return a, !a.Stale && m.remoteCan(a.Host) == nil
+	}
+	if a.Session.Socket == "" {
 		return fleet.Agent{}, false
 	}
 	return a, true
@@ -92,11 +100,16 @@ func (m Model) sendReview(args []string) (tea.Model, tea.Cmd) {
 		return m.say("No draft comments to send.", true)
 	}
 	var cmds []tea.Cmd
-	var sent, held, kept []string
+	var sent, held, kept, waiting []string
 	for _, g := range groups {
 		a, ok := m.reviewRecipient(g.sessionID)
 		if !ok {
-			kept = append(kept, m.recipientName(g.sessionID)+fmt.Sprintf(" (%d)", len(g.comments)))
+			who := m.recipientName(g.sessionID) + fmt.Sprintf(" (%d)", len(g.comments))
+			if host := m.groupHost(g); host != "" {
+				waiting = append(waiting, who+" until "+host+" is back")
+			} else {
+				kept = append(kept, who)
+			}
 			continue
 		}
 		text := review.Message(g.comments)
@@ -110,13 +123,13 @@ func (m Model) sendReview(args []string) (tea.Model, tea.Cmd) {
 		}
 		m.noteCopies(ids)
 		if m.atTerminal(a.Session.SessionID) {
-			it := m.store.Sent(a.Session.SessionID, text, "waiting: you are at that terminal")
+			it := m.sentItem(a, text, "waiting: you are at that terminal")
 			m.queue = append(m.queue, outgoing{agent: a, text: text, item: it, since: time.Now(), review: ids})
 			held = append(held, a.Name)
 			continue
 		}
-		it := m.store.Sent(a.Session.SessionID, text, "sending…")
-		cmds = append(cmds, deliverReview(a, text, it, ids))
+		it := m.sentItem(a, text, "sending…")
+		cmds = append(cmds, deliverReview(m.sender(), a, text, it, ids))
 		sent = append(sent, a.Name)
 	}
 	if len(held) > 0 {
@@ -133,18 +146,29 @@ func (m Model) sendReview(args []string) (tea.Model, tea.Cmd) {
 	if len(kept) > 0 {
 		note = append(note, "Kept as drafts, no live session: "+strings.Join(kept, ", ")+". /send orchestrator hands them on.")
 	}
+	if len(waiting) > 0 {
+		note = append(note, "Kept as drafts: "+strings.Join(waiting, ", ")+".")
+	}
 	mm, flash := m.say(strings.Join(note, " "), len(sent)+len(held) == 0)
 	return mm, tea.Batch(append(cmds, flash)...)
 }
 
 // sendReviewToOrchestrator hands every draft no live session can receive
 // to the orchestrator in one turn, so it can pass them to an agent that
-// can act on them. They count as sent once handed over.
+// can act on them. They count as sent once handed over. Drafts on a remote
+// agent's work never go: they quote its host's diff, which stays out of
+// the orchestrator, and the agent may only be out of reach while the link
+// is down. They stay drafts until the host is back.
 func (m Model) sendReviewToOrchestrator() (tea.Model, tea.Cmd) {
 	var parts []string
 	var ids []string
+	var waiting []string
 	for _, g := range m.draftGroups() {
 		if _, ok := m.reviewRecipient(g.sessionID); ok {
+			continue
+		}
+		if host := m.groupHost(g); host != "" {
+			waiting = append(waiting, m.recipientName(g.sessionID)+" until "+host+" is back")
 			continue
 		}
 		name := ""
@@ -157,6 +181,9 @@ func (m Model) sendReviewToOrchestrator() (tea.Model, tea.Cmd) {
 		}
 	}
 	if len(parts) == 0 {
+		if len(waiting) > 0 {
+			return m.say("Remote drafts stay with their agent: kept "+strings.Join(waiting, ", ")+".", true)
+		}
 		return m.say("No drafts are waiting for an ended session; /send delivers to live agents.", true)
 	}
 	text := strings.Join(parts, "\n\n")
@@ -171,15 +198,19 @@ func (m Model) sendReviewToOrchestrator() (tea.Model, tea.Cmd) {
 	}
 	m.saveComments()
 	cmd := m.tell("", text, text)
-	mm, flash := m.say(fmt.Sprintf("Handed %s to the orchestrator.", commentCount(len(ids))), false)
+	note := fmt.Sprintf("Handed %s to the orchestrator.", commentCount(len(ids)))
+	if len(waiting) > 0 {
+		note += " Kept " + strings.Join(waiting, ", ") + "."
+	}
+	mm, flash := m.say(note, false)
 	return mm, tea.Batch(cmd, flash)
 }
 
 // deliverReview is deliver for review comments: the reply carries their
 // ids, so they are marked sent only once the message is through.
-func deliverReview(a fleet.Agent, text string, it *inbox.Item, ids []string) tea.Cmd {
+func deliverReview(send sendFunc, a fleet.Agent, text string, it *inbox.Item, ids []string) tea.Cmd {
 	return func() tea.Msg {
-		err := sendPeer(a.Session.Socket, text)
+		err := send(a, text)
 		return sentMsg{item: it, name: a.Name, err: err, review: ids}
 	}
 }
@@ -241,6 +272,29 @@ func addressedComments(open []review.Comment) []string {
 		}
 	}
 	return ids
+}
+
+// groupHost is the host of a draft group on a remote agent's work, "" for
+// this machine's.
+func (m Model) groupHost(g reviewGroup) string {
+	for _, c := range g.comments {
+		if c.Host != "" {
+			return c.Host
+		}
+	}
+	if a, ok := m.agentFor(g.sessionID); ok {
+		return a.Host
+	}
+	return ""
+}
+
+// remoteDraftsState says, in the drafts column, why drafts on a remote
+// agent's work cannot go now: they are kept until its host can take them.
+func (m Model) remoteDraftsState(host string) string {
+	if h, ok := m.hostStatus(host); ok && linked(h.State) {
+		return host + " takes no sends here · kept" // observe, or attached elsewhere
+	}
+	return host + " is offline · kept until it is back"
 }
 
 // recipientName names a recipient for the drafts column and notes.

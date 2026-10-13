@@ -34,6 +34,12 @@ type Target struct {
 	Dir       string   // working directory, for the uncommitted-changes check
 	Children  []string // names of the agents it directs
 	Dirty     []string // uncommitted paths in Dir, filled by Inspect
+	// Host is the remote host the agent runs on, "" for this machine. A
+	// remote target has no pid, window or checkout path here: its host
+	// signals the process, and RemoteDirty is what the host last said about
+	// its checkout (nil when unknown).
+	Host        string
+	RemoteDirty *bool
 	// Idle is how long since the agent's last activity (its last change
 	// of busy/idle status as Claude Code recorded it), 0 when unknown.
 	Idle time.Duration
@@ -91,7 +97,7 @@ func refuse(t Target, force bool, self Self) string {
 		return "it is Den itself"
 	case t.PID != 0 && self.IsAncestor != nil && self.IsAncestor(t.PID):
 		return "Den runs inside it"
-	case t.PID == 0:
+	case t.PID == 0 && t.Host == "":
 		return "no process to close"
 	case t.Status == "gone":
 		return "already gone"
@@ -109,6 +115,8 @@ func (p Plan) Title() string {
 	switch n := len(p.Targets); {
 	case n == 0:
 		return "Nothing to close"
+	case n == 1 && p.Targets[0].Host != "":
+		return "Close " + p.Targets[0].Name + " on " + p.Targets[0].Host + "?"
 	case n == 1:
 		return "Close " + p.Targets[0].Name + "?"
 	default:
@@ -131,6 +139,10 @@ func (p Plan) Lines() []string {
 		out = append(out, "Agents idle for "+ShortDuration(p.IdleFor)+" or more, by their last change of busy/idle status.")
 	}
 	for _, t := range p.Targets {
+		if t.Host != "" {
+			out = append(out, remoteLines(t)...)
+			continue
+		}
 		line := fmt.Sprintf("%s (%s) · %s · pid %d", t.Name, t.Peer, t.Status, t.PID)
 		if t.Idle > 0 {
 			line = fmt.Sprintf("%s (%s) · idle %s · pid %d", t.Name, t.Peer, roundIdle(t.Idle), t.PID)
@@ -166,6 +178,24 @@ func (p Plan) Lines() []string {
 	}
 	for _, r := range p.Refused {
 		out = append(out, "Not "+r.Target.Name+": "+r.Why)
+	}
+	return out
+}
+
+// remoteLines is a remote target's part of the plan: where it runs, what
+// happens to it there, and whether its checkout there had uncommitted
+// changes when the host last said.
+func remoteLines(t Target) []string {
+	state := t.Status
+	if t.Idle > 0 {
+		state = "idle " + roundIdle(t.Idle)
+	}
+	out := []string{fmt.Sprintf("%s (%s) · %s · on %s · SIGTERM there, no window", t.Name, t.Peer, state, t.Host)}
+	if t.RemoteDirty != nil && *t.RemoteDirty {
+		out = append(out, "  ! uncommitted changes in its checkout on "+t.Host)
+	}
+	if len(t.Children) > 0 {
+		out = append(out, "  ! it directs "+strings.Join(t.Children, ", ")+"; they stay open unless also selected")
 	}
 	return out
 }
@@ -225,7 +255,11 @@ func Summary(results []Result) string {
 		case r.Ended:
 			ended = append(ended, r.Target.Name)
 		default:
-			left = append(left, r.Target.Name)
+			name := r.Target.Name
+			if r.Err != nil {
+				name += " (" + r.Err.Error() + ")"
+			}
+			left = append(left, name)
 		}
 		if r.WindowClosed {
 			windows = append(windows, r.Target.Name)

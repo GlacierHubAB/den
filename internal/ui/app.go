@@ -3,6 +3,7 @@ package ui
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,6 +28,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
@@ -112,6 +114,8 @@ type Model struct {
 	srv        *bridge.Server
 	closing    map[string]closer.Plan     // close questions in the inbox, by item id
 	offers     map[string]skills.Approval // skills offers in the inbox, by item id
+	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
+	sends      map[string]askedSend       // den send questions in the inbox, by item id
 	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard      *closer.Guard              // agents a close must leave alone or only propose when named
@@ -134,6 +138,7 @@ type Model struct {
 	nextImage   int
 	kitty       bool
 	colors      map[string]string // session id → body colour, unique while hues last
+	colorStamp  colors.Stamp      // the record on disk as Den last wrote or read it
 
 	input    textarea.Model
 	complIdx int
@@ -156,6 +161,8 @@ type Model struct {
 	restore restoreState // the roster of agents seen live, and the questions to reopen them
 
 	att attention // desktop notifications, reminders and stalls
+
+	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
 }
 
 // New returns the root model and starts listening for hook events.
@@ -192,6 +199,7 @@ func New(cfg config.Config) Model {
 	m.input = newInput(m.st)
 	m.input.Focus()
 	m.fitInput()
+	m.openRemote(cfg)
 	return m
 }
 
@@ -201,6 +209,9 @@ func (m Model) Close() {
 	if m.srv != nil {
 		m.srv.Close()
 	}
+	if m.remote.feed != nil {
+		m.remote.feed.Close()
+	}
 	m.closeOrchestrator()
 }
 
@@ -208,6 +219,11 @@ func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
+	}
+	if m.remote.feed != nil {
+		m.remote.pump.start(m.remote.feed)
+		m.remote.feed.Start()
+		cmds = append(cmds, waitRemote(m.remote.pump))
 	}
 	return tea.Batch(cmds...)
 }
@@ -310,14 +326,19 @@ func (m Model) agentFor(sessionID string) (fleet.Agent, bool) {
 
 // assignColors gives every live agent a body colour through the shared
 // record, so the badge in each terminal shows the same one. The record is
-// read once and rewritten only when the fleet changes.
+// read once; Den's copy is what it shows, so it is written when the fleet
+// changes and whenever the file on disk is no longer the one Den wrote (a
+// test run or a second Den replaced it), else every badge would fall back
+// to its own pick while Den showed another colour.
 func (m *Model) assignColors() {
 	hues := m.st.pal.Bodies
 	if len(hues) == 0 {
 		return
 	}
+	path := colors.Path()
 	if m.colors == nil {
-		m.colors = colors.Load(colors.Path())
+		m.colors = colors.Load(path)
+		m.colorStamp = colors.StampOf(path)
 	}
 	var live []colors.Agent
 	for _, a := range m.agents {
@@ -329,7 +350,12 @@ func (m *Model) assignColors() {
 	next, changed := colors.Assign(m.colors, live, hues)
 	if changed {
 		m.colors = next
-		_ = colors.Save(colors.Path(), next) // best effort: the UI works without the file
+	}
+	if changed || colors.StampOf(path) != m.colorStamp {
+		if changed || !maps.Equal(colors.Load(path), next) {
+			_ = colors.Save(path, next) // best effort: the UI works without the file
+		}
+		m.colorStamp = colors.StampOf(path)
 	}
 }
 
@@ -359,9 +385,11 @@ func (m *Model) refresh() {
 		}
 		m.agents = append(m.agents, a)
 	}
+	m.agents = append(m.agents, m.remote.agents...)
+	m.findTwins()
 	for i := range m.agents {
 		a := &m.agents[i]
-		if a.Status != fleet.Gone && m.store.SessionNeedsYou(a.Session.SessionID) {
+		if sid, host := splitKey(a.Session.SessionID); a.Status != fleet.Gone && !a.Stale && m.store.NeedsYouOn(host, sid) {
 			a.Status = fleet.NeedsYou
 		}
 	}
@@ -372,6 +400,9 @@ func (m *Model) refresh() {
 	}
 	m.settleCards()
 	sort.SliceStable(m.agents, func(i, j int) bool {
+		if oi, oj := m.remoteOrder(m.agents[i]), m.remoteOrder(m.agents[j]); oi != oj {
+			return oi < oj // a host's last known agents after everyone live, under its row
+		}
 		if m.agents[i].Status != m.agents[j].Status {
 			return m.agents[i].Status < m.agents[j].Status
 		}
@@ -437,7 +468,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now())}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -445,6 +476,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reviewLoadedMsg:
 		m.applyReview(msg)
 		return m, nil
+	case reviewRemoteMsg:
+		return m, m.applyRemoteReview(msg)
 	case changedMsg:
 		m.st = newStyles(theme.Load())
 		applyInputStyles(&m.input, m.st)
@@ -457,6 +490,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refresh()
 			m.afterScan()
 		}
+	case remoteMsg:
+		return m, m.handleRemote(msg)
 	case requestMsg:
 		cmd := m.handleRequest(msg.req)
 		return m, tea.Batch(cmd, waitRequest(m.srv))
@@ -476,6 +511,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.handleOrchEvent(msg.ev)
 		m.refresh()
 		return m, cmd
+	case cliSentMsg:
+		m.applyCLISent(msg)
+		m.refresh()
+		return m, nil
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
@@ -484,6 +523,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
 		return m, m.finishSkills(msg)
+	case installPlanMsg:
+		m.offerInstall(msg)
+		return m, nil
+	case installDoneMsg:
+		return m, m.finishInstall(msg)
+	case askedSentMsg:
+		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
 		return m, m.finishRestore(msg)
 	case serverClosedMsg:
@@ -515,6 +561,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleRequest folds a hook event into the inbox and decides whether a
 // permission request is held for Den or released to the terminal.
 func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
+	if r.Host != "" {
+		// Never local: a remote host's request takes remoteHeld's path, so
+		// it cannot reach the close, skills or install questions, the
+		// orchestrator's rules, or the timers, cards and [on] commands
+		// keyed by a bare session id. Anything but a permission request
+		// is refused outright.
+		if r.Event != "PermissionRequest" {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: a remote host may only relay permission requests"})
+			return nil
+		}
+		return m.remoteHeld(r.Host, r)
+	}
 	if r.Event == bridge.CloseEvent {
 		m.handleCloseRequest(r)
 		return nil
@@ -522,6 +580,12 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SkillsEvent {
 		m.handleSkillsRequest(r)
 		return nil
+	}
+	if r.Event == bridge.InstallEvent {
+		return m.handleInstallRequest(r)
+	}
+	if r.Event == bridge.SendEvent {
+		return m.handleSendRequest(r)
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
@@ -540,7 +604,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	it := m.store.Apply(r)
 	m.trackHook(r, it)
 	if it != nil {
-		if a, ok := m.agentFor(it.SessionID); ok {
+		if a, ok := m.agentFor(itemKey(it)); ok {
 			it.Role, it.Task = a.Labels.Role, a.Labels.Task
 		}
 		if it.Kind == inbox.Done {
@@ -553,7 +617,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		cmds = append(cmds, snapshot)
 	}
 	if it != nil && it.Answerable() {
-		if m.atTerminal(it.SessionID) {
+		if m.atTerminal(itemKey(it)) {
 			m.store.Release(it, "you were at that terminal")
 		} else {
 			cmds = append(cmds, holdTick())
@@ -571,6 +635,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 // atTerminal reports whether the session's terminal window is the focused
 // window right now, in which case the terminal dialog is the better UI.
 func (m Model) atTerminal(sessionID string) bool {
+	if hostOf(sessionID) != "" {
+		return false // a remote agent's terminal is never on this desktop
+	}
 	a, ok := m.agentFor(sessionID)
 	if !ok || a.Window == nil || !hypr.Available() {
 		return false
@@ -588,7 +655,7 @@ func (m *Model) releaseIfAtTerminal() bool {
 		if !it.Answerable() {
 			continue
 		}
-		if m.atTerminal(it.SessionID) {
+		if m.atTerminal(itemKey(it)) {
 			m.store.Release(it, "you went to that terminal")
 			continue
 		}
@@ -769,6 +836,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.sel.active = false
 			return m, nil
 		}
+		if m.remote.listing && strings.TrimSpace(m.input.Value()) == "" {
+			m.remote.listing = false
+			return m, nil
+		}
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
 			switch {
 			case m.ov.listing:
@@ -807,7 +878,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, readClipboard()
 	case "tab":
 		if len(compl) > 0 {
-			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
+			m.input.SetValue(mentionText(compl[m.complIdx%len(compl)]) + " ")
 			m.input.CursorEnd()
 			m.complIdx = 0
 			return m, nil
@@ -946,7 +1017,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			// question or nothing: it never goes on to the orchestrator.
 			if it := m.inboxSelected(); it != nil && it.AsksInDen() {
 				if m.unsettled(it) {
-					return m.say("A new question just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press Enter again to answer it.", true)
+					return m.say("A new question just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press Enter again to answer it.", true)
 				}
 				return m.answerQuestion(it, text)
 			}
@@ -969,7 +1040,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.openSelected()
 		}
 		if len(compl) > 0 && resolveMention(m.input.Value(), m.agents).target == nil {
-			m.input.SetValue("@" + compl[m.complIdx%len(compl)].Name + " ")
+			m.input.SetValue(mentionText(compl[m.complIdx%len(compl)]) + " ")
 			m.input.CursorEnd()
 			return m, nil
 		}
@@ -1043,7 +1114,7 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 	case tabInbox:
 		if it := m.inboxSelected(); it != nil {
 			m.store.MarkRead(it)
-			target, ok = m.agentFor(it.SessionID)
+			target, ok = m.agentFor(itemKey(it))
 		}
 	case tabFleet:
 		target, ok = m.selected()
@@ -1058,6 +1129,10 @@ func (m Model) openSelected() (tea.Model, tea.Cmd) {
 	}
 	if !ok {
 		return m, nil
+	}
+	if target.Host != "" {
+		// Den never types into or raises a remote terminal.
+		return m.say(m.remoteHint(target), false)
 	}
 	return m, func() tea.Msg {
 		note, err := fleet.Focus(target)
@@ -1079,7 +1154,7 @@ func (m Model) answerTarget() *inbox.Item {
 		it = nil
 		for _, sid := range append([]string{d.SessionID}, m.descendants(d.SessionID)...) {
 			for _, o := range m.store.Items() {
-				if o.SessionID == sid && o.Answerable() {
+				if itemKey(o) == sid && o.Answerable() {
 					it = o
 					break
 				}
@@ -1103,11 +1178,25 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 			return m.say(refusedNote("The item you selected is gone; nothing was answered.", m.unboundNote()), true)
 		case it != nil && it.State == inbox.Resolved && (it.Kind <= inbox.Question || it.DenAsks()):
 			return m.say(refusedNote("The request you selected was already answered; nothing was sent.", m.unboundNote()), true)
-		case it != nil && !it.Answerable() && (it.Kind <= inbox.Question || it.DenAsks()) && m.inboxWaiting() > 0:
+		case it != nil && hostOf(itemKey(it)) == "" && !it.Answerable() && (it.Kind <= inbox.Question || it.DenAsks()) && m.inboxWaiting() > 0:
 			return m.say(refusedNote("The request you selected can only be answered in its terminal (/open); nothing was sent.", m.unboundNote()), true)
-		case (it == nil || !it.Answerable()) && m.inboxWaiting() > 0:
+		case (it == nil || !it.Answerable() && hostOf(itemKey(it)) == "") && m.inboxWaiting() > 0:
 			return m.say(refusedNote("The item you selected is not a request; nothing was answered.", m.unboundNote()), true)
 		}
+	}
+	if it != nil && hostOf(itemKey(it)) != "" && !it.Answerable() {
+		host := hostOf(itemKey(it))
+		if it.State == inbox.Resolved {
+			return m.say("That request on "+host+" is no longer waiting.", true)
+		}
+		msg := m.nameFor(itemKey(it)) + " runs on " + host + ": answer it in the terminal there (ssh -t " + m.hostTarget(host) + ")"
+		if h, ok := m.hostStatus(host); ok && h.State == remote.AttachedElsewhere {
+			msg += "; " + remote.ElsewhereNote(host)
+		} else if ok && !answersHere(h) {
+			msg += "; " + remote.ObserveNote(host)
+		}
+		msg += "."
+		return m.say(msg, true)
 	}
 	if it == nil || !it.Answerable() {
 		return m.say("Nothing is waiting for an answer.", true)
@@ -1119,13 +1208,13 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		return m.say(why, true)
 	}
 	if m.unsettled(it) {
-		return m.say("A new request just came up: "+m.nameFor(it.SessionID)+": "+it.Title+". Press again to answer it.", true)
+		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
 			m.store.Release(it, "you chose the terminal")
 			m.refresh()
-			return m.say(m.nameFor(it.SessionID)+"'s question is back in its terminal", false)
+			return m.say(m.nameFor(itemKey(it))+"'s question is back in its terminal", false)
 		}
 		return m.say(questionHint(it), true)
 	}
@@ -1150,6 +1239,12 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Cleanup {
 		return m.decideCleanup(it, verb)
 	}
+	if it.Kind == inbox.Message {
+		return m.decideSend(it, verb)
+	}
+	if it.Kind == inbox.Install {
+		return m.decideInstall(it, verb)
+	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
 			return m.say(why, true)
@@ -1157,17 +1252,17 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		scope := inbox.AlwaysScope(it)
 		if !m.store.Answer(it, verb) {
 			m.refresh()
-			return m.say(m.nameFor(it.SessionID)+": "+it.Resolved, true)
+			return m.say(m.nameFor(itemKey(it))+": "+it.Resolved, true)
 		}
 		m.refresh()
-		return m.say("Allowed for "+m.nameFor(it.SessionID)+", and from now on this session: "+scope, false)
+		return m.say("Allowed for "+m.nameFor(itemKey(it))+", and from now on this session: "+scope, false)
 	}
 	if !m.store.Answer(it, verb) {
 		m.refresh()
-		return m.say(m.nameFor(it.SessionID)+": "+it.Resolved, true)
+		return m.say(m.nameFor(itemKey(it))+": "+it.Resolved, true)
 	}
 	m.refresh()
-	return m.say(verbPast(verb)+" for "+m.nameFor(it.SessionID), false)
+	return m.say(verbPast(verb)+" for "+m.nameFor(itemKey(it)), false)
 }
 
 // command runs a slash command typed on the command line.
@@ -1199,6 +1294,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m.say(questionHint(it), true)
 		}
 		return m.answerQuestion(it, text)
+	case "/remote", "/remotes", "/hosts":
+		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":
 		return m.openSelected()
 	case "/copy":
@@ -1333,6 +1430,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) nameFor(sessionID string) string {
+	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
+		return "@" + host
+	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
 		if ms := m.missions.Get(id); ms != nil {
 			return ms.Name

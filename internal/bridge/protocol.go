@@ -59,6 +59,49 @@ type SkillsInput struct {
 	Reason  string   `json:"reason,omitempty"`
 }
 
+// InstallEvent is not a hook either: `den remote install` (and `den
+// remote add`) send it to ask the human, in Den's inbox, to copy this den
+// to a remote host (docs/REMOTE.md), and wait for
+// the outcome. Den makes the plan itself and carries it out only on ^Y.
+//
+// It is only ever read from the local den.sock. A remote host's messages
+// travel its ssh pipe to remote.Manager, whose closed set of types has no
+// way to reach the bridge, so no host can ask for an install, and an agent
+// on this machine can only ask: the human answers.
+const InstallEvent = "InstallRequest"
+
+// InstallInput is the payload of an InstallEvent.
+type InstallInput struct {
+	Host    string `json:"host"`     // the host's label in remotes.toml
+	AskedBy string `json:"asked_by"` // who ran the command, for the question
+}
+
+// SendEvent is not a hook either: `den send name@host …` sends it to the
+// running Den to message an agent on a remote host, because only Den holds the
+// ssh session to that host. Den resolves the agent itself, in its own fleet,
+// and answers allow with a note, or with why nothing was sent: SendDeclined
+// when the human said no, SendCancelled when the question ended before they
+// answered, and deny for everything else.
+//
+// Like InstallEvent it is only ever read from the local den.sock: a remote
+// host's messages never reach the bridge (its held requests enter as
+// PermissionRequests of Den's own making), and a Request that did come
+// from a host is refused. The message is plain text and approves nothing.
+const SendEvent = "SendRequest"
+
+// The behaviours of a SendEvent answer besides allow and deny.
+const (
+	SendDeclined  = "declined"  // the human answered ^N
+	SendCancelled = "cancelled" // the question ended unanswered: the agent's session ended, or the link was lost
+)
+
+// SendInput is the payload of a SendEvent.
+type SendInput struct {
+	Who     string `json:"who"`      // name@host, session-id@host or pid@host as typed
+	Text    string `json:"text"`     // the message
+	AskedBy string `json:"asked_by"` // who ran the command, for the notice
+}
+
 // HookInput is the subset of Claude Code's hook JSON that Den reads.
 type HookInput struct {
 	SessionID        string          `json:"session_id"`

@@ -52,6 +52,10 @@ type Event struct {
 	Error   string    `json:"error,omitempty"`
 	Minutes int       `json:"minutes,omitempty"`
 	Reason  string    `json:"reason,omitempty"`
+	// Host is the remote host the event happened on, as the local Den
+	// labels it (remotes.toml); left out for this machine. Additive: v
+	// stays 1.
+	Host string `json:"host,omitempty"`
 }
 
 // New stamps an event of kind for a session with the version, the time and

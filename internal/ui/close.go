@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -45,23 +46,70 @@ func idleFor(a fleet.Agent, now time.Time) (time.Duration, bool) {
 	return now.Sub(a.LastActive), true
 }
 
+// guardNames are the names the guard knows an agent by: its critter and
+// peer names, and for an agent on a host also both written "name@host",
+// so "/protect Mossy Lemur@devbox" covers that host's agent alone while a
+// bare name covers every agent called so.
+func guardNames(a fleet.Agent) []string {
+	names := []string{a.Name, a.Session.Name}
+	if a.Host != "" {
+		names = append(names, a.Name+"@"+a.Host)
+		if a.Session.Name != "" {
+			names = append(names, a.Session.Name+"@"+a.Host)
+		}
+	}
+	return names
+}
+
 // guardReason says why the guard keeps an agent out of a bulk close.
 func (m Model) guardReason(a fleet.Agent) string {
 	if m.guard == nil {
 		return ""
 	}
+	if n := m.guard.ProtectedName(guardNames(a)...); n != "" {
+		return "protected (" + n + ")"
+	}
+	// Folder rules are folders on this machine: an agent on a host has no
+	// path here, so only a rule by name, or by a task that mentions the
+	// folder's name, can protect it.
 	dirs := append([]string{a.Session.CWD}, rootsOf(a)...)
-	return m.guard.Protected(a.Name, a.Session.Name, dirs, a.Labels.Task)
+	return m.guard.Protected("", "", dirs, a.Labels.Task)
+}
+
+// unprotectHint says how the human lets a protected agent be closed: the
+// name rule that holds it, or the folder in protected.json.
+func (m Model) unprotectHint(a fleet.Agent) string {
+	if n := m.guard.ProtectedName(guardNames(a)...); n != "" {
+		return "/unprotect " + n + " to allow it"
+	}
+	return "remove its folder from protected.json to allow it"
+}
+
+// guardHeld is the flag note of a flagged agent, by any of its names.
+func (m Model) guardHeld(a fleet.Agent) (string, bool) {
+	for _, n := range guardNames(a) {
+		if n == "" {
+			continue
+		}
+		if note, ok := m.guard.Held(n, ""); ok {
+			return note, true
+		}
+	}
+	return "", false
 }
 
 // staleAgents picks the agents idle for at least d: idle by status, with a
 // known last activity that long ago, not protected (those come back in
 // skipped) and not flagged (those come back in held). among, when not
 // empty, limits the pick to those session ids.
-func (m Model) staleAgents(d time.Duration, among map[string]bool) (picked []fleet.Agent, skipped, held []closer.Refusal) {
+//
+// Agents on remote hosts count only when remotes is true (the human's own
+// /close idle, never the orchestrator's close_agent) and their host is live
+// and allows actions; one whose host does not is listed as skipped, with why.
+func (m Model) staleAgents(d time.Duration, among map[string]bool, remotes bool) (picked []fleet.Agent, skipped, held []closer.Refusal) {
 	now := closeNow()
 	for _, a := range m.agents {
-		if a.Status != fleet.Idle || (among != nil && !among[a.Session.SessionID]) {
+		if a.Status != fleet.Idle || (a.Host != "" && !remotes) || (among != nil && !among[a.Session.SessionID]) {
 			continue
 		}
 		// A duration needs a known last activity; unknown is never stale.
@@ -72,9 +120,15 @@ func (m Model) staleAgents(d time.Duration, among map[string]bool) (picked []fle
 			skipped = append(skipped, closer.Refusal{Target: m.closeTarget(a), Why: why})
 			continue
 		}
-		if note, ok := m.guard.Held(a.Name, a.Session.Name); ok {
+		if note, ok := m.guardHeld(a); ok {
 			held = append(held, closer.Refusal{Target: m.closeTarget(a), Why: note})
 			continue
+		}
+		if a.Host != "" {
+			if err := m.remoteCan(a.Host); err != nil {
+				skipped = append(skipped, closer.Refusal{Target: m.closeTarget(a), Why: err.Error()})
+				continue
+			}
 		}
 		picked = append(picked, a)
 	}
@@ -96,6 +150,11 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 		Peer:      a.Session.Name,
 		PID:       a.Session.PID,
 		Dir:       a.Session.CWD,
+	}
+	if a.Host != "" {
+		// SessionID stays the UI's key (session id and host); the host does
+		// the signalling, so there is no pid, window or checkout path here.
+		t.Host, t.RemoteDirty, t.PID, t.Dir = a.Host, a.Dirty, 0, ""
 	}
 	switch a.Status {
 	case fleet.Working:
@@ -151,10 +210,25 @@ func (m *Model) proposePlan(cands []fleet.Agent, force bool, from, reason string
 			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: "it is the orchestrator"})
 			continue
 		}
-		// Protected agents are never proposed, even by name.
+		// Protected agents are never proposed, even by name, on this machine
+		// or on a host.
 		if why := m.guardReason(a); why != "" {
-			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: why + " · /unprotect to allow"})
+			refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: why + " · " + m.unprotectHint(a)})
 			continue
+		}
+		if a.Host != "" {
+			// Only the human closes a remote agent, and only while its host is
+			// live and allows it; the question is asked for nothing else.
+			why := ""
+			if from == "orchestrator" {
+				why = "the orchestrator cannot close agents on other hosts"
+			} else if err := m.remoteCan(a.Host); err != nil {
+				why = err.Error()
+			}
+			if why != "" {
+				refused = append(refused, closer.Refusal{Target: m.closeTarget(a), Why: why})
+				continue
+			}
 		}
 		targets = append(targets, m.closeTarget(a))
 	}
@@ -185,8 +259,8 @@ func (m *Model) proposePlan(cands []fleet.Agent, force bool, from, reason string
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	closer.Inspect(ctx, &plan)
 	cancel()
-	sid := plan.Targets[0].SessionID
-	it := m.store.AddClose(sid, plan.Title(), plan.Lines(), req)
+	sid, host := splitKey(plan.Targets[0].SessionID)
+	it := m.store.AddCloseOn(host, sid, plan.Title(), plan.Lines(), req)
 	if m.closing == nil {
 		m.closing = map[string]closer.Plan{}
 	}
@@ -202,7 +276,7 @@ func (m Model) closeSelected(force bool) (tea.Model, tea.Cmd) {
 	switch m.tab {
 	case tabInbox:
 		if it := m.inboxSelected(); it != nil {
-			a, ok = m.agentFor(it.SessionID)
+			a, ok = m.agentFor(itemKey(it))
 		}
 	default:
 		a, ok = m.selected()
@@ -238,13 +312,14 @@ func (m Model) closeCommand(args []string) (tea.Model, tea.Cmd) {
 		}
 		return m.askStale(d, force, nil)
 	}
-	// Names: critter names, possibly several words each, or peer names.
+	// Names: critter names, possibly several words each, or peer names; an
+	// agent on a remote host is named with its host, "Mossy Lemur@devbox".
 	var cands []fleet.Agent
 	var refused []closer.Refusal
 	for _, name := range splitNames(strings.Join(words, " ")) {
-		a, ok := m.agentNamed(name)
-		if !ok {
-			refused = append(refused, closer.Refusal{Target: closer.Target{Name: name}, Why: "not in the fleet"})
+		a, why := m.closeNamed(name)
+		if why != "" {
+			refused = append(refused, closer.Refusal{Target: closer.Target{Name: name}, Why: why})
 			continue
 		}
 		cands = append(cands, a)
@@ -256,7 +331,7 @@ func (m Model) closeCommand(args []string) (tea.Model, tea.Cmd) {
 // d is 0), protected and flagged ones listed but left out.
 func (m Model) askStale(d time.Duration, force bool, among map[string]bool) (tea.Model, tea.Cmd) {
 	m.ensureGuard()
-	picked, skipped, held := m.staleAgents(d, among)
+	picked, skipped, held := m.staleAgents(d, among, true)
 	if len(picked) == 0 && len(skipped) == 0 && len(held) == 0 {
 		if d > 0 {
 			return m.say("No agent has been idle for "+closer.ShortDuration(d)+".", true)
@@ -297,9 +372,7 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 			name, note = strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+1:])
 		}
 	}
-	if a, ok := m.agentNamed(name); ok {
-		name = a.Name
-	}
+	name = m.guardName(name)
 	var msg string
 	switch verb {
 	case "/protect":
@@ -325,6 +398,36 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 		return m.say(msg+" (not saved: "+err.Error()+")", true)
 	}
 	return m.say(msg, false)
+}
+
+// guardName is the name /protect, /unprotect, /flag and /unflag record
+// for what the human typed: an agent's critter name as Den writes it, with
+// its host when it was named "name@host" ("@local" is this machine). A
+// name that fits no agent is kept as typed, so an agent can be protected
+// before it starts.
+func (m Model) guardName(name string) string {
+	if i := strings.LastIndexByte(name, '@'); i > 0 {
+		if a, why := m.closeNamed(name); why == "" {
+			if a.Host == "" {
+				return a.Name
+			}
+			return a.Name + "@" + a.Host
+		}
+		host := strings.ToLower(strings.TrimSpace(name[i+1:]))
+		if host == "local" {
+			return strings.TrimSpace(name[:i])
+		}
+		return strings.TrimSpace(name[:i]) + "@" + host
+	}
+	if a, ok := m.agentNamed(name); ok {
+		return a.Name
+	}
+	for _, r := range m.remote.agents {
+		if strings.EqualFold(r.Name, name) {
+			return r.Name
+		}
+	}
+	return name
 }
 
 // askClose proposes and shows the question in the inbox.
@@ -380,7 +483,7 @@ func (m *Model) handleCloseRequest(r *bridge.Request) {
 		if len(among) == 0 {
 			among = nil
 		}
-		cands, skipped, held = m.staleAgents(d, among)
+		cands, skipped, held = m.staleAgents(d, among, false)
 	}
 	it, note := m.proposePlan(cands, false, "orchestrator", in.Reason, r, refused, skipped, held, d)
 	if note != "" {
@@ -422,13 +525,48 @@ func (m Model) decideClose(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	it.Resolved = "closing…"
 	self := m.closeSelf()
 	id := it.ID
+	feed := m.remote.feed
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
-		return closeDoneMsg{itemID: id, plan: plan, results: closer.Run(ctx, plan, self, closeOps)}
+		return closeDoneMsg{itemID: id, plan: plan, results: runClose(ctx, plan, self, feed)}
 	}
 	model, say := m.say("Closing "+strings.TrimSuffix(strings.TrimPrefix(it.Title, "Close "), "?")+"…", false)
 	return model, tea.Batch(say, cmd)
+}
+
+// runClose carries the plan out: agents on this machine through the closer,
+// agents on a host through that host's live session, which signals them
+// there and refuses what the closer would refuse. Results keep the plan's
+// order.
+func runClose(ctx context.Context, plan closer.Plan, self closer.Self, feed remoteFeed) []closer.Result {
+	local := plan
+	local.Targets = nil
+	for _, t := range plan.Targets {
+		if t.Host == "" {
+			local.Targets = append(local.Targets, t)
+		}
+	}
+	done := closer.Run(ctx, local, self, closeOps)
+	var out []closer.Result
+	for _, t := range plan.Targets {
+		if t.Host == "" {
+			out = append(out, done[0])
+			done = done[1:]
+			continue
+		}
+		r := closer.Result{Target: t}
+		sid, host := splitKey(t.SessionID)
+		if feed == nil {
+			r.Err = fmt.Errorf("%s is offline; nothing was closed", host)
+		} else if killed, err := feed.CloseAgent(host, sid, plan.Force); err != nil {
+			r.Err = err
+		} else {
+			r.Ended, r.Killed = true, killed
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // finishClose records what happened and clears Den's own traces of the
@@ -444,6 +582,19 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 	delete(m.closing, msg.itemID)
 	for _, r := range msg.results {
 		if !r.Ended {
+			continue
+		}
+		if r.Target.Host != "" {
+			// Gone on its host; the next snapshot from there agrees. The
+			// roster and tree are this machine's, so they are left alone.
+			sid, host := splitKey(r.Target.SessionID)
+			m.store.SessionClosedOn(host, sid)
+			for i := range m.remote.agents {
+				if m.remote.agents[i].Session.SessionID == r.Target.SessionID {
+					m.remote.agents[i].Status = fleet.Gone
+					m.remote.agents[i].Session.Alive = false
+				}
+			}
 			continue
 		}
 		m.store.SessionClosed(r.Target.SessionID)
@@ -463,6 +614,41 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], false
 	m.refresh()
 	return tea.Batch(snapshot, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} }))
+}
+
+// closeNamed finds the agent a /close name means: on this machine, or on a
+// host when written "name@host". A name that fits agents on more than one
+// host is refused, listing them. why is "" when an agent was found.
+func (m Model) closeNamed(name string) (a fleet.Agent, why string) {
+	host, qualified := "", false
+	if i := strings.LastIndexByte(name, '@'); i > 0 {
+		name, host, qualified = strings.TrimSpace(name[:i]), strings.ToLower(strings.TrimSpace(name[i+1:])), true
+		if host == "local" {
+			host = ""
+		}
+	}
+	var hits []fleet.Agent
+	if !qualified || host == "" {
+		if l, ok := m.agentNamed(name); ok {
+			hits = append(hits, l)
+		}
+	}
+	for _, r := range m.remote.agents {
+		if (!qualified || strings.EqualFold(r.Host, host)) && (strings.EqualFold(r.Name, name) || strings.EqualFold(r.Session.Name, name)) {
+			hits = append(hits, r)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return fleet.Agent{}, "not in the fleet"
+	case 1:
+		return hits[0], ""
+	}
+	var where []string
+	for _, h := range hits {
+		where = append(where, h.Name+"@"+fleet.HostName(h.Host))
+	}
+	return fleet.Agent{}, "that name fits " + strings.Join(where, " and ") + "; add @host"
 }
 
 // agentByPeer finds an agent by its session name.

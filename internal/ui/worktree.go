@@ -54,6 +54,12 @@ func (m Model) workFor(args []string) (*work, string) {
 	return nil, "No agent called " + name + " has anything in Review."
 }
 
+// remoteOnly is why a worktree command refuses remote work: Den merges and
+// removes worktrees on this machine only.
+func remoteOnly(cmd, name, host string) string {
+	return cmd + " works on this machine only, and " + name + "'s checkout is on " + host + ". Ask the agent to do it there: /send it a comment."
+}
+
 // worktreeLive reports whether a live agent works inside dir: its folder
 // is there, or its session recorded dir as its worktree.
 func (m Model) worktreeLive(dir string) bool {
@@ -110,6 +116,9 @@ func (m Model) mergeCommand(args []string) (tea.Model, tea.Cmd) {
 	w, why := m.workFor(args)
 	if w == nil {
 		return m.say(why, true)
+	}
+	if w.Host != "" {
+		return m.say(remoteOnly("/merge", m.nameFor(w.SessionID), w.Host), true)
 	}
 	if !w.Worktree {
 		return m.say(m.nameFor(w.SessionID)+" does not work in a git worktree, so there is no branch of its own to merge.", true)
@@ -191,6 +200,9 @@ func (m Model) cleanupCommand(args []string) (tea.Model, tea.Cmd) {
 	w, why := m.workFor(args)
 	if w == nil {
 		return m.say(why, true)
+	}
+	if w.Host != "" {
+		return m.say(remoteOnly("/cleanup", m.nameFor(w.SessionID), w.Host), true)
 	}
 	if !w.Worktree {
 		return m.say(m.nameFor(w.SessionID)+" does not work in a git worktree.", true)

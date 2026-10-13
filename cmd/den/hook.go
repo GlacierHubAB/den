@@ -83,7 +83,10 @@ func hook() {
 	}
 	cfg := config.Load()
 	wait := time.Duration(cfg.Hooks.PermissionWait) * time.Second
-	d, ok := bridge.Ask(path, env, wait)
+	// A Den running on this machine comes first; then a Den attached from
+	// another machine through `den remote serve`. Neither: fail open.
+	remotePath, _ := bridge.RemoteSocketPath()
+	d, ok := bridge.AskFirst(path, remotePath, env, wait)
 	logHook(in, ok)
 	if !ok {
 		return // no decision: Claude Code shows its own dialog

@@ -9,8 +9,11 @@ import (
 
 // Comment is one review note on a line, or a range of lines, of a file.
 type Comment struct {
-	ID        string    `json:"id"`
-	Root      string    `json:"root"` // repository root
+	ID   string `json:"id"`
+	Root string `json:"root"` // repository root
+	// Host is the remote host the file is on, "" for this machine. A remote
+	// comment's Root is a key, never a folder Den reads.
+	Host      string    `json:"host,omitempty"`
 	Path      string    `json:"path"` // relative to Root
 	Side      string    `json:"side"` // "new" for added and unchanged lines, "old" for removed ones
 	Start     int       `json:"start"`

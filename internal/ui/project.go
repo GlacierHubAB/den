@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -212,11 +213,34 @@ func rootsAt(a fleet.Agent, now time.Time) []string {
 func (m *Model) buildProjects() {
 	byRoot := map[string]*project{}
 	m.proj.loose = 0
+	byCard := m.cardMissions()
 	for _, a := range m.agents {
 		if a.Status == fleet.Gone {
 			continue
 		}
+		if a.Host != "" {
+			// A remote checkout is its own project, (host, repository),
+			// even of a repository that is also checked out here.
+			if !a.HasGit || a.Git.Repo == "" {
+				m.proj.loose++
+				continue
+			}
+			root := remoteProject(a.Host, a.Git.Repo)
+			p := byRoot[root]
+			if p == nil {
+				p = &project{Root: root, Name: root, Branch: a.Git.Branch}
+				byRoot[root] = p
+			}
+			p.Agents = append(p.Agents, a.Session.SessionID)
+			continue
+		}
 		roots := rootsOf(a)
+		// An agent serving a live mission works for that mission's project
+		// too, even from a checkout of its own (a scratch clone, a landing
+		// copy) that is listed apart.
+		if root := m.missionProject(a.Session.SessionID, byCard); root != "" && !slices.Contains(roots, root) {
+			roots = append(roots, root)
+		}
 		if len(roots) == 0 {
 			m.proj.loose++
 		}
@@ -250,7 +274,7 @@ func (m *Model) buildProjects() {
 		names[p.Name]++
 	}
 	for i, p := range list {
-		if names[p.Name] > 1 {
+		if names[p.Name] > 1 && projectHost(p.Root) == "" {
 			if p.Branch != "" {
 				list[i].Name = p.Name + " · " + p.Branch
 			} else {
@@ -271,6 +295,23 @@ func (m *Model) buildProjects() {
 			m.proj.cur = list[0].Root
 		}
 	}
+}
+
+// missionProject is the local project of the live mission the agent
+// serves, "" for none.
+func (m Model) missionProject(id string, byCard map[string]string) string {
+	if m.missions == nil {
+		return ""
+	}
+	mid := m.missionVia(id, byCard)
+	if mid == "" {
+		return ""
+	}
+	ms := m.missions.Get(mid)
+	if ms == nil || !ms.Live() || ms.Project == "" || projectHost(ms.Project) != "" {
+		return ""
+	}
+	return ms.Project
 }
 
 func (m Model) projectByRoot(root string) (project, bool) {
@@ -343,5 +384,20 @@ func (m *Model) filterReview() {
 	if m.rev.all == nil {
 		return
 	}
-	m.applyReview(reviewLoadedMsg{works: m.rev.all, errs: m.rev.errs, note: m.rev.note})
+	m.mergeReview()
+}
+
+// remoteProject is the root, and the name, of a repository on a remote
+// host: "den @devbox". It is no path, so nothing local ever runs in it.
+func remoteProject(host, repo string) string { return repo + " @" + host }
+
+// projectHost is the host of a remote project's root, "" for a local one.
+func projectHost(root string) string {
+	if strings.HasPrefix(root, "/") {
+		return ""
+	}
+	if i := strings.LastIndex(root, " @"); i >= 0 {
+		return root[i+2:]
+	}
+	return ""
 }

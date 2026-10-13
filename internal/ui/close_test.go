@@ -296,7 +296,7 @@ func TestCloseIdleForPicksByLastActivityAndHonoursTheGuard(t *testing.T) {
 		t.Errorf("flash = %q", m3.flash)
 	}
 	mm, _ = m.closeCommand([]string{"Fuzzy Sprite"})
-	if !strings.Contains(mm.(Model).flash, "Fuzzy Sprite: protected (fuzzy) · /unprotect to allow") {
+	if !strings.Contains(mm.(Model).flash, "Fuzzy Sprite: protected (fuzzy) · /unprotect fuzzy to allow it") {
 		t.Errorf("named protected agent: %q", mm.(Model).flash)
 	}
 	// A flagged agent is included when named.

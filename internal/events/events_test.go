@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -150,5 +151,16 @@ func TestRunOn(t *testing.T) {
 	log, _ := os.ReadFile(filepath.Join(dir, "den", "hooks.log"))
 	if strings.Count(string(log), "[on] command failed") != 2 || !strings.Contains(string(log), "on.needs_you") {
 		t.Errorf("hooks.log = %q", log)
+	}
+}
+
+func TestEnvHasTheHostOnlyForRemoteEvents(t *testing.T) {
+	ev := New(Done, "s1")
+	if strings.Contains(strings.Join(Env(ev), " "), "DEN_HOST") {
+		t.Error("a local event has DEN_HOST")
+	}
+	ev.Host = "devbox"
+	if !slices.Contains(Env(ev), "DEN_HOST=devbox") {
+		t.Errorf("env = %v", Env(ev))
 	}
 }

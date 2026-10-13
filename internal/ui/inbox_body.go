@@ -69,7 +69,7 @@ func (m Model) unreadNote(it *inbox.Item, n int) string {
 	if m.tab == tabInbox && it.ID == m.inboxSel {
 		return lines + " below: read them (↓) before ^Y"
 	}
-	return m.nameFor(it.SessionID) + "'s request has " + lines + " than the Inbox shows at once: select it there and read it to the end before ^Y"
+	return m.nameFor(itemKey(it)) + "'s request has " + lines + " than the Inbox shows at once: select it there and read it to the end before ^Y"
 }
 
 // scrollBody scrolls the selected item by delta rows when it is taller
@@ -145,5 +145,5 @@ func (m Model) showInInbox(it *inbox.Item) (tea.Model, tea.Cmd) {
 	m.tab = tabInbox
 	m.refresh()
 	m.selectItem(it)
-	return m.say(m.nameFor(it.SessionID)+"'s request: read it here first; ^Y again to allow", true)
+	return m.say(m.nameFor(itemKey(it))+"'s request: read it here first; ^Y again to allow", true)
 }

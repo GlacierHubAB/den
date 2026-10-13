@@ -130,7 +130,7 @@ func TestCloseOfAnEndedProcessIsGone(t *testing.T) {
 func TestNoKillAfterTheContextEnds(t *testing.T) {
 	ops := &fakeOps{alive: map[int]bool{2: true}, stubborn: map[int]bool{2: true}}
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }() // well inside the stop wait, which other tests shorten to 50 ms
 	res := Run(ctx, Plan{Targets: []Target{{SessionID: "s2", PID: 2, Status: "idle"}}, Force: true}, Self{}, ops)
 	if !errors.Is(res[0].Err, ErrNotKnown) || res[0].Killed || res[0].Ended {
 		t.Errorf("result %+v", res[0])

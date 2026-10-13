@@ -210,7 +210,7 @@ func FuzzText(f *testing.F) {
 		"", "plain", "a\r\nb\rc", "\x1b]52;c;SGVsbG8=\x07", "\x1b[2J\x1b[H",
 		"\x1b]8;;http://x\x1b\\y\x1b]8;;\x1b\\", "\u009b31m", "\u009d0;t\u009c",
 		"\x1bP\x1b\\", "\x1b(B", "\u202eabc", "\xff\xfe", "👩\u200d👩\u200d👧", "e\u0301",
-		"\x1b", "\x1b]", "\x1b[", "\xc2", "\xc2\x9c",
+		"\x1b", "\x1b]", "\x1b[", "\xc2", "\xc2\x9c", "a\u2028b\u2029c", "\u2028\r\u2029",
 		"a\u200bb\U000e0041", "\u0645\u200c\u062e", "\u2764\ufe0f\u200d🔥", "x\ufe0f\ufe0f\u200d", "\u00ad\u3164\U000e0101",
 	} {
 		f.Add(s)
@@ -229,6 +229,8 @@ func FuzzText(f *testing.F) {
 				t.Fatalf("Text(%q) = %q keeps C1 %U", in, out, r)
 			case bidi(r):
 				t.Fatalf("Text(%q) = %q keeps bidi %U", in, out, r)
+			case r == 0x2028 || r == 0x2029:
+				t.Fatalf("Text(%q) = %q keeps a line or paragraph separator %U", in, out, r)
 			case invisible(r) && r != zwj && r != zwnj && r != vs15 && r != vs16:
 				t.Fatalf("Text(%q) = %q keeps invisible %U", in, out, r)
 			}
@@ -265,4 +267,22 @@ func FuzzText(f *testing.F) {
 			t.Fatalf("Line not idempotent on %q", in)
 		}
 	})
+}
+
+// U+2028 and U+2029 break a line in some terminals and show nothing in
+// others: Text makes them a newline, Line and Code a space, JSON an escape.
+func TestLineAndParagraphSeparators(t *testing.T) {
+	in := "sep\u2028arator\u2029end"
+	if got := Text(in); got != "sep\narator\nend" {
+		t.Errorf("Text = %q", got)
+	}
+	if got := Line(in); got != "sep arator end" {
+		t.Errorf("Line = %q", got)
+	}
+	if got := Code(in); got != "sep arator end" {
+		t.Errorf("Code = %q", got)
+	}
+	if got := string(JSON([]byte(`"` + in + `"`))); got != "\"sep\\u2028arator\\u2029end\"" {
+		t.Errorf("JSON = %q", got)
+	}
 }

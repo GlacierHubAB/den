@@ -61,12 +61,18 @@ func sortedComments(comments []Comment) []Comment {
 }
 
 // writeComments writes the comments under one heading per repository.
+// A comment on a remote agent's work names the folder as the agent sees it
+// on its host: its Root is Review's key, the folder plus " @host".
 func writeComments(b *strings.Builder, cs []Comment) {
 	root := "\x00"
 	for _, c := range cs {
 		if c.Root != root {
 			root = c.Root
-			fmt.Fprintf(b, "\nIn %s:\n", root)
+			folder := root
+			if c.Host != "" {
+				folder = strings.TrimSuffix(root, " @"+c.Host)
+			}
+			fmt.Fprintf(b, "\nIn %s:\n", folder)
 		}
 		b.WriteString("\n" + Where(c) + "\n")
 		for _, q := range c.Quote {
@@ -124,6 +130,9 @@ func Changed(c Comment, content []byte) bool {
 
 // FileChanged is Changed against the file on disk.
 func FileChanged(c Comment) bool {
+	if c.Host != "" {
+		return false // the file is on another machine
+	}
 	raw, err := os.ReadFile(filepath.Join(c.Root, c.Path))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -137,6 +146,9 @@ func FileChanged(c Comment) bool {
 // FileCopies counts the copies of a comment's quoted lines in the file on
 // disk now, for Copies when it is sent.
 func FileCopies(c Comment) int {
+	if c.Host != "" {
+		return 0
+	}
 	block, _ := anchor(c)
 	raw, err := os.ReadFile(filepath.Join(c.Root, c.Path))
 	if err != nil || len(block) == 0 {

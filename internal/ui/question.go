@@ -21,9 +21,9 @@ func (m Model) answerQuestion(it *inbox.Item, text string) (tea.Model, tea.Cmd) 
 	}
 	cleared := m.clear()
 	m.refresh()
-	msg := "Next question for " + m.nameFor(it.SessionID)
+	msg := "Next question for " + m.nameFor(itemKey(it))
 	if done {
-		msg = "Answered " + m.nameFor(it.SessionID) + "'s question"
+		msg = "Answered " + m.nameFor(itemKey(it)) + "'s question"
 		if len(it.Questions) > 1 {
 			msg += "s"
 		}

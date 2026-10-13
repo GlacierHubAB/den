@@ -163,7 +163,7 @@ func (m *Model) observeRoster() {
 	var skillsLooked bool
 	var prov *skills.Provenance
 	for _, a := range m.agents {
-		if a.Status == fleet.Gone || !a.Session.Alive || m.isOrchestrator(a) || a.Session.Name == m.cfg.Orchestrator.Name {
+		if a.Status == fleet.Gone || !a.Session.Alive || a.Host != "" || m.isOrchestrator(a) || a.Session.Name == m.cfg.Orchestrator.Name {
 			continue
 		}
 		// Only terminal sessions can be reopened in a terminal.
@@ -234,17 +234,31 @@ func agentSkillsDir(p *skills.Provenance, peer, cwd string) string {
 // missionOf is the mission the agent works for: the mission of its own
 // dispatch card, else of the nearest ancestor's.
 func (m Model) missionOf(id string) string {
-	ids := []string{id}
+	return m.missionVia(id, m.cardMissions())
+}
+
+// cardMissions maps each session to the mission of its first card that
+// serves one.
+func (m Model) cardMissions() map[string]string {
+	out := map[string]string{}
+	for _, d := range m.cards() {
+		if _, seen := out[d.SessionID]; !seen && d.SessionID != "" && d.MissionID != "" {
+			out[d.SessionID] = d.MissionID
+		}
+	}
+	return out
+}
+
+// missionVia is missionOf over a cardMissions map built once.
+func (m Model) missionVia(id string, byCard map[string]string) string {
+	if ms := byCard[id]; ms != "" {
+		return ms
+	}
 	if m.tree.edges != nil {
 		chain := m.tree.edges.Chain(id)
 		for i := len(chain) - 1; i >= 0; i-- {
-			ids = append(ids, chain[i])
-		}
-	}
-	for _, sid := range ids {
-		for _, d := range m.cards() {
-			if d.SessionID == sid && d.MissionID != "" {
-				return d.MissionID
+			if ms := byCard[chain[i]]; ms != "" {
+				return ms
 			}
 		}
 	}

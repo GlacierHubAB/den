@@ -2,20 +2,14 @@ package ui
 
 import (
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/remote"
 )
-
-// The settle guard is tested on its own; elsewhere ^Y acts at once.
-func TestMain(m *testing.M) {
-	answerSettle = 0
-	os.Exit(m.Run())
-}
 
 // ^Y and ^N act on the item the human selected, found by its id, and only
 // while it is still open: never on whatever slid into its row.
@@ -244,5 +238,59 @@ func TestAnswerWaitsWhenTheTopRequestJustChanged(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	if ctrl(m, 'y'); !decided(c) {
 		t.Error("a settled top request was not answered")
+	}
+}
+
+func TestSelectionIsHostKeyedWithLocalAndRemoteInterleaved(t *testing.T) {
+	m, feed, _ := remoteModel(t)
+	approveDevbox(feed)
+	m.syncRemote()
+	m.tab = tabInbox
+	// The local and the devbox agent share a session id; their items
+	// interleave: local, devbox, local.
+	l1 := heldPerm(m, dupSession, "echo local one")
+	var sent []bridge.Decision
+	r := heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "echo remote"}, &sent)
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r}, ok: true}))
+	m.refresh()
+	l2 := heldPerm(m, dupSession, "echo local two")
+	var rit *inbox.Item
+	for _, it := range m.store.Items() {
+		if it.Host == "devbox" && it.Answerable() {
+			rit = it
+		}
+	}
+	if rit == nil {
+		t.Fatal("no devbox item")
+	}
+	m.selectItem(rit)
+	_ = m.View()
+	// The first local request is answered in its terminal: the list
+	// reorders, and ^Y still answers the devbox one, through its host.
+	m.store.Settle(itemOf(*m, l1), false, "answered in the terminal")
+	m.refresh()
+	*m = ctrl(*m, 'y')
+	if len(sent) != 1 || sent[0].Behavior != "allow" || decided(l2) {
+		t.Fatalf("sent %+v, local two decided %v (flash %q)", sent, decided(l2), m.flash)
+	}
+	// A second devbox request selected, then released on its host: ^Y
+	// answers nothing, neither it nor the local request now on top.
+	r2 := heldRequest("devbox", "PermissionRequest", "Bash", map[string]string{"command": "echo remote two"}, &sent)
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldArrived, Host: "devbox", Request: r2}, ok: true}))
+	m.refresh()
+	for _, it := range m.store.Items() {
+		if it.Host == "devbox" && it.Answerable() {
+			m.selectItem(it)
+		}
+	}
+	r2.LetGo("released to the terminal on devbox (link lost)")
+	runAll(m.handleRemote(remoteMsg{u: remote.Update{Kind: remote.HeldReleased, Host: "devbox", Request: r2}, ok: true}))
+	m.refresh()
+	got := ctrl(*m, 'y')
+	if len(sent) != 1 || decided(l2) {
+		t.Errorf("^Y after the selected devbox request was released: sent %+v, local decided %v", sent, decided(l2))
+	}
+	if !strings.Contains(got.flash, "answer it in the terminal there") {
+		t.Errorf("flash = %q", got.flash)
 	}
 }

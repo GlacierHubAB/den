@@ -12,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -25,12 +26,16 @@ type attention struct {
 	reminded map[string]bool        // item id → its reminder went out
 	send     func(notify.Note) bool // notify.Send; tests record instead
 	looking  func(sessionID string) bool
+	hosts    *hostNotes // remote notifications and [on] runs, coalesced and capped
 }
 
 // ready fills the maps of a zero attention, as a Model built without New has.
 func (a *attention) ready() {
 	if a.lastHook == nil {
 		a.lastHook, a.noted, a.reminded = map[string]time.Time{}, map[string]string{}, map[string]bool{}
+	}
+	if a.hosts == nil {
+		a.hosts = newHostNotes()
 	}
 	if a.since.IsZero() {
 		a.since = time.Now()
@@ -44,6 +49,7 @@ func newAttention() attention {
 		noted:    map[string]string{},
 		reminded: map[string]bool{},
 		send:     notify.Send,
+		hosts:    newHostNotes(),
 	}
 }
 
@@ -63,6 +69,9 @@ func needsWhat(k inbox.Kind) string {
 func (m Model) lookingAt(sessionID string) bool {
 	if m.att.looking != nil {
 		return m.att.looking(sessionID)
+	}
+	if hostOf(sessionID) != "" {
+		return lookingAtDen() // its terminal is on another machine
 	}
 	return m.atTerminal(sessionID) || hypr.ActiveHolds(os.Getpid())
 }
@@ -85,6 +94,13 @@ func (m *Model) attend(r *bridge.Request, it *inbox.Item) tea.Cmd {
 	if r.Event == "SessionEnd" {
 		delete(m.att.lastHook, sid)
 	}
+	return m.attendItem(sid, it)
+}
+
+// attendItem is attend's decision for the item a hook event, or an event
+// from a remote host, made for the session sid.
+func (m *Model) attendItem(sid string, it *inbox.Item) tea.Cmd {
+	m.att.ready()
 	if it == nil {
 		return nil
 	}
@@ -96,6 +112,12 @@ func (m *Model) attend(r *bridge.Request, it *inbox.Item) tea.Cmd {
 		}
 		m.att.noted[sid] = it.ID
 		what = needsWhat(it.Kind)
+		if remote.ToolName(it.Tool) && it.Kind == inbox.Permission && hostOf(sid) != "" {
+			// A remote request carries the tool's name only (observe). Only
+			// a name in Claude Code's charset goes in the summary, which
+			// some notification servers read as markup too.
+			what += " (" + it.Tool + ")"
+		}
 	case inbox.Done:
 		if !m.cfg.Notify.Done || !m.topOfBranch(sid) || m.subtreeBusy(sid) > 0 {
 			return nil
@@ -131,11 +153,11 @@ func (m *Model) checkStuck(now time.Time) tea.Cmd {
 			continue
 		}
 		m.att.reminded[it.ID] = true
-		ev := events.New(events.StillWaiting, it.SessionID)
+		ev := eventFor(events.StillWaiting, itemKey(it))
 		ev.Request, ev.Minutes = request(it.Kind), int(now.Sub(it.At).Minutes())
 		cmds = append(cmds, m.emit(ev))
-		if m.cfg.Notify.NeedsYou && !m.lookingAt(it.SessionID) {
-			cmds = append(cmds, m.notifyCmd(it.SessionID, "still "+needsWhat(it.Kind)))
+		if m.cfg.Notify.NeedsYou && !m.lookingAt(itemKey(it)) {
+			cmds = append(cmds, m.notifyCmd(itemKey(it), "still "+needsWhat(it.Kind)))
 		}
 	}
 	for id := range m.att.reminded {
@@ -148,8 +170,8 @@ func (m *Model) checkStuck(now time.Time) tea.Cmd {
 		quiet := time.Duration(mins) * time.Minute
 		for _, a := range m.agents {
 			sid := a.Session.SessionID
-			if a.Status != fleet.Working {
-				continue
+			if a.Status != fleet.Working || a.Stale {
+				continue // a stale agent's status is unknown, never working
 			}
 			last := m.att.since
 			for _, t := range []time.Time{m.att.lastHook[sid], a.Session.StatusChanged()} {
@@ -160,11 +182,12 @@ func (m *Model) checkStuck(now time.Time) tea.Cmd {
 			if now.Sub(last) < quiet {
 				continue
 			}
-			it := m.store.AddStalled(sid, now.Sub(last))
+			raw, host := splitKey(sid)
+			it := m.store.AddStalledOn(host, raw, now.Sub(last))
 			if it == nil {
 				continue
 			}
-			ev := events.New(events.Stalled, sid)
+			ev := eventFor(events.Stalled, sid)
 			ev.Minutes = int(now.Sub(last).Minutes())
 			cmds = append(cmds, m.emit(ev))
 			if m.cfg.Notify.Stalled && !m.lookingAt(sid) {
@@ -217,7 +240,7 @@ func (m Model) runOn(ev events.Event) tea.Cmd {
 // named gives the event the name Den shows for the agent; den hook's
 // name from the session id is the same unless the fleet says otherwise.
 func (m Model) named(ev events.Event) events.Event {
-	if a, ok := m.agentFor(ev.Session); ok {
+	if a, ok := m.agentFor(remoteKey(ev.Host, ev.Session)); ok {
 		ev.Agent = a.Name
 	}
 	return ev
@@ -254,6 +277,12 @@ func (m Model) notifyCmd(sessionID, what string) tea.Cmd {
 	send := m.att.send
 	if send == nil {
 		return nil
+	}
+	if host := hostOf(sessionID); host != "" {
+		// No remote window to focus: the notice says where the agent is,
+		// and offers no click (hostNotes posts it inert).
+		n.Summary = m.nameFor(sessionID) + " on " + host + " " + what
+		return m.att.hosts.note(host, sessionID, needsYou(what), n, send, time.Now())
 	}
 	return func() tea.Msg {
 		if !send(n) {

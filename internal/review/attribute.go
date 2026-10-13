@@ -44,7 +44,7 @@ func Attribute(root string, files []File, sources []Source) {
 
 	byPath := map[string][]edit{}
 	for i, s := range all {
-		p := filepath.Clean(s.c.Path)
+		p := filepath.Clean(s.c.Real())
 		if !filepath.IsAbs(p) {
 			continue
 		}

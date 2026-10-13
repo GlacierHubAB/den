@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -170,12 +171,34 @@ func (m Model) roster() []orch.RosterAgent {
 			Title: a.Title, Files: fleet.TouchedFolders(a), Recent: fleet.RecentActivity(a),
 			Earlier: a.Labels.History,
 			IsSelf:  m.isOrchestrator(a), Terminal: a.Window != nil,
+			Host: a.Host,
+		}
+		if last, stale := m.lastKnown(a); stale {
+			r.Status = "host offline, last known " + last.String()
+		}
+		if a.Host != "" {
+			// A remote agent's title, files and recent activity cross only
+			// for the human's own views under full: they never go into the
+			// orchestrator's prompt, which Claude Code writes to disk, or
+			// steer a local agent.
+			r.Task, r.Title, r.Files, r.Recent = a.Labels.Task, "", nil, nil
 		}
 		for _, it := range m.store.Items() {
-			if it.SessionID == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
+			if itemKey(it) == a.Session.SessionID && it.State != inbox.Resolved && it.Kind <= inbox.Question {
 				line := it.Kind.String() + ": " + it.Title
 				if len(it.Body) > 0 {
 					line += " " + it.Body[0]
+				}
+				if a.Host != "" {
+					// A host's request body is its own text, up to 16 KB of
+					// it: never in the prompt, which is written to disk.
+					line = "a " + it.Kind.String() + " request"
+					if it.Kind == inbox.Question {
+						line = "a question"
+					}
+					if remote.ToolName(it.Tool) {
+						line += " (" + it.Tool + ")"
+					}
 				}
 				r.Waiting = append(r.Waiting, line)
 			}

@@ -98,10 +98,12 @@ hotfix/<topic>   ──PR, merge commit──▶  main, then the same fix into d
 - Do not include generated binaries (`den`, `dist/`) or personal paths.
 
 Only maintainers merge. A pull request from a `release/…` branch (cut from
-`dev`) into `main` is a release
-and follows [docs/RELEASING.md](docs/RELEASING.md); a hotfix is the one other
-way into `main`. Nobody pushes to `dev` or `main` directly, force-pushes them
-or deletes them, and only maintainers create `v*` tags.
+`dev`) into `main` is a release and follows
+[docs/RELEASING.md](docs/RELEASING.md); a hotfix is the one other way into
+`main`. Nobody pushes to `dev` or `main` directly, force-pushes them or deletes
+them, and only maintainers create `v*` tags. The one exception is the last
+step of a release, where a maintainer fast-forwards `dev` to `main`; a branch
+made from the old `dev` needs no rebase for it.
 
 Agents work the same way: an agent's worktree branch goes into `dev` through
 a pull request, never straight into `main`.
