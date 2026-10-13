@@ -516,6 +516,7 @@ type line struct {
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	Result    string  `json:"result"`
+	NumTurns  *int    `json:"num_turns"`
 	IsError   bool    `json:"is_error"`
 	CostUSD   float64 `json:"total_cost_usd"`
 	ErrorText string  `json:"error"`
@@ -610,7 +611,9 @@ func (o *Orchestrator) readStdout(r io.Reader) {
 				}
 			}
 		case "result":
-			if o.blocked {
+			// A refused prompt's turn: the notice before it, or no turn
+			// taken at all (num_turns 0).
+			if o.blocked || (l.NumTurns != nil && *l.NumTurns == 0 && !l.IsError) {
 				// The turn of a prompt the hook refused: not an answer.
 				o.blocked = false
 				o.emit(Event{Kind: Blocked, Peer: o.blockedPeer, CostUSD: l.CostUSD})

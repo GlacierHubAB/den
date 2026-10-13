@@ -42,6 +42,10 @@ type peerState struct {
 	refilled map[string]time.Time // when it was last topped up
 	inFlight int                  // reports sent, not yet answered
 	refused  map[string]time.Time // when a refusal note last went up, by sender
+	// envelopes counts the peer messages the hook asked about whose
+	// blocked turn has not come back yet: Blocked is a peer's while it is
+	// above zero, and otherwise ends one of Den's own turns.
+	envelopes int
 }
 
 // handleInbound answers the inbound hook. It always says deny to an
@@ -61,7 +65,14 @@ func (m *Model) handleInbound(r *bridge.Request) tea.Cmd {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "den did not write this prompt"})
 		}
 		return nil
+	case "refused":
+		// An envelope the hook could not read: blocked there, counted here.
+		m.peers.envelopes++
+		r.Reply(bridge.Decision{Behavior: "deny", Message: "Den refused the message"})
+		m.noteRefusal("an unreadable peer message", sanitize.Label(in.Body, 120))
+		return nil
 	case "envelope":
+		m.peers.envelopes++
 		a, why := m.admitReport(in)
 		if why != "" {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "Den refused the message: " + why})
@@ -217,7 +228,7 @@ func (m *Model) onBackstop(why string) tea.Cmd {
 	m.orch.proc = nil
 	m.orch.resume, m.orch.replay = "", ""
 	m.orch.started, m.orch.thinking = false, false
-	m.orch.origins, m.peers.inFlight = nil, 0
+	m.orch.origins, m.peers.inFlight, m.peers.envelopes = nil, 0, 0
 	m.orch.unanswered = nil
 	m.turn = missionTurn{}
 	m.logSession("")

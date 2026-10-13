@@ -67,6 +67,7 @@ func TestUpdateMissionAppliesOnlyFromTheHumansTurn(t *testing.T) {
 		{originReport, "continue", false}, // a peer's report started the turn
 		{originReport, "done", false},
 	} {
+
 		m, ms := missionUpdateModel(t, c.origin)
 		d := updateMission(t, &m, c.state)
 		items := missionItems(m)
@@ -76,6 +77,19 @@ func TestUpdateMissionAppliesOnlyFromTheHumansTurn(t *testing.T) {
 			t.Errorf("%s/%s: should apply at once: %+v, %d items", c.origin, c.state, d, len(items))
 		case !c.direct && (len(items) != 1 || got.State != mission.Running || !strings.Contains(d.Message, "confirm")):
 			t.Errorf("%s/%s: should ask the human: %+v, %d items, state %v", c.origin, c.state, d, len(items), got.State)
+		}
+	}
+}
+
+// TestUpdateMissionMixedTurnsAsk: the human's turn with a report or a
+// turn of Den's in flight with it is not the human's alone.
+func TestUpdateMissionMixedTurnsAsk(t *testing.T) {
+	for _, origins := range [][]string{{originHuman, originReport}, {originHuman, originDen}, {originReport, originHuman}} {
+		m, ms := missionUpdateModel(t, "")
+		m.orch.origins = origins
+		updateMission(t, &m, "continue")
+		if len(missionItems(m)) != 1 || m.missions.Get(ms.ID).Runs[0].Summary == "all green" {
+			t.Errorf("origins %v: should ask the human", origins)
 		}
 	}
 }

@@ -238,6 +238,22 @@ func TestBackstopLetsDensOwnHookThrough(t *testing.T) {
 	}
 }
 
+// TestNoTurnTakenIsBlocked: a result with no turn taken is a refused
+// prompt's, whatever the notice before it said (or if there was none).
+func TestNoTurnTakenIsBlocked(t *testing.T) {
+	o, _ := fakeWith(t, hookBlockJS, `{"type":"result","subtype":"success","is_error":false,"result":"some other wording","num_turns":0}`)
+	proc, err := Start(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Close()
+	proc.Send("hello")
+	k := kinds(collect(t, proc, time.Second))
+	if k[Blocked] != 1 || k[Result] != 0 || k[Backstop] != 0 {
+		t.Errorf("events %v", k)
+	}
+}
+
 // TestSettingsFileGoesOnceRead: the file holding the user's keys is gone
 // once the process has started (its init event), and on exit at the latest.
 func TestSettingsFileGoesOnceRead(t *testing.T) {

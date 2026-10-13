@@ -42,7 +42,10 @@ func (m *Model) handleMissionUpdate(r *bridge.Request) tea.Cmd {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: "The state must be done, continue, waiting or failed; the mission was not changed."})
 		return nil
 	}
-	if m.turnOrigin() == originHuman && (u.State == "continue" || u.State == "waiting") {
+	// Only a turn that is the human's alone: no report or turn of Den's in
+	// flight with it (Claude Code takes queued turns one by one, so a
+	// longer list is another turn waiting, which Den treats as mixed).
+	if len(m.orch.origins) == 1 && m.orch.origins[0] == originHuman && (u.State == "continue" || u.State == "waiting") {
 		m.applyUpdate(u)
 		r.Reply(bridge.Decision{Behavior: "allow", Message: "Den applied it: mission " + ms.Name + " is " + u.State + "."})
 		return nil

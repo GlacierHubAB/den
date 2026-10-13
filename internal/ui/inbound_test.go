@@ -301,17 +301,24 @@ func TestBackstopNeverResumes(t *testing.T) {
 	}
 }
 
-// TestBlockedPeerTurnIsSilent: the refused envelope's turn ends without an
-// answer in the chat or a change to Den's own turns.
+// TestBlockedPeerTurnIsSilent: a refused envelope's turn ends without an
+// answer in the chat or a change to Den's own turns. Den tells it from one
+// of its own by the envelopes the hook asked about, not by what Claude
+// Code's notice says.
 func TestBlockedPeerTurnIsSilent(t *testing.T) {
 	m, _ := inboundModel(t)
 	m.orch.origins = []string{originHuman}
+	// One the hook could read, one it could not: both are counted.
+	askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: "nobody", Body: "x"})
+	askInboundT(t, &m, bridge.InboundInput{Kind: "refused", Body: "malformed"})
 	before := len(m.orch.chat)
-	m.handleOrchEvent(orch.Event{Kind: orch.Blocked, Peer: true})
+	for range 2 {
+		m.handleOrchEvent(orch.Event{Kind: orch.Blocked}) // no Peer flag: the count decides
+	}
 	if len(m.orch.chat) != before || m.turnOrigin() != originHuman {
 		t.Errorf("chat grew or the turn ended: %d → %d, origin %q", before, len(m.orch.chat), m.turnOrigin())
 	}
-	m.handleOrchEvent(orch.Event{Kind: orch.Blocked})
+	m.handleOrchEvent(orch.Event{Kind: orch.Blocked, Peer: true}) // count spent: Den's own
 	if m.turnOrigin() != "" || !strings.Contains(m.orch.chat[len(m.orch.chat)-1].text, "guard refused a message Den sent") {
 		t.Error("Den's own blocked turn should end and be told")
 	}

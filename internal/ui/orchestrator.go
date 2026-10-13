@@ -341,7 +341,7 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 	m.orch.started = false
 	m.orch.said = false
 	m.orch.status = "ready"
-	m.orch.origins, m.peers.inFlight = nil, 0
+	m.orch.origins, m.peers.inFlight, m.peers.envelopes = nil, 0, 0
 	cmds := []tea.Cmd{waitOrch(msg.o)}
 	for i, p := range m.orch.pending {
 		origin := originDen
@@ -445,7 +445,8 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 		// A prompt the inbound hook refused: a peer's envelope (Den passes
 		// on what it admits as its own turn), or, never expected, one of
 		// Den's own turns the hook did not recognise.
-		if ev.Peer {
+		if m.peers.envelopes > 0 {
+			m.peers.envelopes--
 			return waitOrch(m.orch.proc)
 		}
 		m.turnDone()
@@ -795,7 +796,7 @@ func (m *Model) restartOrchestrator() tea.Cmd {
 		// Resent after a restart: Den sends them, whoever wrote them.
 		m.orch.pendingOrigins = append(m.orch.pendingOrigins, originDen)
 	}
-	m.orch.origins, m.peers.inFlight = nil, 0
+	m.orch.origins, m.peers.inFlight, m.peers.envelopes = nil, 0, 0
 	m.orch.started = false
 	m.orch.starting = true
 	m.orch.status = "restarting…"

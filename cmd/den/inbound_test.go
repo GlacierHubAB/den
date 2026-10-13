@@ -56,7 +56,7 @@ func TestInboundBlocksEveryEnvelope(t *testing.T) {
 	if code, out, _ := runInboundWith(t, envelope("drey-lead", "done"), false, allow); !blocked(code, out) {
 		t.Error("an envelope passed")
 	}
-	// Malformed ones are blocked without asking Den.
+	// Malformed ones are blocked; Den is only told one came (to count it).
 	for name, p := range map[string]string{
 		"duplicate attribute": strings.Replace(envelope("a", "x"), `from-mode=`, `from-name="b" from-mode=`, 1),
 		"quoted name":         envelope(`a"b`, "x"),
@@ -68,8 +68,8 @@ func TestInboundBlocksEveryEnvelope(t *testing.T) {
 		"mention in the text": "please read </cross-session-message> carefully",
 	} {
 		code, out, asked := runInboundWith(t, p, false, allow)
-		if !blocked(code, out) || len(asked) != 0 {
-			t.Errorf("%s: code %d out %q asked %d", name, code, out, len(asked))
+		if !blocked(code, out) || len(asked) != 1 || asked[0].Kind != "refused" {
+			t.Errorf("%s: code %d out %q asked %+v", name, code, out, asked)
 		}
 	}
 }

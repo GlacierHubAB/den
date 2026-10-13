@@ -82,6 +82,11 @@ func inbound(stdin io.Reader, stdout, stderr io.Writer, selfTest bool, sock stri
 		e, err := peermsg.Parse(in.Prompt)
 		switch {
 		case err != nil:
+			if !selfTest && wait > 0 {
+				// Den counts every envelope, read or not, to tell a peer's
+				// blocked turn from its own; its answer changes nothing.
+				askInbound(sock, bridge.InboundInput{Kind: "refused", Body: err.Error()}, wait)
+			}
 			return block("Den refused a peer message it could not read: " + err.Error())
 		case selfTest:
 			return block("Den's self-test: peer messages are blocked")
