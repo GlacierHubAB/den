@@ -1,6 +1,11 @@
 # Weekly updates for Go modules and the pinned GitHub Actions, opened against
 # dev like any other change. Actions stay pinned to a commit; Dependabot
 # updates the SHA and the version comment together.
+#
+# Minor and patch updates of Go modules come as one pull request; a major
+# update comes on its own, since it can need code changes. Dependabot cannot
+# regenerate THIRD_PARTY_LICENSES, so CI fails on a Go modules pull request
+# until someone does (CONTRIBUTING.md, "Dependency updates").
 version: 2
 updates:
   - package-ecosystem: gomod
@@ -11,6 +16,7 @@ updates:
     groups:
       go-modules:
         patterns: ["*"]
+        update-types: [minor, patch]
     commit-message:
       prefix: "Go modules"
   - package-ecosystem: github-actions
