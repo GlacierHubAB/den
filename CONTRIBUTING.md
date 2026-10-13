@@ -33,6 +33,9 @@ must pass without a git identity and without network, as they do there: a test
 that runs `git commit` or `git merge` sets `user.name` and `user.email` in its
 own repository. Please run `make test` before you open a pull request.
 
+To use what is on `dev` as your own `den`, see
+[docs/DEV-CHANNEL.md](docs/DEV-CHANNEL.md).
+
 ## Code layout
 
 `cmd/den` holds the commands, `internal/ui` the bubbletea application, and the
