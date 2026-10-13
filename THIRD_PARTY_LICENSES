@@ -144,7 +144,7 @@ SOFTWARE.
 
 ================================================================
 Module: charm.land/bubbletea/v2
-Version: v2.0.10
+Version: v2.1.0
 License file(s): LICENSE
 
 --- LICENSE ---
@@ -392,7 +392,7 @@ SOFTWARE.
 
 ================================================================
 Module: github.com/charmbracelet/ultraviolet
-Version: v0.0.0-20260811164956-006e29f97886
+Version: v0.0.0-20261008173134-6b8d4baf91b4
 License file(s): LICENSE
 
 --- LICENSE ---
@@ -421,7 +421,7 @@ SOFTWARE.
 
 ================================================================
 Module: github.com/charmbracelet/x/ansi
-Version: v0.11.8
+Version: v0.11.9
 License file(s): LICENSE
 
 --- LICENSE ---
@@ -672,7 +672,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ================================================================
 Module: github.com/mattn/go-runewidth
-Version: v0.0.27
+Version: v0.0.30
 License file(s): LICENSE
 
 --- LICENSE ---
@@ -759,7 +759,7 @@ SOFTWARE.
 
 ================================================================
 Module: github.com/xo/terminfo
-Version: v0.0.0-20220910002029-abceb7e1c41e
+Version: v1.0.0
 License file(s): LICENSE
 
 --- LICENSE ---
@@ -848,7 +848,7 @@ shall terminate as of the date such litigation is filed.
 
 ================================================================
 Module: golang.org/x/sys
-Version: v0.47.0
+Version: v0.49.0
 License file(s): LICENSE, PATENTS
 
 --- LICENSE ---
