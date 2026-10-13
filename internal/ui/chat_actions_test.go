@@ -53,7 +53,9 @@ func actionsModel(w, h int, to, summary string) Model {
 	return m
 }
 
-var actionsVolatile = regexp.MustCompile(`\d{2}:\d{2}|(\b|m)\d+[smhd]\b`)
+// actionsVolatile masks clock times and ages; a clock cut short by a
+// narrow header ("05:…") is masked too.
+var actionsVolatile = regexp.MustCompile(`\d{2}:(\d{2}|…)|(\b|m)\d+[smhd]\b`)
 
 func actionsFrame(m Model) string {
 	return actionsVolatile.ReplaceAllStringFunc(m.View().Content, func(v string) string {

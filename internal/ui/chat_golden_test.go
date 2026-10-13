@@ -38,7 +38,7 @@ const chatGoldenReply = "drey-lead has routed around the stalled agent, so you d
 // and a narrow width: the reply's markup is drawn, never shown as
 // asterisks, and the chat keeps its inner margin.
 func TestChatGolden(t *testing.T) {
-	volatile := regexp.MustCompile(`\d{2}:\d{2}|(\b|m)\d+[smhd]\b`)
+	volatile := regexp.MustCompile(`\d{2}:(\d{2}|…)|(\b|m)\d+[smhd]\b`)
 	for _, c := range []struct {
 		name string
 		w, h int

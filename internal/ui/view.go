@@ -1191,7 +1191,7 @@ func (m Model) hints(w int) string {
 			items = append(items[:7:7], [2]string{"/merge", "ask to merge " + w.Branch}, [2]string{"/cleanup", "remove its worktree"}, items[7], items[8])
 		}
 	case m.tab == tabOrch:
-		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards, actions"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tree.mapView:
 		items = [][2]string{{"↑ ↓", "walk"}, {"← →", "parent · child"}, {"Enter", "send · empty: focus terminal"}, {"^T", "list"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.focus == paneDetail:
