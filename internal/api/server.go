@@ -603,8 +603,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 	switch req.Op {
 	case "hello":
 		var p struct {
-			V       int    `json:"v"`
-			Session string `json:"session"`
+			V     int    `json:"v"`
+			Group string `json:"group"`
 		}
 		json.Unmarshal(req.Params, &p)
 		v := p.V
@@ -615,8 +615,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 			c.fail(req.ID, CodeUnsupported, "protocol version")
 			return
 		}
-		if p.Session != "" && !validSession(p.Session) {
-			c.fail(req.ID, CodeBadRequest, "session: 32 hex digits, 128 random bits")
+		if p.Group != "" && !validGroup(p.Group) {
+			c.fail(req.ID, CodeBadRequest, "group: 32 lowercase hex digits, 128 random bits")
 			return
 		}
 		host, _ := os.Hostname()
@@ -626,10 +626,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		}
 		c.mu.Lock()
 		c.hello, c.agent = true, isAgent
-		if p.Session != "" {
+		if p.Group != "" {
 			// The program is part of the scope: another program naming
-			// the same session shares nothing with it.
-			c.scope = "session:" + c.peer.Exe + "\x00" + strings.ToLower(p.Session)
+			// the same group shares nothing with it.
+			c.scope = "group:" + c.peer.Exe + "\x00" + p.Group
 		}
 		c.mu.Unlock()
 		if isAgent {

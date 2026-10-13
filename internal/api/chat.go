@@ -241,14 +241,18 @@ func randHex() string {
 	return hex.EncodeToString(b[:])
 }
 
-// validSession reports whether a hello session is 128 bits in hex, as a
-// client that drew it at random sends it.
-func validSession(s string) bool {
+// validGroup reports whether a hello group is 128 bits in lowercase hex,
+// as a client that drew it at random sends it.
+func validGroup(s string) bool {
 	if len(s) != 32 {
 		return false
 	}
-	_, err := hex.DecodeString(s)
-	return err == nil
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func newUUID() string {

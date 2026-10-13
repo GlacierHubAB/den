@@ -628,19 +628,19 @@ func TestNewAskSupersedesOnItsConnection(t *testing.T) {
 	}
 }
 
-// Connections that name the same session in hello share one ask: a newer
+// Connections that name the same group in hello share one ask: a newer
 // ask on one supersedes the other's.
-func TestHelloSessionSupersedesAcrossConnections(t *testing.T) {
+func TestHelloGroupSupersedesAcrossConnections(t *testing.T) {
 	h := newHarness(t, 2)
 	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
 	sess := randHex()
 	a := h.dial()
-	a.helloSession(sess)
+	a.helloGroup(sess)
 	a.call("ask", map[string]string{"text": "stuck"})
 	waitChunk(t, a, "text")
 	os.Remove(filepath.Join(h.lane, "slow"))
 	b := h.dial()
-	b.helloSession(strings.ToUpper(sess))
+	b.helloGroup(sess)
 	b.call("ask", map[string]string{"text": "fresh"})
 	if ch := waitChunk(t, a, "error"); ch.Message != "superseded by a newer question" {
 		t.Errorf("the stuck ask ended with %q", ch.Message)
@@ -648,7 +648,7 @@ func TestHelloSessionSupersedesAcrossConnections(t *testing.T) {
 	waitChunk(t, b, "done")
 }
 
-// Two processes of the same program, without a shared session, neither
+// Two processes of the same program, without a shared group, neither
 // supersede nor see each other's asks: the newer one waits its turn, and
 // the fleet hides the other's ask id, which is what would cancel it.
 // Guessed or partial ids cancel nothing.
@@ -662,8 +662,8 @@ func TestSameExeAsks(t *testing.T) {
 				a.hello()
 				b.hello()
 			} else {
-				a.helloSession(randHex())
-				b.helloSession(randHex())
+				a.helloGroup(randHex())
+				b.helloGroup(randHex())
 			}
 			id := askID(t, a.call("ask", map[string]string{"text": "slow"}))
 			if len(id) != len("a-")+32 {
@@ -699,20 +699,20 @@ func TestSameExeAsks(t *testing.T) {
 	}
 }
 
-// A hello session must be 128 bits in hex.
-func TestHelloSessionShape(t *testing.T) {
+// A hello group must be 128 bits in lowercase hex.
+func TestHelloGroupShape(t *testing.T) {
 	h := newHarness(t, 2)
-	for _, bad := range []string{"drey", "0123456789abcdef", randHex() + "00", "zz" + randHex()[2:]} {
+	for _, bad := range []string{"drey", "0123456789abcdef", randHex() + "00", "zz" + randHex()[2:], strings.ToUpper(randHex())} {
 		c := h.dial()
-		if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "session": bad}); code(l) != CodeBadRequest {
-			t.Errorf("session %q: %+v", bad, l)
+		if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "group": bad}); code(l) != CodeBadRequest {
+			t.Errorf("group %q: %+v", bad, l)
 		}
 	}
 }
 
-func (c *client) helloSession(s string) {
+func (c *client) helloGroup(s string) {
 	c.t.Helper()
-	if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "session": s}); !l.OK {
+	if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "group": s}); !l.OK {
 		c.t.Fatalf("hello: %+v", l.Error)
 	}
 }

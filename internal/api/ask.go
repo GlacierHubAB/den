@@ -52,7 +52,7 @@ type askJob struct {
 	session string
 	text    string
 	exe     string
-	// scope is who the ask belongs to: its connection, or the session the
+	// scope is who the ask belongs to: its connection, or the group the
 	// client named in hello. A newer ask supersedes only one in its scope.
 	scope string
 	send  func(Chunk) bool // false: the client is gone
@@ -298,7 +298,7 @@ type errAsk struct{ code, msg string }
 func (e errAsk) Error() string { return e.msg }
 
 // enqueue queues an ask. A newer ask in the same scope (connection or
-// hello session) supersedes its earlier one, which ends with "superseded";
+// hello group) supersedes its earlier one, which ends with "superseded";
 // another process of the same program never does. The budget and the
 // queue cap refuse at once.
 func (l *lane) enqueue(j *askJob) error {
