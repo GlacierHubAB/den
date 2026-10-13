@@ -84,6 +84,7 @@ func TestMissionProposeStartRunAndSettle(t *testing.T) {
 	m.orch.proc, m.orch.origins = proc, []string{originDen}
 	raw, _ := json.Marshal(bridge.MissionInput{ID: ms.ID, State: "done", Summary: "suite green"})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
+	r.PeerPID = orchChildPID
 	m.handleRequest(r)
 	if ms.State == mission.Done {
 		t.Fatal("done applied without the human")

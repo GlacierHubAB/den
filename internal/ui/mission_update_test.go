@@ -32,6 +32,7 @@ func updateMission(t *testing.T, m *Model, state string) bridge.Decision {
 	t.Helper()
 	raw, _ := json.Marshal(bridge.MissionInput{ID: "m1", State: state, Summary: "all green"})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
+	r.PeerPID = orchChildPID
 	m.handleRequest(r)
 	d, ok := r.Decided()
 	if !ok {
@@ -114,6 +115,7 @@ func TestUpdateMissionRefusals(t *testing.T) {
 	}
 	raw, _ := json.Marshal(bridge.MissionInput{ID: "nope", State: "done"})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
+	r.PeerPID = orchChildPID
 	m.handleRequest(r)
 	if d, _ := r.Decided(); d.Behavior != "deny" {
 		t.Errorf("unknown mission: %+v", d)

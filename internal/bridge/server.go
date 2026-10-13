@@ -25,12 +25,15 @@ type Request struct {
 	Host string
 	// RemoteID is the remote's id for a request relayed from Host.
 	RemoteID string
-	reply    chan Decision
-	once     sync.Once
-	gone     chan struct{} // closed when the waiting hook hangs up
-	bye      sync.Once
-	send     func(Decision) // a remote request's way back; nil for a local one
-	why      string         // why a remote request was let go
+	// PeerPID is the pid of the local process that sent it (SO_PEERCRED),
+	// 0 when not known (a relayed request, a test).
+	PeerPID int
+	reply   chan Decision
+	once    sync.Once
+	gone    chan struct{} // closed when the waiting hook hangs up
+	bye     sync.Once
+	send    func(Decision) // a remote request's way back; nil for a local one
+	why     string         // why a remote request was let go
 }
 
 // WantsReply reports whether the sender is waiting for a decision.
@@ -172,6 +175,9 @@ func (s *Server) serve(conn net.Conn) {
 		return
 	}
 	req := &Request{Envelope: env}
+	if pid, err := PeerPID(conn); err == nil && pid > 0 {
+		req.PeerPID = pid
+	}
 	_ = json.Unmarshal(env.Payload, &req.Input)
 	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == InboundEvent || env.Event == MissionEvent {
 		if s.held.Add(1) > MaxHeld {

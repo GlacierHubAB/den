@@ -76,8 +76,9 @@ func (m *Model) handleInbound(r *bridge.Request) tea.Cmd {
 }
 
 // admitReport finds the sender in the fleet: a live session on this
-// machine whose name is the message's from-name, not the orchestrator and
-// not the app lane, within its rate and the queue. why says why not.
+// machine whose name is the message's from-name and whose process is the
+// one the message's socket names, not the orchestrator and not the app
+// lane, within its rate and the queue. why says why not.
 func (m *Model) admitReport(in bridge.InboundInput) (fleet.Agent, string) {
 	if m.orch.proc == nil {
 		return fleet.Agent{}, "the orchestrator is not running"
@@ -93,6 +94,10 @@ func (m *Model) admitReport(in bridge.InboundInput) (fleet.Agent, string) {
 		return fleet.Agent{}, "no live session on this machine has that name"
 	case len(hits) > 1:
 		return fleet.Agent{}, "more than one session has that name"
+	case in.PID != hits[0].Session.PID:
+		// The socket a message comes from is named by the sending
+		// process; the name alone could be anyone's claim.
+		return fleet.Agent{}, "it did not come from that session's process"
 	case m.isOrchestrator(hits[0]) || in.FromName == OrchestratorName:
 		return fleet.Agent{}, "it is the orchestrator itself"
 	case in.FromName == D1LaneName:

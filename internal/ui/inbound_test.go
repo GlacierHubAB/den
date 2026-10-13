@@ -3,15 +3,18 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/peermsg"
 	"github.com/GlacierHubAB/den/internal/theme"
@@ -25,7 +28,9 @@ func liveOrchestrator(t *testing.T) (*orch.Orchestrator, string) {
 	dir := t.TempDir()
 	got := filepath.Join(dir, "stdin.jsonl")
 	script := filepath.Join(dir, "claude")
-	os.WriteFile(script, []byte("#!/bin/sh\nexec cat > "+got+"\n"), 0o755)
+	// The fake starts a child, as Claude Code starts its hook and `den
+	// mcp`: requests from the orchestrator's side carry its pid.
+	os.WriteFile(script, []byte("#!/bin/sh\nsleep 300 &\necho $! > "+filepath.Join(dir, "child")+"\nexec cat > "+got+"\n"), 0o755)
 	hook := filepath.Join(dir, "den-hook")
 	os.WriteFile(hook, []byte("#!/bin/sh\ncat >/dev/null\necho '{\"decision\":\"block\"}'\n"), 0o755)
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
@@ -35,8 +40,26 @@ func liveOrchestrator(t *testing.T) (*orch.Orchestrator, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(proc.Close)
+	orchChildPID = 0
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if raw, err := os.ReadFile(filepath.Join(dir, "child")); err == nil && len(raw) > 1 {
+			fmt.Sscan(string(raw), &orchChildPID)
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if orchChildPID == 0 {
+		t.Fatal("the fake orchestrator started no child")
+	}
+	child := orchChildPID
+	t.Cleanup(func() { syscall.Kill(child, syscall.SIGKILL) })
 	return proc, got
 }
+
+// orchChildPID is a process the test orchestrator started: requests that
+// carry it come from the orchestrator's side.
+var orchChildPID int
 
 // inboundModel is a fleet of sample agents on this machine with peer names,
 // and a running orchestrator.
@@ -58,13 +81,15 @@ func inboundModel(t *testing.T) (Model, string) {
 func inboundReq(t *testing.T, in bridge.InboundInput) *bridge.Request {
 	t.Helper()
 	raw, _ := json.Marshal(in)
-	return bridge.TestRequest(bridge.Envelope{Event: bridge.InboundEvent, Payload: raw})
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.InboundEvent, Payload: raw})
+	r.PeerPID = orchChildPID
+	return r
 }
 
 func askInboundT(t *testing.T, m *Model, in bridge.InboundInput) (bridge.Decision, func()) {
 	t.Helper()
 	r := inboundReq(t, in)
-	cmd := m.handleInbound(r)
+	cmd := m.handleRequest(r)
 	d, ok := r.Decided()
 	if !ok {
 		t.Fatal("no answer for the hook")
@@ -126,6 +151,7 @@ func TestPeerReportRefusals(t *testing.T) {
 	lane.Session.Name, lane.Session.SessionID = D1LaneName, "sess-lane"
 	m.base = append(m.base, lane)
 	m.base[3].Session.Name = OrchestratorName // Maple Owl plays the orchestrator
+	pidOf := map[string]int{}                 // the reasons below come before the pid's
 	for name, from := range map[string]string{
 		"unknown sender":     "nobody",
 		"empty name":         "",
@@ -135,7 +161,7 @@ func TestPeerReportRefusals(t *testing.T) {
 		"the app lane":       D1LaneName,
 		"the orchestrator":   OrchestratorName,
 	} {
-		d, send := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: from, Body: "hi"})
+		d, send := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: from, PID: pidOf[from], Body: "hi"})
 		send()
 		if d.Behavior != "deny" || !strings.HasPrefix(d.Message, "Den refused") {
 			t.Errorf("%s: %+v", name, d)
@@ -143,6 +169,10 @@ func TestPeerReportRefusals(t *testing.T) {
 	}
 	if m.peers.inFlight != 0 || len(m.orch.origins) != 0 {
 		t.Error("a refused message became a turn")
+	}
+	// The right name from another process is refused too.
+	if d, _ := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: "snug", PID: 4999, Body: "hi"}); !strings.Contains(d.Message, "did not come from that session's process") {
+		t.Errorf("wrong pid: %+v", d)
 	}
 	// Refusal notes are rate-limited per sender.
 	notes := 0
@@ -169,7 +199,7 @@ func TestPeerReportFloodIsCapped(t *testing.T) {
 	m, _ := inboundModel(t)
 	admitted := 0
 	for i := 0; i < 10; i++ {
-		d, send := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: "snug", Body: "spam"})
+		d, send := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: "snug", PID: 4001, Body: "spam"})
 		send()
 		if strings.Contains(d.Message, "as a report") {
 			admitted++
@@ -179,15 +209,16 @@ func TestPeerReportFloodIsCapped(t *testing.T) {
 		t.Errorf("one sender got %d reports through, want %d", admitted, reportBurst)
 	}
 	// Others fill the queue up to its cap.
+	pidOf := map[string]int{"fuzzy": 4002, "maple": 4003}
 	for _, from := range []string{"fuzzy", "maple", "fuzzy", "maple"} {
-		d, send := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: from, Body: "x"})
+		d, send := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: from, PID: pidOf[from], Body: "x"})
 		send()
 		_ = d
 	}
 	if m.peers.inFlight != reportQueue {
 		t.Errorf("in flight %d, want the cap %d", m.peers.inFlight, reportQueue)
 	}
-	if d, _ := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: "fuzzy", Body: "x"}); !strings.Contains(d.Message, "too many reports") {
+	if d, _ := askInboundT(t, &m, bridge.InboundInput{Kind: "envelope", FromName: "fuzzy", PID: 4002, Body: "x"}); !strings.Contains(d.Message, "too many reports") {
 		t.Errorf("past the cap: %+v", d)
 	}
 	// Answers free the queue.
@@ -296,5 +327,32 @@ func TestAuthTroubleNote(t *testing.T) {
 	}
 	if !found {
 		t.Error("no sign-in note")
+	}
+}
+
+// TestOnlyTheOrchestratorsChildrenAsk: a process that does not run under
+// the orchestrator is refused both questions, whatever it claims.
+func TestOnlyTheOrchestratorsChildrenAsk(t *testing.T) {
+	m, _ := inboundModel(t)
+	m.orch.origins = []string{originHuman}
+	m.missions = mission.New("")
+	m.missions.Save(&mission.Mission{ID: "m1", Name: "x", State: mission.Running})
+	for name, pid := range map[string]int{"Den's own process": os.Getpid(), "no pid": 0, "pid 1": 1} {
+		r := inboundReq(t, bridge.InboundInput{Kind: "envelope", FromName: "mossy", PID: 4000, Body: "x"})
+		r.PeerPID = pid
+		m.handleRequest(r)
+		if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "only the orchestrator") {
+			t.Errorf("%s, envelope: %+v", name, d)
+		}
+		raw, _ := json.Marshal(bridge.MissionInput{ID: "m1", State: "continue"})
+		r = bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
+		r.PeerPID = pid
+		m.handleRequest(r)
+		if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "only the orchestrator") {
+			t.Errorf("%s, mission: %+v", name, d)
+		}
+	}
+	if m.peers.inFlight != 0 || len(m.orch.origins) != 1 {
+		t.Error("a refused caller changed something")
 	}
 }

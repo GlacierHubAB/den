@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/peermsg"
+	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 )
@@ -170,6 +171,9 @@ type Orchestrator struct {
 	SessionID string
 	Model     string
 	PID       int
+	// start is when the process started (procs.StartTicks), so a pid
+	// reused after it ends is never taken for it.
+	start string
 }
 
 // Start launches the process. Events arrive on Events() until Exited.
@@ -330,7 +334,7 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
-	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile}
+	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid)}
 	read := make(chan struct{})
 	go func() {
 		orc.readStdout(stdout)
@@ -414,6 +418,12 @@ func (o *Orchestrator) dropSettings() {
 	if path != "" {
 		os.Remove(path)
 	}
+}
+
+// Spawned reports whether pid runs under this orchestrator process: its
+// inbound hook and its `den mcp` do; nothing else on the machine does.
+func (o *Orchestrator) Spawned(pid int) bool {
+	return o != nil && procs.Descends(pid, o.PID, o.start)
 }
 
 // SentWindow is how long after writing a prompt Den vouches for it.
