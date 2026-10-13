@@ -118,13 +118,20 @@ type Orchestrator struct {
 
 // Start launches the process. Events arrive on Events() until Exited.
 func Start(ctx context.Context, o Options) (*Orchestrator, error) {
-	if o.Name == "" {
-		o.Name = "den-orchestrator"
-	}
 	if o.Dir == "" {
 		o.Dir, _ = os.UserHomeDir()
 	}
-	args := o.Command
+	args := Argv(o)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	return start(cmd, o)
+}
+
+// Argv is the command line Start runs for o.
+func Argv(o Options) []string {
+	if o.Name == "" {
+		o.Name = "den-orchestrator"
+	}
+	args := append([]string(nil), o.Command...)
 	if len(args) == 0 {
 		args = []string{"claude"}
 	}
@@ -138,6 +145,12 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
 		"--append-system-prompt", Prompt(o.Guidance),
+		// Claude Code records a session's system prompt and, by default,
+		// sends that record again on every resume, whatever a later launch
+		// passes: guidance turned off or changed would stay in force. Off,
+		// each launch sends the prompt it was given, a session recorded
+		// earlier included.
+		"--system-prompt-snapshot", "off",
 	)
 	if o.Spawn {
 		exe := o.Executable
@@ -166,7 +179,10 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 	if o.Model != "off" {
 		args = append(args, "--model", o.Model)
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	return args
+}
+
+func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	cmd.Dir = o.Dir
 	cmd.Env = append(os.Environ(), "DEN_ORCHESTRATOR=1")
 	stdin, err := cmd.StdinPipe()

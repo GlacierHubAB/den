@@ -81,6 +81,39 @@ func TestRoundTripWithFakeClaude(t *testing.T) {
 	next(Exited)
 }
 
+// The orchestrator's command line, pinned. --system-prompt-snapshot off
+// keeps a resume from sending the prompt an earlier launch recorded
+// (Claude Code 2.1.289 does by default), so guidance turned off or changed
+// takes effect.
+func TestArgv(t *testing.T) {
+	t.Setenv("DEN_ORCHESTRATOR_MODEL", "")
+	got := Argv(Options{Command: []string{"claude"}, Name: "den-orchestrator", Spawn: true, Executable: "/usr/bin/den", Resume: "sess-1", Guidance: "Lead with the answer.\n"})
+	want := []string{"claude", "-p",
+		"--input-format", "stream-json",
+		"--output-format", "stream-json",
+		"--include-partial-messages",
+		"--verbose",
+		"--name", "den-orchestrator",
+		"--tools", "ListAgents,SendMessage",
+		"--append-system-prompt", Prompt("Lead with the answer.\n"),
+		"--system-prompt-snapshot", "off",
+		"--mcp-config", MCPConfig("/usr/bin/den"), "--strict-mcp-config",
+		"--allowedTools", "ListAgents,SendMessage," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool,
+		"--resume", "sess-1",
+		"--model", "sonnet",
+	}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("argv:\n got %q\nwant %q", got, want)
+	}
+	off := Argv(Options{Resume: "sess-1"})
+	if strings.Contains(strings.Join(off, " "), "<human_guidance>\n") || !strings.Contains(strings.Join(off, " "), "--system-prompt-snapshot off") {
+		t.Errorf("without guidance: %q", off)
+	}
+	if strings.Contains(strings.Join(Argv(Options{Model: "off"}), " "), "--model") {
+		t.Error(`model "off" keeps Claude Code's default`)
+	}
+}
+
 func TestSpawnInputWorktree(t *testing.T) {
 	for in, want := range map[string]spawn.Worktree{
 		`{"dir":"/r","worktree":true}`:      spawn.WorktreeAuto,

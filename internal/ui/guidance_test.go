@@ -370,3 +370,73 @@ func TestGuidanceRestartWaitsForIdle(t *testing.T) {
 		t.Errorf("note %q", lastNote(&m))
 	}
 }
+
+// After guidance is turned off, changed or turned on, the next launch
+// resumes the session with that prompt and --system-prompt-snapshot off,
+// so Claude Code sends it rather than the prompt it recorded before.
+func TestGuidanceChangeReachesTheNextLaunch(t *testing.T) {
+	cfg := guidanceEnv(t)
+	var launched []orch.Options
+	defer func(f func(orch.Options) (*orch.Orchestrator, error)) { launchOrchestrator = f }(launchOrchestrator)
+	launchOrchestrator = func(o orch.Options) (*orch.Orchestrator, error) {
+		launched = append(launched, o)
+		return nil, os.ErrNotExist
+	}
+	launch := func(m *Model) []string {
+		t.Helper()
+		before := len(launched)
+		if msg := startOrchestrator(m.cfg, "sess-1", m.guide.active)(); msg == nil {
+			t.Fatal("no launch")
+		}
+		if len(launched) != before+1 {
+			t.Fatal("startOrchestrator did not launch")
+		}
+		o := launched[len(launched)-1]
+		if o.Resume != "sess-1" {
+			t.Errorf("resume %q", o.Resume)
+		}
+		return orch.Argv(o)
+	}
+	prompt := func(argv []string) string {
+		for i, a := range argv {
+			if a == "--append-system-prompt" {
+				return argv[i+1]
+			}
+		}
+		t.Fatal("no prompt in argv")
+		return ""
+	}
+	snapshotOff := func(argv []string) bool {
+		return strings.Contains(strings.Join(argv, " "), "--system-prompt-snapshot off")
+	}
+
+	p := ownGuidance(t, "Lead with the answer.\n")
+	writeConfig(t, cfg, "[orchestrator]\nguidance = \""+p+"\"\n")
+	m := guidanceModel(t, p)
+	approve(t, &m)
+	on := launch(&m)
+	if !strings.HasSuffix(prompt(on), "<human_guidance>\nLead with the answer.\n\n</human_guidance>") || !snapshotOff(on) {
+		t.Fatalf("approved guidance: %q", prompt(on))
+	}
+
+	writeConfig(t, cfg, "[orchestrator]\nmodel = \"opus\"\n")
+	m.applyGuidance(readGuidance(m.guide.setting, m.guide.sha))
+	off := launch(&m)
+	if prompt(off) != orch.SystemPrompt || !snapshotOff(off) {
+		t.Errorf("guidance off: the prompt still has a block, or the snapshot is on: %q", off)
+	}
+
+	if err := os.WriteFile(p, []byte("Lead with the steps.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writeConfig(t, cfg, "[orchestrator]\nguidance = \""+p+"\"\n")
+	m.applyGuidance(readGuidance(m.guide.setting, m.guide.sha))
+	if pending := launch(&m); prompt(pending) != orch.SystemPrompt {
+		t.Error("changed text reached the prompt before approval")
+	}
+	approve(t, &m)
+	changed := launch(&m)
+	if !strings.HasSuffix(prompt(changed), "<human_guidance>\nLead with the steps.\n\n</human_guidance>") || strings.Contains(prompt(changed), "Lead with the answer.") || !snapshotOff(changed) {
+		t.Errorf("changed guidance: %q", prompt(changed))
+	}
+}

@@ -97,9 +97,15 @@ func startOrchestrator(cfg config.Config, resume, guidance string) tea.Cmd {
 		if name == "" {
 			name = OrchestratorName
 		}
-		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance})
+		o, err := launchOrchestrator(orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance})
 		return orchStartedMsg{o: o, err: err}
 	}
+}
+
+// launchOrchestrator starts the process; tests replace it to see the
+// options every launch gets.
+var launchOrchestrator = func(o orch.Options) (*orch.Orchestrator, error) {
+	return orch.Start(context.Background(), o)
 }
 
 // newOrchestratorSession forgets the resumable session: the next message
