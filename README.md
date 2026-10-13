@@ -611,12 +611,21 @@ directs others, who stay open unless also selected.
 The rules, enforced whatever asked: an agent that is working or waiting on
 you is refused unless you add `--force`; the orchestrator, Den itself and
 anything Den runs inside are never closed; an agent not in the fleet is
-refused by name; the window Den runs in is never closed. Each agent gets a
-graceful stop (SIGTERM) and a short wait; only `--force` sends SIGKILL to one
-that does not stop, and nothing is forced from the orchestrator's side. A
-terminal Den opened for the agent closes with its process; a window Den
-matched by title is closed through Hyprland by address, never any other
-window. Closed agents leave Den's state at once: their open inbox items are
+refused by name; the window Den runs in is never closed. Agents close one at
+a time, half a second apart. Each gets a graceful stop (SIGTERM) and a short
+wait; only `--force` sends SIGKILL to one that does not stop, and nothing is
+forced from the orchestrator's side. Only the agent's own process is
+signalled, never its terminal. A terminal Den opened for the agent runs it
+as its command, as a Ghostty process of its own with a window class Den
+chose (`io.glacierhub.den.<peer>`, recorded in Den's state with the
+agent's session), and closes with it. Den closes a window itself only when
+it is still open after the agent ended, is still the one window with the
+class recorded for that session, is run by the agent's terminal, and has
+nothing else running in it (no shell in another tab, no second claude):
+never a window of an agent Den did not spawn, never one matched by title or
+folder, never the window in front or its own. The question says,
+agent by agent, which window closes and how, or why Den will not close it.
+Closed agents leave Den's state at once: their open inbox items are
 resolved, they drop out of the tree, and the roster rescans.
 
 `/close idle 1h` picks the agents that have been idle for at least that long.

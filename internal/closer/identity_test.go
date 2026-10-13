@@ -141,3 +141,19 @@ func TestNoKillAfterTheContextEnds(t *testing.T) {
 		}
 	}
 }
+
+// TestBusy reads real children: a process with a live child is busy, one
+// without is not, and a pid that cannot be read counts as busy.
+func TestBusy(t *testing.T) {
+	cmd, done := child(t, "sleep")
+	if !(System{}).Busy(os.Getpid()) {
+		t.Error("the test process has a live child")
+	}
+	if (System{}).Busy(cmd.Process.Pid) {
+		t.Error("sleep has no children")
+	}
+	if !(System{}).Busy(0) {
+		t.Error("an unreadable pid counts as busy")
+	}
+	_ = done
+}

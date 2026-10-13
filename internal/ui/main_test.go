@@ -20,6 +20,9 @@ func TestMain(m *testing.M) {
 	}
 	gitenvtest.Scrub() // git must not work on a repository the test run inherited
 	os.Setenv("XDG_STATE_HOME", dir)
+	// No test may reach the compositor the run happens to sit in: close
+	// plans list windows and a close may close one.
+	os.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
 	// The settle guard is tested on its own; elsewhere ^Y acts at once.
 	answerSettle = 0
 	code := m.Run()
