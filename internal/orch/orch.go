@@ -35,6 +35,25 @@ type Event struct {
 	SessionID string
 	Model     string
 	CostUSD   float64 // result
+	// Stderr is the first line the process wrote to stderr, on Exited:
+	// one sanitised line of at most maxStderrLine characters.
+	Stderr string
+}
+
+// maxStderrLine caps a line of the process's stderr in an event.
+const maxStderrLine = 200
+
+// UnknownFlag reports whether claude's first stderr line refuses an
+// option on its command line, as a version older than Den needs does.
+func UnknownFlag(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "unknown option") || strings.Contains(s, "unknown argument") || strings.Contains(s, "unrecognized option")
+}
+
+// TooOld is what Den says when claude refused one of its flags; stderr is
+// Event.Stderr, already one sanitised, capped line.
+func TooOld(stderr string) string {
+	return "the orchestrator couldn't start: " + stderr + "; Den needs Claude Code 2.1.289 or newer"
 }
 
 // Kind classifies events.
@@ -118,13 +137,20 @@ type Orchestrator struct {
 
 // Start launches the process. Events arrive on Events() until Exited.
 func Start(ctx context.Context, o Options) (*Orchestrator, error) {
-	if o.Name == "" {
-		o.Name = "den-orchestrator"
-	}
 	if o.Dir == "" {
 		o.Dir, _ = os.UserHomeDir()
 	}
-	args := o.Command
+	args := Argv(o)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	return start(cmd, o)
+}
+
+// Argv is the command line Start runs for o.
+func Argv(o Options) []string {
+	if o.Name == "" {
+		o.Name = "den-orchestrator"
+	}
+	args := append([]string(nil), o.Command...)
 	if len(args) == 0 {
 		args = []string{"claude"}
 	}
@@ -138,6 +164,12 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
 		"--append-system-prompt", Prompt(o.Guidance),
+		// Claude Code records a session's system prompt and, by default,
+		// sends that record again on every resume, whatever a later launch
+		// passes: guidance turned off or changed would stay in force. Off,
+		// each launch sends the prompt it was given, a session recorded
+		// earlier included.
+		"--system-prompt-snapshot", "off",
 	)
 	if o.Spawn {
 		exe := o.Executable
@@ -166,7 +198,10 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 	if o.Model != "off" {
 		args = append(args, "--model", o.Model)
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	return args
+}
+
+func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	cmd.Dir = o.Dir
 	cmd.Env = append(os.Environ(), "DEN_ORCHESTRATOR=1")
 	stdin, err := cmd.StdinPipe()
@@ -194,8 +229,13 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
 		var tail []string
+		first := ""
 		for sc.Scan() {
-			tail = append(tail, sc.Text())
+			line := sanitize.Label(sc.Text(), maxStderrLine)
+			if first == "" {
+				first = line
+			}
+			tail = append(tail, line)
 			if len(tail) > 5 {
 				tail = tail[1:]
 			}
@@ -213,7 +253,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		if len(tail) > 0 {
 			msg += " · " + strings.Join(tail, " | ")
 		}
-		orc.emit(Event{Kind: Exited, Text: msg})
+		orc.emit(Event{Kind: Exited, Text: msg, Stderr: first})
 		close(orc.events)
 		close(orc.done)
 	}()

@@ -66,6 +66,9 @@ func ask(args []string) {
 		case orch.Error:
 			fail("den: %s", ev.Text)
 		case orch.Exited:
+			if orch.UnknownFlag(ev.Stderr) {
+				fail("den: %s", orch.TooOld(ev.Stderr))
+			}
 			fail("den: %s", ev.Text)
 		}
 	}

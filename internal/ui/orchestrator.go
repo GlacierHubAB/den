@@ -111,9 +111,15 @@ func startOrchestrator(cfg config.Config, resume, guidance string) tea.Cmd {
 		if name == "" {
 			name = OrchestratorName
 		}
-		o, err := orch.Start(context.Background(), orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance})
+		o, err := launchOrchestrator(orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance})
 		return orchStartedMsg{o: o, err: err}
 	}
+}
+
+// launchOrchestrator starts the process; tests replace it to see the
+// options every launch gets.
+var launchOrchestrator = func(o orch.Options) (*orch.Orchestrator, error) {
+	return orch.Start(context.Background(), o)
 }
 
 // newOrchestratorSession forgets the resumable session: the next message
@@ -427,6 +433,13 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	case orch.Exited:
 		m.orch.thinking = false
 		m.orch.proc = nil
+		if !m.orch.started && orch.UnknownFlag(ev.Stderr) {
+			// An older claude that refuses one of Den's flags: no session
+			// was at fault, so the resumable one is kept.
+			m.orch.status = "stopped"
+			m.logEntry(m.addChat(chatEntry{role: "note", text: orch.TooOld(ev.Stderr), at: now}))
+			return nil
+		}
 		if !m.orch.started && m.orch.resume != "" {
 			// The old session could not be resumed (deleted, or Claude Code
 			// changed): start fresh and carry the restored chat along.

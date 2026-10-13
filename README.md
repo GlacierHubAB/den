@@ -498,6 +498,9 @@ at your next message. Other keys leave the approval alone. A process running as 
 file and the approval together, so Den's checks guard against mistakes and
 other users, not against your own processes.
 
+`den ask` from the command line starts a fresh orchestrator and doesn't load
+guidance.
+
 ### Dispatch cards
 
 When the orchestrator hands a brief to an agent, that agent's turn shows up in
