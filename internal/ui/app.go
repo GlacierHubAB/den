@@ -256,7 +256,7 @@ func (m Model) Init() tea.Cmd {
 		cmds = append(cmds, waitRequest(m.srv))
 	}
 	if m.api.srv != nil {
-		cmds = append(cmds, waitAPINote(m.api.srv))
+		cmds = append(cmds, waitAPINote(m.api.srv), waitAPIAct(m.api.srv))
 	}
 	if m.remote.feed != nil {
 		m.remote.pump.start(m.remote.feed)
@@ -559,6 +559,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
+	case apiActMsg:
+		if msg.from != m.api.srv {
+			return m, nil
+		}
+		cmd := m.applyAPIAct(msg.act)
+		return m, tea.Batch(cmd, waitAPIAct(msg.from))
 	case apiNoteMsg:
 		if msg.from != m.api.srv {
 			return m, nil
@@ -1334,6 +1340,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.APIOn {
 		return m.decideAPIOn(it, verb)
+	}
+	if it.Kind == inbox.Grant {
+		return m.decideGrant(it, verb)
 	}
 	if it.Kind == inbox.Guidance {
 		return m.decideGuidance(it, verb)

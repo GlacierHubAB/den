@@ -83,11 +83,35 @@ host}`; a `v` Den does not serve gets `unsupported`. Added fields never change
 | `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk |
 | `chat.history` | `{session}` | `[Message]` of an ask session |
 | `chat.sessions` | | `[{id, title, last, current}]`, newest first, exactly one current |
+| `grant.request` | `{manifest}` | `{id}`; the answer comes on `grant.events`, never here |
+| `grant.events` | | `{subscribed:true}`, then `grant` events `{id, answer: granted\|denied\|expired, version, hash}` |
 
 Every other op answers `unsupported`, including every verb that would approve,
 allow, deny, answer, start, close or message: there are none. This release
-also answers `unsupported` for `focus`, `grant.request`, `grant.events`,
-`theme.get`, `mission.start`, `mission.drop` and `view.data`.
+also answers `unsupported` for `focus`, `theme.get`, `mission.start`,
+`mission.drop` and `view.data`.
+
+## Grants
+
+`grant.request {manifest: {id, name, version, capabilities, provenance?,
+body}}` is the one way an app asks you for something. Den puts a card in its
+inbox: a title and lines of its own (which app asked, by the executable Den
+read, and the capabilities), then `body` exactly as the app sent it, between
+rules Den draws. You answer with `Ctrl+Y` (granted) or `Ctrl+N` (denied), and
+`Ctrl+Y` counts only once the whole card has been on screen; there is no
+"always". The answer goes to `grant.events` connections of the same
+executable that asked, never to another app; an app that is away gets it
+when it subscribes again. Its `hash` is `"sha256:"` + the hex SHA-256 of the
+body Den showed, so an app records a grant only when that hash is the one it
+computed.
+
+Den refuses, with `bad_request`, a body that is empty, over 16 KiB or 200
+lines, not valid UTF-8, holds a tab, a control, bidi or invisible character,
+or draws rules like Den's own frame: it shows a body exactly or not at all.
+An app may have three requests waiting, and Den takes twenty per run; a body
+you denied is not asked again until Den restarts. A request expires when its
+app has had no connection for 30 seconds, on `/api disconnect`, and when Den
+exits.
 
 ## Types
 

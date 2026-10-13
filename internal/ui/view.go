@@ -653,6 +653,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
 	case it.Answerable() && it.Kind == inbox.APIOn:
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
+	case it.Answerable() && it.Kind == inbox.Grant:
+		out = append(out, key("^Y", "grant it")+"  "+key("^N", "deny"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -898,6 +900,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.APIOn {
 			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")
+		}
+		if it.Kind == inbox.Grant {
+			acts = key("^Y", "grant it") + sp + sp + key("^N", "deny")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")

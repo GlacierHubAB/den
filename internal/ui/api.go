@@ -27,8 +27,86 @@ import (
 
 type apiState struct {
 	srv     *api.Server
-	err     string      // why the API is not running, "" when it is or is off
-	askItem *inbox.Item // the open /api on question
+	err     string                 // why the API is not running, "" when it is or is off
+	askItem *inbox.Item            // the open /api on question
+	grants  map[*inbox.Item]string // open grant cards → grant id
+}
+
+type apiActMsg struct {
+	act  api.Act
+	from *api.Server
+}
+
+func waitAPIAct(srv *api.Server) tea.Cmd {
+	return func() tea.Msg {
+		act, ok := <-srv.Acts()
+		if !ok {
+			return nil
+		}
+		return apiActMsg{act: act, from: srv}
+	}
+}
+
+// applyAPIAct puts an app's grant card in the inbox, or settles the cards
+// of grants whose app is gone.
+func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if m.api.grants == nil {
+		m.api.grants = map[*inbox.Item]string{}
+	}
+	if g := act.Grant; g != nil {
+		title := "App grant · " + g.Name + " v" + strconv.Itoa(g.Version)
+		body := []string{
+			"requested by " + sanitize.Label(filepath.Base(g.Exe), 40) + " (pid " + strconv.Itoa(g.PID) + ", " + sanitize.Label(g.Exe, 120) + ") through den-api.sock",
+			"capabilities: " + strings.Join(g.Capabilities, ", "),
+			"──── the app's request, as it sent it ────",
+		}
+		body = append(body, strings.Split(g.Body, "\n")...)
+		body = append(body, "──── end of the app's request · sha256 "+strings.TrimPrefix(g.Hash, "sha256:")[:16]+"… ────")
+		it := m.store.AddGrant(title, body)
+		m.api.grants[it] = g.ID
+		m.refresh()
+		if m.cfg.Notify.NeedsYou {
+			return m.notifyCmd(inbox.APISession, "has an app asking for a grant")
+		}
+		return nil
+	}
+	gone := map[string]bool{}
+	for _, id := range act.Expired {
+		gone[id] = true
+	}
+	for it, id := range m.api.grants {
+		if gone[id] {
+			if it.State != inbox.Resolved {
+				m.store.Settle(it, false, "expired: the app is gone")
+			}
+			delete(m.api.grants, it)
+		}
+	}
+	m.refresh()
+	return nil
+}
+
+// decideGrant is the human's ^Y or ^N on a grant card, after the whole
+// request was shown (answer's readGate). It is answered once: no /always.
+func (m Model) decideGrant(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	id, ok := m.api.grants[it]
+	if !ok || m.api.srv == nil {
+		m.store.Settle(it, false, "stale; nothing granted")
+		m.refresh()
+		return m.say("That grant request is stale; nothing was granted.", true)
+	}
+	if verb == "always" {
+		return m.say("A grant is answered once: ^Y grants it, ^N denies it.", true)
+	}
+	delete(m.api.grants, it)
+	answer := "denied"
+	if verb == "allow" {
+		answer = "granted"
+	}
+	m.api.srv.GrantAnswered(id, answer)
+	m.store.Settle(it, verb == "allow", answer)
+	m.refresh()
+	return m.say("Grant "+answer+".", false)
 }
 
 type apiNoteMsg struct {
@@ -78,7 +156,7 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	m.api.srv, m.api.err = srv, ""
 	m.publishAPI()
-	return waitAPINote(srv)
+	return tea.Batch(waitAPINote(srv), waitAPIAct(srv))
 }
 
 func waitAPINote(srv *api.Server) tea.Cmd {

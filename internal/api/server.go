@@ -58,6 +58,10 @@ type Server struct {
 
 	paused atomic.Bool // /api off or /api disconnect: answer unavailable
 
+	grants   *grants
+	acts     chan Act
+	lastConn map[string]time.Time // exe -> when its last connection closed
+
 	mu        sync.Mutex
 	conns     map[*conn]bool
 	lastFleet []byte
@@ -78,9 +82,87 @@ func Listen(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opts: o, b: b, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refused: map[int]bool{}}
+	s.grants, s.acts, s.lastConn = newGrants(), make(chan Act, 64), map[string]time.Time{}
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	go s.accept()
+	go s.expireLoop()
 	return s, nil
+}
+
+// Acts are what only the UI can do: put a grant card in the inbox, settle
+// expired ones.
+func (s *Server) Acts() <-chan Act { return s.acts }
+
+// GrantAnswered is the human's ^Y (granted) or ^N (denied) on a grant
+// card. The answer goes to the app that asked, never to another: to its
+// subscribed connections, or kept until it subscribes again.
+func (s *Server) GrantAnswered(id, answer string) {
+	ev, exe, ok := s.grants.answer(id, answer)
+	if !ok {
+		return
+	}
+	s.deliverGrant(exe, ev)
+}
+
+func (s *Server) deliverGrant(exe string, ev GrantAnswer) {
+	delivered := false
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		if c.peer.Exe == exe && c.subscribed(EventGrant) {
+			delivered = c.push(Event{Event: EventGrant, Data: ev}, true) || delivered
+		}
+	}
+	if !delivered {
+		s.grants.retain(exe, ev)
+	}
+}
+
+// connected reports whether an exe has a connection now, or had one in the
+// last grantGrace: an app that re-dials keeps its pending grants.
+func (s *Server) connected(exe string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for c := range s.conns {
+		if c.peer.Exe == exe {
+			return true
+		}
+	}
+	t, ok := s.lastConn[exe]
+	return ok && time.Since(t) < grantGrace
+}
+
+func (s *Server) expireLoop() {
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.lane.stop:
+			return
+		case <-t.C:
+			s.expire(s.connected)
+		}
+	}
+}
+
+// expire ends grants whose app is gone, and tells the UI.
+func (s *Server) expire(keep func(string) bool) {
+	evs := s.grants.expire(keep)
+	if len(evs) == 0 {
+		return
+	}
+	var ids []string
+	for _, ev := range evs {
+		ids = append(ids, ev.ID)
+	}
+	select {
+	case s.acts <- Act{Expired: ids}:
+	default:
+	}
 }
 
 // LanePID is the read-only lane's pid, 0 when it is not running. Den
@@ -120,6 +202,7 @@ func (s *Server) Close() {
 // Resume; the path stays bound, so nothing else can take it.
 func (s *Server) Pause() {
 	s.paused.Store(true)
+	s.expire(func(string) bool { return false })
 	s.mu.Lock()
 	for c := range s.conns {
 		c.close()
@@ -379,6 +462,7 @@ func (s *Server) serve(nc net.Conn) {
 		c.close()
 		s.mu.Lock()
 		delete(s.conns, c)
+		s.lastConn[peer.Exe] = time.Now()
 		s.mu.Unlock()
 	}()
 	go c.writer()
@@ -552,6 +636,32 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		c.reply(req.ID, h)
 	case "ask":
 		s.ask(c, req)
+	case "grant.request":
+		gr, err := s.grants.request(req.Params, c.peer)
+		if err != nil {
+			var e errAsk
+			if errors.As(err, &e) {
+				c.fail(req.ID, e.code, e.msg)
+			} else {
+				c.fail(req.ID, CodeInternal, "")
+			}
+			return
+		}
+		select {
+		case s.acts <- Act{Grant: gr}:
+			c.reply(req.ID, map[string]string{"id": gr.ID})
+		default:
+			s.grants.cancel(gr.ID)
+			c.fail(req.ID, CodeUnavailable, "Den is busy; ask again")
+		}
+	case "grant.events":
+		c.mu.Lock()
+		c.subs[EventGrant] = true
+		c.mu.Unlock()
+		c.reply(req.ID, map[string]bool{"subscribed": true})
+		for _, ev := range s.grants.take(c.peer.Exe) {
+			c.push(Event{Event: EventGrant, Data: ev}, true)
+		}
 	default:
 		c.fail(req.ID, CodeUnsupported, "")
 	}

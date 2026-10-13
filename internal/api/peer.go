@@ -74,8 +74,11 @@ func identify(c net.Conn) (Peer, error) {
 		return p, fmt.Errorf("peer %d changed while it was read", pid)
 	}
 	p.Start = start
-	return p, nil
+	return identifyHook(p), nil
 }
+
+// identifyHook lets tests make one process look like two apps.
+var identifyHook = func(p Peer) Peer { return p }
 
 // procStat reads a process's start time and parent from /proc/<pid>/stat.
 var procStat = func(pid int) (start uint64, ppid int, err error) {
