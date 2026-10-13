@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -19,7 +20,10 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/noremote_
 // remote support. The goldens were rendered by this same test on the code
 // before it; only the clock and ages are masked, since they move.
 func TestNoRemotesViewUnchanged(t *testing.T) {
-	volatile := regexp.MustCompile(`\d{2}:\d{2}|\b\d+[smhd]\b`)
+	// Clock times and ages vary from run to run. An age can follow an SGR
+	// sequence directly ("…124m20739d"), with no word boundary before it, so
+	// the "m" that ends the sequence counts as one and is kept.
+	volatile := regexp.MustCompile(`\d{2}:\d{2}|(\b|m)\d+[smhd]\b`)
 	for _, c := range []struct {
 		name string
 		tab  tab
@@ -37,7 +41,12 @@ func TestNoRemotesViewUnchanged(t *testing.T) {
 		m.colors = map[string]string{} // no colors.json: hues come from the session id
 		m.refresh()
 		// Styled, so colours count too; the mask also hides some SGR digits, alike on both sides.
-		got := volatile.ReplaceAllString(m.View().Content, "#")
+		got := volatile.ReplaceAllStringFunc(m.View().Content, func(v string) string {
+			if strings.HasPrefix(v, "m") {
+				return "m#"
+			}
+			return "#"
+		})
 		path := filepath.Join("testdata", "noremote_"+c.name+".golden")
 		if *updateGolden {
 			if err := os.MkdirAll("testdata", 0o755); err != nil {
