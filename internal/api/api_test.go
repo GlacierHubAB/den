@@ -609,22 +609,123 @@ func TestRebindOnce(t *testing.T) {
 	}
 }
 
-// A newer ask from the same app supersedes its stuck one: the old stream
-// ends at once, and the new one is answered.
-func TestNewAskSupersedesAStuckOne(t *testing.T) {
+// A newer ask on the same connection supersedes its stuck one: the old
+// stream ends at once with its own ask id, and the new one is answered.
+func TestNewAskSupersedesOnItsConnection(t *testing.T) {
 	h := newHarness(t, 2)
 	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
 	a := h.dial()
 	a.hello()
+	first := askID(t, a.call("ask", map[string]string{"text": "stuck"}))
+	waitChunk(t, a, "text")
+	os.Remove(filepath.Join(h.lane, "slow"))
+	second := askID(t, a.call("ask", map[string]string{"text": "fresh"}))
+	if ch := waitChunk(t, a, "error"); ch.Message != "superseded by a newer question" || ch.Ask != first {
+		t.Errorf("the stuck ask ended with %+v", ch)
+	}
+	if ch := waitChunk(t, a, "done"); ch.Ask != second {
+		t.Errorf("the newer ask ended with %+v", ch)
+	}
+}
+
+// Connections that name the same session in hello share one ask: a newer
+// ask on one supersedes the other's.
+func TestHelloSessionSupersedesAcrossConnections(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
+	sess := randHex()
+	a := h.dial()
+	a.helloSession(sess)
 	a.call("ask", map[string]string{"text": "stuck"})
 	waitChunk(t, a, "text")
 	os.Remove(filepath.Join(h.lane, "slow"))
-	if ch := askEnds(t, h, "fresh", 8*time.Second); ch.Type != "done" {
-		t.Fatalf("the newer ask: %+v", ch)
-	}
+	b := h.dial()
+	b.helloSession(strings.ToUpper(sess))
+	b.call("ask", map[string]string{"text": "fresh"})
 	if ch := waitChunk(t, a, "error"); ch.Message != "superseded by a newer question" {
 		t.Errorf("the stuck ask ended with %q", ch.Message)
 	}
+	waitChunk(t, b, "done")
+}
+
+// Two processes of the same program, without a shared session, neither
+// supersede nor see each other's asks: the newer one waits its turn, and
+// the fleet hides the other's ask id, which is what would cancel it.
+// Guessed or partial ids cancel nothing.
+func TestSameExeAsks(t *testing.T) {
+	for _, name := range []string{"plain", "own"} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, 2)
+			os.WriteFile(filepath.Join(h.lane, "slow"), nil, 0o600)
+			a, b := h.dial(), h.dial()
+			if name == "plain" {
+				a.hello()
+				b.hello()
+			} else {
+				a.helloSession(randHex())
+				b.helloSession(randHex())
+			}
+			id := askID(t, a.call("ask", map[string]string{"text": "slow"}))
+			if len(id) != len("a-")+32 {
+				t.Errorf("ask id %q is not 128 bits", id)
+			}
+			waitChunk(t, a, "text")
+			bid := askID(t, b.call("ask", map[string]string{"text": "after"}))
+			if ch := waitChunk(t, b, "status"); ch.Text != "Waiting for 1 earlier question…" || ch.Ask != bid {
+				t.Errorf("b's ask: %+v", ch)
+			}
+			var f Fleet
+			json.Unmarshal(b.call("fleet.snapshot", nil).Result, &f)
+			if len(f.Asks) != 2 {
+				t.Fatalf("asks %+v", f.Asks)
+			}
+			for _, as := range f.Asks {
+				if as.Ask == id || (as.Ask != bid && (as.Ask != "" || as.Session != "")) {
+					t.Errorf("b sees another client's ask: %+v", as)
+				}
+			}
+			for _, guess := range []string{id[:10], "a-" + randHex(), id[2:]} {
+				if l := b.call("ask.cancel", map[string]string{"ask": guess}); code(l) != CodeNotFound {
+					t.Errorf("b cancelled %q: %+v", guess, l)
+				}
+			}
+			if st := h.s.LaneState(); st.Queued != 1 || !st.Running {
+				t.Errorf("lane state %+v: an ask was superseded or cancelled", st)
+			}
+			os.Remove(filepath.Join(h.lane, "slow"))
+			a.nc.Close() // a's turn stops, b's runs
+			waitChunk(t, b, "done")
+		})
+	}
+}
+
+// A hello session must be 128 bits in hex.
+func TestHelloSessionShape(t *testing.T) {
+	h := newHarness(t, 2)
+	for _, bad := range []string{"drey", "0123456789abcdef", randHex() + "00", "zz" + randHex()[2:]} {
+		c := h.dial()
+		if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "session": bad}); code(l) != CodeBadRequest {
+			t.Errorf("session %q: %+v", bad, l)
+		}
+	}
+}
+
+func (c *client) helloSession(s string) {
+	c.t.Helper()
+	if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "session": s}); !l.OK {
+		c.t.Fatalf("hello: %+v", l.Error)
+	}
+}
+
+func askID(t *testing.T, l line) string {
+	t.Helper()
+	var r struct {
+		Ask string `json:"ask"`
+	}
+	if !l.OK || json.Unmarshal(l.Result, &r) != nil || r.Ask == "" {
+		t.Fatalf("ask refused: %+v", l.Error)
+	}
+	return r.Ask
 }
 
 // Another app's ask waits its turn, told how many are ahead, and runs

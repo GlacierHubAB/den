@@ -52,10 +52,13 @@ type askJob struct {
 	session string
 	text    string
 	exe     string
-	send    func(Chunk) bool // false: the client is gone
+	// scope is who the ask belongs to: its connection, or the session the
+	// client named in hello. A newer ask supersedes only one in its scope.
+	scope string
+	send  func(Chunk) bool // false: the client is gone
 	seq     int
 	reply   strings.Builder
-	// cancelled is closed by ask.cancel, by a newer ask from the same app,
+	// cancelled is closed by ask.cancel, by a newer ask in the same scope,
 	// or when the asking connection goes: the turn stops, its slot frees.
 	cancelled chan struct{}
 	once      sync.Once
@@ -66,7 +69,7 @@ type askJob struct {
 
 func (j *askJob) cancel() { j.cancelWith("cancelled") }
 
-// superseded is why an ask ends when the same program asks again.
+// superseded is why an ask ends when its scope asks again.
 const superseded = "superseded by a newer question"
 
 // cancelWith stops the ask; the first reason given is the one its stream
@@ -119,10 +122,10 @@ func (j *askJob) end(errMsg string) {
 	}
 	j.ended = true
 	if errMsg == "" {
-		j.send(Chunk{Type: "done", Session: j.session})
+		j.send(Chunk{Type: "done", Ask: j.id, Session: j.session})
 		return
 	}
-	j.send(Chunk{Type: "error", Message: errMsg})
+	j.send(Chunk{Type: "error", Ask: j.id, Message: errMsg})
 }
 
 // LaneConfig configures the lane.
@@ -220,7 +223,7 @@ func (l *lane) resume() {
 
 type askState struct {
 	AskStatus
-	exe string
+	scope string
 }
 
 func newLane(cfg LaneConfig, chat *chatStore, view func() *View, note func(string)) *lane {
@@ -294,9 +297,10 @@ type errAsk struct{ code, msg string }
 
 func (e errAsk) Error() string { return e.msg }
 
-// enqueue queues an ask. A newer ask from the same app supersedes its
-// earlier one, which ends with "superseded"; the budget and the queue cap
-// refuse at once.
+// enqueue queues an ask. A newer ask in the same scope (connection or
+// hello session) supersedes its earlier one, which ends with "superseded";
+// another process of the same program never does. The budget and the
+// queue cap refuse at once.
 func (l *lane) enqueue(j *askJob) error {
 	l.mu.Lock()
 	if l.leftLocked() <= 0 {
@@ -304,12 +308,12 @@ func (l *lane) enqueue(j *askJob) error {
 		return errAsk{CodeUnavailable, "today's ask budget is spent"}
 	}
 	var old []*askJob
-	if l.cur != nil && l.cur.exe == j.exe {
+	if l.cur != nil && l.cur.scope == j.scope {
 		old = append(old, l.cur)
 	}
 	kept := l.queue[:0]
 	for _, q := range l.queue {
-		if q.exe == j.exe {
+		if q.scope == j.scope {
 			old = append(old, q)
 			continue
 		}
@@ -326,10 +330,10 @@ func (l *lane) enqueue(j *askJob) error {
 	l.queue = append(l.queue, j)
 	l.jobs[j.id] = j
 	ahead := len(l.queue) - 1
-	if l.cur != nil && l.cur.exe != j.exe {
+	if l.cur != nil && l.cur.scope != j.scope {
 		ahead++
 	}
-	l.statuses[j.id] = askState{AskStatus: AskStatus{Ask: j.id, Session: j.session}, exe: j.exe}
+	l.statuses[j.id] = askState{AskStatus: AskStatus{Ask: j.id, Session: j.session}, scope: j.scope}
 	l.mu.Unlock()
 	for _, o := range old {
 		o.cancelWith(superseded)
@@ -366,7 +370,8 @@ func (l *lane) finish(j *askJob, errMsg string) {
 	l.changed()
 }
 
-// cancel stops an ask the same exe made; false for any other ask.
+// cancel stops an ask by its id, which only the asking connection was told,
+// and only for the program that made it; false for any other ask.
 func (l *lane) cancel(id, exe string) bool {
 	l.mu.Lock()
 	j := l.jobs[id]
@@ -393,16 +398,17 @@ func (l *lane) cancel(id, exe string) bool {
 	return true
 }
 
-// Asks is the latest status of every running or queued ask; the session
-// id only for asks the viewer's exe made.
-func (l *lane) Asks(viewerExe string) []AskStatus {
+// Asks is the latest status of every running or queued ask. The ask and
+// session ids only for asks in the viewer's scope: an ask id is what cancels
+// it.
+func (l *lane) Asks(viewerScope string) []AskStatus {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var out []AskStatus
 	for _, s := range l.statuses {
 		a := s.AskStatus
-		if s.exe != viewerExe {
-			a.Session = ""
+		if s.scope != viewerScope {
+			a.Ask, a.Session = "", ""
 		}
 		out = append(out, a)
 	}
@@ -644,7 +650,7 @@ func (l *lane) serve(p *laneProc, j *askJob) (*laneProc, string) {
 					return nil, "the reply was too long and was cut"
 				}
 				j.reply.WriteString(text)
-				if !j.send(Chunk{Type: "text", Delta: text}) {
+				if !j.send(Chunk{Type: "text", Ask: j.id, Delta: text}) {
 					j.cancel() // the client left or stopped reading
 				}
 			case orch.Result:

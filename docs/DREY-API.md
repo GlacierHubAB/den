@@ -65,15 +65,19 @@ Error codes: `unsupported` (an unknown op or version: hide the feature),
 
 ## Versioning
 
-`v` is 1. `hello {v, client, version}` returns `{version, versions:[1],
-host}`; a `v` Den does not serve gets `unsupported`. Added fields never change
+`v` is 1. `hello {v, client, version, session?}` returns `{version,
+versions:[1], host}`; a `v` Den does not serve gets `unsupported`. `session`
+is optional: 32 hex digits (128 random bits) the app draws once per process
+and sends on each of its connections, so that its asks on all of them count
+as one app's (see Asking); any other shape gets `bad_request`. Without it,
+each connection is on its own. Added fields never change
 `v`; a removed or changed verb does.
 
 ## Verbs
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version}` | `{version, versions, host}` |
+| `hello` | `{v, client, version, session?}` | `{version, versions, host}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -81,8 +85,8 @@ host}`; a `v` Den does not serve gets `unsupported`. Added fields never change
 | `inbox.body` | `{id}` | `{id, kind, text, hash}` for a request on this machine; `unavailable` for one from another machine |
 | `mission.list` | | `[Mission]` |
 | `focus` | `{target}` an agent's id or the name Den gave it | `{focused}`: that agent's terminal comes to the front. An inbox item answers `unavailable` (open the Inbox in Den), as do an agent on another machine and any focus within 1.5 s of your last key in Den. One per app every 3 s, ten a minute in all. Den's own view, selection and command line never change. |
-| `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk |
-| `ask.cancel` | `{ask}` | `{cancelled:true}`; the ask's stream ends with an `error` chunk `"cancelled"`. Only the app that asked may cancel it; any other ask is `not_found` |
+| `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk. `ask` is 128 random bits, told only to the connection that asked: it is what cancels the ask, so keep it to yourself |
+| `ask.cancel` | `{ask}` | `{cancelled:true}`; the ask's stream ends with an `error` chunk `"cancelled"`. It takes the ask's id, from the program that asked; any other id is `not_found` |
 | `chat.history` | `{session}` | `[Message]` of an ask session |
 | `chat.sessions` | | `[{id, title, last, current}]`, newest first, exactly one current |
 | `grant.request` | `{manifest}` | `{id}`; the answer comes on `grant.events`, never here |
@@ -136,12 +140,13 @@ no transcript, and no request body outside `inbox.body`.
   budgetUsd?, proposed}`; `state` is `proposed`, `running`, `done` or
   `dropped`.
 - **Chunk**, the `ask` stream: `{"type":"text","delta":"…"}`,
-  `{"type":"status","ask":"…","seq":n,"text":"…"}`, `{"type":"done",
-  "session":"…"}` or `{"type":"error","message":"…"}`. Status lines are Den's
+  `{"type":"status","seq":n,"text":"…"}`, `{"type":"done","session":"…"}`
+  or `{"type":"error","message":"…"}`, each with the `ask` it belongs to. Status lines are Den's
   own fixed sentences ("Reading the fleet in Den…", "Writing a reply…"),
   never model text; `seq` rises per ask, and an empty `text` clears the line
-  before `done`. The fleet's `asks` lists each running ask's latest status;
-  only the app that asked sees its session id there.
+  before `done`. The fleet's `asks` lists each running and waiting ask's
+  latest status; its `ask` and `session` ids are there only for the
+  connection that asked, or one with the same hello `session`.
 
 ## Asking
 
@@ -164,10 +169,13 @@ roster the orchestrator reads (without agents' recent words and tool calls,
 and with what waits on you named by kind and title only). A question with a
 control, bidi or invisible character, or over 16 KiB, is refused with
 `bad_request`. One question runs at a time and up to four wait; a waiting
-question gets a status saying how many are ahead. Each app has one question
-at a time: a newer question from the same app always replaces its earlier
-one, running or waiting, whose stream ends with the error
-`"superseded by a newer question"`. When the
+question gets a status saying how many are ahead. A connection, or the
+connections that sent one hello `session`, have one question at a time: a
+newer question from them replaces their earlier one, running or waiting,
+whose stream ends with the error `"superseded by a newer question"`.
+Another process of the same program, with no session or its own, never
+replaces, cancels or sees the ids of their questions; its question waits
+its turn. When the
 connection that asked closes, or stops reading, its turn stops and the next
 question runs. Every ask stream ends with a `done` or an `error` chunk; when
 the lane cannot start (a release the spike has not passed, a failed check, the

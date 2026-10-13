@@ -282,7 +282,7 @@ func (s *Server) Clients() []Client {
 	var out []Client
 	for c := range s.conns {
 		c.mu.Lock()
-		cl := Client{PID: c.peer.PID, Exe: c.peer.Exe, Label: c.peer.Label(), Since: c.since, Asking: c.asking, Agent: c.agent}
+		cl := Client{PID: c.peer.PID, Exe: c.peer.Exe, Label: c.peer.Label(), Since: c.since, Asking: c.asks > 0, Agent: c.agent}
 		for k := range c.subs {
 			cl.Streams = append(cl.Streams, k)
 		}
@@ -355,8 +355,8 @@ func (s *Server) asksChanged() {
 	}
 }
 
-// fleetFor is the fleet a connection sees: its own asks with their
-// session, other apps' without.
+// fleetFor is the fleet a connection sees: the asks in its scope with
+// their ask and session ids, every other ask without.
 func (s *Server) fleetFor(c *conn) Fleet {
 	var f Fleet
 	if v := s.view.Load(); v != nil {
@@ -364,7 +364,10 @@ func (s *Server) fleetFor(c *conn) Fleet {
 	} else {
 		f = Fleet{Taken: time.Now().UTC(), Agents: []Agent{}, Windows: []Window{}, Missions: []MissionRef{}, Cost: Cost{Currency: "USD"}}
 	}
-	f.Asks = s.lane.Asks(c.peer.Exe)
+	c.mu.Lock()
+	scope := c.scope
+	c.mu.Unlock()
+	f.Asks = s.lane.Asks(scope)
 	return f
 }
 
@@ -392,7 +395,10 @@ type conn struct {
 	hello  bool
 	agent  bool
 	subs   map[string]bool
-	asking bool
+	asks   int // asks of this connection not yet done
+	// scope is whose asks this connection's are: its own, or those of the
+	// session it named in hello.
+	scope string
 	fleet  []byte // a fleet event waiting to be written, latest wins
 }
 
@@ -498,7 +504,7 @@ func (s *Server) serve(nc net.Conn) {
 		writeNow(nc, CodeUnavailable, "the human disconnected API clients in Den")
 		return
 	}
-	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}}
+	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}, scope: "conn:" + randHex()}
 	s.mu.Lock()
 	perPID := 0
 	for o := range s.conns {
@@ -539,7 +545,7 @@ func (s *Server) serve(nc net.Conn) {
 			return
 		}
 		c.mu.Lock()
-		streaming := len(c.subs) > 0 || c.asking
+		streaming := len(c.subs) > 0 || c.asks > 0
 		c.mu.Unlock()
 		if streaming {
 			nc.SetReadDeadline(time.Time{})
@@ -597,7 +603,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 	switch req.Op {
 	case "hello":
 		var p struct {
-			V int `json:"v"`
+			V       int    `json:"v"`
+			Session string `json:"session"`
 		}
 		json.Unmarshal(req.Params, &p)
 		v := p.V
@@ -608,6 +615,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 			c.fail(req.ID, CodeUnsupported, "protocol version")
 			return
 		}
+		if p.Session != "" && !validSession(p.Session) {
+			c.fail(req.ID, CodeBadRequest, "session: 32 hex digits, 128 random bits")
+			return
+		}
 		host, _ := os.Hostname()
 		isAgent := false
 		if view := s.view.Load(); view != nil {
@@ -615,6 +626,11 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		}
 		c.mu.Lock()
 		c.hello, c.agent = true, isAgent
+		if p.Session != "" {
+			// The program is part of the scope: another program naming
+			// the same session shares nothing with it.
+			c.scope = "session:" + c.peer.Exe + "\x00" + strings.ToLower(p.Session)
+		}
 		c.mu.Unlock()
 		if isAgent {
 			s.mu.Lock()
@@ -787,14 +803,10 @@ func (s *Server) ask(c *conn, req Request) {
 		s.chat.Use(session)
 	}
 	c.mu.Lock()
-	if c.asking {
-		c.mu.Unlock()
-		c.fail(req.ID, CodeUnavailable, "a question is already running on this connection")
-		return
-	}
-	c.asking = true
+	c.asks++
+	scope := c.scope
 	c.mu.Unlock()
-	j := &askJob{id: "a-" + newUUID()[:8], session: session, text: p.Text, exe: c.peer.Exe, cancelled: make(chan struct{})}
+	j := &askJob{id: "a-" + randHex(), session: session, text: p.Text, exe: c.peer.Exe, scope: scope, cancelled: make(chan struct{})}
 	// The asking connection going away stops the turn.
 	go func() {
 		select {
@@ -810,7 +822,7 @@ func (s *Server) ask(c *conn, req Request) {
 		}
 		if ch.Type == "done" || ch.Type == "error" {
 			c.mu.Lock()
-			c.asking = false
+			c.asks--
 			c.mu.Unlock()
 			s.asksChanged()
 		}

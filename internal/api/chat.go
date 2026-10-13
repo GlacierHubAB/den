@@ -233,6 +233,24 @@ func title(text string) string {
 }
 
 // newUUID is a random version-4 UUID, the form claude --session-id takes.
+// randHex is 128 random bits in hex: an ask id, which is what cancels the
+// ask, and a connection's own scope.
+func randHex() string {
+	var b [16]byte
+	rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// validSession reports whether a hello session is 128 bits in hex, as a
+// client that drew it at random sends it.
+func validSession(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
 func newUUID() string {
 	var b [16]byte
 	rand.Read(b[:])
