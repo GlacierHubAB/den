@@ -38,7 +38,7 @@ func TestOrchestratorTabRendersConversation(t *testing.T) {
 	if !named {
 		t.Errorf("no line naming the orchestrator above its text:\n%s", plain)
 	}
-	for _, want := range []string{"Mossy Lemur is waiting", "Mossy Lemur  CODING AGENT", "delivered", "Rebase on main first. Then open the PR.", "$0.05"} {
+	for _, want := range []string{"Mossy Lemur is waiting", "Mossy Lemur  CODING AGENT", "delivered", "▸ Rebase on main first.", "$0.05"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing %q in:\n%s", want, plain)
 		}

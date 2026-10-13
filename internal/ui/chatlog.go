@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -32,6 +33,7 @@ type cardRecord struct {
 	SessionID string    `json:"session"`
 	Agent     string    `json:"agent"`
 	Brief     string    `json:"brief"`
+	Summary   string    `json:"summary,omitempty"`
 	SentAt    time.Time `json:"sent"`
 	StartedAt time.Time `json:"started,omitempty"`
 	EndedAt   time.Time `json:"ended,omitempty"`
@@ -97,7 +99,7 @@ func (m *Model) logCard(d *dispatch) {
 		return
 	}
 	appendChatRecord(m.chatLog, chatRecord{Kind: "card", At: d.SentAt, Card: &cardRecord{
-		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: d.Brief,
+		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: d.Brief, Summary: d.Summary,
 		SentAt: d.SentAt, StartedAt: d.StartedAt, EndedAt: d.EndedAt,
 		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped,
 	}})
@@ -143,7 +145,7 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			if thread == "" {
 				thread = c.MissionID
 			}
-			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
+			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, Summary: sanitize.Line(c.Summary), SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
 			if d, ok := cards[c.ID]; ok {
 				*d = nd
 				continue

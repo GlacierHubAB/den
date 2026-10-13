@@ -1039,6 +1039,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.toggleMission()
 				return m, nil
 			}
+			if m.tab == tabOrch && m.toggleAction() {
+				return m, nil
+			}
 			if d := m.focusedCard(); d != nil && m.tab == tabOrch {
 				d.Expanded = !d.Expanded
 				if d.Expanded && !d.turnLoaded {

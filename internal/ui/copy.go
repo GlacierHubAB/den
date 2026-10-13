@@ -105,6 +105,8 @@ func (m *Model) copyMouse(msg tea.Msg) tea.Cmd {
 		if block := codeBlockAt(frame, pane, m.sel.ay); block != "" {
 			return m.copyText(block, "command ("+countLines(block)+")")
 		}
+		// A click on an action shows or hides its full text.
+		m.clickAction(m.sel.ay)
 		return nil
 	}
 	return nil

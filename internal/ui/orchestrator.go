@@ -15,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -37,6 +38,10 @@ type chatEntry struct {
 	// mission is the thread the entry belongs to: the mission the human's
 	// latest message was about, "" for the plain chat.
 	mission string
+	// full is the whole text behind a tool call drawn as one line (a
+	// message or a brief), shown when the entry is expanded.
+	full     string
+	expanded bool
 }
 
 type orchEventMsg struct {
@@ -337,20 +342,27 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			if ok {
 				name, sid := m.agentForPeer(in.To)
 				if sid == "" {
-					m.addChat(chatEntry{role: "fan", to: name, text: firstLineOf(in.Message), status: "sending", toolUseID: ev.ToolUseID, at: now})
+					m.addChat(chatEntry{role: "fan", to: name, text: actionSummary(in.Summary, in.Message), full: in.Message, status: "sending", toolUseID: ev.ToolUseID, at: now})
 					break
 				}
-				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(in.Message), SentAt: now}
+				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(in.Message), Summary: actionSummary(in.Summary, ""), SentAt: now}
 				m.attachCard(d)
 				m.addChat(chatEntry{role: "card", card: d, toolUseID: ev.ToolUseID, at: now})
 				m.logCard(d)
 				m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: sid, Brief: firstLineOf(in.Message), At: now, Source: "dispatch"})
 			}
 		} else {
+			note := chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now}
 			if in, ok := orch.ParseSpawn(ev.Input); ok && ev.Tool == orch.SpawnAgentTool {
 				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, now)
+				note.full = in.Brief
+			} else if mm, ok := parseMessageCall(ev.Tool, ev.Input); ok {
+				// Another tool that messages someone: one line, like a
+				// SendMessage to a peer outside the fleet.
+				name, sid := m.agentForPeer(mm.To)
+				note = chatEntry{role: "fan", to: name, sid: sid, text: actionSummary(mm.Summary, mm.Message), full: mm.Message, status: "sending", toolUseID: ev.ToolUseID, at: now}
 			}
-			m.addChat(chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now})
+			m.addChat(note)
 		}
 	case orch.ToolResult:
 		for i := range m.orch.chat {
@@ -465,8 +477,15 @@ func (m Model) orchPane(w, h int) string {
 		}
 		return strings.Join(lines, "\n")
 	}
-	strip := m.stripLines(w-2, time.Now())
-	lines, focusStart, focusEnd := m.chatLines(w, func(chatEntry) bool { return true })
+	strip, lines, _ := m.orchWindow(w, h)
+	return strings.Join(append(strip, lines...), "\n")
+}
+
+// orchWindow is what the Orchestrator pane shows: the strip, the chat lines
+// in view, and for each of those the chat entry it draws (-1 for none).
+func (m Model) orchWindow(w, h int) (strip, lines []string, owners []int) {
+	strip = m.stripLines(w-2, time.Now())
+	lines, owners, focusStart, focusEnd := m.chatLinesOwned(w, func(chatEntry) bool { return true })
 	// The strip stays put; the chat scrolls under it. With a card focused
 	// the window is anchored to that card, otherwise it follows the tail,
 	// honouring scroll-back.
@@ -483,9 +502,9 @@ func (m Model) orchPane(w, h int) string {
 			}
 		}
 		start = clamp(start, 0, len(lines)-body)
-		lines = lines[start : start+body]
+		lines, owners = lines[start:start+body], owners[start:start+body]
 	}
-	return strings.Join(append(strip, lines...), "\n")
+	return strip, lines, owners
 }
 
 // chatPad is the chat's inner margin, either side of the text: two
@@ -502,6 +521,13 @@ func chatPad(w int) string {
 // their thread. The Orchestrator tab shows every entry, a mission pane its
 // own thread. focusStart and focusEnd bound the focused card, -1 for none.
 func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focusStart, focusEnd int) {
+	lines, _, focusStart, focusEnd = m.chatLinesOwned(w, keep)
+	return lines, focusStart, focusEnd
+}
+
+// chatLinesOwned is chatLines with, for each line, the chat entry it
+// draws (-1 for the thinking line).
+func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string, owners []int, focusStart, focusEnd int) {
 	s := m.st
 	// The speaker's name sits on its own line above the text, so the text
 	// has the pane's width less a margin.
@@ -530,9 +556,9 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 				focusStart, focusEnd = len(lines), len(lines)+len(cl)
 			}
 			for _, l := range cl {
-				lines = append(lines, pad+l)
+				lines, owners = append(lines, pad+l), append(owners, i)
 			}
-			lines = append(lines, "")
+			lines, owners = append(lines, ""), append(owners, -1)
 			continue
 		}
 		switch e.role {
@@ -541,7 +567,7 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 			body = m.plainLines(e.text, bodyW, s.fg)
 		case "orchestrator":
 			from = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor)).Bold(true).Render("orchestrator")
-			body = mo.markdownLines(e.text, bodyW)
+			body = mo.orchTextLines(e, bodyW)
 			if e.streaming {
 				if len(body) == 0 {
 					body = []string{""}
@@ -555,22 +581,35 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 			} else if e.status == "sending" {
 				st = s.attn
 			}
-			name := s.fg.Render(e.to)
+			// Only a fleet agent's exact name is coloured; anything else
+			// is the model's word and is shown plain.
+			to := ansi.Truncate(sanitize.Line(e.to), max(8, bodyW/3), "…")
+			name := s.fg.Render(to)
 			if e.sid != "" {
-				name = lipgloss.NewStyle().Foreground(lipgloss.Color(m.colorFor(e.sid))).Bold(true).Render(e.to)
+				name = lipgloss.NewStyle().Foreground(lipgloss.Color(m.colorFor(e.sid))).Bold(true).Render(to)
 			}
-			body = []string{s.dim.Render("→ ") + name + s.dim.Render(" · "+ansi.Truncate(e.text, max(10, bodyW-ansi.StringWidth(e.to)-len(e.status)-8), "…")+" · ") + st.Render(e.status)}
+			status := ansi.Truncate(sanitize.Line(e.status), max(8, bodyW/3), "…")
+			room := max(4, bodyW-ansi.StringWidth(to)-ansi.StringWidth(status)-7)
+			body = []string{s.dim.Render("→ ") + name + s.dim.Render(": ") + s.fg.Render(ansi.Truncate(sanitize.Line(e.text), room, "…")) + s.dim.Render(" · ") + st.Render(status)}
+			if e.expanded {
+				body = append(body, mo.expandedLines(e.full, bodyW)...)
+			}
 		default:
-			text := e.text
 			if e.status != "" {
 				st := s.muted
 				if strings.HasPrefix(e.status, "failed") {
 					st = s.err
 				}
-				body = append(m.plainLines(text, bodyW, s.muted), m.plainLines(e.status, bodyW, st)...)
+				body = append(m.noteLines(e, bodyW), m.plainLines(e.status, bodyW, st)...)
+				if e.expanded {
+					body = append(body, mo.expandedLines(e.full, bodyW)...)
+				}
 				break
 			}
-			body = m.plainLines(text, bodyW, s.muted)
+			body = m.noteLines(e, bodyW)
+			if e.expanded {
+				body = append(body, mo.expandedLines(e.full, bodyW)...)
+			}
 			// The close tool waits for the human: its question is shown
 			// right here, answerable with the same keys as in the Inbox.
 			if strings.HasPrefix(e.text, "▶ asking you to close") {
@@ -593,13 +632,19 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 				}
 			}
 		}
+		lp := pad
+		if i == m.orch.cardCur && e.collapsible() {
+			// The focused action takes the bar a focused card has.
+			lp = s.bright.Render("▌") + pad[1:]
+			focusStart, focusEnd = len(lines), len(lines)+len(body)+1
+		}
 		if from != "" {
-			lines = append(lines, pad+from)
+			lines, owners = append(lines, pad+from), append(owners, i)
 		}
 		for _, l := range body {
-			lines = append(lines, pad+l)
+			lines, owners = append(lines, lp+l), append(owners, i)
 		}
-		lines = append(lines, "")
+		lines, owners = append(lines, ""), append(owners, -1)
 	}
 	if (m.orch.thinking || m.orch.starting) && keep(chatEntry{role: "orchestrator", mission: m.orch.thread}) {
 		think := "thinking…"
@@ -612,9 +657,9 @@ func (m Model) chatLines(w int, keep func(chatEntry) bool) (lines []string, focu
 		} else if q := time.Since(m.orch.lastEvent); q > 10*time.Second {
 			think = "thinking… " + humanAge(q)
 		}
-		lines = append(lines, pad+s.dim.Render(think))
+		lines, owners = append(lines, pad+s.dim.Render(think)), append(owners, -1)
 	}
-	return lines, focusStart, focusEnd
+	return lines, owners, focusStart, focusEnd
 }
 
 // closeOrchestrator stops the process if running.
