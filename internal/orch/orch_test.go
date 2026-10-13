@@ -102,6 +102,7 @@ func TestArgv(t *testing.T) {
 		// backstop reads.
 		"--setting-sources", "",
 		"--settings", "/run/user/1000/den/orchestrator-settings-0123456789abcdef.json",
+		"--permission-mode", "dontAsk",
 		"--include-hook-events",
 		"--replay-user-messages",
 		"--mcp-config", MCPConfig("/usr/bin/den"), "--strict-mcp-config",

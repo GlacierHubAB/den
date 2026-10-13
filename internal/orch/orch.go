@@ -228,6 +228,9 @@ func Argv(o Options) []string {
 		// the backstop to check (readStdout).
 		"--setting-sources", "",
 		"--settings", o.SettingsFile,
+		// With no settings sources the mode would be Claude Code's default;
+		// dontAsk runs the allowed tools and refuses anything else.
+		"--permission-mode", "dontAsk",
 		"--include-hook-events",
 		"--replay-user-messages",
 	)
