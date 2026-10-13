@@ -39,11 +39,11 @@ type Snapshot struct {
 
 // View is what the server serves until the next one.
 type View struct {
-	Fleet     Fleet
-	Items     []Item
-	Bodies    map[string]Body // local items only
-	Missions  []Mission
-	Roster    []orch.RosterAgent
+	Fleet      Fleet
+	Items      []Item
+	Bodies     map[string]Body // local items only
+	Missions   []Mission
+	Roster     []orch.RosterAgent
 	AgentProcs map[int]AgentProc
 	Guidance   string
 }
@@ -68,11 +68,11 @@ const summaryMax = 200
 // Project builds the View. It reads only the fields it names.
 func Project(s Snapshot) *View {
 	v := &View{
-		Fleet:     Fleet{Taken: s.Taken, Agents: []Agent{}, Windows: []Window{}, Missions: []MissionRef{}, Cost: Cost{Currency: "USD"}},
-		Items:     []Item{},
-		Bodies:    map[string]Body{},
-		Missions:  []Mission{},
-		Roster:    append([]orch.RosterAgent(nil), s.Roster...),
+		Fleet:      Fleet{Taken: s.Taken, Agents: []Agent{}, Windows: []Window{}, Missions: []MissionRef{}, Cost: Cost{Currency: "USD"}},
+		Items:      []Item{},
+		Bodies:     map[string]Body{},
+		Missions:   []Mission{},
+		Roster:     append([]orch.RosterAgent(nil), s.Roster...),
 		AgentProcs: map[int]AgentProc{},
 		Guidance:   s.Guidance,
 	}
