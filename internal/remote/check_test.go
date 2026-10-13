@@ -55,7 +55,9 @@ func hostileRun(t *testing.T, msgs ...any) (*Manager, []Update) {
 	m.Start()
 	t.Cleanup(func() { m.Close(); <-done })
 	deadline := time.Now().Add(5 * time.Second)
-	for !slices.ContainsFunc(localLines(t, s.localEvts), func(ev events.Event) bool { return ev.Session == sidA }) {
+	// Wait for the marker itself: a message before it may be an event of
+	// the same session, logged before the messages after it are read.
+	for !slices.ContainsFunc(localLines(t, s.localEvts), func(ev events.Event) bool { return ev.Session == sidA && ev.Kind == events.Done }) {
 		if time.Now().After(deadline) {
 			t.Fatal("the marker event never arrived")
 		}
