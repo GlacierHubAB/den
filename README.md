@@ -160,6 +160,11 @@ turns once restarted.
 old entries, so run it again after upgrading Den; `den uninstall-hooks` removes
 them. `CLAUDE_CONFIG_DIR` moves the settings file Den edits.
 
+After updating the `den` binary, restart Den as well: the orchestrator's own
+hook and tools are recognised by the binary Den started them from, so a
+running orchestrator's peer reports and mission updates are refused until
+Den, and with it the orchestrator, starts again on the new binary.
+
 ### Commands
 
 ```
