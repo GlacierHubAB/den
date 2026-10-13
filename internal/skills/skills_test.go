@@ -258,10 +258,36 @@ func TestCodingRoleGetsDiagnosingBugsNotSystematicDebugging(t *testing.T) {
 		got = append(got, m.Name)
 	}
 	want := []string{"test-driven-development", "verification-before-completion", "diagnosing-bugs"}
+	if len(got) > len(want) {
+		got = got[:len(want)] // ponytail comes fourth (TestCodingRoleGetsFourInOrder)
+	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("coding agent → %v, want %v", got, want)
 	}
 	if _, ok := c.Skill("systematic-debugging"); ok {
 		t.Error("systematic-debugging yielded to diagnosing-bugs and must not ship")
+	}
+}
+
+// Every coding role is offered ponytail as well, fourth, after the three
+// it was offered before.
+func TestCodingRoleGetsFourInOrder(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"test-driven-development", "verification-before-completion", "diagnosing-bugs", "ponytail"}
+	for _, role := range []string{"coding agent", "coder", "software engineer", "backend developer"} {
+		var got []string
+		for _, m := range c.Match(role) {
+			got = append(got, m.Name)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s → %v, want %v", role, got, want)
+		}
+	}
+	p, ok := c.Skill("ponytail")
+	if !ok || len(p.Files) != 2 || p.Files[0].Path != "SKILL.md" || p.Files[0].SHA256 != "ba68ff26239c3c3b05b2a9a47ee0d9a6b93a69639a2555ec87a5d44bffaf2f0c" || p.Files[1].Path != "LICENSE" || p.Files[1].Source != "LICENSE" {
+		t.Errorf("ponytail must pin its SKILL.md and the repository LICENSE, nothing else: %+v", p.Files)
 	}
 }

@@ -659,7 +659,7 @@ The catalogue is `internal/skills/catalogue.json`, built into the binary. Every
 entry names a GitHub repository, a full commit SHA (never a branch), an
 allowed license, its role tags, a one-line reason, what was checked before it
 was admitted, and every file with its SHA-256. `den skills catalogue` prints it.
-It holds six skills from four repositories:
+It holds seven skills from five repositories:
 
 | Skill | Roles | Repository @ commit | License |
 | --- | --- | --- | --- |
@@ -669,11 +669,12 @@ It holds six skills from four repositories:
 | diagnosing-bugs | coding | mattpocock/skills @ 49dd158d1076 | MIT |
 | vulnerability-triage-brocards | security | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
 | property-based-testing | testing | trailofbits/skills @ 442fc9d6c89b | CC-BY-SA-4.0 |
+| ponytail | coding | DietrichGebert/ponytail @ 2961b52fc1fe | MIT |
 
 The writing, devops and research tags have no skills yet. Roles are free text
 ("coding agent", "ui designer", "sysadmin"), so Den matches them word by word
 to the tags coding, frontend, design, writing, testing, security, devops and
-research, and offers at most three skills; a role with no known word gets
+research, and offers at most four skills; a role with no known word gets
 nothing. `den skills match "<role>"` shows what a role would be offered.
 
 **Two ways in.** `spawn_agent` takes a `role`: Den offers the matching skills

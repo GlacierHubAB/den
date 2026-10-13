@@ -74,7 +74,7 @@ var Tags = []string{"coding", "frontend", "design", "writing", "testing", "secur
 var Licenses = []string{"Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "0BSD", "Unlicense"}
 
 // MaxPerRole is how many skills one proposal offers at most.
-const MaxPerRole = 3
+const MaxPerRole = 4
 
 var (
 	shaRe  = regexp.MustCompile(`^[0-9a-f]{40}$`)
