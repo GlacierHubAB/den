@@ -702,7 +702,9 @@ The writing, devops and research tags have no skills yet. Roles are free text
 ("coding agent", "ui designer", "sysadmin"), so Den matches them word by word
 to the tags coding, frontend, design, writing, testing, security, devops and
 research, and offers at most four skills; a role with no known word gets
-nothing. `den skills match "<role>"` shows what a role would be offered.
+nothing. `den skills match "<role>"` shows what a role would be offered. A
+request that names skills (`skills` on `spawn_agent` or `propose_skills`) can
+also have a catalogue skill past those four, if its tags fit the role.
 
 **Two ways in.** `spawn_agent` takes a `role`: Den offers the matching skills
 for that agent only and waits for your answer before starting it. On `Ctrl+Y`
@@ -717,7 +719,7 @@ an agent with a role, or when you ask; a lead can pass a role to the agents it
 starts.
 
 **What Den checks at install.** It looks the skills up again in its own
-catalogue (a request can only narrow the role's matches), downloads each file
+catalogue (a request can only name skills whose tags fit the role), downloads each file
 from `raw.githubusercontent.com/<repo>/<commit>/…`, and refuses the skill if
 any file's size or SHA-256 differs from the catalogue, if any markdown file's
 frontmatter sets `hooks` or `allowed-tools`, if it runs a shell command when

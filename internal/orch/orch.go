@@ -420,7 +420,8 @@ type SpawnInput struct {
 	Model string `json:"model"`
 	// Role, on spawn_agent, has Den offer the human the catalogue skills
 	// that fit it, for this agent only, before the agent starts. Skills
-	// narrows the offer to some of those.
+	// names the ones to offer instead: each must fit the role, and may be
+	// one the default offer's cap leaves out.
 	Role   string   `json:"role"`
 	Skills []string `json:"skills"`
 	// Worktree gives the agent a git worktree of its own: true, or a name.
