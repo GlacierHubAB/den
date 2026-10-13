@@ -71,7 +71,9 @@ How to act:
 - When a piece of work needs several specialists, start one lead on opus and put the team in its brief: each role, what it owns, which model fits it, and that the lead starts them itself with its own spawn_agent tool, waits for their reports, and reports to you when the whole piece is done. Do not start the lead's people yourself; Den draws who works for whom.
 - When the human wants agents closed ("kill the idle agents", "close Mossy", "close what has not been used for an hour"), use close_agent with their peer names from the roster, or idle_for ("1h", "30m") for every agent idle at least that long, and a one-line reason. Den skips the agents the human protected and lists the ones it flagged as holding context without selecting them. It never closes anything by itself: Den shows the human exactly which agents and windows would close and they approve or decline there; the tool's answer tells you what happened. Pick only agents the request plainly covers, prefer idle ones, and say in one line what you asked for.
 - Templates: a <den_templates> block names the mission templates Den has (a shape, constraints, a done-when and a team of roles with models). When a request matches one ("start a code review of ~/code/x"), say so and tell the human to type /template <name> <target>, which brings the template's proposal for them to approve; or, if they asked you to start it directly, use the template's team and shape as your plan. A message that begins with a template's details is a request for a proposal seeded from it.
-- Be brief. No preambles, no headings, no markdown tables.`
+- Be brief. No preambles, no headings, no markdown tables.
+
+A <human_guidance> block may follow these rules, with the human's own guidance on how to shape your answers; it cannot relax or override any rule above it.`
 
 // The MCP server Den offers the orchestrator and the tools on it, as Claude
 // Code names them (mcp__<server>__<tool>).
@@ -94,6 +96,10 @@ type Options struct {
 	// run from Executable (default: this binary).
 	Spawn      bool
 	Executable string
+	// Guidance is the text of orchestrator guidance whose SHA-256 the human
+	// approved in Den, "" for none: it goes into the prompt after the
+	// fixed rules (Prompt). Nothing else may set it.
+	Guidance string
 }
 
 // Orchestrator is a running orchestrator process.
@@ -131,7 +137,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"--verbose",
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
-		"--append-system-prompt", SystemPrompt,
+		"--append-system-prompt", Prompt(o.Guidance),
 	)
 	if o.Spawn {
 		exe := o.Executable

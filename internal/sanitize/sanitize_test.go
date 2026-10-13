@@ -286,3 +286,31 @@ func TestLineAndParagraphSeparators(t *testing.T) {
 		t.Errorf("JSON = %q", got)
 	}
 }
+
+func TestHidden(t *testing.T) {
+	for _, ok := range []string{"", "plain text\n\twith a tab", "café, 日本語, 👍", "# heading\n- item"} {
+		if r, bad := Hidden(ok); bad {
+			t.Errorf("Hidden(%q) refused %U", ok, r)
+		}
+	}
+	for in, want := range map[string]rune{
+		"a\rb":           '\r',
+		"a\x1b[31mb":     0x1b,
+		"a\x7fb":         0x7f,
+		"a\u0085b":       0x85,
+		"a\u202eb":       0x202e,
+		"a\u2066b":       0x2066,
+		"a\u200bb":       0x200b,
+		"a\u200db":       0x200d,
+		"a\U000E0041b":   0xe0041,
+		"a\ufeffb":       0xfeff,
+		"a\u00adb":       0xad,
+		"a\u2028b":       0x2028,
+		"a\xffb":         utf8.RuneError,
+		"a\u034fb\u3164": 0x34f,
+	} {
+		if r, bad := Hidden(in); !bad || r != want {
+			t.Errorf("Hidden(%q) = %U %v, want %U", in, r, bad, want)
+		}
+	}
+}

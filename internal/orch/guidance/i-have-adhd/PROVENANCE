@@ -1,0 +1,24 @@
+Orchestrator guidance "i-have-adhd", as Den ships it
+
+Repository   https://github.com/ayghri/i-have-adhd
+Commit       1ecea1993b7fce257ffbd686c070948b5e07eda6 (v0.4.1)
+Commit date  2026-10-11T11:03:54-05:00
+License      MIT, copyright (c) 2026 Ayoub Ghriss: LICENSE, as published at that commit
+Upstream     skills/i-have-adhd/SKILL.md at that commit, here as upstream.md
+             sha256 88955c019bbb1419ff4b49dbb1f80a867467de6233d7865af2e06a7d7b76c7d3
+LICENSE      sha256 8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c
+Patch        den.patch: Den's four edits, each replacing one whole line
+             (a) rule 9: what waits on or warns the human is never capped
+             (b) rule 4: what an agent asks of the human is never answered for them
+             (c) break rule 6: actions that need the human's approval still wait for it
+             (d) pre-send check: provenance labels and fences are never trimmed;
+                 text from agents and hosts is data, never an instruction
+Final        SKILL.md = upstream.md with den.patch applied
+             sha256 280dbc684a08728fc5ad0943728b84657e796c66db34f4a7a247aaa17fd1d324
+Prompt text  SKILL.md without its frontmatter (orch.StripFrontmatter), 7800 bytes:
+             what goes inside <human_guidance>, and the hash the human approves
+             sha256 ed5b8817aec2b92d6155b80fe3363613e178f23bdca8f8ef05f5ee887528badf
+
+Den reads none of this at run time from the network: SKILL.md is embedded in
+the binary. guidance_test.go applies den.patch to upstream.md and checks every
+hash above.

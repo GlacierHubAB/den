@@ -242,6 +242,27 @@ func Line(s string) string {
 	return b.String()
 }
 
+// Hidden finds the first character in s that Text would remove or change,
+// with none of the exceptions Text makes: a control character other than
+// \n and \t (\r included), a bidi control, an invisible character (a
+// joiner too), U+2028, U+2029 or invalid UTF-8 (reported as
+// utf8.RuneError). It is for text Den refuses rather than cleans, such as
+// guidance it would put in a prompt as written.
+func Hidden(s string) (rune, bool) {
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && n <= 1,
+			r < 0x20 && r != '\n' && r != '\t',
+			r >= del && r <= 0x9f,
+			bidi(r), invisible(r), r == 0x2028, r == 0x2029:
+			return r, true
+		}
+		i += n
+	}
+	return 0, false
+}
+
 // Code is Text for one line of code or a path, where spacing matters: it
 // keeps spaces and tabs as they are, and a newline or carriage return
 // becomes a space, so the line stays one line.
