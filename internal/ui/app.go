@@ -604,6 +604,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flashClearMsg:
 		m.flash = ""
 	case tea.KeyPressMsg:
+		m.api.lastKey = time.Now()
 		return m.handleKey(msg)
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
 		if m.tab == tabReview {

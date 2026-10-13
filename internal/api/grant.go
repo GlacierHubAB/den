@@ -60,6 +60,7 @@ type Grant struct {
 type Act struct {
 	Grant   *Grant
 	Expired []string // grant ids no longer answerable
+	Focus   *FocusReq
 }
 
 type grants struct {

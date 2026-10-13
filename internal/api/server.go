@@ -62,6 +62,8 @@ type Server struct {
 	acts     chan Act
 	lastConn map[string]time.Time // exe -> when its last connection closed
 
+	focusLimit focusLimit
+
 	mu        sync.Mutex
 	conns     map[*conn]bool
 	lastFleet []byte
@@ -640,6 +642,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		c.reply(req.ID, h)
 	case "ask":
 		s.ask(c, req)
+	case "focus":
+		s.focus(c, req)
 	case "ask.cancel":
 		var p struct {
 			Ask string `json:"ask"`

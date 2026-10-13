@@ -80,6 +80,7 @@ host}`; a `v` Den does not serve gets `unsupported`. Added fields never change
 | `inbox.events` | | `{subscribed:true}`, then `inbox` events `{change: added\|answered, item}` |
 | `inbox.body` | `{id}` | `{id, kind, text, hash}` for a request on this machine; `unavailable` for one from another machine |
 | `mission.list` | | `[Mission]` |
+| `focus` | `{target}` an agent's id or the name Den gave it | `{focused}`: that agent's terminal comes to the front. An inbox item answers `unavailable` (open the Inbox in Den), as do an agent on another machine and any focus within 1.5 s of your last key in Den. One per app every 3 s, ten a minute in all. Den's own view, selection and command line never change. |
 | `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk |
 | `ask.cancel` | `{ask}` | `{cancelled:true}`; the ask's stream ends with an `error` chunk `"cancelled"`. Only the app that asked may cancel it; any other ask is `not_found` |
 | `chat.history` | `{session}` | `[Message]` of an ask session |
@@ -89,7 +90,7 @@ host}`; a `v` Den does not serve gets `unsupported`. Added fields never change
 
 Every other op answers `unsupported`, including every verb that would approve,
 allow, deny, answer, start, close or message: there are none. This release
-also answers `unsupported` for `focus`, `theme.get`, `mission.start`,
+also answers `unsupported` for `theme.get`, `mission.start`,
 `mission.drop` and `view.data`.
 
 ## Grants

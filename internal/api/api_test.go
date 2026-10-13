@@ -196,7 +196,7 @@ func TestHelloFirstAndUnknownVerbs(t *testing.T) {
 	if !l.OK || info.Version != "test" || len(info.Versions) != 1 || info.Versions[0] != 1 {
 		t.Fatalf("hello: %+v %+v", l, info)
 	}
-	for _, op := range []string{"inbox.answer", "permission.allow", "agent.spawn", "agent.close", "agent.send", "mission.start", "mission.drop", "view.data", "theme.get", "focus", "nope"} {
+	for _, op := range []string{"inbox.answer", "permission.allow", "agent.spawn", "agent.close", "agent.send", "mission.start", "mission.drop", "view.data", "theme.get", "nope"} {
 		if l := c.call(op, map[string]any{}); code(l) != CodeUnsupported {
 			t.Errorf("%s: %+v", op, l)
 		}

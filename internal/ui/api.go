@@ -31,7 +31,15 @@ type apiState struct {
 	err     string                 // why the API is not running, "" when it is or is off
 	askItem *inbox.Item            // the open /api on question
 	grants  map[*inbox.Item]string // open grant cards → grant id
+	lastKey time.Time              // the human's last key in Den: no focus from outside right after it
 }
+
+// focusQuiet is how long after the human's last key in Den an app may not
+// move the focus.
+const focusQuiet = 1500 * time.Millisecond
+
+// focusAgent brings an agent's terminal to the front; tests replace it.
+var focusAgent = fleet.Focus
 
 type apiActMsg struct {
 	act  api.Act
@@ -53,6 +61,33 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	if m.api.grants == nil {
 		m.api.grants = map[*inbox.Item]string{}
+	}
+	if f := act.Focus; f != nil {
+		if time.Since(m.api.lastKey) < focusQuiet {
+			f.Reply <- "the human is typing in Den"
+			return nil
+		}
+		var target *fleet.Agent
+		for i := range m.agents {
+			if a := &m.agents[i]; a.Session.SessionID == f.AgentID && a.Host == "" && a.Status != fleet.Gone {
+				target = a
+			}
+		}
+		if target == nil {
+			f.Reply <- "no such agent here"
+			return nil
+		}
+		a := *target
+		// Only the agent's own terminal moves: Den's tab, selection and
+		// command line stay as the human left them.
+		return func() tea.Msg {
+			if _, err := focusAgent(a); err != nil {
+				f.Reply <- sanitize.Label(err.Error(), 120)
+			} else {
+				f.Reply <- ""
+			}
+			return nil
+		}
 	}
 	if g := act.Grant; g != nil {
 		title := "App grant · " + g.Name + " v" + strconv.Itoa(g.Version)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
@@ -218,6 +219,43 @@ func TestGrantCardAndAnswer(t *testing.T) {
 	data, _ := ev["data"].(map[string]any)
 	if ev["event"] != "grant" || data["answer"] != "granted" || data["hash"] != api.HashOf(body) || data["version"] != float64(3) {
 		t.Errorf("grant event: %v", ev)
+	}
+}
+
+// An app's focus moves only the agent's own terminal, never right after
+// the human's key in Den, and never Den's tab, selection or input.
+func TestFocusLeavesDenAlone(t *testing.T) {
+	apiEnv(t)
+	m := testModel(140, 30)
+	var focused []string
+	defer func(f func(fleet.Agent) (string, error)) { focusAgent = f }(focusAgent)
+	focusAgent = func(a fleet.Agent) (string, error) { focused = append(focused, a.Session.SessionID); return "", nil }
+	m.tab = tabOrch
+	m.input.SetValue("hello")
+	sel := m.cursor
+	id := m.agents[0].Session.SessionID
+
+	m.api.lastKey = time.Now()
+	r := &api.FocusReq{AgentID: id, Reply: make(chan string, 1)}
+	if cmd := m.applyAPIAct(api.Act{Focus: r}); cmd != nil {
+		t.Fatal("focused right after a key")
+	}
+	if why := <-r.Reply; !strings.Contains(why, "typing") {
+		t.Errorf("refusal %q", why)
+	}
+
+	m.api.lastKey = time.Now().Add(-2 * time.Second)
+	r = &api.FocusReq{AgentID: id, Reply: make(chan string, 1)}
+	cmd := m.applyAPIAct(api.Act{Focus: r})
+	if cmd == nil {
+		t.Fatal("no focus")
+	}
+	cmd()
+	if why := <-r.Reply; why != "" || len(focused) != 1 || focused[0] != id {
+		t.Errorf("focus: %q %v", why, focused)
+	}
+	if m.tab != tabOrch || m.input.Value() != "hello" || m.cursor != sel {
+		t.Error("an app's focus changed Den's tab, input or selection")
 	}
 }
 
