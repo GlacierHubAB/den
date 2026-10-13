@@ -509,6 +509,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, animTick()
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
+		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
 		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}

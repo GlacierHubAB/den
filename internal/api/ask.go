@@ -108,6 +108,8 @@ type LaneConfig struct {
 	BudgetUS func() float64 // today's ask budget in dollars
 	Start    func(context.Context, orch.LaneOptions) (*orch.Orchestrator, error)
 	Version  func(context.Context, []string) (string, error)
+	// SpendPath keeps today's spend across restarts ("" keeps it in memory).
+	SpendPath string
 }
 
 // lane runs client asks one at a time through the read-only lane process.
@@ -129,6 +131,66 @@ type lane struct {
 	note     func(string)
 	changed  func() // asks or lane state moved: the fleet's asks are stale
 	pid      atomic.Int64
+
+	failures []time.Time // failed starts, for the backoff and the lockout
+	nextTry  time.Time   // no start before this
+	locked   bool        // 3 failed starts in 5 minutes: until /api resume
+}
+
+// Restart limits.
+const (
+	backoffMin  = time.Second
+	backoffMax  = time.Minute
+	lockoutRuns = 3
+	lockoutSpan = 5 * time.Minute
+	rotateTurns = 50 // a lane session starts afresh after this many turns
+)
+
+// startFailed counts a failed start: the next waits longer, and three in
+// five minutes stop the lane until the human resumes the API.
+func (l *lane) startFailed(why string) {
+	l.mu.Lock()
+	now := time.Now()
+	kept := l.failures[:0]
+	for _, t := range l.failures {
+		if now.Sub(t) < lockoutSpan {
+			kept = append(kept, t)
+		}
+	}
+	l.failures = append(kept, now)
+	wait := backoffMin << (len(l.failures) - 1)
+	if wait > backoffMax {
+		wait = backoffMax
+	}
+	l.nextTry = now.Add(wait)
+	locked := len(l.failures) >= lockoutRuns && !l.locked
+	if locked {
+		l.locked = true
+	}
+	l.mu.Unlock()
+	if locked {
+		l.note("the read-only lane failed to start 3 times in 5 minutes; asks are refused until /api resume. Last: " + why)
+	}
+}
+
+// startAllowed says why the lane may not start now, "" when it may.
+func (l *lane) startAllowed() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.locked {
+		return "the read-only lane failed to start 3 times; /api resume in Den lets it try again"
+	}
+	if wait := time.Until(l.nextTry); wait > 0 {
+		return fmt.Sprintf("the read-only lane failed to start; it tries again in %d s", int(wait.Seconds())+1)
+	}
+	return ""
+}
+
+// resume lifts the lockout: /api resume.
+func (l *lane) resume() {
+	l.mu.Lock()
+	l.locked, l.failures, l.nextTry = false, nil, time.Time{}
+	l.mu.Unlock()
 }
 
 type askState struct {
@@ -145,8 +207,20 @@ func newLane(cfg LaneConfig, chat *chatStore, view func() *View, note func(strin
 	}
 	l := &lane{cfg: cfg, chat: chat, view: view, statuses: map[string]askState{}, jobs: map[string]*askJob{},
 		state: "off", wake: make(chan struct{}, 1), stop: make(chan struct{}), note: note, changed: func() {}}
+	l.day, l.spent = loadSpend(cfg.SpendPath)
 	go l.run()
 	return l
+}
+
+// addSpend counts a turn's cost against today's budget and keeps it, so a
+// restart of Den does not reset it.
+func (l *lane) addSpend(usd float64) {
+	l.mu.Lock()
+	l.leftLocked()
+	l.spent += usd
+	day, spent := l.day, l.spent
+	l.mu.Unlock()
+	saveSpend(l.cfg.SpendPath, day, spent)
 }
 
 // left is what remains of today's budget.
@@ -446,10 +520,20 @@ func (l *lane) serve(p *laneProc, j *askJob) (*laneProc, string) {
 		p = nil
 	}
 	if p == nil {
+		if why := l.startAllowed(); why != "" {
+			return nil, why
+		}
+		if l.chat.Turns(j.session) >= rotateTurns {
+			// A long session makes every turn dearer: start a new one.
+			j.session = l.chat.Fresh()
+		}
 		l.setStatus(j, StatusStarting)
 		var err error
 		p, err = l.start(j)
 		if err != nil {
+			if err.Error() != "cancelled" {
+				l.startFailed(err.Error())
+			}
 			l.setState("failed: " + err.Error())
 			return nil, err.Error()
 		}
@@ -539,9 +623,7 @@ func (l *lane) serve(p *laneProc, j *askJob) (*laneProc, string) {
 					j.cancel() // the client left or stopped reading
 				}
 			case orch.Result:
-				l.mu.Lock()
-				l.spent += e.CostUSD
-				l.mu.Unlock()
+				l.addSpend(e.CostUSD)
 				if e.IsError {
 					if !p.inited {
 						p.kill()

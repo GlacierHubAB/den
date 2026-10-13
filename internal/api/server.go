@@ -50,7 +50,7 @@ type Client struct {
 // Server serves den-api.sock.
 type Server struct {
 	opts  Options
-	b     *bound
+	bp    atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
 	view  atomic.Pointer[View]
 	chat  *chatStore
 	lane  *lane
@@ -63,6 +63,7 @@ type Server struct {
 	lastConn map[string]time.Time // exe -> when its last connection closed
 
 	focusLimit focusLimit
+	rebound    bool // Rebind ran since the last /api resume
 
 	mu        sync.Mutex
 	conns     map[*conn]bool
@@ -83,11 +84,12 @@ func Listen(o Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{opts: o, b: b, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refused: map[int]bool{}}
+	s := &Server{opts: o, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refused: map[int]bool{}}
 	s.grants, s.acts, s.lastConn = newGrants(), make(chan Act, 64), map[string]time.Time{}
+	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	s.lane.changed = s.asksChanged
-	go s.accept()
+	go s.accept(b)
 	go s.expireLoop()
 	return s, nil
 }
@@ -176,7 +178,7 @@ func (s *Server) LaneState() LaneState { return s.lane.State() }
 func (s *Server) LanePID() int { return int(s.lane.pid.Load()) }
 
 // Path is the socket's path.
-func (s *Server) Path() string { return s.b.path }
+func (s *Server) Path() string { return s.bp.Load().path }
 
 // Notes are lines Den shows in its chat: a first connection, a refused
 // agent, a lane that misbehaved.
@@ -190,13 +192,13 @@ func (s *Server) note(text string) {
 }
 
 // Healthy reports whether the path still holds Den's socket.
-func (s *Server) Healthy() bool { return s.b.ours() }
+func (s *Server) Healthy() bool { return s.bp.Load().ours() }
 
 // Close stops the server: connections, the lane, and the path if it is
 // still Den's.
 func (s *Server) Close() {
 	s.lane.close()
-	s.b.close()
+	s.bp.Load().close()
 	s.mu.Lock()
 	for c := range s.conns {
 		c.close()
@@ -216,8 +218,39 @@ func (s *Server) Pause() {
 	s.mu.Unlock()
 }
 
-// Resume accepts clients again.
-func (s *Server) Resume() { s.paused.Store(false) }
+// Resume accepts clients again and lets a lane that kept failing to start
+// try again.
+func (s *Server) Resume() {
+	s.paused.Store(false)
+	s.lane.resume()
+	s.mu.Lock()
+	s.rebound = false
+	s.mu.Unlock()
+}
+
+// Rebind puts Den's socket back at the path once, when something replaced
+// or removed it; a second replacement is only reported (Healthy) until
+// /api resume.
+func (s *Server) Rebind() error {
+	s.mu.Lock()
+	if s.rebound {
+		s.mu.Unlock()
+		return errors.New("den-api.sock was replaced again")
+	}
+	s.rebound = true
+	s.mu.Unlock()
+	if s.bp.Load().ours() {
+		return nil
+	}
+	nb, err := bind(s.bp.Load().path)
+	if err != nil {
+		return err
+	}
+	old := s.bp.Swap(nb)
+	old.ln.Close()
+	go s.accept(nb)
+	return nil
+}
 
 // Paused reports whether clients are refused.
 func (s *Server) Paused() bool { return s.paused.Load() }
@@ -315,9 +348,9 @@ func (s *Server) fleetFor(c *conn) Fleet {
 	return f
 }
 
-func (s *Server) accept() {
+func (s *Server) accept(b *bound) {
 	for {
-		nc, err := s.b.ln.Accept()
+		nc, err := b.ln.Accept()
 		if err != nil {
 			return
 		}

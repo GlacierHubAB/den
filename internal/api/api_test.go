@@ -541,9 +541,71 @@ func TestEveryFailureEndsTheStream(t *testing.T) {
 			t.Errorf("%s: lane state %q", name, st.State)
 		}
 		os.Remove(filepath.Join(h.lane, c.file))
+		time.Sleep(1100 * time.Millisecond) // the first backoff
 		if ch := askEnds(t, h, "again", 5*time.Second); ch.Type != "done" {
 			t.Errorf("%s: the next ask after the fault: %+v", name, ch)
 		}
+	}
+}
+
+// A lane that keeps failing to start backs off, then after three failures
+// in five minutes refuses asks at once until /api resume.
+func TestLaneLockout(t *testing.T) {
+	h := newHarness(t, 2)
+	os.WriteFile(filepath.Join(h.lane, "no-start"), nil, 0o600)
+	if ch := askEnds(t, h, "1", 5*time.Second); !strings.Contains(ch.Message, "stopped at start") {
+		t.Fatalf("first: %+v", ch)
+	}
+	if ch := askEnds(t, h, "2", 5*time.Second); !strings.Contains(ch.Message, "tries again in") {
+		t.Errorf("during the backoff: %+v", ch)
+	}
+	h.s.lane.mu.Lock()
+	h.s.lane.nextTry = time.Time{}
+	h.s.lane.mu.Unlock()
+	askEnds(t, h, "3", 5*time.Second)
+	h.s.lane.mu.Lock()
+	h.s.lane.nextTry = time.Time{}
+	h.s.lane.mu.Unlock()
+	askEnds(t, h, "4", 5*time.Second)
+	os.Remove(filepath.Join(h.lane, "no-start"))
+	if ch := askEnds(t, h, "5", 5*time.Second); !strings.Contains(ch.Message, "/api resume") {
+		t.Errorf("after three failures: %+v", ch)
+	}
+	h.s.Resume()
+	if ch := askEnds(t, h, "6", 5*time.Second); ch.Type != "done" {
+		t.Errorf("after /api resume: %+v", ch)
+	}
+}
+
+// Today's spend survives a restart of Den.
+func TestSpendIsKept(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "drey-spend.json")
+	saveSpend(path, time.Now().Format("2006-01-02"), 1.25)
+	if day, usd := loadSpend(path); usd != 1.25 || day == "" {
+		t.Errorf("loaded %q %v", day, usd)
+	}
+	saveSpend(path, "2001-01-01", 9)
+	if _, usd := loadSpend(path); usd != 0 {
+		t.Error("another day's spend counted today")
+	}
+}
+
+// A socket replaced at the path is noticed and taken back once.
+func TestRebindOnce(t *testing.T) {
+	h := newHarness(t, 2)
+	path := h.s.Path()
+	os.Remove(path)
+	if h.s.Healthy() {
+		t.Fatal("a removed socket counts as healthy")
+	}
+	if err := h.s.Rebind(); err != nil || !h.s.Healthy() {
+		t.Fatalf("rebind: %v", err)
+	}
+	c := h.dial()
+	c.hello()
+	os.Remove(path)
+	if err := h.s.Rebind(); err == nil {
+		t.Error("a second replacement was taken back without /api resume")
 	}
 }
 

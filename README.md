@@ -1281,6 +1281,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `guidance.json` | the SHA-256 of the orchestrator guidance you approved, nothing else |
 | `drey-chat.jsonl` | apps' questions to the read-only orchestrator and its replies, by ask session (den-api.sock) |
 | `drey-lane/` | the read-only orchestrator's own empty working folder |
+| `drey-spend.json` | what apps' questions spent today, against `api.ask_budget_usd` |
 | `colors.json` | the colour of each session |
 | `remote/<label>.json` | per remote host: its state, the agents it last reported (metadata only) and where its event stream was read up to; readable only by you |
 | `remote/controller` | a random id that tells a host which Den is attached (an identity marker, not a secret) |

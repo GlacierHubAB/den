@@ -196,6 +196,23 @@ func (c *chatStore) Sessions() []Session {
 	return out
 }
 
+// Turns is how many questions a session holds.
+func (c *chatStore) Turns(id string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s := c.sessions[id]
+	if s == nil {
+		return 0
+	}
+	n := 0
+	for _, m := range s.messages {
+		if m.Role == "user" {
+			n++
+		}
+	}
+	return n
+}
+
 // History is a session's messages, nil and false for an unknown session.
 func (c *chatStore) History(id string) ([]Message, bool) {
 	c.mu.Lock()
@@ -223,4 +240,36 @@ func newUUID() string {
 	b[8] = b[8]&0x3f | 0x80
 	h := hex.EncodeToString(b[:])
 	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
+}
+
+// spendLine is drey-spend.json: what asks spent on one day.
+type spendLine struct {
+	Day string  `json:"day"`
+	USD float64 `json:"usd"`
+}
+
+func loadSpend(path string) (string, float64) {
+	if path == "" {
+		return "", 0
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", 0
+	}
+	var l spendLine
+	if json.Unmarshal(raw, &l) != nil || l.Day != time.Now().Format("2006-01-02") {
+		return "", 0
+	}
+	return l.Day, l.USD
+}
+
+func saveSpend(path, day string, usd float64) {
+	if path == "" {
+		return
+	}
+	raw, _ := json.Marshal(spendLine{Day: day, USD: usd})
+	tmp := path + ".tmp"
+	if os.WriteFile(tmp, raw, 0o600) == nil {
+		os.Rename(tmp, path)
+	}
 }

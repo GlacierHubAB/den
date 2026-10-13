@@ -172,7 +172,10 @@ the lane cannot start (a release the spike has not passed, a failed check, the
 budget, claude not starting) the error says why within seconds. A reply is
 cut at 64 KiB or 3 minutes, and a lane silent for 90 seconds is stopped.
 `/api` shows the lane's state (off, starting, ready, failed and why), what
-runs, what waits and today's spend. Asks stop for the day once
+runs, what waits and today's spend, which Den keeps across restarts. A lane
+that fails to start waits a second before it tries again, twice as long each
+time up to a minute; after three failures in five minutes asks are refused
+until `/api resume`. A lane session starts afresh after 50 questions. Asks stop for the day once
 `api.ask_budget_usd` is spent. The lane stops after ten minutes without
 questions and resumes its session on the next one.
 

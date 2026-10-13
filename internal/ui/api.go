@@ -32,6 +32,7 @@ type apiState struct {
 	askItem *inbox.Item            // the open /api on question
 	grants  map[*inbox.Item]string // open grant cards → grant id
 	lastKey time.Time              // the human's last key in Den: no focus from outside right after it
+	warned  bool                   // the second socket replacement was noted
 }
 
 // focusQuiet is how long after the human's last key in Den an app may not
@@ -181,9 +182,10 @@ func (m *Model) startAPI() tea.Cmd {
 		Version: Version,
 		ChatLog: filepath.Join(state, "drey-chat.jsonl"),
 		Lane: api.LaneConfig{
-			Dir:      lane,
-			Model:    func() string { return cfg.Orchestrator.Model },
-			BudgetUS: func() float64 { return cfg.API.AskBudgetUSD },
+			Dir:       lane,
+			SpendPath: filepath.Join(state, "drey-spend.json"),
+			Model:     func() string { return cfg.Orchestrator.Model },
+			BudgetUS:  func() float64 { return cfg.API.AskBudgetUSD },
 		},
 	})
 	if err != nil {
@@ -328,7 +330,8 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 			return m.say("The API is off: /api on turns it on.", true)
 		}
 		m.api.srv.Resume()
-		return m.say("Apps may connect again.", false)
+		m.api.warned = false
+		return m.say("Apps may connect again; the read-only lane may try to start again.", false)
 	}
 	return m.say("/api [on|off|disconnect|resume]", true)
 }
@@ -488,6 +491,24 @@ func laneChip(ls api.LaneState) string {
 		parts = append(parts, strconv.Itoa(ls.Queued)+" queued")
 	}
 	return strings.Join(parts, " · ")
+}
+
+// checkAPISocket runs on the tick: a socket replaced or removed at the
+// path is taken back once and noted; a second time only the chip says so,
+// until /api resume.
+func (m *Model) checkAPISocket() {
+	srv := m.api.srv
+	if srv == nil || srv.Healthy() {
+		return
+	}
+	if err := srv.Rebind(); err != nil {
+		if !m.api.warned {
+			m.api.warned = true
+			m.logEntry(m.addChat(chatEntry{role: "note", text: "den-api.sock was replaced or removed again (" + sanitize.Label(err.Error(), 120) + "); /api resume lets Den take it back", at: time.Now()}))
+		}
+		return
+	}
+	m.logEntry(m.addChat(chatEntry{role: "note", text: "den-api.sock was replaced or removed; Den took the path back", at: time.Now()}))
 }
 
 // isLane reports whether a discovered session is the API's read-only lane.
