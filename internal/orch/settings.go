@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -16,14 +17,51 @@ import (
 // (--setting-sources ""): their hooks would answer its prompts alongside
 // Den's inbound hook, indistinguishably, and their permissions, plugins and
 // MCP servers would widen what it may do. What it needs from them to reach
-// the API is copied instead, from this list only. These values can hold
-// secrets (keys, proxy credentials), so the settings go to a private file,
-// never onto the command line, and the file is gone once the process has
-// read it.
+// the API is copied instead, from this list only: the user's env goes into
+// the orchestrator's process environment (copiedEnv), never into a file or
+// onto the command line, since it can hold keys and proxy credentials; the
+// helper commands go into Den's settings file, which is private (0600, in
+// Den's runtime folder) and lasts as long as the process.
 
-// copiedKeys are the user settings the orchestrator keeps; model too, when
-// Den passes none.
-var copiedKeys = []string{"env", "apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh"}
+// copiedKeys are the user settings the orchestrator's settings file keeps;
+// model too, when Den passes none.
+var copiedKeys = []string{"apiKeyHelper", "awsAuthRefresh", "awsCredentialExport", "gcpAuthRefresh"}
+
+// userSettings is the user's settings file as JSON values by key, nil when
+// it is missing or not an object.
+func userSettings() map[string]json.RawMessage {
+	raw, err := os.ReadFile(userSettingsPath())
+	if err != nil {
+		return nil
+	}
+	var user map[string]json.RawMessage
+	if json.Unmarshal(raw, &user) != nil {
+		return nil
+	}
+	return user
+}
+
+// copiedEnv is the user settings' env as NAME=value pairs for the
+// orchestrator's process, without what would point it, or its hooks, at
+// another Den, socket, home or config: DEN_*, XDG_RUNTIME_DIR, HOME and
+// CLAUDE_CONFIG_DIR. Values that are not strings are left out.
+func copiedEnv() []string {
+	var env map[string]any
+	if json.Unmarshal(userSettings()["env"], &env) != nil {
+		return nil
+	}
+	var out []string
+	for k, v := range env {
+		s, ok := v.(string)
+		if !ok || k == "" || strings.ContainsAny(k, "=\x00") || strings.HasPrefix(k, "DEN_") ||
+			k == "XDG_RUNTIME_DIR" || k == "HOME" || k == "CLAUDE_CONFIG_DIR" {
+			continue
+		}
+		out = append(out, k+"="+s)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // userSettingsPath is the user's Claude Code settings file; tests replace it.
 var userSettingsPath = hooks.SettingsPath
@@ -42,17 +80,14 @@ var settingsDir = func() string {
 // reaches the inbound hook, hooks forced on) and the allowed user keys.
 func denSettings(o Options) map[string]any {
 	s := map[string]any{}
-	if raw, err := os.ReadFile(userSettingsPath()); err == nil {
-		var user map[string]json.RawMessage
-		if json.Unmarshal(raw, &user) == nil {
-			keys := copiedKeys
-			if resolveModel(o) == "off" {
-				keys = append(append([]string(nil), keys...), "model")
-			}
-			for _, k := range keys {
-				if v, ok := user[k]; ok {
-					s[k] = v
-				}
+	if user := userSettings(); user != nil {
+		keys := copiedKeys
+		if resolveModel(o) == "off" {
+			keys = append(append([]string(nil), keys...), "model")
+		}
+		for _, k := range keys {
+			if v, ok := user[k]; ok {
+				s[k] = v
 			}
 		}
 	}
@@ -64,7 +99,7 @@ func denSettings(o Options) map[string]any {
 			"type": "command", "command": shellJoin(hook), "timeout": HookTimeout,
 		}}}},
 		"PermissionRequest": []any{map[string]any{"hooks": []any{map[string]any{
-			"type": "command", "command": shellJoin([]string{denExecutable(o), "hook"}), "timeout": 600,
+			"type": "command", "command": shellJoin([]string{denExecutable(o), "hook", "--socket", socketPath(o)}), "timeout": 600,
 		}}}},
 	}
 	return s
@@ -110,6 +145,15 @@ func denExecutable(o Options) string {
 	}
 	exe, _ := os.Executable()
 	return exe
+}
+
+// socketPath is den.sock, given to the hooks as an argument so the
+// environment the orchestrator runs them in cannot point them elsewhere.
+func socketPath(o Options) string {
+	if o.Socket != "" {
+		return o.Socket
+	}
+	return bridge.SocketPath()
 }
 
 // resolveModel is the model Argv passes: o.Model, else

@@ -29,7 +29,10 @@ import (
 // nothing: Den runs it at every launch on a made-up envelope and starts the
 // orchestrator only when it is blocked.
 func runInbound(args []string) {
-	selfTest := len(args) > 0 && args[0] == "--self-test"
+	selfTest := false
+	for _, a := range args {
+		selfTest = selfTest || a == "--self-test"
+	}
 	os.Exit(inbound(os.Stdin, os.Stdout, os.Stderr, selfTest, bridge.SocketPath(), time.Now().Add(inboundDeadline)))
 }
 

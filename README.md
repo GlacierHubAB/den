@@ -466,10 +466,12 @@ resends what it owes.
 It loads none of your Claude Code settings files on purpose
 (`--setting-sources ""`): your hooks, permissions, plugins and MCP servers do
 not apply to it. Den copies only what it needs to reach the API from your user
-settings (`env`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
-`gcpAuthRefresh`, and `model` when Den's model is `"off"`) into a private
-settings file, mode 0600, that is deleted as soon as the orchestrator has
-started. If it cannot sign in, the chat says so.
+settings: your `env` goes into its process environment (without `DEN_*`,
+`XDG_RUNTIME_DIR`, `HOME` and `CLAUDE_CONFIG_DIR`), and `apiKeyHelper`,
+`awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh` (and `model` when
+Den's model is `"off"`) go into Den's own settings file for it, mode 0600 in
+Den's private runtime folder, removed when it exits. Nothing of yours is put
+on its command line. If it cannot sign in, the chat says so.
 
 Each message has its speaker's name on the line above it, so the text uses
 the pane's full width.

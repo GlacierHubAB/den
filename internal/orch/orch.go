@@ -146,6 +146,8 @@ type Options struct {
 	// SettingsFile is the orchestrator's settings, written by Start
 	// (writeSettings) and passed with --settings.
 	SettingsFile string
+	// Socket is den.sock for the hooks, default bridge.SocketPath().
+	Socket string
 }
 
 // Orchestrator is a running orchestrator process.
@@ -273,7 +275,7 @@ func hookCommand(o Options) []string {
 	if len(o.HookCommand) > 0 {
 		return o.HookCommand
 	}
-	return []string{denExecutable(o), "hook", "orchestrator-inbound"}
+	return []string{denExecutable(o), "hook", "orchestrator-inbound", "--socket", socketPath(o)}
 }
 
 // SelfTest runs the inbound hook on a made-up peer message, the way Claude
@@ -318,7 +320,9 @@ func hookBlocked(exit int, stdout string) bool {
 
 func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	cmd.Dir = o.Dir
-	cmd.Env = append(os.Environ(), "DEN_ORCHESTRATOR=1")
+	// The user settings' env (copiedEnv) in place of their settings files,
+	// then Den's marker last, so nothing overrides it.
+	cmd.Env = append(append(os.Environ(), copiedEnv()...), "DEN_ORCHESTRATOR=1")
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -408,8 +412,9 @@ func (o *Orchestrator) Send(content string) error {
 	return err
 }
 
-// dropSettings removes the settings file: Claude Code has read it by its
-// init event, and it may hold secrets.
+// dropSettings removes the settings file once the process has exited. It
+// holds no secrets (the env goes into the process environment), and
+// Claude Code may read it again while it runs.
 func (o *Orchestrator) dropSettings() {
 	o.mu.Lock()
 	path := o.settings
@@ -560,7 +565,6 @@ func (o *Orchestrator) readStdout(r io.Reader) {
 		case "system":
 			switch l.Subtype {
 			case "init":
-				o.dropSettings()
 				o.SessionID, o.Model = l.SessionID, l.Model
 				o.emit(Event{Kind: Started, SessionID: l.SessionID, Model: l.Model})
 			case "hook_response":

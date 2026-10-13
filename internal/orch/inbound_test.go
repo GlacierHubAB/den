@@ -19,7 +19,7 @@ import (
 // fresh, and its path is all the command line shows.
 func TestSettingsFileCarriesOnlyTheAllowList(t *testing.T) {
 	user := `{
-		"env": {"HTTPS_PROXY": "http://u:secret@proxy:3128"},
+		"env": {"HTTPS_PROXY": "http://u:secret@proxy:3128", "DEN_SOCKET": "/tmp/evil.sock", "DEN_ORCHESTRATOR": "0", "XDG_RUNTIME_DIR": "/tmp/x", "HOME": "/tmp/h", "CLAUDE_CONFIG_DIR": "/tmp/c", "N": 3},
 		"apiKeyHelper": "/usr/local/bin/key",
 		"awsAuthRefresh": "aws sso login",
 		"awsCredentialExport": "/bin/creds",
@@ -47,10 +47,10 @@ func TestSettingsFileCarriesOnlyTheAllowList(t *testing.T) {
 		if err != nil || fi.Mode().Perm() != 0o600 || filepath.Dir(path) != settingsDir() {
 			t.Fatalf("settings file %s: mode %v, %v", path, fi.Mode().Perm(), err)
 		}
-		if strings.Contains(strings.Join(Argv(Options{SettingsFile: path}), " "), "secret") {
-			t.Error("a copied value reached the command line")
-		}
 		raw, _ := os.ReadFile(path)
+		if strings.Contains(strings.Join(Argv(Options{SettingsFile: path}), " "), "secret") || strings.Contains(string(raw), "secret") {
+			t.Error("the user's env reached the command line or the file")
+		}
 		var s map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &s); err != nil {
 			t.Fatal(err)
@@ -65,13 +65,18 @@ func TestSettingsFileCarriesOnlyTheAllowList(t *testing.T) {
 		sort.Strings(ks)
 		return strings.Join(ks, " ")
 	}
-	o := Options{Executable: "/opt/den", HookCommand: []string{"/opt/den", "hook", "orchestrator-inbound"}}
+	o := Options{Executable: "/opt/den", Socket: "/run/user/1000/den.sock"}
 	s := read(o)
-	if got, want := keys(s), "apiKeyHelper awsAuthRefresh awsCredentialExport crossSessionInbound disableAllHooks env gcpAuthRefresh hooks"; got != want {
+	if got, want := keys(s), "apiKeyHelper awsAuthRefresh awsCredentialExport crossSessionInbound disableAllHooks gcpAuthRefresh hooks"; got != want {
 		t.Errorf("keys %q, want %q", got, want)
 	}
-	if string(s["crossSessionInbound"]) != `"accept"` || string(s["disableAllHooks"]) != "false" || !strings.Contains(string(s["env"]), "secret") {
-		t.Errorf("Den's own values: %s %s; env %s", s["crossSessionInbound"], s["disableAllHooks"], s["env"])
+	if string(s["crossSessionInbound"]) != `"accept"` || string(s["disableAllHooks"]) != "false" {
+		t.Errorf("Den's own values: %s %s", s["crossSessionInbound"], s["disableAllHooks"])
+	}
+	// The env goes to the process, without what would point the
+	// orchestrator or its hooks at another Den, home or config.
+	if got := strings.Join(copiedEnv(), " "); got != "HTTPS_PROXY=http://u:secret@proxy:3128" {
+		t.Errorf("copied env %q", got)
 	}
 	var hooks map[string][]struct {
 		Hooks []struct {
@@ -80,8 +85,8 @@ func TestSettingsFileCarriesOnlyTheAllowList(t *testing.T) {
 		}
 	}
 	json.Unmarshal(s["hooks"], &hooks)
-	if len(hooks) != 2 || hooks["UserPromptSubmit"][0].Hooks[0].Command != "/opt/den hook orchestrator-inbound" || hooks["UserPromptSubmit"][0].Hooks[0].Timeout != HookTimeout ||
-		hooks["PermissionRequest"][0].Hooks[0].Command != "/opt/den hook" || strings.Contains(string(s["hooks"]), "evil") {
+	if len(hooks) != 2 || hooks["UserPromptSubmit"][0].Hooks[0].Command != "/opt/den hook orchestrator-inbound --socket /run/user/1000/den.sock" || hooks["UserPromptSubmit"][0].Hooks[0].Timeout != HookTimeout ||
+		hooks["PermissionRequest"][0].Hooks[0].Command != "/opt/den hook --socket /run/user/1000/den.sock" || strings.Contains(string(s["hooks"]), "evil") {
 		t.Errorf("hooks = %s", s["hooks"])
 	}
 	// The user's model only when Den passes none.
@@ -254,9 +259,10 @@ func TestNoTurnTakenIsBlocked(t *testing.T) {
 	}
 }
 
-// TestSettingsFileGoesOnceRead: the file holding the user's keys is gone
-// once the process has started (its init event), and on exit at the latest.
-func TestSettingsFileGoesOnceRead(t *testing.T) {
+// TestSettingsFileLastsAsLongAsTheProcess: Claude Code may read its
+// settings again while it runs, so the file stays until the process exits,
+// then goes; it holds no secrets.
+func TestSettingsFileLastsAsLongAsTheProcess(t *testing.T) {
 	o, _ := fakeWith(t, answer)
 	proc, err := Start(context.Background(), o)
 	if err != nil {
@@ -270,10 +276,13 @@ func TestSettingsFileGoesOnceRead(t *testing.T) {
 		}
 	}
 	collectUntil(Started)
-	if ents, _ := os.ReadDir(settingsDir()); len(ents) != 0 {
-		t.Errorf("settings left after init: %v", ents)
+	if ents, _ := os.ReadDir(settingsDir()); len(ents) != 1 {
+		t.Errorf("the settings file should stay while it runs: %v", ents)
 	}
 	proc.Close()
+	if ents, _ := os.ReadDir(settingsDir()); len(ents) != 0 {
+		t.Errorf("settings left after exit: %v", ents)
+	}
 	// A process that dies before its init event.
 	dir := t.TempDir()
 	script := filepath.Join(dir, "claude")
@@ -312,5 +321,27 @@ func TestSentIsOnceAndExact(t *testing.T) {
 	}
 	if proc.Sent(peermsg.Hash(written)) {
 		t.Error("vouched for twice")
+	}
+}
+
+// TestCopiedEnvReachesTheProcess: the user's env is in the orchestrator's
+// environment, filtered, and Den's marker cannot be overridden.
+func TestCopiedEnvReachesTheProcess(t *testing.T) {
+	os.WriteFile(userSettingsPath(), []byte(`{"env":{"HTTPS_PROXY":"http://proxy:3128","DEN_ORCHESTRATOR":"0","DEN_SOCKET":"/tmp/evil.sock"}}`), 0o600)
+	t.Cleanup(func() { os.Remove(userSettingsPath()) })
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, "env")
+	script := filepath.Join(dir, "claude")
+	os.WriteFile(script, []byte("#!/bin/sh\nenv > "+envFile+"\n"), 0o755)
+	proc, err := Start(context.Background(), Options{Command: []string{script}, Dir: dir, HookCommand: testHook()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range proc.Events() {
+	}
+	raw, _ := os.ReadFile(envFile)
+	env := "\n" + string(raw)
+	if !strings.Contains(env, "\nHTTPS_PROXY=http://proxy:3128\n") || !strings.Contains(env, "\nDEN_ORCHESTRATOR=1\n") || strings.Contains(env, "DEN_ORCHESTRATOR=0") || strings.Contains(env, "evil") {
+		t.Errorf("environment:\n%s", raw)
 	}
 }
