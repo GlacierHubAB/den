@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -312,6 +313,33 @@ func TestPickTakesAFittingSkillPastTheCap(t *testing.T) {
 	}
 	if _, err := c.Pick("fullstack developer", []string{"ponytail-plugin"}); err == nil || !strings.Contains(err.Error(), "not in Den's skills catalogue") {
 		t.Errorf("a name outside the catalogue: %v", err)
+	}
+}
+
+// A name given twice is offered once, and a request naming more than
+// MaxNamed skills is refused before any is looked up.
+func TestPickDedupesAndCapsNames(t *testing.T) {
+	c, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	picked, err := c.Pick("coding agent", []string{"ponytail", "diagnosing-bugs", "ponytail", "ponytail"})
+	if err != nil || len(picked) != 2 || picked[0].Name != "ponytail" || picked[1].Name != "diagnosing-bugs" {
+		t.Errorf("duplicates: %v, %v", picked, err)
+	}
+	many := []string{"ponytail"}
+	for i := 0; i < MaxNamed; i++ {
+		many = append(many, fmt.Sprintf("made-up-%d", i))
+	}
+	if _, err := c.Pick("coding agent", many); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("at most %d can be offered", MaxNamed)) {
+		t.Errorf("%d names: %v", len(many), err)
+	}
+	same := make([]string, 50)
+	for i := range same {
+		same[i] = "ponytail"
+	}
+	if picked, err := c.Pick("coding agent", same); err != nil || len(picked) != 1 {
+		t.Errorf("one name 50 times: %v, %v", picked, err)
 	}
 }
 

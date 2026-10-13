@@ -76,6 +76,9 @@ var Licenses = []string{"Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "IS
 // MaxPerRole is how many skills one proposal offers at most.
 const MaxPerRole = 4
 
+// MaxNamed is how many skills one request may name, once each.
+const MaxNamed = 2 * MaxPerRole
+
 var (
 	shaRe  = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	hashRe = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -317,8 +320,19 @@ func (c *Catalogue) Pick(role string, names []string) ([]Match, error) {
 	if len(names) == 0 {
 		return matches, nil
 	}
-	var out []Match
+	seen := map[string]bool{}
+	var unique []string
 	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			unique = append(unique, n)
+		}
+	}
+	if len(unique) > MaxNamed {
+		return nil, fmt.Errorf("%d skills named; at most %d can be offered at once", len(unique), MaxNamed)
+	}
+	var out []Match
+	for _, n := range unique {
 		found := false
 		for _, m := range matches {
 			if m.Name == n {
