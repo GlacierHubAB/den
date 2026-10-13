@@ -345,7 +345,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 					m.addChat(chatEntry{role: "fan", to: name, text: actionSummary(in.Summary, in.Message), full: in.Message, status: "sending", toolUseID: ev.ToolUseID, at: now})
 					break
 				}
-				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(in.Message), Summary: actionSummary(in.Summary, ""), SentAt: now}
+				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: sanitize.Text(strings.TrimSpace(in.Message)), rawBrief: strings.TrimSpace(in.Message), Summary: actionSummary(in.Summary, ""), SentAt: now}
 				m.attachCard(d)
 				m.addChat(chatEntry{role: "card", card: d, toolUseID: ev.ToolUseID, at: now})
 				m.logCard(d)

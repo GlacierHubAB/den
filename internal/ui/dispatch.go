@@ -59,6 +59,10 @@ type dispatch struct {
 	Stopped  time.Time
 	Expanded bool
 
+	// rawBrief is the brief as the orchestrator sent it, for the log;
+	// Brief is that text sanitised, for everything Den draws.
+	rawBrief string
+
 	turn       []transcript.Entry
 	turnLoaded bool
 }
