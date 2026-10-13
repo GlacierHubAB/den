@@ -137,7 +137,7 @@ func StartLane(ctx context.Context, o LaneOptions) (*Orchestrator, error) {
 // commands, loads no user hook or CLAUDE.md, and keeps peer messages out.
 // The lane runs on no other release; re-run the spike on every Claude Code
 // release Den supports, and add the version it prints.
-var LaneVerified = []string{"2.1.289"}
+var LaneVerified = []string{"2.1.289", "2.1.296"}
 
 // LaneVersion is the Claude Code release the lane would run: the first
 // word of `<claude> --version`.
