@@ -1,6 +1,9 @@
 package hypr
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStripStatusGlyph(t *testing.T) {
 	for in, want := range map[string]string{
@@ -34,5 +37,20 @@ func TestFindPrefersHerdrThenTitleThenCwd(t *testing.T) {
 	}
 	if _, ok := Find(cs, "Nope", "", ""); ok {
 		t.Error("unexpected match")
+	}
+}
+
+func TestMarker(t *testing.T) {
+	for in, want := range map[string]string{
+		"helper":                           "io.glacierhub.den.helper",
+		"Quiet Panda":                      "io.glacierhub.den.quiet-panda",
+		"drey/../x;rm -rf":                 "io.glacierhub.den.drey-x-rm-rf",
+		"--":                               "",
+		strings.Repeat("ab", 30):           "io.glacierhub.den." + strings.Repeat("ab", 20),
+		"a" + strings.Repeat("-", 3) + "b": "io.glacierhub.den.a-b",
+	} {
+		if got := Marker(in); got != want {
+			t.Errorf("Marker(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

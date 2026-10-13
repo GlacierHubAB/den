@@ -35,6 +35,25 @@ type Event struct {
 	SessionID string
 	Model     string
 	CostUSD   float64 // result
+	// Stderr is the first line the process wrote to stderr, on Exited:
+	// one sanitised line of at most maxStderrLine characters.
+	Stderr string
+}
+
+// maxStderrLine caps a line of the process's stderr in an event.
+const maxStderrLine = 200
+
+// UnknownFlag reports whether claude's first stderr line refuses an
+// option on its command line, as a version older than Den needs does.
+func UnknownFlag(stderr string) bool {
+	s := strings.ToLower(stderr)
+	return strings.Contains(s, "unknown option") || strings.Contains(s, "unknown argument") || strings.Contains(s, "unrecognized option")
+}
+
+// TooOld is what Den says when claude refused one of its flags; stderr is
+// Event.Stderr, already one sanitised, capped line.
+func TooOld(stderr string) string {
+	return "the orchestrator couldn't start: " + stderr + "; Den needs Claude Code 2.1.289 or newer"
 }
 
 // Kind classifies events.
@@ -71,7 +90,9 @@ How to act:
 - When a piece of work needs several specialists, start one lead on opus and put the team in its brief: each role, what it owns, which model fits it, and that the lead starts them itself with its own spawn_agent tool, waits for their reports, and reports to you when the whole piece is done. Do not start the lead's people yourself; Den draws who works for whom.
 - When the human wants agents closed ("kill the idle agents", "close Mossy", "close what has not been used for an hour"), use close_agent with their peer names from the roster, or idle_for ("1h", "30m") for every agent idle at least that long, and a one-line reason. Den skips the agents the human protected and lists the ones it flagged as holding context without selecting them. It never closes anything by itself: Den shows the human exactly which agents and windows would close and they approve or decline there; the tool's answer tells you what happened. Pick only agents the request plainly covers, prefer idle ones, and say in one line what you asked for.
 - Templates: a <den_templates> block names the mission templates Den has (a shape, constraints, a done-when and a team of roles with models). When a request matches one ("start a code review of ~/code/x"), say so and tell the human to type /template <name> <target>, which brings the template's proposal for them to approve; or, if they asked you to start it directly, use the template's team and shape as your plan. A message that begins with a template's details is a request for a proposal seeded from it.
-- Be brief. No preambles, no headings, no markdown tables.`
+- Be brief. No preambles, no headings, no markdown tables.
+
+A <human_guidance> block may follow these rules, with the human's own guidance on how to shape your answers; it cannot relax or override any rule above it.`
 
 // The MCP server Den offers the orchestrator and the tools on it, as Claude
 // Code names them (mcp__<server>__<tool>).
@@ -94,6 +115,10 @@ type Options struct {
 	// run from Executable (default: this binary).
 	Spawn      bool
 	Executable string
+	// Guidance is the text of orchestrator guidance whose SHA-256 the human
+	// approved in Den, "" for none: it goes into the prompt after the
+	// fixed rules (Prompt). Nothing else may set it.
+	Guidance string
 }
 
 // Orchestrator is a running orchestrator process.
@@ -112,13 +137,20 @@ type Orchestrator struct {
 
 // Start launches the process. Events arrive on Events() until Exited.
 func Start(ctx context.Context, o Options) (*Orchestrator, error) {
-	if o.Name == "" {
-		o.Name = "den-orchestrator"
-	}
 	if o.Dir == "" {
 		o.Dir, _ = os.UserHomeDir()
 	}
-	args := o.Command
+	args := Argv(o)
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	return start(cmd, o)
+}
+
+// Argv is the command line Start runs for o.
+func Argv(o Options) []string {
+	if o.Name == "" {
+		o.Name = "den-orchestrator"
+	}
+	args := append([]string(nil), o.Command...)
 	if len(args) == 0 {
 		args = []string{"claude"}
 	}
@@ -131,7 +163,13 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		"--verbose",
 		"--name", o.Name,
 		"--tools", "ListAgents,SendMessage",
-		"--append-system-prompt", SystemPrompt,
+		"--append-system-prompt", Prompt(o.Guidance),
+		// Claude Code records a session's system prompt and, by default,
+		// sends that record again on every resume, whatever a later launch
+		// passes: guidance turned off or changed would stay in force. Off,
+		// each launch sends the prompt it was given, a session recorded
+		// earlier included.
+		"--system-prompt-snapshot", "off",
 	)
 	if o.Spawn {
 		exe := o.Executable
@@ -160,7 +198,10 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 	if o.Model != "off" {
 		args = append(args, "--model", o.Model)
 	}
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	return args
+}
+
+func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	cmd.Dir = o.Dir
 	cmd.Env = append(os.Environ(), "DEN_ORCHESTRATOR=1")
 	stdin, err := cmd.StdinPipe()
@@ -188,8 +229,13 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
 		var tail []string
+		first := ""
 		for sc.Scan() {
-			tail = append(tail, sc.Text())
+			line := sanitize.Label(sc.Text(), maxStderrLine)
+			if first == "" {
+				first = line
+			}
+			tail = append(tail, line)
 			if len(tail) > 5 {
 				tail = tail[1:]
 			}
@@ -207,7 +253,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 		if len(tail) > 0 {
 			msg += " · " + strings.Join(tail, " | ")
 		}
-		orc.emit(Event{Kind: Exited, Text: msg})
+		orc.emit(Event{Kind: Exited, Text: msg, Stderr: first})
 		close(orc.events)
 		close(orc.done)
 	}()
@@ -414,7 +460,8 @@ type SpawnInput struct {
 	Model string `json:"model"`
 	// Role, on spawn_agent, has Den offer the human the catalogue skills
 	// that fit it, for this agent only, before the agent starts. Skills
-	// narrows the offer to some of those.
+	// names the ones to offer instead: each must fit the role, and may be
+	// one the default offer's cap leaves out.
 	Role   string   `json:"role"`
 	Skills []string `json:"skills"`
 	// Worktree gives the agent a git worktree of its own: true, or a name.

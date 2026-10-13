@@ -74,7 +74,10 @@ var Tags = []string{"coding", "frontend", "design", "writing", "testing", "secur
 var Licenses = []string{"Apache-2.0", "MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "CC-BY-4.0", "CC-BY-SA-4.0", "CC0-1.0", "0BSD", "Unlicense"}
 
 // MaxPerRole is how many skills one proposal offers at most.
-const MaxPerRole = 3
+const MaxPerRole = 4
+
+// MaxNamed is how many skills one request may name, once each.
+const MaxNamed = 2 * MaxPerRole
 
 var (
 	shaRe  = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -284,15 +287,7 @@ func (c *Catalogue) Match(role string) []Match {
 	}
 	var out []Match
 	for _, s := range c.Skills {
-		var hit []string
-		for _, t := range s.Roles {
-			for _, w := range tags {
-				if t == w {
-					hit = append(hit, t)
-				}
-			}
-		}
-		if len(hit) > 0 {
+		if hit := fits(s, tags); len(hit) > 0 {
 			out = append(out, Match{Skill: s, Matched: hit})
 		}
 	}
@@ -303,15 +298,41 @@ func (c *Catalogue) Match(role string) []Match {
 	return out
 }
 
+// fits is the role tags a skill serves, of tags.
+func fits(s Skill, tags []string) []string {
+	var hit []string
+	for _, t := range s.Roles {
+		for _, w := range tags {
+			if t == w {
+				hit = append(hit, t)
+			}
+		}
+	}
+	return hit
+}
+
 // Pick narrows a match to the named skills, refusing names that are not in
-// the catalogue or do not fit the role. With no names it is the match.
+// the catalogue or do not fit the role. With no names it is the match. A
+// named skill that fits the role is offered even when MaxPerRole cut it
+// from the match: the cap limits only the default offer.
 func (c *Catalogue) Pick(role string, names []string) ([]Match, error) {
 	matches := c.Match(role)
 	if len(names) == 0 {
 		return matches, nil
 	}
-	var out []Match
+	seen := map[string]bool{}
+	var unique []string
 	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			unique = append(unique, n)
+		}
+	}
+	if len(unique) > MaxNamed {
+		return nil, fmt.Errorf("%d skills named; at most %d can be offered at once", len(unique), MaxNamed)
+	}
+	var out []Match
+	for _, n := range unique {
 		found := false
 		for _, m := range matches {
 			if m.Name == n {
@@ -322,10 +343,15 @@ func (c *Catalogue) Pick(role string, names []string) ([]Match, error) {
 		if found {
 			continue
 		}
-		if _, ok := c.Skill(n); !ok {
+		s, ok := c.Skill(n)
+		if !ok {
 			return nil, fmt.Errorf("%q is not in Den's skills catalogue; only catalogue skills can be offered", n)
 		}
-		return nil, fmt.Errorf("%q does not fit the role %q", n, role)
+		hit := fits(s, RoleTags(role))
+		if len(hit) == 0 {
+			return nil, fmt.Errorf("%q does not fit the role %q", n, role)
+		}
+		out = append(out, Match{Skill: s, Matched: hit})
 	}
 	return out, nil
 }

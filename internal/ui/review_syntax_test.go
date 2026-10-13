@@ -224,3 +224,55 @@ func benchReviewKey(b *testing.B, lines int) {
 		m.View()
 	}
 }
+
+// hostileReview is a Review model on a new Rust file of n lines, each a
+// Rust raw-string opener repeated, which chroma lexes in quadratic time.
+func hostileReview(n, lineLen int) Model {
+	var b strings.Builder
+	fmt.Fprintf(&b, "diff --git a/x.rs b/x.rs\nnew file mode 100644\n--- /dev/null\n+++ b/x.rs\n@@ -0,0 +1,%d @@\n", n)
+	for i := 0; i < n; i++ {
+		b.WriteString("+" + strings.Repeat(`r#"`, lineLen/3) + "\n")
+	}
+	m := bigReview(1)
+	m.rev.works[0].Files = review.ParseUnified(b.String())
+	return m
+}
+
+// TestSyntaxHostileDiffIsBounded: a hostile file is lexed in pieces of at
+// most synChunkMax and synFileMax in all, once; a line longer than a piece
+// is never lexed. Counted, not timed, so load cannot flake it.
+func TestSyntaxHostileDiffIsBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		lines, length int
+		chunks        int64 // pieces lexed, at most
+	}{
+		{"many short lines", 400, 120, int64(synFileMax/synChunkMax) + 1},
+		{"one 64 KB line", 1, 64 << 10, 0},
+		{"lines of a piece each", 12, synChunkMax - 2, int64(synFileMax / synChunkMax)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synCache.Lock()
+			synCache.m = map[string]*synEntry{}
+			synCache.Unlock()
+			m := hostileReview(tc.lines, tc.length)
+			chunks, bytes := synChunks.Load(), synChunkBytes.Load()
+			start := time.Now()
+			m.View()
+			first := time.Since(start)
+			gotChunks, gotBytes := synChunks.Load()-chunks, synChunkBytes.Load()-bytes
+			if gotChunks > tc.chunks || gotBytes > synFileMax {
+				t.Errorf("lexed %d pieces, %d bytes; want at most %d pieces, %d bytes", gotChunks, gotBytes, tc.chunks, synFileMax)
+			}
+			if tc.chunks > 0 && gotChunks == 0 {
+				t.Error("the start of the file should still be coloured")
+			}
+			m.moveReview(1)
+			m.View()
+			if synChunks.Load()-chunks != gotChunks {
+				t.Error("the file was lexed again on the next key")
+			}
+			t.Logf("first view %v", first)
+		})
+	}
+}

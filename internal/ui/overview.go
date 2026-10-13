@@ -442,9 +442,10 @@ func (m Model) threadLines(ms *mission.Mission, w int) []string {
 		return e.mission == ms.ID || e.card != nil && e.card.MissionID == ms.ID
 	})
 	if len(lines) == 0 && ms.Text != "" {
-		lines = append([]string{" " + m.st.dim.Render("you")}, m.plainLines(ms.Text, w-2, m.st.fg)...)
+		pad := chatPad(w)
+		lines = append([]string{pad + m.st.dim.Render("you")}, m.plainLines(ms.Text, w-2*len(pad), m.st.fg)...)
 		for i := 1; i < len(lines); i++ {
-			lines[i] = " " + lines[i]
+			lines[i] = pad + lines[i]
 		}
 		lines = append(lines, "")
 	}

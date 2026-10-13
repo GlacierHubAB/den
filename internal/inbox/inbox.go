@@ -39,6 +39,7 @@ const (
 	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
 	Install                // Den asks: copy this den to a remote host? y/n answer it
 	Message                // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
+	Guidance               // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -75,6 +76,8 @@ func (k Kind) String() string {
 		return "install"
 	case Message:
 		return "message"
+	case Guidance:
+		return "guidance"
 	}
 	return "?"
 }
@@ -133,7 +136,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -699,6 +702,16 @@ func (s *Store) AddInstall(host, title string, body []string, req *bridge.Reques
 // req is the request of the den send that asked; it gets the outcome.
 func (s *Store) AddMessageOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
 	return s.add(&Item{Host: host, SessionID: sessionID, Kind: Message, Tool: "den_send", Title: title, Body: body, req: req})
+}
+
+// GuidanceSession is the SessionID of Den's questions about orchestrator
+// guidance, which concern no agent.
+const GuidanceSession = "den:guidance"
+
+// AddGuidance adds Den's question: load this orchestrator guidance? Only
+// the human's ^Y answers it; nothing else can.
+func (s *Store) AddGuidance(title string, body []string) *Item {
+	return s.add(&Item{SessionID: GuidanceSession, Kind: Guidance, Tool: "orchestrator_guidance", Title: title, Body: body})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's

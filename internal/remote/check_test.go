@@ -54,16 +54,25 @@ func hostileRun(t *testing.T, msgs ...any) (*Manager, []Update) {
 	}()
 	m.Start()
 	t.Cleanup(func() { m.Close(); <-done })
-	deadline := time.Now().Add(5 * time.Second)
-	for !slices.ContainsFunc(localLines(t, s.localEvts), func(ev events.Event) bool { return ev.Session == sidA }) {
-		if time.Now().After(deadline) {
-			t.Fatal("the marker event never arrived")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitFor(t, "the marker event", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return markerArrived(ups)
+	})
 	mu.Lock()
 	defer mu.Unlock()
 	return m, slices.Clone(ups)
+}
+
+// markerArrived reports whether ups holds the update of the marker event
+// (Done for sidA) a test host sends last. Updates come in order, so every
+// update the messages before it caused has been collected too. The local
+// log is no such sign: an event is logged before its update is sent, and a
+// message before the marker may be an event of the same session.
+func markerArrived(ups []Update) bool {
+	return slices.ContainsFunc(ups, func(u Update) bool {
+		return u.Kind == EventArrived && u.Event.Session == sidA && u.Event.Kind == events.Done
+	})
 }
 
 func hasFlag(m *Manager, sub string) bool {

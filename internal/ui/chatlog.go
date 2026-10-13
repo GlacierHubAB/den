@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
@@ -32,6 +33,7 @@ type cardRecord struct {
 	SessionID string    `json:"session"`
 	Agent     string    `json:"agent"`
 	Brief     string    `json:"brief"`
+	Summary   string    `json:"summary,omitempty"`
 	SentAt    time.Time `json:"sent"`
 	StartedAt time.Time `json:"started,omitempty"`
 	EndedAt   time.Time `json:"ended,omitempty"`
@@ -97,7 +99,7 @@ func (m *Model) logCard(d *dispatch) {
 		return
 	}
 	appendChatRecord(m.chatLog, chatRecord{Kind: "card", At: d.SentAt, Card: &cardRecord{
-		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: d.Brief,
+		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: firstNonEmptyS(d.rawBrief, d.Brief), Summary: d.Summary,
 		SentAt: d.SentAt, StartedAt: d.StartedAt, EndedAt: d.EndedAt,
 		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped,
 	}})
@@ -143,7 +145,10 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			if thread == "" {
 				thread = c.MissionID
 			}
-			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: c.Agent, Brief: c.Brief, SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: c.Reason, Calls: c.Calls, Ticker: c.Ticker, Result: c.Result, Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
+			// The log is Den's own, but a file can be edited: what comes
+			// back is sanitised like any outside text. The brief keeps its
+			// raw form for the log, so records written again are unchanged.
+			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: sanitize.Line(c.Agent), Brief: sanitize.Text(c.Brief), rawBrief: c.Brief, Summary: sanitize.Line(c.Summary), SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: sanitize.Line(c.Reason), Calls: c.Calls, Ticker: sanitize.Line(c.Ticker), Result: sanitize.Text(c.Result), Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
 			if d, ok := cards[c.ID]; ok {
 				*d = nd
 				continue
@@ -153,7 +158,7 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread})
 			continue
 		}
-		chat = append(chat, chatEntry{role: r.Kind, text: r.Text, to: r.To, status: r.Status, at: r.At, mission: r.Mission})
+		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission, memo: &mdMemo{}})
 	}
 	// Streamed text is logged when its final block lands, which can be after
 	// the card for a dispatch made in the same turn; the screen order is by

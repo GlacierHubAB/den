@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -12,9 +13,10 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/fleet"
-	"github.com/GlacierHubAB/den/internal/hypr"
+
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/tree"
+	"github.com/GlacierHubAB/den/internal/winmark"
 )
 
 // Closing agents. The human (^X, /close) or the orchestrator (close_agent)
@@ -151,6 +153,9 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 		PID:       a.Session.PID,
 		Dir:       a.Session.CWD,
 	}
+	// Only the marker Den recorded when it spawned this session ties a
+	// window to it; none for an agent Den did not start.
+	t.Marker = winmark.For(a.Session.SessionID)
 	if a.Host != "" {
 		// SessionID stays the UI's key (session id and host); the host does
 		// the signalling, so there is no pid, window or checkout path here.
@@ -168,9 +173,6 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 	default:
 		t.Status = "unknown"
 	}
-	if a.Window != nil {
-		t.Window, t.WindowHow = a.Window.Client.Address, a.Window.How
-	}
 	if idle, ok := idleFor(a, closeNow()); ok && a.Status == fleet.Idle {
 		t.Idle = idle
 	}
@@ -181,14 +183,18 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 }
 
 // closeSelf is what must never close: Den, its window, the orchestrator.
+// Den's window is the one window of a process above Den's, not whichever
+// window is in front; the closer refuses the window in front separately.
 func (m Model) closeSelf() closer.Self {
 	orc := ""
 	if m.orch.proc != nil {
 		orc = m.orch.proc.SessionID
 	}
 	window := ""
-	if hypr.Available() {
-		window = hypr.ActiveAddress()
+	if wo, ok := closeOps.(closer.WindowOps); ok {
+		if ws, err := wo.Windows(); err == nil {
+			window = closer.OwnWindow(ws, closer.AncestorPIDs(os.Getpid()))
+		}
 	}
 	return closer.DenSelf(orc, window)
 }
@@ -259,6 +265,13 @@ func (m *Model) proposePlan(cands []fleet.Agent, force bool, from, reason string
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	closer.Inspect(ctx, &plan)
 	cancel()
+	// Each window is tied to its agent now, so the question shows exactly
+	// which windows may close; Run checks again before closing any.
+	if wo, ok := closeOps.(closer.WindowOps); ok {
+		if ws, err := wo.Windows(); err == nil {
+			closer.Locate(&plan, ws, closer.AncestorPIDs)
+		}
+	}
 	sid, host := splitKey(plan.Targets[0].SessionID)
 	it := m.store.AddCloseOn(host, sid, plan.Title(), plan.Lines(), req)
 	if m.closing == nil {

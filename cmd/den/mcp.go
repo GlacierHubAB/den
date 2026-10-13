@@ -40,7 +40,7 @@ func runMCP() {
 					"name":     map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
 					"model":    map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
 					"role":     map[string]any{"type": "string", "description": "The agent's role in a few words: coding agent, ui designer, frontend developer, qa automation, security auditor. Den offers the human the skills from its vetted catalogue that fit the role, for this agent only, and waits for their answer before starting it; the agent starts either way, with the skills they approved."},
-					"skills":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these of the role's catalogue skills."},
+					"skills":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these catalogue skills. Each must fit the role; it may be one the role's default offer (at most four) leaves out."},
 					"worktree": map[string]any{"oneOf": []any{map[string]any{"type": "boolean"}, map[string]any{"type": "string"}}, "description": "Optional: start the agent in a git worktree of its own (true, or a name for it), made by Claude Code under <repo>/.claude/worktrees on branch worktree-<name>, so agents editing one repository do not collide. dir must be in a git repository that has a commit. The human reviews and merges the branch in Den's Review; the agent is told to commit there and not to merge."},
 				},
 				"required": []string{"dir", "brief"},
@@ -103,7 +103,7 @@ func runMCP() {
 				"properties": map[string]any{
 					"role":   map[string]any{"type": "string", "description": "The role to match, in a few words, e.g. the agent's role from the roster."},
 					"dir":    dirSchema,
-					"skills": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these of the role's catalogue skills."},
+					"skills": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these catalogue skills. Each must fit the role; it may be one the role's default offer (at most four) leaves out."},
 					"reason": map[string]any{"type": "string", "description": "One line on why, shown to the human."},
 				},
 				"required": []string{"role", "dir"},

@@ -22,6 +22,7 @@ import (
 )
 
 func (m Model) View() tea.View {
+	m.hl = newHLBudget()
 	w, h := m.width, m.height
 	if w <= 0 {
 		w = 120
@@ -626,6 +627,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.Message:
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
+	case it.Answerable() && it.Kind == inbox.Guidance:
+		out = append(out, key("^Y", "load it")+"  "+key("^N", "leave it off"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -854,6 +857,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Message {
 			acts = key("^Y", "send it") + sp + sp + key("^N", "do not send")
+		}
+		if it.Kind == inbox.Guidance {
+			acts = key("^Y", "load it") + sp + sp + key("^N", "leave it off")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
@@ -1186,7 +1192,7 @@ func (m Model) hints(w int) string {
 			items = append(items[:7:7], [2]string{"/merge", "ask to merge " + w.Branch}, [2]string{"/cleanup", "remove its worktree"}, items[7], items[8])
 		}
 	case m.tab == tabOrch:
-		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
+		items = [][2]string{{"Enter", "send"}, {"⇧Enter", "newline"}, {"@Name", "one agent"}, {"↑ ↓", "cards, actions"}, {"drag", "select · click a block: copy"}, {"^V", "paste image"}, {"^O", "back"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tree.mapView:
 		items = [][2]string{{"↑ ↓", "walk"}, {"← →", "parent · child"}, {"Enter", "send · empty: focus terminal"}, {"^T", "list"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.focus == paneDetail:
@@ -1271,6 +1277,9 @@ func (m Model) inAgentColor(a fleet.Agent) Model {
 func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, newestFirst bool) []string {
 	s := m.st
 	m = m.inAgentColor(a)
+	// A remote host's text is never handed to a lexer: the bytes are the
+	// host's to choose, and a lexer can be made slow.
+	m.plainCode = m.plainCode || a.Host != ""
 	textW = max(12, textW)
 	var out []string
 	prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {

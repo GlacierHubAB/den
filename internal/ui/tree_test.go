@@ -246,3 +246,25 @@ func TestIdleNoticeNamesTheLead(t *testing.T) {
 		t.Errorf("agent without a lead = %q", got)
 	}
 }
+
+// TestSpawnCardAndEdgeSanitised: a spawn's brief becomes a card and a tree
+// edge; neither keeps escapes or bidi controls.
+func TestSpawnCardAndEdgeSanitised(t *testing.T) {
+	m := Model{st: newStyles(theme.Deepharness), orch: orchState{cardCur: -1}}
+	hostile := "brief\x1b]52;c;aGk=\x07 \u202eevil\x1b[2J"
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "▶ starting", toolUseID: "t9"})
+	m.cardForSpawn(pendingSpawn{toolUseID: "t9", brief: hostile}, "Quiet Panda", "sid9")
+	d := m.orch.chat[0].card
+	if d == nil || strings.ContainsAny(d.Brief, "\x1b\x07\u202e") {
+		t.Fatalf("spawn card brief = %+v", d)
+	}
+	if d.rawBrief != hostile {
+		t.Error("the log should keep the brief as it came")
+	}
+	m.learnEdge(tree.Edge{Parent: tree.Orchestrator, Child: "sid9", Brief: hostile + "\nsecond"})
+	for _, e := range m.tree.edges.Children(tree.Orchestrator) {
+		if strings.ContainsAny(e.Brief, "\x1b\x07\u202e\n") {
+			t.Errorf("edge brief = %q", e.Brief)
+		}
+	}
+}
