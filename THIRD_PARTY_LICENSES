@@ -69,11 +69,57 @@ authors and remains under their license:
     not modify these files and installs them with that LICENSE beside them.
     Text: https://creativecommons.org/licenses/by-sa/4.0/legalcode
 
+  DietrichGebert/ponytail https://github.com/DietrichGebert/ponytail
+    pinned commit 2961b52fc1fe6a5a87c7a959a79512e5c2f3ffe5
+    Used: skills/ponytail (SKILL.md only; not the repository's plugin or
+    hooks). License: MIT, Copyright (c) 2026 DietrichGebert, from the root
+    LICENSE at the pinned commit (SHA-256
+    fb1bc6909ac3ef82d5c22106e32ef682b0cff66788fa915fb9b53b15c9d2f3ab).
+
 The license texts above were fetched read-only from raw.githubusercontent.com
 at the pinned commits and their SHA-256 matches the one recorded in the
 catalogue. The full license text of each installed skill travels with the
 skill when it is installed. The test in internal/tools/thirdparty fails if a
 repository in the catalogue is not named in this section.
+
+Orchestrator guidance (internal/orch/guidance)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+What Den embeds: the text of i-have-adhd, the guidance the human can turn on
+with orchestrator.guidance = "i-have-adhd". Unlike the skills above, it is
+part of the Den binary.
+
+  ayghri/i-have-adhd     https://github.com/ayghri/i-have-adhd
+    pinned commit 1ecea1993b7fce257ffbd686c070948b5e07eda6 (v0.4.1)
+    Used: skills/i-have-adhd/SKILL.md (SHA-256
+    88955c019bbb1419ff4b49dbb1f80a867467de6233d7865af2e06a7d7b76c7d3), modified
+    by Den: four edits in internal/orch/guidance/i-have-adhd/den.patch. The
+    original, the patch, the result and the LICENSE are in that folder.
+    License: MIT, from the root LICENSE at the pinned commit (SHA-256
+    8acbb618089b738404f76ac60fca1aaa995d9a87995eddf95f0b777acd7f7d2c):
+
+--- LICENSE ---
+MIT License
+
+Copyright (c) 2026 Ayoub Ghriss
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 3. Go modules and the Go standard library
 -----------------------------------------
