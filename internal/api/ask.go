@@ -56,8 +56,8 @@ type askJob struct {
 	// client named in hello. A newer ask supersedes only one in its scope.
 	scope string
 	send  func(Chunk) bool // false: the client is gone
-	seq     int
-	reply   strings.Builder
+	seq   int
+	reply strings.Builder
 	// cancelled is closed by ask.cancel, by a newer ask in the same scope,
 	// or when the asking connection goes: the turn stops, its slot frees.
 	cancelled chan struct{}

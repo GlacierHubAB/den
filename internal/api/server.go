@@ -453,15 +453,15 @@ type conn struct {
 	done  chan struct{}
 	once  sync.Once
 
-	mu     sync.Mutex
-	hello  bool
-	agent  bool
-	subs   map[string]bool
-	asks   int // asks of this connection not yet done
+	mu    sync.Mutex
+	hello bool
+	agent bool
+	subs  map[string]bool
+	asks  int // asks of this connection not yet done
 	// scope is whose asks this connection's are: its own, or those of the
 	// session it named in hello.
 	scope string
-	fleet  []byte // a fleet event waiting to be written, latest wins
+	fleet []byte // a fleet event waiting to be written, latest wins
 }
 
 func (c *conn) close() {

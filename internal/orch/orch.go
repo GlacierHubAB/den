@@ -244,7 +244,9 @@ func Argv(o Options) []string {
 	}
 	allowed := "ListAgents,SendMessage"
 	tools, mode := "ListAgents,SendMessage", "dontAsk"
+	prompt := Prompt(o.Guidance)
 	if o.Control {
+		prompt += "\n\n" + ControlPrompt
 		// SendMessage never asks permission, so it could not be held for
 		// the human: Den's send_message takes its place.
 		allowed, tools, mode = "ListAgents", "ListAgents", "manual"
@@ -257,7 +259,7 @@ func Argv(o Options) []string {
 		"--verbose",
 		"--name", o.Name,
 		"--tools", tools,
-		"--append-system-prompt", Prompt(o.Guidance),
+		"--append-system-prompt", prompt,
 		// Claude Code records a session's system prompt and, by default,
 		// sends that record again on every resume, whatever a later launch
 		// passes: guidance turned off or changed would stay in force. Off,

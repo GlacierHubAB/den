@@ -53,7 +53,9 @@ func controlOrch(spawn bool) (*Orchestrator, *stdinBuf) {
 	return o, in
 }
 
-func feed(o *Orchestrator, lines ...string) { o.readStdout(strings.NewReader(strings.Join(lines, "\n") + "\n")) }
+func feed(o *Orchestrator, lines ...string) {
+	o.readStdout(strings.NewReader(strings.Join(lines, "\n") + "\n"))
+}
 
 func canUse(id, tool, useID string) string {
 	return `{"type":"control_request","request_id":"` + id + `","request":{"subtype":"can_use_tool","tool_name":"` + tool + `","tool_use_id":"` + useID + `","input":{"x":1}}}`

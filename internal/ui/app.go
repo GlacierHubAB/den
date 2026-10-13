@@ -649,7 +649,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent {
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -657,8 +657,11 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: only the orchestrator's own hook and tools may ask this"})
 			return nil
 		}
-		if r.Event == bridge.InboundEvent {
+		switch r.Event {
+		case bridge.InboundEvent:
 			return m.handleInbound(r)
+		case bridge.OrchSendEvent:
+			return m.handleOrchSend(r)
 		}
 		return m.handleMissionUpdate(r)
 	}

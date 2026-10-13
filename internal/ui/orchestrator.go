@@ -408,7 +408,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			m.logEntry(m.addChat(chatEntry{role: "orchestrator", text: text, at: now}))
 		}
 	case orch.ToolUse:
-		if ev.Tool == "SendMessage" {
+		if ev.Tool == "SendMessage" || ev.Tool == orch.SendMessageTool {
 			in, ok := orch.ParseSendMessage(ev.Input)
 			if ok {
 				name, sid := m.agentForPeer(in.To)

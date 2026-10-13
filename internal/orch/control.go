@@ -30,6 +30,9 @@ import (
 // agents with control on, delivered by Den the way SendMessage would.
 const SendMessageTool = "mcp__" + MCPServer + "__send_message"
 
+// ControlPrompt follows the system prompt with control on.
+const ControlPrompt = "SendMessage is not available in this session: message sessions with send_message instead, wherever these instructions say SendMessage. It reaches them the same way, and their reports come back to you as before. Den may ask the human before any tool runs."
+
 // ControlFlag is the `den mcp` argument that adds send_message.
 const ControlFlag = "--control"
 
