@@ -108,6 +108,19 @@ type InboundInput struct {
 	Body     string `json:"body,omitempty"`
 }
 
+// MissionEvent is not a hook event: `den mcp` sends it for the
+// orchestrator's update_mission call. Den applies the update at once only
+// when the turn began with the human's own words and the state is not
+// final; otherwise it asks the human (^Y). Its answer is immediate.
+const MissionEvent = "MissionUpdate"
+
+// MissionInput is the payload of a MissionEvent.
+type MissionInput struct {
+	ID      string `json:"id"`
+	State   string `json:"state"` // done, continue, waiting, failed
+	Summary string `json:"summary"`
+}
+
 // The behaviours of a SendEvent answer besides allow and deny.
 const (
 	SendDeclined  = "declined"  // the human answered ^N

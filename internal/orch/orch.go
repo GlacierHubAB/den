@@ -116,7 +116,12 @@ const (
 	OpenTerminalTool = "mcp__den__open_terminal"
 	CloseAgentTool   = "mcp__den__close_agent"
 	SkillsTool       = "mcp__den__propose_skills"
+	MissionTool      = "mcp__den__update_mission"
 )
+
+// MissionsOnly is the `den mcp` argument that offers update_mission alone,
+// for an orchestrator that may not open terminals or start agents.
+const MissionsOnly = "--missions-only"
 
 // Options configure the process.
 type Options struct {
@@ -226,17 +231,18 @@ func Argv(o Options) []string {
 		"--include-hook-events",
 		"--replay-user-messages",
 	)
-	if o.Spawn {
-		exe := o.Executable
-		if exe == "" {
-			exe, _ = os.Executable()
-		}
-		if exe != "" {
-			// Only Den's server: the user's own MCP servers would give the
-			// orchestrator tools it must not have.
+	if exe := denExecutable(o); exe != "" {
+		// Only Den's server: the user's own MCP servers would give the
+		// orchestrator tools it must not have. Missions are always updated
+		// through it; opening terminals and starting agents only with
+		// Spawn.
+		if o.Spawn {
 			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
 			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool
+		} else {
+			args = append(args, "--mcp-config", missionsMCPConfig(exe), "--strict-mcp-config")
 		}
+		allowed += "," + MissionTool
 	}
 	args = append(args, "--allowedTools", allowed)
 	if o.Resume != "" {
@@ -651,6 +657,16 @@ func firstNonEmpty(xs ...string) string {
 		}
 	}
 	return ""
+}
+
+// missionsMCPConfig is Den's MCP server with update_mission alone.
+func missionsMCPConfig(exe string) string {
+	b, _ := json.Marshal(map[string]any{
+		"mcpServers": map[string]any{
+			MCPServer: map[string]any{"command": exe, "args": []string{"mcp", MissionsOnly}},
+		},
+	})
+	return string(b)
 }
 
 // MCPConfig is the --mcp-config JSON that registers `<exe> mcp` as the

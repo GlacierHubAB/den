@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/mcp"
 	"github.com/GlacierHubAB/den/internal/peermsg"
 )
 
@@ -126,5 +127,31 @@ func TestInboundSelfTest(t *testing.T) {
 	}
 	if code, out, _ := runInboundWith(t, envelope("den-self-test", "ping"), true, never); !blocked(code, out) {
 		t.Errorf("self-test: code %d out %q", code, out)
+	}
+}
+
+// TestUpdateMissionIsTheOrchestratorsAlone: an agent Den started (it runs
+// `den mcp` too) never gets update_mission; the orchestrator gets it, and
+// with --missions-only nothing else.
+func TestUpdateMissionIsTheOrchestratorsAlone(t *testing.T) {
+	all := []mcp.Tool{{Name: "spawn_agent"}, {Name: "open_terminal"}}
+	names := func(ts []mcp.Tool) string {
+		var n []string
+		for _, x := range ts {
+			n = append(n, x.Name)
+		}
+		return strings.Join(n, ",")
+	}
+	if got := names(mcpTools(all, false, false)); got != "spawn_agent,open_terminal" {
+		t.Errorf("an agent's server: %s", got)
+	}
+	if got := names(mcpTools(all, false, true)); got != "spawn_agent,open_terminal" {
+		t.Errorf("an agent cannot ask for missions only: %s", got)
+	}
+	if got := names(mcpTools(all, true, false)); got != "spawn_agent,open_terminal,update_mission" {
+		t.Errorf("the orchestrator's server: %s", got)
+	}
+	if got := names(mcpTools(all, true, true)); got != "update_mission" {
+		t.Errorf("missions only: %s", got)
 	}
 }

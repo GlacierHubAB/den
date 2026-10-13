@@ -447,10 +447,12 @@ mouse.
 ## Orchestrator
 
 The orchestrator is a headless Claude Code session Den starts on your first
-plain-text message. It has six tools: `ListAgents` and `SendMessage`, plus
-four Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
-`open_terminal`, `close_agent` and `propose_skills`; the last two only ever
-ask you (see Closing agents and Skills for roles). It gets a fresh roster of
+plain-text message. It has seven tools: `ListAgents` and `SendMessage`, plus
+five Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
+`open_terminal`, `close_agent`, `propose_skills` and `update_mission`;
+`close_agent` and `propose_skills` only ever ask you (see Closing agents and
+Skills for roles), and `update_mission` is its only way to move a mission on
+(see missions). With `spawn = false` it keeps `update_mission` alone. It gets a fresh roster of
 the fleet with every message, so it can answer "who is blocked on what?" or
 relay "tell Mossy to rebase first". It cannot approve anything; you do that in
 the inbox.
@@ -810,7 +812,12 @@ starts its own people.
 
 Den drives the runs: it asks the orchestrator to dispatch, tags the resulting
 cards with the mission, notices when they settle, and asks again when the shape
-calls for another pass. `Enter` on a mission opens it: the fields, a line per
+calls for another pass. The orchestrator says where a mission stands only
+through its `update_mission` tool, never in its text: Den applies `continue`
+and `waiting` at once when you asked it about the mission, and puts `done`,
+`failed`, and any update from a turn Den or an agent's report started, to you
+as an inbox question (`Ctrl+Y` applies it, `Ctrl+N` leaves the mission as it
+is). `Enter` on a mission opens it: the fields, a line per
 run with its progress or summary, then the mission's conversation, where the
 agents the orchestrator dispatched work inline as dispatch cards, in the order
 they were sent, just as in the Orchestrator chat. A dispatch made while you

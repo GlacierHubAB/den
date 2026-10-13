@@ -137,8 +137,61 @@ func runMCP() {
 			},
 		},
 	}}
+	// Missions are the orchestrator's alone: an agent Den started (which
+	// runs this server too) never gets the tool, and one started with
+	// --missions-only gets nothing else.
+	s.Tools = mcpTools(s.Tools, os.Getenv("DEN_ORCHESTRATOR") == "1", len(os.Args) > 2 && os.Args[2] == orch.MissionsOnly)
 	if err := s.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
 		fail("den mcp: %v", err)
+	}
+}
+
+// mcpTools is what `den mcp` offers: update_mission only to the
+// orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the agents it
+// starts), and with missionsOnly nothing else.
+func mcpTools(all []mcp.Tool, orchestrator, missionsOnly bool) []mcp.Tool {
+	if !orchestrator {
+		return all
+	}
+	if missionsOnly {
+		all = nil
+	}
+	return append(all, missionTool())
+}
+
+// missionTool is update_mission: the orchestrator's word on a mission,
+// applied by Den or put to the human there.
+func missionTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        strings.TrimPrefix(orch.MissionTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Tell Den where a mission stands after its run: done (the goal is met), continue (another pass is needed; dispatch it in the same reply), waiting (on something outside the agents) or failed. Den applies continue and waiting at once when the human asked you about the mission; anything else, and done or failed always, it puts to the human to confirm. The answer says which.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":      map[string]any{"type": "string", "description": "The mission's id, as Den gave it."},
+				"state":   map[string]any{"type": "string", "enum": []string{"done", "continue", "waiting", "failed"}},
+				"summary": map[string]any{"type": "string", "description": "One line on where it stands, shown to the human."},
+			},
+			"required": []string{"id", "state", "summary"},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.MissionInput
+			if json.Unmarshal(args, &in) != nil || strings.TrimSpace(in.ID) == "" {
+				return "", errorString("give id, state and summary")
+			}
+			switch in.State {
+			case "done", "continue", "waiting", "failed":
+			default:
+				return "", errorString("state is done, continue, waiting or failed")
+			}
+			payload, _ := json.Marshal(in)
+			env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.MissionEvent, Payload: payload}
+			d, ok := bridge.Ask(bridge.SocketPath(), env, 10*time.Second)
+			if !ok {
+				return "", errorString("Den is not running or did not answer; the mission was not updated")
+			}
+			return d.Message, nil
+		},
 	}
 }
 

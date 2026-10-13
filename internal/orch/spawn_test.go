@@ -36,7 +36,7 @@ func TestMCPConfigAndDescribe(t *testing.T) {
 	}
 }
 
-func TestStartOffersMCPOnlyWhenSpawning(t *testing.T) {
+func TestStartOffersSpawnToolsOnlyWhenSpawning(t *testing.T) {
 	dir := t.TempDir()
 	// The fake records its arguments, then behaves as before.
 	script := filepath.Join(dir, "claude")
@@ -50,9 +50,14 @@ func TestStartOffersMCPOnlyWhenSpawning(t *testing.T) {
 		}
 		o.Close()
 		args, _ := os.ReadFile(script + ".args")
-		hasMCP := strings.Contains(string(args), "--mcp-config") && strings.Contains(string(args), "--strict-mcp-config") && strings.Contains(string(args), CloseAgentTool) && strings.Contains(string(args), SpawnAgentTool)
-		if hasMCP != spawn {
+		// Den's server is always there, for update_mission; the spawn
+		// tools only with spawn.
+		hasSpawn := strings.Contains(string(args), CloseAgentTool) && strings.Contains(string(args), SpawnAgentTool)
+		if hasSpawn != spawn || !strings.Contains(string(args), "--strict-mcp-config") || !strings.Contains(string(args), MissionTool) {
 			t.Errorf("spawn=%v: args = %s", spawn, args)
+		}
+		if !spawn && !strings.Contains(string(args), MissionsOnly) {
+			t.Errorf("without spawn the server offers update_mission alone: %s", args)
 		}
 		if !strings.Contains(string(args), "--tools ListAgents,SendMessage ") {
 			t.Errorf("built-in tools must stay restricted: %s", args)

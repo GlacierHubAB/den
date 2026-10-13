@@ -173,7 +173,7 @@ func (s *Server) serve(conn net.Conn) {
 	}
 	req := &Request{Envelope: env}
 	_ = json.Unmarshal(env.Payload, &req.Input)
-	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == InboundEvent {
+	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == InboundEvent || env.Event == MissionEvent {
 		if s.held.Add(1) > MaxHeld {
 			s.held.Add(-1)
 			return // too many waiting: no decision, fail open

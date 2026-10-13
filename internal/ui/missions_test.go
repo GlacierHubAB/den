@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
@@ -76,8 +78,21 @@ func TestMissionProposeStartRunAndSettle(t *testing.T) {
 	if last := m.orch.pending[len(m.orch.pending)-1]; !strings.Contains(last, "Is the goal met?") {
 		t.Errorf("judge prompt = %q", last)
 	}
-	// The orchestrator says done.
-	m.missionReply("Green.\n```json\n{\"mission_update\": {\"id\": \"" + ms.ID + "\", \"state\": \"done\", \"summary\": \"suite green\"}}\n```")
+	// The orchestrator says done, through update_mission, in the turn Den
+	// started to judge the run: the human confirms it.
+	proc, _ := liveOrchestrator(t)
+	m.orch.proc, m.orch.origins = proc, []string{originDen}
+	raw, _ := json.Marshal(bridge.MissionInput{ID: ms.ID, State: "done", Summary: "suite green"})
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
+	m.handleRequest(r)
+	if ms.State == mission.Done {
+		t.Fatal("done applied without the human")
+	}
+	it := missionItems(m)[0]
+	m.tab, m.inboxSel = tabInbox, it.ID
+	nm, _ := m.answer("allow")
+	m = nm.(Model)
+	m.tab = tabOverview
 	if ms.State != mission.Done || ms.Runs[0].Summary != "suite green" {
 		t.Errorf("after update: %+v", ms)
 	}
