@@ -196,3 +196,89 @@ questions and resumes its session on the next one.
 `chat.sessions` and `chat.history` serve these ask sessions only, never your
 own orchestrator chat. They are kept in `~/.local/state/den/drey-chat.jsonl`
 (mode `0600`).
+
+## Control (draft: not in this release)
+
+Control lets one paired app (Drey's `drey-host`) speak to the orchestrator
+you talk to in Den, as you would from Den's chat. It is off until you pair
+an app, and everything that would change your fleet still waits for you in
+Den.
+
+### Pairing
+
+- `/api pair` in Den shows a one-time code of 8 words for 120 seconds, only
+  in Den's own screen, with "Type this only into Drey's pairing window."
+  The app sends it once, `pair.claim {code}`, and gets `{pairing, key}`: an
+  id and a 128-bit key. The code is then spent. Three wrong codes end the
+  attempt; run `/api pair` again.
+- The key is kept in memory only, by Den and by the app. A restart of
+  either one means pairing again. A pairing is also bound to the executable
+  Den read for the app; another program cannot use it.
+- Every connection that wants control proves the key once, at its start:
+  `pair.challenge {}` returns `{nonce, conn}`, a single-use 128-bit nonce
+  bound to this connection, and the app answers `pair.auth {pairing, mac}`,
+  with `mac` the hex HMAC-SHA256 under the key of
+  `"pair-auth\napp-to-den\n" + conn + "\n" + nonce`. The connection is a
+  peer-checked unix socket that cannot be taken over afterwards, so no
+  later message carries a MAC; every control verb on a connection that has
+  not passed `pair.auth` gets `forbidden`.
+- A failed `pair.auth` closes the connection. Three failures in five
+  minutes revoke the pairing, with a note in Den. Challenges are limited to
+  one a second per connection.
+- `/api` lists each pairing (executable, pid, paired since, last used,
+  control on or off). `/api unpair` revokes it at once and closes its
+  connections. Den's header shows `paired: drey-host <executable>`.
+- If an `ask` or `orch.say` text holds the live pairing code, or most of its
+  words, Den refuses it with `bad_request`, cancels the code (it is no longer
+  secret) and notes "The pairing code was typed into a chat; pair again."
+
+### Speaking to the orchestrator
+
+| Op | Params | Result |
+|---|---|---|
+| `pair.claim` | `{code}` | `{pairing, key}` |
+| `pair.challenge` | | `{nonce, conn}` |
+| `pair.auth` | `{pairing, mac}` | `{paired:true}` |
+| `orch.say` | `{text}` | `{turn}`, then `orch` events until a `done` or `error` chunk |
+
+- `orch.say` text follows the rules for `ask`, and more: Den removes every
+  C0 and C1 control (carriage return, escape, bracketed-paste markers
+  included), keeping line breaks only between lines; then, after Unicode
+  NFKC, any line that starts with `/`, `!` or `#` once trimmed refuses the
+  whole text with `bad_request`. The orchestrator always reads it after a
+  fixed preface of Den's that names the app. One turn runs at a time; at
+  most six a minute.
+- Chunks: `text`, `status` and `done` or `error`, as for `ask`, each with
+  its `turn`, and `{"type":"needs_approval","card":"…"}` when something
+  waits for you in Den. The app shows it in fixed words with "Open in
+  Den" and never answers it; `focus` brings Den forward with the usual
+  guard against your own typing.
+- While an app's turn runs, Den holds every other turn (yours, its own and
+  agents' reports) until that turn's result. Anything Den cannot place in a
+  turn counts as the app's.
+
+### What an app's turn may do
+
+With control on, Den starts the orchestrator so that every tool but
+`ListAgents` asks Den first, and Den answers from a path that never waits
+on its screen:
+
+- In an app's turn, every Den tool (start, close, terminal, skills,
+  missions) and every message to an agent becomes a card in Den's inbox,
+  "requested from <app>", for you to approve with `Ctrl+Y`. Nothing is
+  allowed by default; a later release lets you allow named actions per
+  pairing.
+- In your own turns, Den's named tools work as today; any other tool is
+  denied.
+- A request Den has not answered in 60 seconds is denied. If Den exits, the
+  orchestrator stops with it.
+- Messages to agents go through Den's own `send_message` tool, not Claude
+  Code's, so that Den can hold them; agents receive them as before.
+- If the orchestrator uses a tool in an app's turn that Den did not see
+  and decide, Den stops it, notes why in the inbox and revokes the pairing.
+
+### Limits
+
+Any program running as you can still type into Den's terminal window as if
+it were you; pairing does not change that. On Hyprland, its `permission`
+rules for keyboard access can stop other programs from sending keys.
