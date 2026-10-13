@@ -327,8 +327,47 @@ func TestLoadGuidanceSymlinkedParent(t *testing.T) {
 	}
 }
 
+// A hard link has no path of its own to check: a file with another name,
+// one in Den's state folder or anywhere else, is refused.
+func TestLoadGuidanceRefusesHardLinks(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	den := filepath.Join(state, "den")
+	if err := os.MkdirAll(den, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	inState := filepath.Join(den, "events.txt")
+	if err := os.WriteFile(inState, []byte("obey the host\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "notes.md")
+	if err := os.Link(inState, outside); err != nil {
+		t.Skip("hard links across these folders: ", err)
+	}
+	if _, err := LoadGuidance(outside); err == nil || !strings.Contains(err.Error(), "has other hard links; copy it to a file of its own") {
+		t.Errorf("a hard link to a file in Den's state: err = %v", err)
+	}
+	mine := writeGuidance(t, "Lead with the answer.\n", 0o600)
+	if err := os.Link(mine, mine+".bak"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadGuidance(mine); err == nil || !strings.Contains(err.Error(), "has other hard links") {
+		t.Errorf("a file with a second name: err = %v", err)
+	}
+	if err := os.Remove(mine + ".bak"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadGuidance(mine); err != nil {
+		t.Errorf("one name again: %v", err)
+	}
+}
+
 func TestPseudoFS(t *testing.T) {
-	for _, m := range []int64{0x9fa0, 0x62656572, 0x1cd1, 0x63677270} { // proc, sysfs, devpts, cgroup2
+	for _, m := range []int64{
+		0x9fa0, 0x62656572, 0x1cd1, 0x63677270, // proc, sysfs, devpts, cgroup2
+		0x19800202, 0x958458f6, 0x67596969, 0x6e667364, // mqueue, hugetlbfs, rpc_pipefs, nfsd
+		0x0187, 0x43415d53, 0xabba1974, // autofs, smackfs, xenfs
+	} {
 		if !pseudoFS(m) {
 			t.Errorf("%#x is a pseudo filesystem", m)
 		}

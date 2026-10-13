@@ -158,8 +158,14 @@ func readOwnFile(path string) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("guidance path %s is not a regular file", path)
 	}
-	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Getuid() {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) != os.Getuid() {
 		return nil, fmt.Errorf("guidance file %s is not yours", path)
+	}
+	if st.Nlink > 1 {
+		// Another name for the same file can sit anywhere on the
+		// filesystem, Den's state folder too, past every path check.
+		return nil, fmt.Errorf("guidance file %s has other hard links; copy it to a file of its own", path)
 	}
 	if fi.Mode().Perm()&0o022 != 0 {
 		return nil, fmt.Errorf("guidance file %s is writable by others; chmod go-w it", path)
@@ -210,7 +216,14 @@ func pseudoFS(t int64) bool {
 		unix.BPF_FS_MAGIC, unix.PSTOREFS_MAGIC, unix.EFIVARFS_MAGIC, unix.SELINUX_MAGIC, unix.NSFS_MAGIC,
 		unix.BINFMTFS_MAGIC, unix.ANON_INODE_FS_MAGIC, unix.PIPEFS_MAGIC, unix.SOCKFS_MAGIC,
 		0x62656570, // configfs
-		0x65735543: // fusectl
+		0x65735543, // fusectl
+		0x19800202, // mqueue
+		0x958458f6, // hugetlbfs
+		0x67596969, // rpc_pipefs
+		0x6e667364, // nfsd
+		0x0187,     // autofs
+		0x43415d53, // smackfs
+		0xabba1974: // xenfs
 		return true
 	}
 	return false

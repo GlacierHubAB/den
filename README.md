@@ -480,7 +480,8 @@ from (`internal/orch/guidance/i-have-adhd`). An absolute path names a file of
 your own instead. Den never fetches guidance over the network and never sends
 it to a host. It drops a leading frontmatter block and refuses, with a note,
 text over 8192 bytes after that, a file that does not read, is not yours, is
-writable by others, is a symlink or lies in Den's state folder, and text with
+writable by others, is a symlink, has other hard links or lies in Den's state
+folder, `/proc`, `/sys`, `/dev` or a kernel pseudo filesystem, and text with
 control, bidi or invisible characters.
 
 Nothing loads until you approve it. The first time, and whenever the text's
