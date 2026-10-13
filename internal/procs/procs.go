@@ -76,21 +76,43 @@ func StartTicks(pid int) string {
 	return f[starttime]
 }
 
-// Descends reports whether pid runs under ancestor, the process that
-// started at start (StartTicks): a parent, grandparent or further up, and
-// still the same process, not a reused pid.
-func Descends(pid, ancestor int, start string) bool {
-	if pid <= 1 || ancestor <= 1 || pid == ancestor || start == "" {
+// Parent is pid's parent pid and its own command name, ok false when pid
+// is gone.
+func Parent(pid int) (ppid int, comm string, ok bool) {
+	comm, ppid, ok = read(pid)
+	return ppid, comm, ok
+}
+
+// Exe is the executable pid runs, resolved ("" when it cannot be read).
+func Exe(pid int) string {
+	p, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
+	if err != nil {
+		return ""
+	}
+	return p
+}
+
+// shells are the commands a hook command line may run in before it execs
+// the hook.
+var shells = map[string]bool{"sh": true, "bash": true, "dash": true, "zsh": true}
+
+// ChildOf reports whether pid runs exe and is the direct child of parent
+// (the process that started at start), or the child of a shell that is:
+// how Claude Code starts its MCP servers and hook commands. A process any
+// deeper (in a terminal an agent opened, say) is not.
+func ChildOf(pid, parent int, start, exe string) bool {
+	if pid <= 1 || parent <= 1 || start == "" || exe == "" || Exe(pid) != exe {
 		return false
 	}
-	chain := Ancestors(pid)
-	if len(chain) < 2 {
+	pp, _, ok := Parent(pid)
+	if !ok {
 		return false
 	}
-	for _, p := range chain[1:] {
-		if p.PID == ancestor {
-			return StartTicks(ancestor) == start
+	if pp != parent {
+		ppp, comm, ok := Parent(pp)
+		if !ok || ppp != parent || !shells[comm] {
+			return false
 		}
 	}
-	return false
+	return StartTicks(parent) == start
 }

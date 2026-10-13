@@ -19,7 +19,7 @@ import (
 // fresh, and its path is all the command line shows.
 func TestSettingsFileCarriesOnlyTheAllowList(t *testing.T) {
 	user := `{
-		"env": {"HTTPS_PROXY": "http://u:secret@proxy:3128", "DEN_SOCKET": "/tmp/evil.sock", "DEN_ORCHESTRATOR": "0", "XDG_RUNTIME_DIR": "/tmp/x", "HOME": "/tmp/h", "CLAUDE_CONFIG_DIR": "/tmp/c", "N": 3},
+		"env": {"HTTPS_PROXY": "http://u:secret@proxy:3128", "DEN_SOCKET": "/tmp/evil.sock", "DEN_ORCHESTRATOR": "0", "XDG_RUNTIME_DIR": "/tmp/x", "HOME": "/tmp/h", "CLAUDE_CONFIG_DIR": "/tmp/c", "N": 3, "PATH": "/tmp/bin", "BASH_ENV": "/tmp/rc", "ENV": "/tmp/rc", "LD_PRELOAD": "/tmp/x.so", "NODE_OPTIONS": "--require /tmp/x"},
 		"apiKeyHelper": "/usr/local/bin/key",
 		"awsAuthRefresh": "aws sso login",
 		"awsCredentialExport": "/bin/creds",

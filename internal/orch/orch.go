@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -174,8 +175,9 @@ type Orchestrator struct {
 	Model     string
 	PID       int
 	// start is when the process started (procs.StartTicks), so a pid
-	// reused after it ends is never taken for it.
-	start string
+	// reused after it ends is never taken for it; exe is the den binary
+	// its hook and MCP server run.
+	start, exe string
 }
 
 // Start launches the process. Events arrive on Events() until Exited.
@@ -338,7 +340,11 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
-	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid)}
+	exe := denExecutable(o)
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
 	read := make(chan struct{})
 	go func() {
 		orc.readStdout(stdout)
@@ -425,10 +431,13 @@ func (o *Orchestrator) dropSettings() {
 	}
 }
 
-// Spawned reports whether pid runs under this orchestrator process: its
-// inbound hook and its `den mcp` do; nothing else on the machine does.
+// Spawned reports whether pid is this orchestrator's own inbound hook or
+// `den mcp`: Den's binary, started by the orchestrator process itself
+// (directly, or through the shell a hook command runs in). Anything
+// further down, such as an agent it started and what that agent runs,
+// is not.
 func (o *Orchestrator) Spawned(pid int) bool {
-	return o != nil && procs.Descends(pid, o.PID, o.start)
+	return o != nil && procs.ChildOf(pid, o.PID, o.start, o.exe)
 }
 
 // SentWindow is how long after writing a prompt Den vouches for it.

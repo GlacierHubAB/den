@@ -94,6 +94,17 @@ func TestUpdateMissionMixedTurnsAsk(t *testing.T) {
 	}
 }
 
+// TestUpdateMissionAfterAnUnplacedBlock: once a refused prompt could not
+// be placed, even the human's own turn asks.
+func TestUpdateMissionAfterAnUnplacedBlock(t *testing.T) {
+	m, _ := missionUpdateModel(t, originHuman)
+	m.handleOrchEvent(orch.Event{Kind: orch.Blocked})
+	updateMission(t, &m, "continue")
+	if len(missionItems(m)) != 1 {
+		t.Error("should ask the human")
+	}
+}
+
 // TestUpdateMissionCardIsTheHumans: ^Y applies the update, ^N leaves the
 // mission as it was.
 func TestUpdateMissionCardIsTheHumans(t *testing.T) {

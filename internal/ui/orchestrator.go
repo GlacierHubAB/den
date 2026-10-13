@@ -104,6 +104,9 @@ type orchState struct {
 	nextOrigin     string
 	// poisoned are sessions the backstop killed: never resumed.
 	poisoned map[string]bool
+	// mixed is set once a refused prompt could not be placed among the
+	// turns: from then on no turn counts as the human's alone.
+	mixed bool
 }
 
 // Silence thresholds: the status line says so after stallWarn, and Den
@@ -341,7 +344,7 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 	m.orch.started = false
 	m.orch.said = false
 	m.orch.status = "ready"
-	m.orch.origins, m.peers.inFlight, m.peers.envelopes = nil, 0, 0
+	m.orch.origins, m.peers.inFlight, m.peers.envelopes, m.orch.mixed = nil, 0, 0, false
 	cmds := []tea.Cmd{waitOrch(msg.o)}
 	for i, p := range m.orch.pending {
 		origin := originDen
@@ -449,9 +452,12 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			m.peers.envelopes--
 			return waitOrch(m.orch.proc)
 		}
-		m.turnDone()
-		m.orch.thinking = len(m.orch.origins) > 0
-		m.addChat(chatEntry{role: "note", text: "The orchestrator's guard refused a message Den sent it; it did not see it. Send it again.", at: now})
+		// Not one Den counted: a peer's whose hook could not reach Den, or
+		// (never expected) one of Den's own. Which turn it was is not
+		// known, so none is taken off; the turns are mixed from here, and
+		// update_mission asks the human, until a fresh process.
+		m.orch.mixed = true
+		m.addChat(chatEntry{role: "note", text: "The orchestrator's guard refused a prompt Den could not place; if you were waiting for an answer, send your message again.", at: now})
 	case orch.Backstop:
 		return m.onBackstop(ev.Text)
 	case orch.Result:

@@ -42,9 +42,12 @@ func userSettings() map[string]json.RawMessage {
 }
 
 // copiedEnv is the user settings' env as NAME=value pairs for the
-// orchestrator's process, without what would point it, or its hooks, at
-// another Den, socket, home or config: DEN_*, XDG_RUNTIME_DIR, HOME and
-// CLAUDE_CONFIG_DIR. Values that are not strings are left out.
+// orchestrator's process. Left out is whatever would point it, or the
+// hooks it runs, at another Den, socket, home or config (DEN_*,
+// XDG_RUNTIME_DIR, HOME, CLAUDE_CONFIG_DIR), or have its shells, loader or
+// runtimes run other code (strippedEnv); values that are not strings too.
+// The env is the user's own, as is everything they run; this keeps a
+// setting written for their sessions from bending the orchestrator's guard.
 func copiedEnv() []string {
 	var env map[string]any
 	if json.Unmarshal(userSettings()["env"], &env) != nil {
@@ -53,8 +56,7 @@ func copiedEnv() []string {
 	var out []string
 	for k, v := range env {
 		s, ok := v.(string)
-		if !ok || k == "" || strings.ContainsAny(k, "=\x00") || strings.HasPrefix(k, "DEN_") ||
-			k == "XDG_RUNTIME_DIR" || k == "HOME" || k == "CLAUDE_CONFIG_DIR" {
+		if !ok || k == "" || strings.ContainsAny(k, "=\x00") || strings.HasPrefix(k, "DEN_") || strings.HasPrefix(k, "LD_") || strippedEnv[k] {
 			continue
 		}
 		out = append(out, k+"="+s)
@@ -145,6 +147,13 @@ func denExecutable(o Options) string {
 	}
 	exe, _ := os.Executable()
 	return exe
+}
+
+// strippedEnv are the names copiedEnv never passes on.
+var strippedEnv = map[string]bool{
+	"XDG_RUNTIME_DIR": true, "HOME": true, "CLAUDE_CONFIG_DIR": true,
+	"PATH": true, "BASH_ENV": true, "ENV": true, "SHELLOPTS": true, "BASHOPTS": true, "IFS": true, "PS4": true,
+	"NODE_OPTIONS": true, "NODE_PATH": true, "GCONV_PATH": true,
 }
 
 // socketPath is den.sock, given to the hooks as an argument so the

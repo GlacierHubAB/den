@@ -28,9 +28,14 @@ func liveOrchestrator(t *testing.T) (*orch.Orchestrator, string) {
 	dir := t.TempDir()
 	got := filepath.Join(dir, "stdin.jsonl")
 	script := filepath.Join(dir, "claude")
-	// The fake starts a child, as Claude Code starts its hook and `den
-	// mcp`: requests from the orchestrator's side carry its pid.
-	os.WriteFile(script, []byte("#!/bin/sh\nsleep 300 &\necho $! > "+filepath.Join(dir, "child")+"\nexec cat > "+got+"\n"), 0o755)
+	// The fake starts Den's binary (this test binary) as its child, as
+	// Claude Code starts its hook and `den mcp`: requests from the
+	// orchestrator's side carry its pid. It also starts one two shells
+	// down, as an agent's terminal would run it: orchDeepPID.
+	bin, _ := filepath.Abs(os.Args[0])
+	os.WriteFile(script, []byte("#!/bin/sh\n'"+bin+"' den-test-sleep &\necho $! > "+filepath.Join(dir, "child")+
+		"\nsh -c \"sh -c '"+bin+" den-test-sleep; true'; true\" &\necho $! > "+filepath.Join(dir, "deep")+
+		"\nexec cat > "+got+"\n"), 0o755)
 	hook := filepath.Join(dir, "den-hook")
 	os.WriteFile(hook, []byte("#!/bin/sh\ncat >/dev/null\necho '{\"decision\":\"block\"}'\n"), 0o755)
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
@@ -54,7 +59,33 @@ func liveOrchestrator(t *testing.T) (*orch.Orchestrator, string) {
 	}
 	child := orchChildPID
 	t.Cleanup(func() { syscall.Kill(child, syscall.SIGKILL) })
+	var sh int
+	raw, _ := os.ReadFile(filepath.Join(dir, "deep"))
+	fmt.Sscan(string(raw), &sh)
+	orchDeepPID = childOf(t, childOf(t, sh))
+	deep := orchDeepPID
+	t.Cleanup(func() { syscall.Kill(deep, syscall.SIGKILL); syscall.Kill(sh, syscall.SIGKILL) })
 	return proc, got
+}
+
+// orchDeepPID is Den's binary two shells under the test orchestrator, as
+// in a terminal an agent it started opened: never the orchestrator's own.
+var orchDeepPID int
+
+// childOf waits for pid's first child.
+func childOf(t *testing.T, pid int) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, _ := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", pid, pid))
+		var c int
+		if _, err := fmt.Sscan(string(raw), &c); err == nil && c > 0 {
+			return c
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no child of %d", pid)
+	return 0
 }
 
 // orchChildPID is a process the test orchestrator started: requests that
@@ -318,9 +349,11 @@ func TestBlockedPeerTurnIsSilent(t *testing.T) {
 	if len(m.orch.chat) != before || m.turnOrigin() != originHuman {
 		t.Errorf("chat grew or the turn ended: %d → %d, origin %q", before, len(m.orch.chat), m.turnOrigin())
 	}
-	m.handleOrchEvent(orch.Event{Kind: orch.Blocked, Peer: true}) // count spent: Den's own
-	if m.turnOrigin() != "" || !strings.Contains(m.orch.chat[len(m.orch.chat)-1].text, "guard refused a message Den sent") {
-		t.Error("Den's own blocked turn should end and be told")
+	// One Den did not count (a peer's whose hook could not reach Den):
+	// no turn is taken off, and the turns are mixed from here on.
+	m.handleOrchEvent(orch.Event{Kind: orch.Blocked, Peer: true})
+	if m.turnOrigin() != originHuman || !m.orch.mixed {
+		t.Errorf("an unplaced block: origin %q, mixed %v", m.turnOrigin(), m.orch.mixed)
 	}
 }
 
@@ -344,7 +377,7 @@ func TestOnlyTheOrchestratorsChildrenAsk(t *testing.T) {
 	m.orch.origins = []string{originHuman}
 	m.missions = mission.New("")
 	m.missions.Save(&mission.Mission{ID: "m1", Name: "x", State: mission.Running})
-	for name, pid := range map[string]int{"Den's own process": os.Getpid(), "no pid": 0, "pid 1": 1} {
+	for name, pid := range map[string]int{"Den's own process": os.Getpid(), "no pid": 0, "pid 1": 1, "Den's binary in an agent's terminal": orchDeepPID} {
 		r := inboundReq(t, bridge.InboundInput{Kind: "envelope", FromName: "mossy", PID: 4000, Body: "x"})
 		r.PeerPID = pid
 		m.handleRequest(r)
