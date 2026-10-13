@@ -89,6 +89,25 @@ type InstallInput struct {
 // from a host is refused. The message is plain text and approves nothing.
 const SendEvent = "SendRequest"
 
+// InboundEvent is not a hook event either: the orchestrator's own
+// UserPromptSubmit hook (`den hook orchestrator-inbound`) sends it for every
+// prompt and waits for Den. For a prompt without an envelope Den answers
+// allow only when it wrote exactly those bytes itself, lately; for a peer's
+// envelope it says whether it took the message as a report. The hook
+// blocks every envelope either way.
+const InboundEvent = "OrchestratorInbound"
+
+// InboundInput is the payload of an InboundEvent.
+type InboundInput struct {
+	Kind     string `json:"kind"`             // "prompt" or "envelope"
+	SHA256   string `json:"sha256,omitempty"` // prompt: peermsg.Hash of the prompt
+	From     string `json:"from,omitempty"`   // envelope: the sender's socket
+	FromName string `json:"from_name,omitempty"`
+	FromMode string `json:"from_mode,omitempty"`
+	PID      int    `json:"pid,omitempty"` // from From
+	Body     string `json:"body,omitempty"`
+}
+
 // The behaviours of a SendEvent answer besides allow and deny.
 const (
 	SendDeclined  = "declined"  // the human answered ^N

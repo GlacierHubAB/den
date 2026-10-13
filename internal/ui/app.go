@@ -96,6 +96,9 @@ type flashClearMsg struct{}
 
 // Model is the root bubbletea model.
 type Model struct {
+	// peers is the bookkeeping of messages other sessions send the
+	// orchestrator (inbound.go).
+	peers peerState
 	// hl is the code colouring this frame may still do, set by View;
 	// plainCode draws fenced code uncoloured (remote agents' text).
 	hl        *hlBudget
@@ -599,6 +602,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
+	}
+	if r.Event == bridge.InboundEvent {
+		return m.handleInbound(r)
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.

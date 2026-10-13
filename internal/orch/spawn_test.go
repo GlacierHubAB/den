@@ -44,7 +44,7 @@ func TestStartOffersMCPOnlyWhenSpawning(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, spawn := range []bool{false, true} {
-		o, err := Start(context.Background(), Options{Command: []string{script}, Dir: dir, Spawn: spawn, Executable: "/opt/den"})
+		o, err := Start(context.Background(), Options{Command: []string{script}, Dir: dir, Spawn: spawn, Executable: "/opt/den", HookCommand: testHook()})
 		if err != nil {
 			t.Fatal(err)
 		}

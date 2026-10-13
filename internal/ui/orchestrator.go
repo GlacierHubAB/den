@@ -96,6 +96,14 @@ type orchState struct {
 	unanswered []string
 	restarts   int
 	prevTab    tab // where Ctrl+O came from
+	// origins says who started each turn sent and not yet finished, oldest
+	// first (originHuman, originDen, originReport); pendingOrigins goes
+	// with pending, and nextOrigin with the next tell.
+	origins        []string
+	pendingOrigins []string
+	nextOrigin     string
+	// poisoned are sessions the backstop killed: never resumed.
+	poisoned map[string]bool
 }
 
 // Silence thresholds: the status line says so after stallWarn, and Den
@@ -246,8 +254,14 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 	m.orch.thread = mission
 	m.logEntry(m.addChat(chatEntry{role: "you", text: shown, at: time.Now()}))
 	m.orch.scroll, m.ov.scroll = 0, 0
+	origin := m.orch.nextOrigin
+	if origin == "" {
+		origin = originHuman
+	}
+	m.orch.nextOrigin = ""
 	if m.orch.proc == nil {
 		m.orch.pending = append(m.orch.pending, prompt)
+		m.orch.pendingOrigins = append(m.orch.pendingOrigins, origin)
 		if m.orch.starting {
 			return nil
 		}
@@ -256,9 +270,18 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 		if m.orch.resume != "" {
 			m.orch.status = "resuming…"
 		}
-		return startOrchestrator(m.cfg, m.orch.resume, m.guide.active)
+		return startOrchestrator(m.cfg, m.resumable(), m.guide.active)
 	}
-	return m.sendToOrchestrator(prompt)
+	return m.sendToOrchestrator(prompt, origin)
+}
+
+// resumable is the session to resume, "" when there is none or the
+// backstop killed it.
+func (m Model) resumable() string {
+	if m.orch.poisoned[m.orch.resume] {
+		return ""
+	}
+	return m.orch.resume
 }
 
 // addChat appends an entry to the thread of the latest message and returns
@@ -286,7 +309,8 @@ func (o orchState) streaming() int {
 	return -1
 }
 
-func (m *Model) sendToOrchestrator(text string) tea.Cmd {
+func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
+	m.orch.origins = append(m.orch.origins, origin)
 	m.orch.thinking = true
 	m.orch.status = "thinking…"
 	m.orch.lastEvent = time.Now()
@@ -309,19 +333,24 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 	m.orch.starting = false
 	if msg.err != nil {
 		m.orch.status = "failed to start"
-		m.addChat(chatEntry{role: "note", text: "Could not start the orchestrator: " + msg.err.Error(), at: time.Now()})
-		m.orch.pending = nil
+		m.addChat(chatEntry{role: "note", text: "Could not start the orchestrator: " + sanitize.Label(msg.err.Error(), 300), at: time.Now()})
+		m.orch.pending, m.orch.pendingOrigins = nil, nil
 		return nil
 	}
 	m.orch.proc = msg.o
 	m.orch.started = false
 	m.orch.said = false
 	m.orch.status = "ready"
+	m.orch.origins, m.peers.inFlight = nil, 0
 	cmds := []tea.Cmd{waitOrch(msg.o)}
-	for _, p := range m.orch.pending {
-		cmds = append(cmds, m.sendToOrchestrator(p))
+	for i, p := range m.orch.pending {
+		origin := originDen
+		if i < len(m.orch.pendingOrigins) {
+			origin = m.orch.pendingOrigins[i]
+		}
+		cmds = append(cmds, m.sendToOrchestrator(p, origin))
 	}
-	m.orch.pending = nil
+	m.orch.pending, m.orch.pendingOrigins = nil, nil
 	return tea.Batch(cmds...)
 }
 
@@ -412,8 +441,24 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 				e.status = "delivered"
 			}
 		}
+	case orch.Blocked:
+		// A prompt the inbound hook refused: a peer's envelope (Den passes
+		// on what it admits as its own turn), or, never expected, one of
+		// Den's own turns the hook did not recognise.
+		if ev.Peer {
+			return waitOrch(m.orch.proc)
+		}
+		m.turnDone()
+		m.orch.thinking = len(m.orch.origins) > 0
+		m.addChat(chatEntry{role: "note", text: "The orchestrator's guard refused a message Den sent it; it did not see it. Send it again.", at: now})
+	case orch.Backstop:
+		return m.onBackstop(ev.Text)
 	case orch.Result:
-		m.orch.thinking = false
+		m.turnDone()
+		if ev.IsError && !m.orch.said && authTrouble(ev.Text) {
+			m.addChat(chatEntry{role: "note", text: authNote(ev.Text), at: now})
+		}
+		m.orch.thinking = len(m.orch.origins) > 0
 		m.turn = missionTurn{}
 		m.orch.unanswered = nil
 		m.orch.restarts = 0
@@ -746,9 +791,14 @@ func (m *Model) restartOrchestrator() tea.Cmd {
 	m.orch.thinking = false
 	m.orch.unanswered = nil
 	m.orch.pending = append(m.orch.pending, owed...)
+	for range owed {
+		// Resent after a restart: Den sends them, whoever wrote them.
+		m.orch.pendingOrigins = append(m.orch.pendingOrigins, originDen)
+	}
+	m.orch.origins, m.peers.inFlight = nil, 0
 	m.orch.started = false
 	m.orch.starting = true
 	m.orch.status = "restarting…"
 	m.guide.restart = false // the new process starts with the guidance in use
-	return startOrchestrator(m.cfg, m.orch.resume, m.guide.active)
+	return startOrchestrator(m.cfg, m.resumable(), m.guide.active)
 }

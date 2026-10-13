@@ -174,6 +174,7 @@ func (m *Model) runMission(ms *mission.Mission, verb string) tea.Cmd {
 	}
 	m.missions.Save(ms)
 	m.turn = missionTurn{id: ms.ID}
+	m.orch.nextOrigin = originDen
 	prompt := fmt.Sprintf("%s mission %s, run %d.\n%sDispatch this run now, then say in one line what you sent.", verb, ms.ID, r.N, ms.Describe())
 	return m.sendMission(ms.ID, false, fmt.Sprintf("%s mission %q, run %d", strings.ToLower(verb), ms.Name, r.N), prompt)
 }
@@ -195,6 +196,7 @@ func (m *Model) judgeMission(ms *mission.Mission, r *mission.Run) tea.Cmd {
 		}
 	}
 	m.turn = missionTurn{id: ms.ID}
+	m.orch.nextOrigin = originDen
 	prompt := fmt.Sprintf("Mission %s run %d: every agent has reported.\n%sResults:\n%s\nIs the goal met? Answer with the mission_update block; with \"continue\", dispatch the next pass now.", ms.ID, r.N, ms.Describe(), strings.Join(results, "\n"))
 	return m.sendMission(ms.ID, false, fmt.Sprintf("mission %q run %d finished · judging", ms.Name, r.N), prompt)
 }

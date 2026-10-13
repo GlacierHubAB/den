@@ -77,6 +77,9 @@ func main() {
 	case "skills":
 		skillsCmd(os.Args[2:])
 	case "hook":
+		if len(os.Args) > 2 && os.Args[2] == "orchestrator-inbound" {
+			runInbound(os.Args[3:])
+		}
 		runHook()
 	case "install-hooks":
 		installHooks()

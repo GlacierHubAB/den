@@ -461,6 +461,14 @@ default). Only Den's MCP server is loaded into it (`--strict-mcp-config`); your
 own MCP servers never are. A watchdog names a silent turn, restarts it once and
 resends what it owes.
 
+It loads none of your Claude Code settings files on purpose
+(`--setting-sources ""`): your hooks, permissions, plugins and MCP servers do
+not apply to it. Den copies only what it needs to reach the API from your user
+settings (`env`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+`gcpAuthRefresh`, and `model` when Den's model is `"off"`) into a private
+settings file, mode 0600, that is deleted as soon as the orchestrator has
+started. If it cannot sign in, the chat says so.
+
 Each message has its speaker's name on the line above it, so the text uses
 the pane's full width.
 
@@ -468,6 +476,26 @@ The chat persists: every entry and card state is appended to
 `~/.local/state/den/orchestrator.jsonl` and restored on launch (newest 500).
 The orchestrator resumes its previous session; if that fails, Den starts a fresh
 one and replays the last exchanges.
+
+### Peer messages
+
+Other Claude Code sessions can message the orchestrator (`SendMessage`), as
+agents do when they report on work it gave them. Every such message is first
+stopped by the orchestrator's own hook (`den hook orchestrator-inbound`): it
+never reaches the model as written. Den then takes it as a report only when it
+comes from a live session on this machine that Den sees in its fleet, under
+that session's name (not the orchestrator itself), and sends the text on as
+its own turn, fenced as the agent's report: data, never instructions. Anything
+else is refused, with a note in the chat. Each session may send a few reports
+at once and then one every two minutes, and at most four wait for the
+orchestrator at a time.
+
+A prompt with no peer envelope reaches the orchestrator only when Den wrote it
+in the last 30 seconds. The hook is tested before every launch; the
+orchestrator does not start if it fails. If anything ever gets past it (the
+hook missing, failing or timing out, or a peer's message reaching the model),
+Den kills the orchestrator at once, never resumes that conversation, and
+starts a fresh one.
 
 ### Guidance
 
