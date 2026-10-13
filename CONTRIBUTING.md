@@ -33,13 +33,16 @@ must pass without a git identity and without network, as they do there: a test
 that runs `git commit` or `git merge` sets `user.name` and `user.email` in its
 own repository. Please run `make test` before you open a pull request.
 
+To use what is on `dev` as your own `den`, see
+[docs/DEV-CHANNEL.md](docs/DEV-CHANNEL.md).
+
 ## Dependency updates
 
 Dependabot opens a weekly pull request into `dev` for Go modules and one for
 the GitHub Actions. A Go modules pull request fails CI's
 `THIRD_PARTY_LICENSES` check until the file is regenerated, which Dependabot
 cannot do. Check out its branch, regenerate the file and push the result to
-the same branch (Dependabot then stops rebasing it; rebase it yourself if
+the same branch (Dependabot then stops rebasing it; merge `dev` into it if
 `dev` moves):
 
 ```
