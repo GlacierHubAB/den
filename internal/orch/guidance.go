@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -116,16 +118,16 @@ func checkGuidance(text []byte) error {
 }
 
 // readOwnFile reads a guidance file: a clean absolute path, not a symlink,
-// a regular file owned by this user and writable by no one else, outside
-// Den's state folder and /proc.
+// a regular file owned by this user and writable by no one else, on a real
+// filesystem and outside Den's state folder, /proc, /sys and /dev. The
+// folders are checked on the path as given and again on the path the open
+// file really has, so a symlinked parent folder cannot lead into them.
 func readOwnFile(path string) ([]byte, error) {
 	if filepath.Clean(path) != path {
 		return nil, fmt.Errorf("guidance path %s is not clean; write it without . or .. parts", path)
 	}
-	for _, dir := range []string{denStateDir(), "/proc"} {
-		if dir != "" && (path == dir || strings.HasPrefix(path, dir+string(filepath.Separator))) {
-			return nil, fmt.Errorf("guidance path %s is inside %s, which hosts and agents write; keep it elsewhere", path, dir)
-		}
+	if err := outsideRefused(path, path); err != nil {
+		return nil, err
 	}
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -135,6 +137,23 @@ func readOwnFile(path string) ([]byte, error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("guidance file does not read: %w", err)
+	}
+	var fs unix.Statfs_t
+	if err := unix.Fstatfs(int(f.Fd()), &fs); err != nil {
+		return nil, fmt.Errorf("guidance file does not read: %w", err)
+	}
+	if pseudoFS(int64(fs.Type)) {
+		return nil, fmt.Errorf("guidance path %s is on a kernel pseudo filesystem (%#x), where Den never reads guidance from", path, fs.Type)
+	}
+	real, err := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", f.Fd()))
+	if err != nil {
+		return nil, fmt.Errorf("guidance path %s: its real path does not resolve: %w", path, err)
+	}
+	if rfi, err := os.Stat(real); err != nil || !os.SameFile(fi, rfi) {
+		return nil, fmt.Errorf("guidance path %s: its real path %s is not the file Den opened", path, real)
+	}
+	if err := outsideRefused(path, real); err != nil {
+		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("guidance path %s is not a regular file", path)
@@ -153,6 +172,48 @@ func readOwnFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("guidance file %s is over %d bytes; the cap is %d bytes (8 KB) after its frontmatter", path, maxGuidanceFile, MaxGuidance)
 	}
 	return b, nil
+}
+
+// refusedDirs are where Den never reads guidance from: its state folder,
+// which hosts' and agents' data lands in, and the kernel's own.
+func refusedDirs() []string {
+	dirs := []string{"/proc", "/sys", "/dev"}
+	if d := denStateDir(); d != "" {
+		dirs = append(dirs, d)
+		if r, err := filepath.EvalSymlinks(d); err == nil && r != d {
+			dirs = append(dirs, r)
+		}
+	}
+	return dirs
+}
+
+// outsideRefused refuses p, the guidance path as given, when at (that
+// path, or the real path of the file opened) lies in one of refusedDirs.
+func outsideRefused(p, at string) error {
+	for _, dir := range refusedDirs() {
+		if at == dir || strings.HasPrefix(at, dir+string(filepath.Separator)) {
+			if at != p {
+				return fmt.Errorf("guidance path %s leads to %s, inside %s, where Den never reads guidance from; keep it elsewhere", p, at, dir)
+			}
+			return fmt.Errorf("guidance path %s is inside %s, where Den never reads guidance from; keep it elsewhere", p, dir)
+		}
+	}
+	return nil
+}
+
+// pseudoFS reports whether a filesystem type (statfs f_type) is one the
+// kernel makes up rather than stores: procfs, sysfs and their kin.
+func pseudoFS(t int64) bool {
+	switch t {
+	case unix.PROC_SUPER_MAGIC, unix.SYSFS_MAGIC, unix.DEVPTS_SUPER_MAGIC, unix.DEBUGFS_MAGIC,
+		unix.TRACEFS_MAGIC, unix.SECURITYFS_MAGIC, unix.CGROUP_SUPER_MAGIC, unix.CGROUP2_SUPER_MAGIC,
+		unix.BPF_FS_MAGIC, unix.PSTOREFS_MAGIC, unix.EFIVARFS_MAGIC, unix.SELINUX_MAGIC, unix.NSFS_MAGIC,
+		unix.BINFMTFS_MAGIC, unix.ANON_INODE_FS_MAGIC, unix.PIPEFS_MAGIC, unix.SOCKFS_MAGIC,
+		0x62656570, // configfs
+		0x65735543: // fusectl
+		return true
+	}
+	return false
 }
 
 // denStateDir is $XDG_STATE_HOME/den, else ~/.local/state/den.

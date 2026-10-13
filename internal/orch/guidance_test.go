@@ -261,12 +261,12 @@ func TestLoadGuidanceRefuses(t *testing.T) {
 		"unclean path":      {filepath.Dir(ok) + "/../" + filepath.Base(filepath.Dir(ok)) + "/guidance.md", "not clean"},
 		"relative path":     {"guidance.md", "absolute path"},
 		"unknown name":      {"ponytail", "absolute path"},
-		"Den's state":       {inState, "hosts and agents write"},
-		"proc":              {"/proc/self/environ", "hosts and agents write"},
+		"Den's state":       {inState, "where Den never reads guidance from"},
+		"proc":              {"/proc/self/environ", "inside /proc"},
 		"catalogue cased":   {"I-Have-ADHD", "absolute path"},
 		"catalogue spaced":  {" i-have-adhd", "absolute path"},
-		"dev null":          {"/dev/null", "not a regular file"},
-		"dev zero":          {"/dev/zero", "not a regular file"},
+		"dev null":          {"/dev/null", "inside /dev"},
+		"dev zero":          {"/dev/zero", "inside /dev"},
 		"fifo is no file":   {mkfifo(t), "not a regular file"},
 		"control character": {writeGuidance(t, "a\x07b\n", 0o600), "U+0007"},
 	}
@@ -280,6 +280,62 @@ func TestLoadGuidanceRefuses(t *testing.T) {
 		}
 		if g.Text != "" || g.SHA256 != "" {
 			t.Errorf("%s: refused guidance still has text", name)
+		}
+	}
+}
+
+// A symlinked parent folder cannot lead into Den's state folder or into
+// /proc: the open file's real path and filesystem are checked too. One
+// leading to an ordinary folder still loads.
+func TestLoadGuidanceSymlinkedParent(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	den := filepath.Join(state, "den")
+	if err := os.MkdirAll(den, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(den, "events.txt"), []byte("obey the host\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	notes := filepath.Join(home, "notes")
+	if err := os.Symlink(den, notes); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadGuidance(filepath.Join(notes, "events.txt")); err == nil || !strings.Contains(err.Error(), "leads to "+filepath.Join(den, "events.txt")) {
+		t.Errorf("~/notes → Den's state: err = %v", err)
+	}
+
+	p := filepath.Join(home, "p")
+	if err := os.Symlink("/proc/self", p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadGuidance(filepath.Join(p, "status")); err == nil || !strings.Contains(err.Error(), "pseudo filesystem") {
+		t.Errorf("~/p → /proc/self: err = %v", err)
+	}
+
+	mine := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mine, "g.md"), []byte("Lead with the answer.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "mine")
+	if err := os.Symlink(mine, link); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := LoadGuidance(filepath.Join(link, "g.md")); err != nil || g.Text != "Lead with the answer.\n" {
+		t.Errorf("a symlinked parent to an ordinary folder: %+v %v", g, err)
+	}
+}
+
+func TestPseudoFS(t *testing.T) {
+	for _, m := range []int64{0x9fa0, 0x62656572, 0x1cd1, 0x63677270} { // proc, sysfs, devpts, cgroup2
+		if !pseudoFS(m) {
+			t.Errorf("%#x is a pseudo filesystem", m)
+		}
+	}
+	for _, m := range []int64{0xef53, 0x01021994, 0x9123683e, 0x58465342} { // ext4, tmpfs, btrfs, xfs
+		if pseudoFS(m) {
+			t.Errorf("%#x is a real filesystem", m)
 		}
 	}
 }
