@@ -341,6 +341,9 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 	headW := textW - ansi.StringWidth(state) - 2
 	line1 := justify(ansi.Truncate(head, max(8, headW), "…"), state, textW)
 	line2 := s.fg.Render(ansi.Truncate("▸ "+actionSummary(d.Summary, d.Brief), textW, "…"))
+	if hasSummary(d.Summary) {
+		line2 = s.fg.Render("▸ ") + s.muted.Render("(summary) ") + s.fg.Render(ansi.Truncate(actionSummary(d.Summary, ""), max(4, textW-12), "…"))
+	}
 	var left, right string
 	switch d.State {
 	case cardQueued:

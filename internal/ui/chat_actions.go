@@ -31,6 +31,11 @@ func actionSummary(summary, text string) string {
 	return ansi.Truncate(s, summaryMax, "…")
 }
 
+// hasSummary says whether a call carried a summary of its own.
+func hasSummary(summary string) bool {
+	return strings.TrimSpace(sanitize.Line(summary)) != ""
+}
+
 // firstLine is the first non-blank line of s.
 func firstLine(s string) string {
 	for _, l := range strings.Split(s, "\n") {

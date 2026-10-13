@@ -142,11 +142,12 @@ func TestChatActionsCollapse(t *testing.T) {
 		"seats: UI engineer (Quiet Panda), Security reviewer (Velvet Quokka)",
 		"done when: The human has the pack and the re-review passed.",
 		"Here is the plan.", "Say go and I start it.",
-		"▸ asked it to rebuild the bar item",
+		"▸ (summary) asked it to rebuild the bar item",
 		// No summary given: the first line of the message.
 		"→ drey-hatch: Please re-review **host-fixes-2**: · delivered",
 		"▶ starting an agent in /srv/drey as coding agent · Build the HTML pages. …",
-		"→ ops: The pack is ready for review. · delivered",
+		// Another tool is named, so it never reads as a message between agents.
+		"→ mcp__mail__message ops: The pack is ready for review. · delivered",
 	} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("missing %q in:\n%s", want, plain)
@@ -198,7 +199,7 @@ func TestChatActionClick(t *testing.T) {
 	frame := strings.Split(ansi.Strip(m.View().Content), "\n")
 	y := -1
 	for i, l := range frame {
-		if strings.Contains(l, "→ ops:") {
+		if strings.Contains(l, "ops: The pack") {
 			y = i
 		}
 	}

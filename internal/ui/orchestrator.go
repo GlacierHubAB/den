@@ -42,6 +42,11 @@ type chatEntry struct {
 	// message or a brief), shown when the entry is expanded.
 	full     string
 	expanded bool
+	// tool is set when the message went through a tool other than
+	// SendMessage; summarized when the line is the call's own summary
+	// rather than the message's first line.
+	tool       string
+	summarized bool
 }
 
 type orchEventMsg struct {
@@ -342,7 +347,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			if ok {
 				name, sid := m.agentForPeer(in.To)
 				if sid == "" {
-					m.addChat(chatEntry{role: "fan", to: name, text: actionSummary(in.Summary, in.Message), full: in.Message, status: "sending", toolUseID: ev.ToolUseID, at: now})
+					m.addChat(chatEntry{role: "fan", to: name, text: actionSummary(in.Summary, in.Message), summarized: hasSummary(in.Summary), full: in.Message, status: "sending", toolUseID: ev.ToolUseID, at: now})
 					break
 				}
 				d := &dispatch{ID: ev.ToolUseID, SessionID: sid, Agent: name, Brief: sanitize.Text(strings.TrimSpace(in.Message)), rawBrief: strings.TrimSpace(in.Message), Summary: actionSummary(in.Summary, ""), SentAt: now}
@@ -360,7 +365,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 				// Another tool that messages someone: one line, like a
 				// SendMessage to a peer outside the fleet.
 				name, sid := m.agentForPeer(mm.To)
-				note = chatEntry{role: "fan", to: name, sid: sid, text: actionSummary(mm.Summary, mm.Message), full: mm.Message, status: "sending", toolUseID: ev.ToolUseID, at: now}
+				note = chatEntry{role: "fan", to: name, sid: sid, tool: ev.Tool, text: actionSummary(mm.Summary, mm.Message), summarized: hasSummary(mm.Summary), full: mm.Message, status: "sending", toolUseID: ev.ToolUseID, at: now}
 			}
 			m.addChat(note)
 		}
@@ -588,9 +593,29 @@ func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string,
 			if e.sid != "" {
 				name = lipgloss.NewStyle().Foreground(lipgloss.Color(m.colorFor(e.sid))).Bold(true).Render(to)
 			}
+			// A tool other than SendMessage is named, so a call that leaves
+			// the machine never reads as a message between agents.
+			var tool string
+			if e.tool != "" {
+				tool = ansi.Truncate(sanitize.Line(e.tool), max(8, bodyW/4), "…") + " "
+			}
+			// The call's own summary is marked as one: it is the model's
+			// account of the message, which Enter shows in full.
+			var mark string
+			if e.summarized {
+				mark = "(summary) "
+			}
 			status := ansi.Truncate(sanitize.Line(e.status), max(8, bodyW/3), "…")
-			room := max(4, bodyW-ansi.StringWidth(to)-ansi.StringWidth(status)-7)
-			body = []string{s.dim.Render("→ ") + name + s.dim.Render(": ") + s.fg.Render(ansi.Truncate(sanitize.Line(e.text), room, "…")) + s.dim.Render(" · ") + st.Render(status)}
+			room := max(4, bodyW-ansi.StringWidth(tool)-ansi.StringWidth(to)-ansi.StringWidth(mark)-ansi.StringWidth(status)-7)
+			line := s.dim.Render("→ ")
+			if tool != "" {
+				line += s.muted.Render(tool)
+			}
+			line += name + s.dim.Render(": ")
+			if mark != "" {
+				line += s.muted.Render(mark)
+			}
+			body = []string{line + s.fg.Render(ansi.Truncate(sanitize.Line(e.text), room, "…")) + s.dim.Render(" · ") + st.Render(status)}
 			if e.expanded {
 				body = append(body, mo.expandedLines(e.full, bodyW)...)
 			}
