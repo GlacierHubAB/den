@@ -12,6 +12,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/mcp"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/peermsg"
 )
 
@@ -107,6 +108,33 @@ func TestInboundBlocksWhenDenIsDown(t *testing.T) {
 	}
 	if code, out, _ := runInboundWith(t, "hello", false, slow); !blocked(code, out) {
 		t.Error("a Den that did not answer passed a prompt")
+	}
+}
+
+// TestInboundWaitsForABusyDen: Den answering its own prompt 3 s late (its
+// screen busy) still lets the prompt through; the hook's limit stays
+// inside Claude Code's.
+func TestInboundWaitsForABusyDen(t *testing.T) {
+	if inboundDeadline+time.Second > orch.HookTimeout*time.Second {
+		t.Fatalf("the hook's %v leaves no margin inside Claude Code's %ds", inboundDeadline, orch.HookTimeout)
+	}
+	mine := "What is Mossy doing?"
+	old := askInbound
+	askInbound = func(_ string, in bridge.InboundInput, wait time.Duration) (bridge.Decision, error) {
+		if wait < 3*time.Second {
+			return bridge.Decision{}, errors.New("i/o timeout")
+		}
+		time.Sleep(3 * time.Second)
+		if in.SHA256 == peermsg.Hash(mine) {
+			return bridge.Decision{Behavior: "allow"}, nil
+		}
+		return bridge.Decision{Behavior: "deny"}, nil
+	}
+	t.Cleanup(func() { askInbound = old })
+	raw, _ := json.Marshal(map[string]string{"hook_event_name": "UserPromptSubmit", "prompt": mine})
+	var stdout, stderr bytes.Buffer
+	if code := inbound(bytes.NewReader(raw), &stdout, &stderr, false, "/nowhere", time.Now().Add(inboundDeadline)); code != 0 || stdout.Len() != 0 {
+		t.Errorf("a slow Den's own prompt: exit %d, %q", code, stdout.String())
 	}
 }
 

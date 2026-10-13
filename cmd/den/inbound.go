@@ -25,7 +25,9 @@ import (
 //   - Den not answering blocks. Anything going wrong inside exits 2, which
 //     Claude Code also takes as a block.
 //
-// It is done within 2 s. --self-test reads the same input but asks Den
+// It is done within 8 s, well inside Claude Code's 12 (orch.HookTimeout),
+// so a Den whose screen is busy still answers for its own prompt.
+// --self-test reads the same input but asks Den
 // nothing: Den runs it at every launch on a made-up envelope and starts the
 // orchestrator only when it is blocked.
 func runInbound(args []string) {
@@ -36,9 +38,10 @@ func runInbound(args []string) {
 	os.Exit(inbound(os.Stdin, os.Stdout, os.Stderr, selfTest, bridge.SocketPath(), time.Now().Add(inboundDeadline)))
 }
 
-// inboundDeadline is how long the hook may take; Claude Code's own timeout
-// for it is longer (orch.HookTimeout).
-const inboundDeadline = 2 * time.Second
+// inboundDeadline is how long the hook may take: room for a busy Den to
+// answer, and still a margin inside Claude Code's own limit for it
+// (orch.HookTimeout, 12 s), which would count as the hook failing.
+const inboundDeadline = 8 * time.Second
 
 // askInbound reaches Den; tests replace it.
 var askInbound = func(sock string, in bridge.InboundInput, wait time.Duration) (bridge.Decision, error) {

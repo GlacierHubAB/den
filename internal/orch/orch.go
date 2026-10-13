@@ -269,7 +269,7 @@ func Argv(o Options) []string {
 }
 
 // HookTimeout is Claude Code's limit on the inbound hook, in seconds; the
-// hook itself gives up well before (2 s), so it is never cut short.
+// hook itself gives up well before (8 s), so it is never cut short.
 const HookTimeout = 12
 
 // hookCommand is the inbound hook's argv for o.
