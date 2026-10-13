@@ -13,7 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
-var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/noremote_*.golden")
+var updateGolden = flag.Bool("update-golden", false, "rewrite the testdata/*.golden frames")
 
 // TestNoRemotesViewUnchanged is remote acceptance test 8:
 // with no remote host configured, the frames are what they were before

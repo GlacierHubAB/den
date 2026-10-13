@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,4 +70,48 @@ func TestChatLogRoundTripAndReconcile(t *testing.T) {
 		t.Error("reconcile should run once")
 	}
 	_ = discover.Session{}
+}
+
+// TestChatLogRestoreSanitises: an edited log cannot put escapes or bidi
+// controls on screen, and a card written again keeps its brief as logged.
+func TestChatLogRestoreSanitises(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "orchestrator.jsonl")
+	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), chatLog: log, orch: orchState{cardCur: -1}}
+	at := time.Date(2026, 10, 13, 5, 0, 0, 0, time.UTC)
+	hostile := "a\x1b]52;c;aGk=\x07b\u202ec\x1b[2Jd"
+	appendChatRecord(log, chatRecord{Kind: "orchestrator", At: at, Text: hostile})
+	appendChatRecord(log, chatRecord{Kind: "fan", At: at, Text: "x", To: hostile, Status: hostile})
+	appendChatRecord(log, chatRecord{Kind: "card", At: at, Card: &cardRecord{ID: "t1", SessionID: "s", Agent: hostile, Brief: hostile, Reason: hostile, Ticker: hostile, Result: hostile, SentAt: at}})
+	before, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat, _ := loadChatLog(log, maxChatLog)
+	for _, e := range chat {
+		fields := []string{e.text, e.to, e.status}
+		if d := e.card; d != nil {
+			fields = append(fields, d.Agent, d.Brief, d.Reason, d.Ticker, d.Result)
+		}
+		for _, f := range fields {
+			if strings.ContainsAny(f, "\x1b\x07\u202e") {
+				t.Errorf("restored %s entry keeps %q", e.role, f)
+			}
+		}
+	}
+	after, _ := os.ReadFile(log)
+	if string(after) != string(before) {
+		t.Error("loading the log changed it")
+	}
+	// Written again (a state change), the card logs the brief it was given.
+	for _, e := range chat {
+		if e.card != nil {
+			m.logCard(e.card)
+		}
+	}
+	again, _ := os.ReadFile(log)
+	last := strings.TrimSpace(string(again[len(before):]))
+	raw, _ := json.Marshal(hostile)
+	if !strings.Contains(last, `"brief":`+string(raw)) {
+		t.Errorf("the brief should be logged as it came: %s", last)
+	}
 }

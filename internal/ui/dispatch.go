@@ -45,6 +45,9 @@ type dispatch struct {
 	Calls     int
 	Ticker    string // the latest tool call, or what is waiting on you
 	Result    string // the agent's last message, verbatim
+	// Summary is the orchestrator's own gist of the brief, sanitised, ""
+	// when it gave none; the card shows it in place of the brief.
+	Summary   string
 	Files     int
 	MissionID string // the mission this dispatch is a run of, "" for a plain one
 	// Thread is the conversation the card was made in: the mission the
@@ -55,6 +58,10 @@ type dispatch struct {
 	// still at work; the card finishes once they are done.
 	Stopped  time.Time
 	Expanded bool
+
+	// rawBrief is the brief as the orchestrator sent it, for the log;
+	// Brief is that text sanitised, for everything Den draws.
+	rawBrief string
 
 	turn       []transcript.Entry
 	turnLoaded bool
@@ -105,11 +112,12 @@ func (m Model) focusedCard() *dispatch {
 	return m.orch.chat[m.orch.cardCur].card
 }
 
-// cardIndexes are the chat positions of the cards.
-func (m Model) cardIndexes() []int {
+// focusIndexes are the chat positions the arrows step through: the cards
+// and the actions that expand.
+func (m Model) focusIndexes() []int {
 	var out []int
 	for i, e := range m.orch.chat {
-		if e.card != nil {
+		if e.card != nil || e.collapsible() {
 			out = append(out, i)
 		}
 	}
@@ -119,7 +127,7 @@ func (m Model) cardIndexes() []int {
 // moveCard steps the focus through the cards; past the last one the focus
 // clears and the chat follows its tail again.
 func (m *Model) moveCard(delta int) {
-	idx := m.cardIndexes()
+	idx := m.focusIndexes()
 	if len(idx) == 0 {
 		m.orch.scroll = max(0, m.orch.scroll-delta)
 		return
@@ -332,7 +340,10 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 	head := agentStyle.Bold(true).Render(d.Agent) + role
 	headW := textW - ansi.StringWidth(state) - 2
 	line1 := justify(ansi.Truncate(head, max(8, headW), "…"), state, textW)
-	line2 := s.fg.Render(ansi.Truncate("▸ "+strings.Join(strings.Fields(d.Brief), " "), textW, "…"))
+	line2 := s.fg.Render(ansi.Truncate("▸ "+actionSummary(d.Summary, d.Brief), textW, "…"))
+	if hasSummary(d.Summary) {
+		line2 = s.fg.Render("▸ ") + s.muted.Render("(summary) ") + s.fg.Render(ansi.Truncate(actionSummary(d.Summary, ""), max(4, textW-12), "…"))
+	}
 	var left, right string
 	switch d.State {
 	case cardQueued:
@@ -391,6 +402,12 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 		out = append(out, indent)
 		a, _ := m.agentFor(d.SessionID)
 		a.Session.SessionID = d.SessionID
+		// The brief in full, as the orchestrator wrote it.
+		out = append(out, indent+s.dim.Render("brief"))
+		for _, l := range m.markdownLines(d.Brief, textW) {
+			out = append(out, indent+l)
+		}
+		out = append(out, indent)
 		if !d.turnLoaded {
 			out = append(out, indent+s.dim.Render("transcript not loaded yet"))
 		} else if len(d.turn) == 0 {

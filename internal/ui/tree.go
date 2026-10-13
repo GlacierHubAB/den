@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -73,6 +74,7 @@ func (m *Model) ensureTree() {
 // disk. A no-op when nothing changes.
 func (m *Model) learnEdge(e tree.Edge) {
 	m.ensureTree()
+	e.Brief = sanitize.Line(e.Brief) // drawn in the tree map
 	if e.At.IsZero() {
 		e.At = time.Now()
 	}
@@ -191,7 +193,7 @@ func (m *Model) cardForSpawn(p pendingSpawn, name, sid string) {
 			continue
 		}
 		now := time.Now()
-		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started", Thread: e.mission}
+		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: sanitize.Text(strings.TrimSpace(p.brief)), rawBrief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started", Thread: e.mission}
 		if d.SentAt.IsZero() {
 			d.SentAt = now
 		}
