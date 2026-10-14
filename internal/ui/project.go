@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/transcript"
 	"github.com/GlacierHubAB/den/internal/worktree"
@@ -288,6 +289,11 @@ func (m *Model) buildProjects() {
 				list[i].Name = p.Name + " · " + filepath.Base(p.Root)
 			}
 		}
+	}
+	// A folder's name, a branch and a remote repository's name are
+	// anyone's to choose: shown, they are one clean line.
+	for i := range list {
+		list[i].Name, list[i].Branch = sanitize.Line(list[i].Name), sanitize.Line(list[i].Branch)
 	}
 	sort.SliceStable(list, func(i, j int) bool {
 		if len(list[i].Agents) != len(list[j].Agents) {
