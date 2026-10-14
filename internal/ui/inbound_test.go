@@ -33,9 +33,15 @@ func liveOrchestrator(t *testing.T) (*orch.Orchestrator, string) {
 	// orchestrator's side carry its pid. It also starts one two shells
 	// down, as an agent's terminal would run it: orchDeepPID.
 	bin, _ := filepath.Abs(os.Args[0])
-	os.WriteFile(script, []byte("#!/bin/sh\n'"+bin+"' den-test-sleep &\necho $! > "+filepath.Join(dir, "child")+
-		"\nsh -c \"sh -c '"+bin+" den-test-sleep; true'; true\" &\necho $! > "+filepath.Join(dir, "deep")+
-		"\nexec cat > "+got+"\n"), 0o755)
+	// Each pid is written whole and then moved into place, so a reader
+	// never sees half of one.
+	pidTo := func(name string) string {
+		f := filepath.Join(dir, name)
+		return "echo $! > " + f + ".tmp && mv " + f + ".tmp " + f + "\n"
+	}
+	os.WriteFile(script, []byte("#!/bin/sh\n'"+bin+"' den-test-sleep &\n"+pidTo("child")+
+		"sh -c \"sh -c '"+bin+" den-test-sleep; true'; true\" &\n"+pidTo("deep")+
+		"exec cat > "+got+"\n"), 0o755)
 	hook := filepath.Join(dir, "den-hook")
 	os.WriteFile(hook, []byte("#!/bin/sh\ncat >/dev/null\necho '{\"decision\":\"block\"}'\n"), 0o755)
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
@@ -45,27 +51,59 @@ func liveOrchestrator(t *testing.T) (*orch.Orchestrator, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(proc.Close)
-	orchChildPID = 0
+	// Everything the fake started holds its output open, and Close waits
+	// for that output to end: kill it all first (cleanups run last first),
+	// so teardown takes moments even when the test failed half way.
+	t.Cleanup(func() { killTree(proc.PID) })
+	orchChildPID = readPID(t, filepath.Join(dir, "child"))
+	sh := readPID(t, filepath.Join(dir, "deep"))
+	orchDeepPID = childOf(t, childOf(t, sh))
+	return proc, got
+}
+
+// readPID waits for a file the fake orchestrator writes to hold a pid.
+func readPID(t *testing.T, path string) int {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if raw, err := os.ReadFile(filepath.Join(dir, "child")); err == nil && len(raw) > 1 {
-			fmt.Sscan(string(raw), &orchChildPID)
-			break
+		var pid int
+		if raw, err := os.ReadFile(path); err == nil {
+			if _, err := fmt.Sscan(string(raw), &pid); err == nil && pid > 0 {
+				return pid
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if orchChildPID == 0 {
-		t.Fatal("the fake orchestrator started no child")
+	t.Fatalf("the fake orchestrator wrote no pid to %s", filepath.Base(path))
+	return 0
+}
+
+// killTree kills every process under pid, not pid itself, until none is
+// left or two seconds pass.
+func killTree(pid int) {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var all []int
+		for todo := []int{pid}; len(todo) > 0; {
+			p := todo[0]
+			todo = todo[1:]
+			raw, _ := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", p, p))
+			for _, f := range strings.Fields(string(raw)) {
+				var c int
+				if _, err := fmt.Sscan(f, &c); err == nil && c > 0 {
+					all = append(all, c)
+					todo = append(todo, c)
+				}
+			}
+		}
+		if len(all) == 0 {
+			return
+		}
+		for _, c := range all {
+			syscall.Kill(c, syscall.SIGKILL)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
-	child := orchChildPID
-	t.Cleanup(func() { syscall.Kill(child, syscall.SIGKILL) })
-	var sh int
-	raw, _ := os.ReadFile(filepath.Join(dir, "deep"))
-	fmt.Sscan(string(raw), &sh)
-	orchDeepPID = childOf(t, childOf(t, sh))
-	deep := orchDeepPID
-	t.Cleanup(func() { syscall.Kill(deep, syscall.SIGKILL); syscall.Kill(sh, syscall.SIGKILL) })
-	return proc, got
 }
 
 // orchDeepPID is Den's binary two shells under the test orchestrator, as
