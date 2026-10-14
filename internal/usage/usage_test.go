@@ -35,20 +35,20 @@ func TestNewestTakesTheLatestFreshReading(t *testing.T) {
 }
 
 // TestNewestCannotBeHeldDown: a sample dated ahead would stay fresh for
-// ever, so it is ignored; among fresh ones of this week the highest share
-// counts, so a wrong figure can only make Den act early.
+// ever, so it is ignored; every fresh sample is the account now, and the
+// highest share counts, so a wrong or forged one (a 0% naming a reset
+// centuries away, say) can only make Den act early.
 func TestNewestCannotBeHeldDown(t *testing.T) {
 	week := now.Add(3 * 24 * time.Hour).Format(time.RFC3339)
-	lastWeek := now.Add(-4 * 24 * time.Hour).Format(time.RFC3339)
 	samples := []Sample{
-		{Percent: pct(5), Resets: week, At: now.Add(48 * time.Hour).UnixMilli()},    // from the future
-		{Percent: pct(91), Resets: week, At: now.Add(-9 * time.Minute).UnixMilli()}, // older but higher
+		{Percent: pct(5), Resets: week, At: now.Add(48 * time.Hour).UnixMilli()},                     // from the future
+		{Percent: pct(0), Resets: "3000-01-01T00:00:00Z", At: now.Add(-1 * time.Minute).UnixMilli()}, // a fake far week
+		{Percent: pct(91), Resets: week, At: now.Add(-9 * time.Minute).UnixMilli()},
 		{Percent: pct(12), Resets: week, At: now.Add(-1 * time.Minute).UnixMilli()},
-		{Percent: pct(99), Resets: lastWeek, At: now.Add(-1 * time.Minute).UnixMilli()}, // last week's
 	}
 	r, ok := Newest(samples, now)
-	if !ok || r.Percent != 91 {
-		t.Errorf("reading %+v %v, want the highest fresh share of this week, 91", r, ok)
+	if !ok || r.Percent != 91 || r.Resets.Format(time.RFC3339) != week {
+		t.Errorf("reading %+v %v, want the highest fresh share, 91, with its own reset", r, ok)
 	}
 	if _, ok := Newest(samples[:1], now); ok {
 		t.Error("a future-dated sample alone is no reading")
@@ -56,11 +56,24 @@ func TestNewestCannotBeHeldDown(t *testing.T) {
 	if r, ok := Newest([]Sample{{Percent: pct(30), At: now.Add(30 * time.Second).UnixMilli()}}, now); !ok || r.Percent != 30 {
 		t.Error("a clock a few seconds ahead is fine")
 	}
+	// A reset more than a week ahead is no reset: not kept, and not a
+	// bound for the human's figure either.
+	far := Sample{Percent: pct(40), Resets: now.Add(8 * 24 * time.Hour).Format(time.RFC3339), At: now.UnixMilli()}
+	r, _ = Newest([]Sample{far}, now)
+	if !r.Resets.IsZero() {
+		t.Errorf("an 8-day reset was kept: %v", r.Resets)
+	}
+	var st State
+	st.Current(r, true, 0, 0, now)
+	if !st.LastReset.IsZero() {
+		t.Errorf("LastReset moved to %v", st.LastReset)
+	}
 }
 
 // TestResumeHoldsTheWeek: after the human resumes, the automatic stop does
 // not fire again that week at the same share; another share, a stop by
-// hand (which clears ResumedWhen) or a new week arm it again.
+// hand (which clears ResumedWhen) or a real new week arm it again, but a
+// reset nudged forward a second does not.
 func TestResumeHoldsTheWeek(t *testing.T) {
 	s := State{LastReset: now.Add(72 * time.Hour), Stopped: true}
 	s.Resume(95, now)
@@ -70,7 +83,12 @@ func TestResumeHoldsTheWeek(t *testing.T) {
 	if !s.Armed(97, now.Add(time.Hour)) {
 		t.Error("a changed stop share arms it")
 	}
-	s.LastReset = now.Add(10 * 24 * time.Hour)
+	nudged := s
+	nudged.LastReset = s.LastReset.Add(time.Second)
+	if nudged.Armed(95, now.Add(time.Hour)) {
+		t.Error("a reset nudged by a second re-armed the stop")
+	}
+	s.LastReset = s.ResumedFor.Add(7 * 24 * time.Hour)
 	if !s.Armed(95, now.Add(4*24*time.Hour)) {
 		t.Error("a new week arms it")
 	}

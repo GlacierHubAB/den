@@ -49,14 +49,17 @@ type Sample struct {
 	At      int64  // ms since the epoch, as agent-badge records it
 }
 
-// Newest picks the reading Den goes by from the sessions' samples: among
-// those taken in the last Stale (a sample dated more than a minute ahead
-// is ignored: it would stay fresh for ever) and for the latest weekly
-// reset, the HIGHEST share, so a wrong or forged sample can only make Den
-// warn or stop early, never late. ok false when there is none.
+// Newest picks the reading Den goes by from the sessions' samples: every
+// sample taken in the last Stale is the account as it is now (one dated
+// more than a minute ahead is ignored: it would stay fresh for ever), and
+// of those the HIGHEST share counts, so a wrong or forged sample can only
+// make Den warn or stop early, never late. Just after a real weekly reset
+// that can mean last week's high figure for up to Stale: erring toward
+// stopping. The reset a sample names is its writer's word, so only a
+// plausible one is kept (PlausibleReset). ok false when there is none.
 func Newest(samples []Sample, now time.Time) (Reading, bool) {
-	var fresh []Reading
-	var reset time.Time
+	var best Reading
+	found := false
 	for _, s := range samples {
 		if s.Percent == nil || s.At <= 0 {
 			continue
@@ -66,28 +69,20 @@ func Newest(samples []Sample, now time.Time) (Reading, bool) {
 			continue
 		}
 		r := Reading{Percent: clamp(*s.Percent), At: at, Source: Statusline}
-		if t, err := time.Parse(time.RFC3339, s.Resets); err == nil {
+		if t, err := time.Parse(time.RFC3339, s.Resets); err == nil && PlausibleReset(t, now) {
 			r.Resets = t
-			if t.After(reset) {
-				reset = t
-			}
-		}
-		fresh = append(fresh, r)
-	}
-	var best Reading
-	found := false
-	for _, r := range fresh {
-		if !reset.IsZero() && !r.Resets.IsZero() && !r.Resets.Equal(reset) {
-			continue // an older week's figure
 		}
 		if !found || r.Percent > best.Percent || r.Percent == best.Percent && r.At.After(best.At) {
 			best, found = r, true
 		}
 	}
-	if found && best.Resets.IsZero() {
-		best.Resets = reset
-	}
 	return best, found
+}
+
+// PlausibleReset reports whether t can be the next weekly reset: after
+// now, and at most a week (and an hour) ahead.
+func PlausibleReset(t, now time.Time) bool {
+	return t.After(now) && !t.After(now.Add(7*24*time.Hour+time.Hour))
 }
 
 func clamp(p float64) float64 {
@@ -142,7 +137,9 @@ func (s State) Armed(stopPercent int, now time.Time) bool {
 		return true
 	}
 	if !s.ResumedFor.IsZero() {
-		return !s.LastReset.Equal(s.ResumedFor) // a new week re-arms it
+		// A new week re-arms it: a reset a real weekly step after the one
+		// resumed in, not one nudged forward.
+		return !s.LastReset.Before(s.ResumedFor.Add(6 * 24 * time.Hour))
 	}
 	return now.Sub(s.ResumedWhen) >= 7*24*time.Hour // no reset known: a week
 }
@@ -213,7 +210,7 @@ func (s *State) Set(p float64, now time.Time) {
 	v := clamp(p)
 	s.SetPercent, s.SetAt = &v, now
 	s.SetUntil = now.Add(7 * 24 * time.Hour)
-	if s.LastReset.After(now) {
+	if PlausibleReset(s.LastReset, now) {
 		s.SetUntil = s.LastReset
 	}
 }
@@ -223,7 +220,7 @@ func (s *State) Set(p float64, now time.Time) {
 // weeklyUSD, when that is set). ok false means Den does not know.
 func (s *State) Current(fresh Reading, haveFresh bool, spent, weeklyUSD float64, now time.Time) (Reading, bool) {
 	if haveFresh {
-		if !fresh.Resets.IsZero() && fresh.Resets.After(s.LastReset) {
+		if !fresh.Resets.IsZero() && fresh.Resets.After(s.LastReset) && PlausibleReset(fresh.Resets, now) {
 			s.LastReset = fresh.Resets
 		}
 		if fresh.At.After(s.LastSeen) {
