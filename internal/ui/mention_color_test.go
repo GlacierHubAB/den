@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -13,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/notify"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/theme"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // mentionModel is a fleet of sample agents on this machine, with a
@@ -191,5 +194,43 @@ func TestMentionGolden(t *testing.T) {
 		if got != string(want) {
 			t.Errorf("%s: the frame changed\n--- got\n%s\n--- want\n%s", c.name, ansi.Strip(got), ansi.Strip(string(want)))
 		}
+	}
+}
+
+// TestMentionsStayPlainInOthersWords: names are coloured in what Den, the
+// orchestrator and a local agent in its own pane write, never in a remote
+// host's text, an agent's report or turn in the chat, or a quote.
+func TestMentionsStayPlainInOthersWords(t *testing.T) {
+	m := mentionModel(t)
+	colour := lipgloss.NewStyle().Foreground(lipgloss.Color(m.colorFor("plucky"))).Render("x")
+	colour = strings.TrimSuffix(strings.TrimPrefix(colour[:strings.Index(colour, "x")], "\x1b["), "m") // bold may join the sequence
+	coloured := func(lines []string) bool { return strings.Contains(strings.Join(lines, "\n"), colour) }
+	text := func(lines []string) string { return ansi.Strip(strings.Join(lines, "\n")) }
+
+	tail := []transcript.Entry{{Kind: "claude", Text: "@Plucky approved. Mossy Lemur too."}}
+	local := m.base[3] // Plucky's own pane
+	if out := m.activityLines(tail, local, 80, false); !coloured(out) || !strings.Contains(text(out), "@Mossy Lemur too") {
+		t.Errorf("a local agent's own text should colour its mentions: %q", text(out))
+	}
+	far := m.remote.agents[0]
+	if out := m.activityLines(tail, far, 80, false); coloured(out) || !strings.Contains(text(out), "@Plucky approved. Mossy Lemur too.") {
+		t.Errorf("a remote tail should stay plain: %q", text(out))
+	}
+
+	d := &dispatch{ID: "c1", SessionID: "plucky", Agent: "Plucky", State: cardDone, Expanded: true, turnLoaded: true,
+		Brief: "Check with Mossy Lemur.", turn: tail, Result: "Done; @Plucky approved, Mossy Lemur agreed."}
+	out := text(m.cardLines(d, 100, false, time.Now()))
+	if !strings.Contains(out, "Check with @Mossy Lemur.") {
+		t.Errorf("the orchestrator's brief should colour its mentions:\n%s", out)
+	}
+	if !strings.Contains(out, "Done; @Plucky approved, Mossy Lemur agreed.") || !strings.Contains(out, "@Plucky approved. Mossy Lemur too.") {
+		t.Errorf("an agent's report and turn in the chat should stay plain:\n%s", out)
+	}
+
+	if out := m.markdownLines("> Mossy Lemur said @Plucky approved", 80); coloured(out) || strings.Contains(text(out), "@Mossy") {
+		t.Errorf("a quote should stay plain: %q", text(out))
+	}
+	if out := m.markdownLines("Mossy Lemur said @Plucky approved", 80); !coloured(out) {
+		t.Errorf("the orchestrator's own words should colour: %q", text(out))
 	}
 }

@@ -1303,6 +1303,8 @@ func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, 
 	// A remote host's text is never handed to a lexer: the bytes are the
 	// host's to choose, and a lexer can be made slow.
 	m.plainCode = m.plainCode || a.Host != ""
+	// Nor are its names coloured: the host chose them.
+	m.quietMentions = m.quietMentions || a.Host != ""
 	textW = max(12, textW)
 	var out []string
 	prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {

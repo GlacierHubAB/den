@@ -18,8 +18,10 @@ import (
 // colour. Only agents of this machine's fleet count, under the names Den
 // gave them; a name two of them share counts for neither. "@Name" always
 // matches; a bare name only when it is several words ("Quiet Panda"),
-// written exactly. Code, links and urls are never scanned, and an inbox
-// body a human approves by its exact text is never restyled.
+// written exactly. Code, links, urls and quotes are never scanned, nor is
+// text a remote host wrote, nor an agent's report or turn shown in the
+// chat; an inbox body a human approves by its exact text is never
+// restyled.
 
 // mentionName is one agent the set matches.
 type mentionName struct {
@@ -148,9 +150,19 @@ func (ms *mentionSet) apply(spans []mdSpan) []mdSpan {
 	return out
 }
 
+// mentionSpans colours the mentions in spans, unless the text is quoted
+// (a quote repeats someone else's words) or the Model draws text whose
+// author is not Den, the orchestrator or a local agent in its own pane.
+func (m Model) mentionSpans(spans []mdSpan, quoted bool) []mdSpan {
+	if quoted || m.quietMentions {
+		return spans
+	}
+	return m.ments.apply(spans)
+}
+
 // mentionKey is the set's part of a rendering's cache key.
 func (m Model) mentionKey() string {
-	if m.ments == nil {
+	if m.ments == nil || m.quietMentions {
 		return ""
 	}
 	return m.ments.key

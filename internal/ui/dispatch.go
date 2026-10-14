@@ -413,6 +413,9 @@ func (m Model) cardLines(d *dispatch, w int, focused bool, now time.Time) []stri
 		} else if len(d.turn) == 0 {
 			out = append(out, indent+s.dim.Render("nothing recorded for this turn yet"))
 		}
+		// The agent's turn and report are its words, not the
+		// orchestrator's: names in them stay plain.
+		m.quietMentions = true
 		for _, l := range m.activityLines(d.turn, a, textW, false) {
 			out = append(out, indent+l)
 		}

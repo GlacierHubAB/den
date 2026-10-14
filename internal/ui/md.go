@@ -233,7 +233,7 @@ func (m Model) blockLine(line string, width int) []string {
 		return []string{bar + s.muted.Render(strings.Repeat("─", max(4, min(width-barW, 24))))}
 	case mdHeading.MatchString(line):
 		h := mdHeading.FindStringSubmatch(line)
-		return m.wrapSpans(m.ments.apply(parseInline(h[2])), s.bright.Bold(true), width, bar, bar, barW)
+		return m.wrapSpans(m.mentionSpans(parseInline(h[2]), depth > 0), s.bright.Bold(true), width, bar, bar, barW)
 	}
 	if l := mdList.FindStringSubmatch(line); l != nil && !mdRule.MatchString(line) {
 		level := min(ansi.StringWidth(l[1])/2, 6)
@@ -244,13 +244,13 @@ func (m Model) blockLine(line string, width int) []string {
 		lead := strings.Repeat("  ", level)
 		first := bar + lead + s.dim.Render(marker) + " "
 		w := barW + len(lead) + ansi.StringWidth(marker) + 1
-		return m.wrapSpans(m.ments.apply(parseInline(l[3])), base, width, first, bar+strings.Repeat(" ", w-barW), w)
+		return m.wrapSpans(m.mentionSpans(parseInline(l[3]), depth > 0), base, width, first, bar+strings.Repeat(" ", w-barW), w)
 	}
 	// A paragraph keeps a little of its indent, so a list item's second
 	// paragraph still sits under it.
 	t := strings.TrimLeft(line, " ")
 	indent := strings.Repeat(" ", min(len(line)-len(t), 8, width/3))
-	return m.wrapSpans(m.ments.apply(parseInline(t)), base, width, bar+indent, bar+indent, barW+len(indent))
+	return m.wrapSpans(m.mentionSpans(parseInline(t), depth > 0), base, width, bar+indent, bar+indent, barW+len(indent))
 }
 
 // spanStyle is the style for a span in base text.
@@ -647,7 +647,7 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 		cells[r] = make([][]mdSpan, cols)
 		for c := 0; c < cols; c++ {
 			if c < len(row) {
-				cells[r][c] = m.ments.apply(parseInline(row[c]))
+				cells[r][c] = m.mentionSpans(parseInline(row[c]), false)
 			}
 			w := 0
 			for _, sp := range cells[r][c] {
@@ -665,7 +665,7 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 			if r == 0 {
 				base = base.Bold(true)
 			}
-			out = append(out, m.wrapSpans(m.ments.apply(parseInline(strings.Join(row, " · "))), base, width, "", "", 0)...)
+			out = append(out, m.wrapSpans(m.mentionSpans(parseInline(strings.Join(row, " · ")), false), base, width, "", "", 0)...)
 		}
 		return out
 	}

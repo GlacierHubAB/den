@@ -107,6 +107,9 @@ type Model struct {
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
 	ments *mentionSet
+	// quietMentions leaves mentions uncoloured: text a host or an agent
+	// report wrote, where a name in someone's colour would vouch for it.
+	quietMentions bool
 	// hl is the code colouring this frame may still do, set by View;
 	// plainCode draws fenced code uncoloured (remote agents' text).
 	hl        *hlBudget
