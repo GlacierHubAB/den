@@ -423,6 +423,7 @@ func (m *Model) refresh() {
 		m.reconcileCards()
 	}
 	m.settleCards()
+	m.releaseAssignments(time.Now())
 	sort.SliceStable(m.agents, func(i, j int) bool {
 		if oi, oj := m.remoteOrder(m.agents[i]), m.remoteOrder(m.agents[j]); oi != oj {
 			return oi < oj // a host's last known agents after everyone live, under its row
@@ -434,6 +435,7 @@ func (m *Model) refresh() {
 	})
 	m.buildTree()
 	m.buildProjects()
+	m.groupByProject()
 	m.cursor = 0
 	for i, a := range m.agents {
 		if a.Session.SessionID == keep {
@@ -1284,6 +1286,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Budget {
 		return m.decideBudget(it, verb)
 	}
+	if it.Kind == inbox.MissionMove {
+		return m.decideMove(it, verb)
+	}
 	if it.Kind == inbox.Restore {
 		return m.decideRestore(it, verb)
 	}
@@ -1406,6 +1411,18 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/fleet":
 		m.tab = tabFleet
+		if len(fields) > 1 {
+			switch strings.ToLower(fields[1]) {
+			case "project", "projects":
+				m.proj.byProject = true
+			case "flat":
+				m.proj.byProject = false
+			default:
+				return m.say("/fleet project groups the Fleet by project; /fleet flat goes back.", true)
+			}
+			m.saveProjectPick()
+			m.refresh()
+		}
 	case "/inbox":
 		m.tab = tabInbox
 	case "/delete", "/del":
@@ -1462,6 +1479,11 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 	case "/mission":
 		if len(fields) < 2 {
 			return m.say("Describe the mission: /mission <goal>", true)
+		}
+		// "/mission move <project>" names a project Den lists; any other
+		// goal that starts with "move" is a goal.
+		if len(fields) > 2 && strings.EqualFold(fields[1], "move") && m.listsProject(strings.Join(fields[2:], " ")) {
+			return m.askMove(strings.Join(fields[2:], " "))
 		}
 		m.tab = tabOverview
 		return m, m.proposeMission(strings.Join(fields[1:], " "))

@@ -43,6 +43,7 @@ const (
 	MissionUpdate             // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
 	Usage                     // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
 	UsageResume               // Den asks: let the fleet go on after a usage stop? y/n answer it
+	MissionMove               // Den asks: move this mission to another project, as you typed? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -87,6 +88,8 @@ func (k Kind) String() string {
 		return "message"
 	case Guidance:
 		return "guidance"
+	case MissionMove:
+		return "move"
 	}
 	return "?"
 }
@@ -145,7 +148,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -739,6 +742,13 @@ func (s *Store) AddUsageResume(title string, body []string) *Item {
 		return nil
 	}
 	return s.add(&Item{SessionID: UsageSession, Kind: UsageResume, Tool: "usage_resume", Title: title, Body: body})
+}
+
+// AddMissionMove adds Den's question: move this mission to another
+// project? sessionID is "mission:<id>". Only the human's /mission move
+// raises it, and only the human's ^Y answers it.
+func (s *Store) AddMissionMove(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: MissionMove, Tool: "mission_move", Title: title, Body: body})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's

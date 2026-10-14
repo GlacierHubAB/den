@@ -406,10 +406,12 @@ each chip. Delete a chip from the text and its image is left out.
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
 | `/remote`, `/remote connect <label>`, `/remote retry <label>` | list the remote hosts with their state; retry one now, applying a raise in `remotes.toml` after showing it (`connect`) or not (`retry`) (see [Remote agents](#remote-agents)) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
+| `/fleet project`, `/fleet flat` | group the Fleet by project, or not; remembered |
 | `/map` | toggle the Fleet map |
 | `/orchestrator` `/orch` | open the orchestrator; `/orch new` starts a fresh session, `/orch restart` restarts it |
 | `/project <name>`, `/project add <dir>`, `/project drop` | pick, list or unlist a project |
 | `/mission <goal>`, `/pause`, `/resume`, `/stop` | missions |
+| `/mission move <project>` | ask to move the open or selected mission to another listed project; `Ctrl+Y` in the Inbox moves it |
 | `/budget 2M`, `/budget $5`, `/budget off` | set, show (`/budget` alone) or remove the budget on the open or selected mission |
 | `/template`, `/template <name> <target or goal>`, `/template save <name>` | list the mission templates, start a proposal from one, save the open mission as one |
 | `/delete` `/del` | remove the review comment under the cursor |
@@ -800,12 +802,15 @@ skill's folder once it is empty, and drops the record.
 
 ## Overview, projects and missions
 
-The Overview tab, first in the row, shows one project at a time. Projects are
-the repositories agents work in, found through the files their transcripts say
-they edited plus session folders that are checkouts. An agent serving a live
-mission is also listed on that mission's project, even from a checkout of its
-own such as a scratch clone. The strip under the tabs lists the projects with
-a count of agents on each. `← →` or `/project <name>` switch,
+The Overview tab, first in the row, shows one project at a time. Each agent is
+listed under one project: the project of the live mission it serves (Den put it
+on the mission, or it works for an agent Den did), the most recently started
+one if several; else the project of the mission Den last put it on; else the
+repository its session folder is in. An agent whose folder is in no
+repository, with no mission, is in no project. (Earlier versions also
+listed an agent on every repository it had edited files in lately; now the
+files it edits elsewhere do not list it there.) The strip under the tabs lists
+the projects with a count of agents on each. `← →` or `/project <name>` switch,
 the pick is remembered, and the Review tab follows it. A folder nobody works in
 yet is listed with `/project add <dir>` (its repository root when it is inside
 one) and stays listed, empty, until `/project drop`.
@@ -840,9 +845,18 @@ run with its progress or summary, then the mission's conversation, where the
 agents the orchestrator dispatched work inline as dispatch cards, in the order
 they were sent, just as in the Orchestrator chat. A dispatch made while you
 talk about a finished mission shows there too. `/pause` holds the next run,
-`/resume` lets it go, `/stop` ends the mission and keeps its history. Missions
-persist in `~/.local/state/den/missions.jsonl`; the project pick and pinned
-projects in `overview.json` beside it.
+`/resume` lets it go, `/stop` ends the mission and keeps its history.
+
+A mission belongs to the project it was made in, and only you move it:
+`/mission move <project>` (a project Den lists, picked or added) asks in the
+Inbox, showing both project names, and `Ctrl+Y` moves it. Nothing the
+orchestrator or an agent says, and no `den` command, changes a mission's
+project. Den records which agents it put on each mission (a dispatch to the
+agent, or a spawn for the mission) and until when; that record, not what the
+agents say, decides where they are listed. `/fleet project` groups the Fleet
+by project in the same way, each lead with its people, and `/fleet flat` goes
+back. Missions persist in `~/.local/state/den/missions.jsonl`; the project
+pick, pinned projects and the Fleet grouping in `overview.json` beside it.
 
 ### Templates
 
@@ -1248,7 +1262,7 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `protected.json` | agents a close leaves alone, folders that protect their agents, and flagged agents with their notes |
 | `skills.json` | every skill Den installed: where from, where to, when, who approved |
 | `skills/agents/` | skills installed for one agent only |
-| `overview.json` | the picked and pinned projects |
+| `overview.json` | the picked and pinned projects, and whether the Fleet is grouped by project |
 | `reviews.json` | Review comments |
 | `guidance.json` | the SHA-256 of the orchestrator guidance you approved, nothing else |
 | `colors.json` | the colour of each session |

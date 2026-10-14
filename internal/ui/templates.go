@@ -90,7 +90,7 @@ func (m *Model) proposeFromTemplate(t templates.Template, target string) tea.Cmd
 	p, _ := m.curProject()
 	now := time.Now()
 	words := strings.TrimSpace("template " + t.Name + " " + target)
-	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, Text: words, State: mission.Proposed, Template: t.Name, Created: now, Updated: now}
+	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: words, State: mission.Proposed, Template: t.Name, Created: now, Updated: now}
 	ms.Apply(mission.Proposal{
 		Name:    templateMissionName(t.Name, target),
 		Mission: t.Fill(target), DoneWhen: t.DoneWhen, Constraints: t.Constraints,

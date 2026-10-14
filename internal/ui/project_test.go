@@ -76,8 +76,8 @@ func TestOldSideEditDoesNotKeepAgentOnProject(t *testing.T) {
 }
 
 // An agent working in a checkout of its own (a scratch clone outside the
-// usual projects) still shows on the project of the mission it serves, as
-// well as on its own checkout's.
+// usual projects) shows on the project of the live mission it serves, and
+// there only; with its mission done, on its own checkout's.
 func TestMissionAgentInOwnCheckoutShowsOnMissionProject(t *testing.T) {
 	home, clone := t.TempDir(), t.TempDir()
 	for _, r := range []string{home, clone} {
@@ -109,7 +109,7 @@ func TestMissionAgentInOwnCheckoutShowsOnMissionProject(t *testing.T) {
 	if got := on(home); !slices.Contains(got, "quiet-panda") || slices.Contains(got, "tiny-moth") {
 		t.Errorf("mission project %s lists %v, want quiet-panda (live mission) and not tiny-moth (done)", home, got)
 	}
-	if got := on(clone); !slices.Contains(got, "quiet-panda") || !slices.Contains(got, "tiny-moth") {
-		t.Errorf("own checkout %s lists %v, want both", clone, got)
+	if got := on(clone); slices.Contains(got, "quiet-panda") || !slices.Contains(got, "tiny-moth") {
+		t.Errorf("own checkout %s lists %v, want tiny-moth only", clone, got)
 	}
 }
