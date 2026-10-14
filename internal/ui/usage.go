@@ -98,7 +98,7 @@ func (m *Model) checkUsage(now time.Time) tea.Cmd {
 			m.store.AddUsage(title, body)
 			cmds = append(cmds, m.notifyCmd(inbox.UsageSession, fmt.Sprintf("says the weekly limit is past %d%%", w)))
 		}
-		if !g.st.Stopped && usage.ShouldStop(g.reading, m.cfg.Usage.StopPercent) {
+		if !g.st.Stopped && usage.ShouldStop(g.reading, m.cfg.Usage.StopPercent) && g.st.Armed(m.cfg.Usage.StopPercent, now) {
 			cmds = append(cmds, m.stopFleet(fmt.Sprintf("the weekly limit reached %.0f%%, your stop is %d%%", g.reading.Percent, m.cfg.Usage.StopPercent)))
 		}
 	}
@@ -187,6 +187,7 @@ func (m Model) usageCommand(args []string) (tea.Model, tea.Cmd) {
 		if m.use.st.Stopped {
 			return m.say(m.usageStopped(), true)
 		}
+		m.use.st.ResumedWhen = time.Time{} // a stop by hand arms the automatic one again
 		cmd := m.stopFleet("stopped by you")
 		return m, cmd
 	case "resume":
@@ -214,7 +215,9 @@ func (m Model) decideUsageResume(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		m.refresh()
 		return m.say("The fleet stays stopped.", false)
 	}
-	m.use.st.Stopped, m.use.st.StopWhy = false, ""
+	// The automatic stop holds off for the rest of this week at this stop
+	// share; /usage stop, a new week or another share arms it again.
+	m.use.st.Resume(m.cfg.Usage.StopPercent, time.Now())
 	m.use.save()
 	m.store.Settle(it, true, "the fleet goes on")
 	m.refresh()

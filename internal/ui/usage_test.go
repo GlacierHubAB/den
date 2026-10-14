@@ -181,6 +181,35 @@ func TestUsageStopHoldsMissionsUntilResume(t *testing.T) {
 	}
 }
 
+// TestUsageResumeDoesNotLoop: still past the stop share after the human
+// resumes, Den does not stop and send again that week; a new stop share
+// does.
+func TestUsageResumeDoesNotLoop(t *testing.T) {
+	m := usageModel(t, 96, time.Minute, 95)
+	m.checkUsage(time.Now())
+	if !m.use.st.Stopped {
+		t.Fatal("not stopped")
+	}
+	sent := len(items(m, inbox.Sent))
+	mm, _ := m.usageCommand([]string{"resume"})
+	m = mm.(Model)
+	q := items(m, inbox.UsageResume)
+	m.tab, m.inboxSel = tabInbox, q[0].ID
+	mm, _ = m.answer("allow")
+	m = mm.(Model)
+	for range 3 {
+		m.checkUsage(time.Now())
+	}
+	if m.use.st.Stopped || len(items(m, inbox.Sent)) != sent {
+		t.Errorf("stopped again after the resume: %v, %d messages (was %d)", m.use.st.Stopped, len(items(m, inbox.Sent)), sent)
+	}
+	m.cfg.Usage.StopPercent = 90 // the human changes the share
+	m.checkUsage(time.Now())
+	if !m.use.st.Stopped {
+		t.Error("a new stop share should arm the stop again")
+	}
+}
+
 func TestUsageSetByHand(t *testing.T) {
 	m := usageModel(t, -1, 0, 0)
 	mm, _ := m.usageCommand([]string{"set", "87"})

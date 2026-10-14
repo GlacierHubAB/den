@@ -623,6 +623,14 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return m.handleMissionUpdate(r)
 	}
+	if r.Event == bridge.UsageEvent {
+		if why := m.usageStopped(); why != "" {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: m.use.st.StopWhy})
+		} else {
+			r.Reply(bridge.Decision{Behavior: "allow"})
+		}
+		return nil
+	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
 		if r.WantsReply() {

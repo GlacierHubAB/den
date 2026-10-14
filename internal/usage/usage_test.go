@@ -15,9 +15,8 @@ func TestNewestTakesTheLatestFreshReading(t *testing.T) {
 	samples := []Sample{
 		{Percent: pct(40), Resets: reset, At: now.Add(-10 * time.Minute).UnixMilli()},
 		{Percent: pct(63), Resets: reset, At: now.Add(-2 * time.Minute).UnixMilli()},
-		{Percent: nil, At: now.UnixMilli()},                            // no weekly figure
-		{Percent: pct(99), At: 0},                                      // no time
-		{Percent: pct(150), At: now.Add(-3 * time.Minute).UnixMilli()}, // older than the 63
+		{Percent: nil, At: now.UnixMilli()}, // no weekly figure
+		{Percent: pct(99), At: 0},           // no time
 	}
 	r, ok := Newest(samples, now)
 	if !ok || r.Percent != 63 || r.Source != Statusline || r.Resets.IsZero() || r.Estimate() {
@@ -32,6 +31,48 @@ func TestNewestTakesTheLatestFreshReading(t *testing.T) {
 	}
 	if got := Label(Reading{}, false, State{}, now); got != "usage unknown" {
 		t.Errorf("label %q", got)
+	}
+}
+
+// TestNewestCannotBeHeldDown: a sample dated ahead would stay fresh for
+// ever, so it is ignored; among fresh ones of this week the highest share
+// counts, so a wrong figure can only make Den act early.
+func TestNewestCannotBeHeldDown(t *testing.T) {
+	week := now.Add(3 * 24 * time.Hour).Format(time.RFC3339)
+	lastWeek := now.Add(-4 * 24 * time.Hour).Format(time.RFC3339)
+	samples := []Sample{
+		{Percent: pct(5), Resets: week, At: now.Add(48 * time.Hour).UnixMilli()},    // from the future
+		{Percent: pct(91), Resets: week, At: now.Add(-9 * time.Minute).UnixMilli()}, // older but higher
+		{Percent: pct(12), Resets: week, At: now.Add(-1 * time.Minute).UnixMilli()},
+		{Percent: pct(99), Resets: lastWeek, At: now.Add(-1 * time.Minute).UnixMilli()}, // last week's
+	}
+	r, ok := Newest(samples, now)
+	if !ok || r.Percent != 91 {
+		t.Errorf("reading %+v %v, want the highest fresh share of this week, 91", r, ok)
+	}
+	if _, ok := Newest(samples[:1], now); ok {
+		t.Error("a future-dated sample alone is no reading")
+	}
+	if r, ok := Newest([]Sample{{Percent: pct(30), At: now.Add(30 * time.Second).UnixMilli()}}, now); !ok || r.Percent != 30 {
+		t.Error("a clock a few seconds ahead is fine")
+	}
+}
+
+// TestResumeHoldsTheWeek: after the human resumes, the automatic stop does
+// not fire again that week at the same share; another share, a stop by
+// hand (which clears ResumedWhen) or a new week arm it again.
+func TestResumeHoldsTheWeek(t *testing.T) {
+	s := State{LastReset: now.Add(72 * time.Hour), Stopped: true}
+	s.Resume(95, now)
+	if s.Stopped || s.Armed(95, now.Add(time.Hour)) {
+		t.Error("armed again the same week")
+	}
+	if !s.Armed(97, now.Add(time.Hour)) {
+		t.Error("a changed stop share arms it")
+	}
+	s.LastReset = now.Add(10 * 24 * time.Hour)
+	if !s.Armed(95, now.Add(4*24*time.Hour)) {
+		t.Error("a new week arms it")
 	}
 }
 

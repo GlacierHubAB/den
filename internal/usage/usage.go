@@ -49,29 +49,45 @@ type Sample struct {
 	At      int64  // ms since the epoch, as agent-badge records it
 }
 
-// Newest picks the most recent statusline sample with a weekly figure, ok
-// false when there is none or it is older than Stale.
+// Newest picks the reading Den goes by from the sessions' samples: among
+// those taken in the last Stale (a sample dated more than a minute ahead
+// is ignored: it would stay fresh for ever) and for the latest weekly
+// reset, the HIGHEST share, so a wrong or forged sample can only make Den
+// warn or stop early, never late. ok false when there is none.
 func Newest(samples []Sample, now time.Time) (Reading, bool) {
-	var best Reading
-	found := false
+	var fresh []Reading
+	var reset time.Time
 	for _, s := range samples {
 		if s.Percent == nil || s.At <= 0 {
 			continue
 		}
 		at := time.UnixMilli(s.At)
-		if found && !at.After(best.At) {
+		if at.After(now.Add(time.Minute)) || now.Sub(at) > Stale {
 			continue
 		}
 		r := Reading{Percent: clamp(*s.Percent), At: at, Source: Statusline}
 		if t, err := time.Parse(time.RFC3339, s.Resets); err == nil {
 			r.Resets = t
+			if t.After(reset) {
+				reset = t
+			}
 		}
-		best, found = r, true
+		fresh = append(fresh, r)
 	}
-	if !found || now.Sub(best.At) > Stale {
-		return best, false
+	var best Reading
+	found := false
+	for _, r := range fresh {
+		if !reset.IsZero() && !r.Resets.IsZero() && !r.Resets.Equal(reset) {
+			continue // an older week's figure
+		}
+		if !found || r.Percent > best.Percent || r.Percent == best.Percent && r.At.After(best.At) {
+			best, found = r, true
+		}
 	}
-	return best, true
+	if found && best.Resets.IsZero() {
+		best.Resets = reset
+	}
+	return best, found
 }
 
 func clamp(p float64) float64 {
@@ -104,6 +120,31 @@ type State struct {
 	Stopped   bool      `json:"stopped,omitempty"`
 	StoppedAt time.Time `json:"stopped_at,omitzero"`
 	StopWhy   string    `json:"stop_why,omitempty"`
+	// ResumedFor is the week (its reset) the human let the fleet go on in,
+	// at stop share ResumedAt (usage.stop_percent then): Den does not
+	// stop it again by itself that week unless the share is changed.
+	ResumedFor  time.Time `json:"resumed_for,omitzero"`
+	ResumedAt   int       `json:"resumed_at,omitempty"`
+	ResumedWhen time.Time `json:"resumed_when,omitzero"`
+}
+
+// Resume lets the fleet go on, and holds off the automatic stop for the
+// rest of this week at this stop share.
+func (s *State) Resume(stopPercent int, now time.Time) {
+	s.Stopped, s.StopWhy = false, ""
+	s.ResumedFor, s.ResumedAt, s.ResumedWhen = s.LastReset, stopPercent, now
+}
+
+// Armed reports whether the automatic stop may fire: not after the human
+// resumed this week at the same stop share.
+func (s State) Armed(stopPercent int, now time.Time) bool {
+	if s.ResumedWhen.IsZero() || s.ResumedAt != stopPercent {
+		return true
+	}
+	if !s.ResumedFor.IsZero() {
+		return !s.LastReset.Equal(s.ResumedFor) // a new week re-arms it
+	}
+	return now.Sub(s.ResumedWhen) >= 7*24*time.Hour // no reset known: a week
 }
 
 // Path is usage.json in Den's state folder.
