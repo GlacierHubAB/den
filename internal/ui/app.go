@@ -104,6 +104,9 @@ type Model struct {
 	missionUpdates map[string]mission.Update
 	// use is the usage guard (usage.go).
 	use usageGuard
+	// ments are the agents names in rendered text are coloured for
+	// (mention_color.go), rebuilt with the fleet.
+	ments *mentionSet
 	// hl is the code colouring this frame may still do, set by View;
 	// plainCode draws fenced code uncoloured (remote agents' text).
 	hl        *hlBudget
@@ -403,6 +406,7 @@ func (m *Model) refresh() {
 		m.agents = append(m.agents, a)
 	}
 	m.agents = append(m.agents, m.remote.agents...)
+	m.ments = buildMentions(m.base, m.isOrchestrator)
 	m.findTwins()
 	for i := range m.agents {
 		a := &m.agents[i]

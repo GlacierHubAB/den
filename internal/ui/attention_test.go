@@ -51,7 +51,7 @@ func TestNeedsYouNotifiesOncePerWait(t *testing.T) {
 	m, sent := attentionModel(t)
 	perm := req("PermissionRequest", "fuzzy-sprite", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "cat ~/.ssh/id_ed25519", "description": "Read the deploy key"}})
 	runAll(m.handleRequest(perm))
-	if len(*sent) != 1 || (*sent)[0] != "Fuzzy Sprite needs your permission|" {
+	if len(*sent) != 1 || (*sent)[0] != "@Fuzzy Sprite needs your permission|" {
 		t.Fatalf("sent = %q", *sent)
 	}
 	runAll(m.handleRequest(req("PreToolUse", "fuzzy-sprite", map[string]any{"tool_name": "AskUserQuestion", "tool_input": map[string]any{"questions": []map[string]any{{"question": "Which key?"}}}})))
@@ -60,7 +60,7 @@ func TestNeedsYouNotifiesOncePerWait(t *testing.T) {
 	}
 	runAll(m.handleRequest(req("UserPromptSubmit", "fuzzy-sprite", map[string]any{"prompt": "go on"})))
 	runAll(m.handleRequest(req("PermissionRequest", "fuzzy-sprite", map[string]any{"tool_name": "ExitPlanMode", "tool_input": map[string]any{"plan": "Delete the staging database"}})))
-	if len(*sent) != 2 || (*sent)[1] != "Fuzzy Sprite has a plan for you to review|" {
+	if len(*sent) != 2 || (*sent)[1] != "@Fuzzy Sprite has a plan for you to review|" {
 		t.Errorf("a new wait notifies again: %q", *sent)
 	}
 	for _, s := range *sent {
@@ -101,7 +101,7 @@ func TestDoneNotifiesOnlyTheTopOfABranch(t *testing.T) {
 	m.refresh()
 	stop("snug-capybara")
 	stop("maple-owl") // directed by nobody: reports to the human
-	if strings.Join(*sent, ",") != "Snug Capybara finished|,Maple Owl finished|" {
+	if strings.Join(*sent, ",") != "@Snug Capybara finished|,@Maple Owl finished|" {
 		t.Errorf("sent = %q", *sent)
 	}
 }
@@ -112,7 +112,7 @@ func TestFailuresNotifyOnlyWhenAskedFor(t *testing.T) {
 	runAll(m.handleRequest(fail))
 	m.cfg.Notify.Failed = true
 	runAll(m.handleRequest(req("StopFailure", "fuzzy-sprite", map[string]any{"error": "overloaded"})))
-	if strings.Join(*sent, ",") != "Fuzzy Sprite stopped on an error|" {
+	if strings.Join(*sent, ",") != "@Fuzzy Sprite stopped on an error|" {
 		t.Errorf("sent = %q", *sent)
 	}
 	if m.store.SessionNeedsYou("fuzzy-sprite") {
@@ -131,7 +131,7 @@ func TestRemindOnceAfterTheWait(t *testing.T) {
 	}
 	runAll(m.checkStuck(now.Add(11 * time.Minute)))
 	runAll(m.checkStuck(now.Add(20 * time.Minute)))
-	if strings.Join(*sent, ",") != "Fuzzy Sprite still needs your permission|" {
+	if strings.Join(*sent, ",") != "@Fuzzy Sprite still needs your permission|" {
 		t.Errorf("sent = %q", *sent)
 	}
 }
@@ -167,7 +167,7 @@ func TestStalledAfterQuietWork(t *testing.T) {
 	}
 	m.cfg.Notify.Stalled = true
 	runAll(m.checkStuck(now.Add(time.Hour)))
-	if strings.Join(*sent, ",") != "Snug Capybara has gone quiet|" {
+	if strings.Join(*sent, ",") != "@Snug Capybara has gone quiet|" {
 		t.Errorf("sent = %q", *sent)
 	}
 	m.hooksReady = false

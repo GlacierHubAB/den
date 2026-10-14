@@ -482,6 +482,14 @@ on its command line. If it cannot sign in, the chat says so.
 Each message has its speaker's name on the line above it, so the text uses
 the pane's full width.
 
+Agents named in what the orchestrator or an agent writes show as `@Name` in
+that agent's colour: `@Name` always, a bare name only when it is several
+words written exactly (`Quiet Panda`), never inside code or a link. Only
+agents on this machine count, under the names Den gave them, and never a
+name two of them share; agents on hosts stay plain. Inbox bodies you approve
+are shown exactly as sent and never restyled. Notifications name a local
+agent as a plain `@Name`.
+
 The chat persists: every entry and card state is appended to
 `~/.local/state/den/orchestrator.jsonl` and restored on launch (newest 500).
 The orchestrator resumes its previous session; if that fails, Den starts a fresh

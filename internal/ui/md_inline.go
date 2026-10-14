@@ -17,9 +17,10 @@ import (
 // mdAttr is the markup a span of text sits in.
 type mdAttr struct {
 	bold, italic, strike bool
-	code                 bool // a code span
-	link                 bool // the text of a link
-	url                  bool // a link's target, shown after its text
+	code                 bool   // a code span
+	link                 bool   // the text of a link
+	url                  bool   // a link's target, shown after its text
+	mention              string // an agent named in the text: its session id
 }
 
 type mdSpan struct {

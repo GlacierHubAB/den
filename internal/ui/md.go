@@ -233,7 +233,7 @@ func (m Model) blockLine(line string, width int) []string {
 		return []string{bar + s.muted.Render(strings.Repeat("─", max(4, min(width-barW, 24))))}
 	case mdHeading.MatchString(line):
 		h := mdHeading.FindStringSubmatch(line)
-		return m.wrapSpans(parseInline(h[2]), s.bright.Bold(true), width, bar, bar, barW)
+		return m.wrapSpans(m.ments.apply(parseInline(h[2])), s.bright.Bold(true), width, bar, bar, barW)
 	}
 	if l := mdList.FindStringSubmatch(line); l != nil && !mdRule.MatchString(line) {
 		level := min(ansi.StringWidth(l[1])/2, 6)
@@ -244,13 +244,13 @@ func (m Model) blockLine(line string, width int) []string {
 		lead := strings.Repeat("  ", level)
 		first := bar + lead + s.dim.Render(marker) + " "
 		w := barW + len(lead) + ansi.StringWidth(marker) + 1
-		return m.wrapSpans(parseInline(l[3]), base, width, first, bar+strings.Repeat(" ", w-barW), w)
+		return m.wrapSpans(m.ments.apply(parseInline(l[3])), base, width, first, bar+strings.Repeat(" ", w-barW), w)
 	}
 	// A paragraph keeps a little of its indent, so a list item's second
 	// paragraph still sits under it.
 	t := strings.TrimLeft(line, " ")
 	indent := strings.Repeat(" ", min(len(line)-len(t), 8, width/3))
-	return m.wrapSpans(parseInline(t), base, width, bar+indent, bar+indent, barW+len(indent))
+	return m.wrapSpans(m.ments.apply(parseInline(t)), base, width, bar+indent, bar+indent, barW+len(indent))
 }
 
 // spanStyle is the style for a span in base text.
@@ -261,6 +261,9 @@ func (m Model) spanStyle(a mdAttr, base lipgloss.Style) lipgloss.Style {
 		st = m.st.code
 	case a.url:
 		st = m.st.muted
+	case a.mention != "":
+		// The agent's own colour, the way its card and inbox items show it.
+		st = lipgloss.NewStyle().Foreground(lipgloss.Color(m.colorFor(a.mention))).Bold(true)
 	}
 	if a.bold {
 		st = st.Bold(true)
@@ -444,7 +447,7 @@ var mdLexed, mdRendered atomic.Int64
 // the model that changes how it looks.
 func (m Model) mdKey(text string, width int) string {
 	h := sha256.Sum256([]byte(text))
-	return fmt.Sprintf("%x|%d|%v|%v|%v", h, width, m.st.pal, m.st.code.GetForeground(), m.plainCode)
+	return fmt.Sprintf("%x|%d|%v|%v|%v|%s", h, width, m.st.pal, m.st.code.GetForeground(), m.plainCode, m.mentionKey())
 }
 
 // mdCache keeps rendered markdown, so a long chat or a detail pane full of
@@ -644,7 +647,7 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 		cells[r] = make([][]mdSpan, cols)
 		for c := 0; c < cols; c++ {
 			if c < len(row) {
-				cells[r][c] = parseInline(row[c])
+				cells[r][c] = m.ments.apply(parseInline(row[c]))
 			}
 			w := 0
 			for _, sp := range cells[r][c] {
@@ -662,7 +665,7 @@ func (m Model) tableLines(rows [][]string, aligns []byte, width int) []string {
 			if r == 0 {
 				base = base.Bold(true)
 			}
-			out = append(out, m.wrapSpans(parseInline(strings.Join(row, " · ")), base, width, "", "", 0)...)
+			out = append(out, m.wrapSpans(m.ments.apply(parseInline(strings.Join(row, " · "))), base, width, "", "", 0)...)
 		}
 		return out
 	}
