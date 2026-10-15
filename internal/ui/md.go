@@ -191,9 +191,67 @@ func (m Model) renderMarkdown(text string, width int) []string {
 			out = append(out, m.tableLines(rows, aligns, width)...)
 			continue
 		}
+		// A paragraph's soft line breaks join it into one line, as in
+		// CommonMark, so emphasis can span them; a hard break (two
+		// trailing spaces, or a backslash) keeps the line.
+		if d, ok := paragraphLine(line); ok {
+			parts := []string{line}
+			for i+1 < len(src) && !hardBreak(parts[len(parts)-1]) && continues(d, src, i+1) {
+				_, next := quoteSplit(src[i+1])
+				parts[len(parts)-1] = strings.TrimRight(parts[len(parts)-1], " \t")
+				parts = append(parts, strings.TrimLeft(next, " \t"))
+				i++
+			}
+			// A backslash break is markup only when a line follows it.
+			if last := parts[len(parts)-1]; i+1 < len(src) && strings.HasSuffix(last, "\\") && hardBreak(last) && continues(d, src, i+1) {
+				parts[len(parts)-1] = strings.TrimSuffix(last, "\\")
+			}
+			line = strings.Join(parts, " ")
+		}
 		out = append(out, m.blockLine(line, width)...)
 	}
 	return out
+}
+
+// quoteSplit is a line's quote depth and what follows its > marks.
+func quoteSplit(line string) (depth int, rest string) {
+	for {
+		t := strings.TrimLeft(line, " ")
+		if len(line)-len(t) > 3 || !strings.HasPrefix(t, ">") {
+			return depth, line
+		}
+		depth++
+		line = strings.TrimPrefix(t[1:], " ")
+	}
+}
+
+// hardBreak says the line ends in a hard line break.
+func hardBreak(line string) bool {
+	return strings.HasSuffix(line, "  ") || strings.HasSuffix(line, "\\") && !strings.HasSuffix(line, "\\\\")
+}
+
+// paragraphLine says line is text that can run on to the next line (a
+// paragraph or a list item), and its quote depth.
+func paragraphLine(line string) (depth int, ok bool) {
+	d, cur := quoteSplit(strings.ReplaceAll(line, "\t", "    "))
+	if strings.TrimSpace(cur) == "" || mdRule.MatchString(cur) || mdHeading.MatchString(cur) {
+		return 0, false
+	}
+	return d, true
+}
+
+// continues says src[j] carries on a paragraph at quote depth d: text at
+// the same depth that starts no block of its own.
+func continues(d int, src []string, j int) bool {
+	nd, next := quoteSplit(strings.ReplaceAll(src[j], "\t", "    "))
+	if nd != d || strings.TrimSpace(next) == "" {
+		return false
+	}
+	if mdFence.MatchString(next) || mdRule.MatchString(next) || mdHeading.MatchString(next) || mdList.MatchString(next) {
+		return false
+	}
+	// Nor the first row of a table.
+	return !(j+1 < len(src) && strings.Contains(next, "|") && mdTableSep.MatchString(src[j+1]))
 }
 
 var (
@@ -212,15 +270,7 @@ func (m Model) blockLine(line string, width int) []string {
 		return []string{""}
 	}
 	// Quotes nest: each > is a bar, and what follows is a line of its own.
-	depth := 0
-	for {
-		t := strings.TrimLeft(line, " ")
-		if len(line)-len(t) > 3 || !strings.HasPrefix(t, ">") {
-			break
-		}
-		depth++
-		line = strings.TrimPrefix(t[1:], " ")
-	}
+	depth, line := quoteSplit(line)
 	base := s.fg
 	var bar string
 	if depth > 0 {

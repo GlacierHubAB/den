@@ -158,26 +158,73 @@ func (m Model) projectAgentsPane(w, h int) string {
 // in its conversation, so like the chat it follows the tail, honouring
 // scroll-back.
 func (m Model) missionsPane(w, h int) string {
-	var lines []string
+	lines, _ := m.missionsPaneOwned(w, h)
+	return strings.Join(lines, "\n")
+}
+
+// missionsPaneOwned is missionsPane's lines, each with the chat entry it
+// draws (-1 for none), so a click can find an action in the thread.
+func (m Model) missionsPaneOwned(w, h int) (lines []string, owners []int) {
 	switch {
 	case m.ov.listing:
 		lines = m.templateLines(w)
 	case m.ov.proposal != "":
-		lines = m.proposalLines(w)
+		lines, owners = m.proposalLinesOwned(w)
 	case m.ov.open != "":
-		lines = m.missionLines(w)
+		lines, owners = m.missionLinesOwned(w)
 	default:
 		lines = m.missionRows(w)
 		if len(lines) > h {
 			lines = lines[:h]
 		}
-		return strings.Join(lines, "\n")
+		return lines, noOwners(len(lines))
+	}
+	if owners == nil {
+		owners = noOwners(len(lines))
 	}
 	if len(lines) > h {
 		start := clamp(len(lines)-h-m.ov.scroll, 0, len(lines)-h)
-		lines = lines[start : start+h]
+		lines, owners = lines[start:start+h], owners[start:start+h]
 	}
-	return strings.Join(lines, "\n")
+	return lines, owners
+}
+
+// noOwners is n lines that draw no chat entry.
+func noOwners(n int) []int {
+	o := make([]int, n)
+	for i := range o {
+		o[i] = -1
+	}
+	return o
+}
+
+// withThread appends the mission's thread to out, and its owners to the
+// -1s of the lines before it.
+func (m Model) withThread(out []string, ms *mission.Mission, w int) ([]string, []int) {
+	lines, owners := m.threadLinesOwned(ms, w)
+	return append(out, lines...), append(noOwners(len(out)), owners...)
+}
+
+// toggleThreadActions expands every collapsed action in the open mission's
+// thread, or collapses them all when every one is open. It reports whether
+// the thread had any.
+func (m *Model) toggleThreadActions() bool {
+	id := firstNonEmptyS(m.ov.proposal, m.ov.open)
+	if id == "" {
+		return false
+	}
+	var in []int
+	open := true
+	for i, e := range m.orch.chat {
+		if e.mission == id && e.collapsible() {
+			in = append(in, i)
+			open = open && e.expanded
+		}
+	}
+	for _, i := range in {
+		m.orch.chat[i].expanded = !open
+	}
+	return len(in) > 0
 }
 
 // missionRows lists the project's missions, three lines each.
@@ -414,10 +461,16 @@ func (m Model) teamLines(team []mission.Member) []string {
 
 // proposalLines is the orchestrator's proposal, waiting for ^Y.
 func (m Model) proposalLines(w int) []string {
+	lines, _ := m.proposalLinesOwned(w)
+	return lines
+}
+
+// proposalLinesOwned is proposalLines with each line's chat entry.
+func (m Model) proposalLinesOwned(w int) ([]string, []int) {
 	s := m.st
 	ms := m.missions.Get(m.ov.proposal)
 	if ms == nil {
-		return nil
+		return nil, nil
 	}
 	var out []string
 	out = append(out, "")
@@ -428,13 +481,13 @@ func (m Model) proposalLines(w int) []string {
 		out = append(out, m.fieldLines(ms, w)...)
 		out = append(out, "")
 	}
-	out = append(out, m.threadLines(ms, w)...)
+	out, owners := m.withThread(out, ms, w)
 	if ms.Mission == "" {
 		out = append(out, "  "+s.key.Render("^N")+s.keyLabel.Render(" drop")+"   "+s.key.Render("Esc")+s.keyLabel.Render(" keep it for later"))
-		return out
+		return out, append(owners, -1)
 	}
 	out = append(out, "  "+s.key.Render("^Y")+s.keyLabel.Render(" start")+"   "+s.key.Render("^N")+s.keyLabel.Render(" drop")+"   "+s.dim.Render("or type to refine: \"make it a schedule\", \"use Mossy\""))
-	return out
+	return out, append(owners, -1)
 }
 
 // threadLines is the mission's conversation with the orchestrator, drawn
@@ -442,7 +495,13 @@ func (m Model) proposalLines(w int) []string {
 // it as cards, in the order they were sent. A proposal from before threads
 // were kept shows the words it started from.
 func (m Model) threadLines(ms *mission.Mission, w int) []string {
-	lines, _, _ := m.chatLines(w, func(e chatEntry) bool {
+	lines, _ := m.threadLinesOwned(ms, w)
+	return lines
+}
+
+// threadLinesOwned is threadLines with each line's chat entry.
+func (m Model) threadLinesOwned(ms *mission.Mission, w int) ([]string, []int) {
+	lines, owners, _, _ := m.chatLinesOwned(w, func(e chatEntry) bool {
 		return e.mission == ms.ID || e.card != nil && e.card.MissionID == ms.ID
 	})
 	if len(lines) == 0 && ms.Text != "" {
@@ -452,18 +511,25 @@ func (m Model) threadLines(ms *mission.Mission, w int) []string {
 			lines[i] = pad + lines[i]
 		}
 		lines = append(lines, "")
+		owners = noOwners(len(lines))
 	}
-	return lines
+	return lines, owners
 }
 
 // missionLines is an open mission: its fields, its runs newest first,
 // each a line with its progress or summary, then its conversation, where
 // the runs' agents work.
 func (m Model) missionLines(w int) []string {
+	lines, _ := m.missionLinesOwned(w)
+	return lines
+}
+
+// missionLinesOwned is missionLines with each line's chat entry.
+func (m Model) missionLinesOwned(w int) ([]string, []int) {
 	s := m.st
 	ms := m.missions.Get(m.ov.open)
 	if ms == nil {
-		return nil
+		return nil, nil
 	}
 	now := time.Now()
 	var out []string
@@ -511,7 +577,7 @@ func (m Model) missionLines(w int) []string {
 		out = append(out, ansi.Truncate(s.dim.Render("  "+h.At.Format("Jan 2 15:04")+" · "+h.What), w, "…"))
 	}
 	out = append(out, "")
-	out = append(out, m.threadLines(ms, w)...)
+	out, owners := m.withThread(out, ms, w)
 	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop /budget /mission move")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
-	return out
+	return out, append(owners, -1)
 }

@@ -943,6 +943,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cycleTab(-1)
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
 		return m, cmd
+	case "ctrl+e":
+		// On an open mission with an empty line: show or hide the full
+		// text of its actions. Enter stays with the mission itself.
+		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" && m.toggleThreadActions() {
+			return m, nil
+		}
 	case "ctrl+o":
 		m.toggleOrchestrator()
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())

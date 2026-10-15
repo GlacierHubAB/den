@@ -432,6 +432,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | newline |
 | `Ctrl+Y` / `Ctrl+N` | allow / deny the waiting prompt (Overview: start / drop the proposed mission) |
 | `Ctrl+T` | toggle the Fleet map |
+| `Ctrl+E` | on an open mission with an empty line: show or hide the full text of its actions (a click on one toggles just that one) |
 | `Ctrl+X` | close the selected agent (Fleet, map, Inbox): a question in the inbox lists what would close, `Ctrl+Y` does it |
 | `Ctrl+V` | paste an image from the clipboard |
 | `Esc` | clear the line; closes a proposal or an open mission; drops a review edit or range |

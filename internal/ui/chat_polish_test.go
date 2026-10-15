@@ -164,3 +164,65 @@ func TestHugePasteScrollsInsideTheCapAndKeepsAllText(t *testing.T) {
 		t.Errorf("height after clear = %d", h)
 	}
 }
+
+// TestMissionActionsToggleOnOverview: an open mission's actions show their
+// full text on ^E or a click on the line, while Enter stays with the
+// mission; a mission block with a mistake says so plainly.
+func TestMissionActionsToggleOnOverview(t *testing.T) {
+	m := missionModel()
+	now := time.Now()
+	ms := &mission.Mission{ID: "m1", Project: m.proj.cur, Name: "Site", Mission: "Ship the site.", State: mission.Running, Created: now, Updated: now}
+	m.missions.Save(ms)
+	m.ov.open = ms.ID
+	m.orch.chat = []chatEntry{
+		{role: "you", text: "check the header", mission: "m1", at: now},
+		{role: "fan", to: "Plucky", text: "Look at the header", full: "Look at the header.\nTHE-FULL-BRIEF", status: "sent", mission: "m1", at: now},
+		{role: "orchestrator", text: "```json\n{\"mission\": oops}\n```", mission: "m1", at: now},
+	}
+	pane, ok := m.copyPane()
+	if !ok {
+		t.Fatal("no mission pane")
+	}
+	text := func(m Model) string { return ansi.Strip(m.missionsPane(pane.x1-pane.x0+1, pane.y1-pane.y0+1)) }
+	if out := text(m); strings.Contains(out, "THE-FULL-BRIEF") || !strings.Contains(out, "this mission block has a mistake, so nothing changed") {
+		t.Fatalf("collapsed pane:\n%s", out)
+	}
+
+	// A click on the action's line.
+	_, owners := m.missionsPaneOwned(pane.x1-pane.x0+1, pane.y1-pane.y0+1)
+	row := -1
+	for r, o := range owners {
+		if o == 1 {
+			row = r
+			break
+		}
+	}
+	if row < 0 || !m.clickAction(pane.y0+row) || !strings.Contains(text(m), "THE-FULL-BRIEF") {
+		t.Fatalf("a click on the action did not show it:\n%s", text(m))
+	}
+	m.clickAction(pane.y0 + row)
+	if strings.Contains(text(m), "THE-FULL-BRIEF") {
+		t.Error("a second click did not hide it")
+	}
+	if m.clickAction(pane.y0) {
+		t.Error("a click off the actions toggled something")
+	}
+
+	// ^E opens every action in the thread, and again closes them.
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if out := text(m); !strings.Contains(out, "THE-FULL-BRIEF") || !strings.Contains(out, "oops") {
+		t.Fatalf("^E did not open the actions:\n%s", out)
+	}
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if strings.Contains(text(m), "THE-FULL-BRIEF") || m.ov.open != "m1" {
+		t.Errorf("a second ^E did not close them, or left the mission:\n%s", text(m))
+	}
+
+	// Enter still closes the mission, as before.
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m = mm.(Model); m.ov.open != "" {
+		t.Error("Enter no longer closes the open mission")
+	}
+}
