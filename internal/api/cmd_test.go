@@ -88,7 +88,7 @@ func TestConsoleKnownFromItsProof(t *testing.T) {
 	if a := ctlAct(t, h.s, func(a Act) bool { return a.CardAnswer != nil }).CardAnswer; a.Console != ConsoleLabel {
 		t.Errorf("answer from %q", a.Console)
 	}
-	h.s.UnpairConsole("")
+	h.s.UnpairConsole(CauseDen, "")
 	for _, cl := range h.s.Clients() {
 		if cl.Console {
 			t.Errorf("a console connection after the unpair: %+v", cl)

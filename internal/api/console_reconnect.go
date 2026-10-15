@@ -237,7 +237,7 @@ func (s *Server) repairSilently(c *conn, req Request, was, rec *consoleRec, sig 
 	st.cur = rec
 	s.saveConsoleLocked()
 	st.mu.Unlock()
-	s.closeConsole(was.ID, ConsoleEvent{Kind: "unpaired", PID: was.PID, StartTicks: was.start, Started: hhmmss(was.Started), Reason: "it reconnected"})
+	s.closeConsole(was.ID, ConsoleEvent{Kind: "unpaired", PID: was.PID, StartTicks: was.start, Started: hhmmss(was.Started), Reason: "it reconnected", Cause: CauseReplaced})
 	s.note("console reconnected: " + ConsoleUnit + " pid " + itoa(rec.PID) + ", started " + hhmmss(rec.Started) + ". It answers cards and runs commands again once you press Ctrl+Y on its card.")
 	s.act(Act{ConsoleChanged: true})
 	s.askPowers(rec, "it reconnected after a restart")
@@ -274,7 +274,7 @@ func (s *Server) consoleIntruder(rec *consoleRec, peer Peer) {
 		}
 	}
 	if unpair {
-		s.UnpairConsole("three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
+		s.UnpairConsole(CauseIntruders, "three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
 		return
 	}
 	s.LockConsolePowers("another program tried your console")

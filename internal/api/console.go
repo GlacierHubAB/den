@@ -119,7 +119,38 @@ type ConsoleEvent struct {
 	Program    string `json:"program,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	On         *bool  `json:"on,omitempty"` // powers: whether the console has them now
+	// Cause says why an unpaired console is unpaired, one of the Cause
+	// values; reason is display text. A Den from before causes sends none.
+	Cause string `json:"cause,omitempty"`
 }
+
+// The causes of an unpaired console event (ConsoleEvent.Cause). The set is
+// closed: every path that unpairs the console names one.
+const (
+	// CauseBurst: the console answered cards faster than anyone could read.
+	CauseBurst = "burst"
+	// CauseProofs: three wrong proofs for the console in ten minutes.
+	CauseProofs = "proofs"
+	// CauseIntruders: three other programs tried the console in ten minutes.
+	CauseIntruders = "intruders"
+	// CauseSelf: the console unpaired itself, with console.unpair.
+	CauseSelf = "self"
+	// CauseDen: the human unpaired it in Den (den unpair, /api unpair).
+	CauseDen = "den"
+	// CauseOther: another program on this machine unpaired every pairing
+	// with console.unpair {all: true}, from a connection that is not the
+	// console's own. Never the human's act.
+	CauseOther = "other"
+	// CauseReplaced: another console was paired in its place.
+	CauseReplaced = "replaced"
+	// CauseRecord: Den found its console record changed outside Den.
+	CauseRecord = "record"
+	// CauseGuard: Den's own guard stopped the orchestrator, and unpaired.
+	CauseGuard = "guard"
+)
+
+// UnpairCauses are the Cause values.
+var UnpairCauses = []string{CauseBurst, CauseProofs, CauseIntruders, CauseSelf, CauseDen, CauseOther, CauseReplaced, CauseRecord, CauseGuard}
 
 type consoleRec struct {
 	Console
@@ -331,7 +362,7 @@ func (s *Server) ConsoleAnswered(id string, ok bool) {
 // UnpairConsole ends the console, and a claim waiting for the human, and
 // closes the console's connections after telling them why; why is also
 // noted in Den's chat when it is not "".
-func (s *Server) UnpairConsole(why string) int {
+func (s *Server) UnpairConsole(cause, why string) int {
 	s.con.mu.Lock()
 	rec, pending := s.con.cur, s.con.pending
 	s.con.cur, s.con.pending = nil, nil
@@ -350,7 +381,7 @@ func (s *Server) UnpairConsole(why string) int {
 	if len(reason) > 40 {
 		reason = "unpaired in Den"
 	}
-	s.closeConsole(rec.ID, ConsoleEvent{Kind: "unpaired", PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started), Reason: reason})
+	s.closeConsole(rec.ID, ConsoleEvent{Kind: "unpaired", PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started), Reason: reason, Cause: cause})
 	if why != "" {
 		s.note(why)
 	}
@@ -628,7 +659,7 @@ func (s *Server) awaitConsole(c *conn, req Request, rec *consoleRec, confirm cha
 			return
 		}
 		if old != nil && old.ID != rec.ID {
-			s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: "another console was paired"})
+			s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: "another console was paired", Cause: CauseReplaced})
 		}
 		s.act(Act{ConsoleDone: rec.ID, ConsoleChanged: true})
 		c.reply(req.ID, reply())
@@ -709,7 +740,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 		// Unpaired first, then told, as for a burst.
 		if unpair {
-			s.UnpairConsole("three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
+			s.UnpairConsole(CauseIntruders, "three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
 		} else {
 			s.LockConsolePowers("another program tried your console")
 		}
@@ -729,7 +760,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		st.mu.Unlock()
 		// Unpaired first, then told, as for a burst.
 		if unpair {
-			s.UnpairConsole("three wrong console proofs in ten minutes: the console is unpaired; pair again with den pair")
+			s.UnpairConsole(CauseProofs, "three wrong console proofs in ten minutes: the console is unpaired; pair again with den pair")
 		} else {
 			s.LockConsolePowers("a wrong proof for your console")
 		}
@@ -844,7 +875,7 @@ func (s *Server) consoleUnpair(c *conn, req Request) {
 			c.fail(req.ID, CodeForbidden, "prove first, or send {\"all\": true}")
 			return
 		}
-		c.reply(req.ID, map[string]any{"ok": true, "unpaired": s.UnpairConsole("the console unpaired itself")})
+		c.reply(req.ID, map[string]any{"ok": true, "unpaired": s.UnpairConsole(CauseSelf, "the console unpaired itself")})
 		return
 	}
 	now := time.Now()
@@ -858,7 +889,17 @@ func (s *Server) consoleUnpair(c *conn, req Request) {
 	s.con.mu.Unlock()
 	n := len(s.Pairings())
 	s.Unpair("", "")
-	n += s.UnpairConsole("")
+	// From the console's own proved connection it is the console unpairing
+	// itself (along with the rest); from any other program, that program's
+	// act, which the human did not do.
+	c.mu.Lock()
+	id := c.console
+	c.mu.Unlock()
+	if cur, ok := s.CurrentConsole(); ok && id != "" && cur.ID == id {
+		n += s.UnpairConsole(CauseSelf, "")
+	} else {
+		n += s.UnpairConsole(CauseOther, "")
+	}
 	s.note("every console and app pairing was unpaired by " + sanitize.Label(ExeLabel(c.peer.Exe), 40) + " pid " + itoa(c.peer.PID))
 	c.reply(req.ID, map[string]any{"ok": true, "unpaired": n})
 }

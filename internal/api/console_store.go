@@ -235,7 +235,7 @@ func (s *Server) checkConsoleRecord() {
 // is unpaired, the file is rewritten to what Den knows, and Den says so.
 func (s *Server) recordTampered() {
 	const why = "Den's console record was changed by another program: Den rewrote it, and any console is unpaired; pair again with den pair"
-	if s.UnpairConsole("") == 0 {
+	if s.UnpairConsole(CauseRecord, "") == 0 {
 		s.con.mu.Lock()
 		s.saveConsoleLocked()
 		s.con.mu.Unlock()

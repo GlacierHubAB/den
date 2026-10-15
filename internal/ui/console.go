@@ -351,7 +351,7 @@ func (m *Model) handleConsoleUnpair(r *bridge.Request) tea.Cmd {
 		All bool `json:"all"`
 	}
 	json.Unmarshal(r.Envelope.Payload, &p)
-	n := m.api.srv.UnpairConsole("")
+	n := m.api.srv.UnpairConsole(api.CauseDen, "")
 	if p.All {
 		n += len(m.api.srv.Pairings())
 		m.api.srv.Unpair("", "")
