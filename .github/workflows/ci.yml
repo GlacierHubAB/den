@@ -140,6 +140,14 @@ jobs:
           GOPROXY: "off"
           GOFLAGS: -mod=readonly
         run: make build && ./den version
+      # A parser of another process's bus messages: its seed corpus runs as a
+      # plain test above, and this gives it 30 seconds of fuzzing as well.
+      - name: fuzz the bus message parser for 30 seconds
+        if: matrix.go == 'stable'
+        env:
+          GOPROXY: "off"
+          GOFLAGS: -mod=readonly
+        run: go test -run '^$' -fuzz FuzzReadMessage -fuzztime 30s ./internal/sysd/
 
   vuln:
     runs-on: ubuntu-latest
