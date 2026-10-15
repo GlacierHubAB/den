@@ -274,6 +274,11 @@ func (m Model) itemOpen(id string) bool {
 // agent's terminal as `den focus` would.
 func (m Model) notifyCmd(sessionID, what string) tea.Cmd {
 	n := notify.Note{Summary: m.nameFor(sessionID) + " " + what}
+	if a, ok := m.agentFor(sessionID); ok && a.Host == "" {
+		// An agent of this machine is named as it is mentioned elsewhere:
+		// @Name, plain text.
+		n.Summary = "@" + n.Summary
+	}
 	send := m.att.send
 	if send == nil {
 		return nil
