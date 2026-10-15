@@ -441,3 +441,42 @@ func TestOnlyTheOrchestratorsChildrenAsk(t *testing.T) {
 		t.Error("a refused caller changed something")
 	}
 }
+
+// A hook request from the orchestrator's own hook process gets the
+// orchestrator's restriction even before its init has named its session
+// (a turn can go out first); one from further down (an agent it started)
+// does not, nor one that names no session Den knows.
+func TestOrchestratorsHookBeforeInit(t *testing.T) {
+	m, _ := inboundModel(t)
+	if m.orch.proc.SessionID() != "" {
+		t.Fatal("the fake orchestrator sent an init")
+	}
+	perm := func(pid int, sid string) *bridge.Request {
+		raw, _ := json.Marshal(map[string]any{"session_id": sid, "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": map[string]any{"command": "rm -rf /tmp/x"}})
+		r := bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: raw})
+		r.PeerPID = pid
+		return r
+	}
+	r := perm(orchChildPID, "s-early")
+	m.handleRequest(r)
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "may only list and message sessions") {
+		t.Errorf("the orchestrator's request before init: %+v %v", d, ok)
+	}
+	for _, it := range m.store.Items() {
+		if it.SessionID == "s-early" {
+			t.Error("the orchestrator's request reached the inbox")
+		}
+	}
+	r = perm(orchDeepPID, "sess-a")
+	m.handleRequest(r)
+	if d, ok := r.Decided(); ok && strings.Contains(d.Message, "may only list and message sessions") {
+		t.Errorf("an agent's request was taken for the orchestrator's: %+v", d)
+	}
+	// After init the session id is enough, from any process.
+	m.orch.proc.SetSessionID("s-orch")
+	r = perm(os.Getpid(), "s-orch")
+	m.handleRequest(r)
+	if d, ok := r.Decided(); !ok || !strings.Contains(d.Message, "may only list and message sessions") {
+		t.Errorf("the orchestrator's session after init: %+v %v", d, ok)
+	}
+}

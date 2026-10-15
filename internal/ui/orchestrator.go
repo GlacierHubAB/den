@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -392,6 +393,22 @@ func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
 		}
 		return nil
 	}
+}
+
+// fromOrchestratorSession reports whether a hook request is the
+// orchestrator's own: its session id, once its init named it, or, before
+// that, a sender that is the orchestrator's own hook process (Spawned:
+// Den's binary, started by the orchestrator process, whose pid and start
+// time it checks). Either is enough. A turn can go out before init, so the
+// session id alone would let an early request through as an agent's.
+func (m *Model) fromOrchestratorSession(r *bridge.Request) bool {
+	if m.orch.proc == nil {
+		return false
+	}
+	if sid := m.orch.proc.SessionID(); sid != "" && r.SessionID == sid {
+		return true
+	}
+	return r.PeerPID > 0 && m.orch.proc.Spawned(r.PeerPID)
 }
 
 func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
