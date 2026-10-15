@@ -28,10 +28,11 @@ import (
 	"time"
 )
 
-// ConsoleOptions turns on the console subtests (the headless design's
-// §3.3, §8 and §11.1). The suite plays the dock: it makes an Ed25519 key
-// pair, claims a pairing code, proves itself on connections and answers a
-// card. What only the server's own test can do is passed in.
+// ConsoleOptions turns on the console subtests (the console section of
+// Den's docs/DREY-API.md: pairing, proof and cards). The suite plays the
+// dock: it makes an Ed25519 key pair, claims a pairing code, proves itself
+// on connections and answers a card. What only the server's own test can
+// do is passed in.
 type ConsoleOptions struct {
 	// Offer starts a console pairing in the server, as /api console or
 	// `den pair` does, and returns its code of eight words. Required.
@@ -76,7 +77,7 @@ var ConsoleSubtests = []string{
 	"console.auth refusals", "console thief", "console.unpair unproved", "console.unpair all", "console cooldown",
 }
 
-// Wire constants of the console (§11.1).
+// Wire constants of the console (DREY-API.md, the console section).
 const (
 	codeForbidden    = "forbidden"
 	codeUnavailable  = "unavailable"
@@ -112,7 +113,8 @@ func codeMAC(code, salt, info, text string) (string, error) {
 	return hex.EncodeToString(m.Sum(nil)), nil
 }
 
-// signedText is what each side signs (§3.3).
+// signedText is what each side signs to prove a console connection
+// (DREY-API.md, the console section).
 func signedText(direction, conn, pairing, dockPK, denPK, nd, na, signer string) []byte {
 	return []byte(strings.Join([]string{"den-console-v1", direction, conn, pairing, dockPK, denPK, nd, na, signer}, "\n"))
 }
@@ -937,7 +939,7 @@ func refusedOrClosed(err error, code string) bool {
 	return codeOf(err) == code || (err != nil && codeOf(err) == "")
 }
 
-// cardRecord is card.get's reply (§11.1 item 7).
+// cardRecord is card.get's reply (DREY-API.md, card.get).
 type cardRecord struct {
 	ID          string   `json:"id"`
 	Kind        string   `json:"kind"`
@@ -963,8 +965,8 @@ func cardGet(ctx context.Context, c *conn, id string) (cardRecord, error) {
 	return rec, err
 }
 
-// cardEvent is a card event's data (§11.1; result and by with settled,
-// Den console-1 7ffcafe).
+// cardEvent is a card event's data (DREY-API.md, console.events; result
+// and by come with settled, Den console-1 7ffcafe).
 type cardEvent struct {
 	ID         string  `json:"id"`
 	Change     string  `json:"change"`

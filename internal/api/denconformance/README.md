@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Exported at Drey commit `030b342ee2f527f95d58ab04006360020bebea35`, package SHA-256 `3fc9017eed5116b84f2a3982e1713eb75278fac6d344cf33acb1eb1298cf0c20`.
+Exported at Drey commit `23cadb7ea889bb4bc4f2a7c3a9b06b66cb7ff4e0`, package SHA-256 `306277a50be22f84f92f15ced91dee83da25f731356329be26e1cfacadf45acc`.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
