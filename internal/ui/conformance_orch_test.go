@@ -25,8 +25,7 @@ import (
 const conformanceOrchestrator = `#!/bin/sh
 PATH=/usr/bin:/bin
 D=$(dirname "$0")
-echo '{"type":"system","subtype":"init","session_id":"s-conf","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
-n=0
+inited=""
 while IFS= read -r line; do
   case "$line" in
     *'"control_response"'*) continue ;;
@@ -34,9 +33,14 @@ while IFS= read -r line; do
       case "$line" in *'"interrupt"'*) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","num_turns":1}' ;; esac
       continue ;;
   esac
+  # Claude Code sends its init only after the first message it reads.
+  if [ -z "$inited" ]; then
+    echo '{"type":"system","subtype":"init","session_id":"s-conf","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
+    inited=1
+  fi
   printf '%s\n' "$line" | sed 's/}$/,"isReplay":true}/'
-  n=$((n+1))
-  if [ "$n" = 1 ]; then : > "$D/held"; read -r _ < "$D/gate"; fi
+  # The first turn of the whole run is held, whichever process gets it.
+  if [ ! -e "$D/held" ]; then : > "$D/held"; read -r _ < "$D/gate"; fi
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello."}}}'
   echo '{"type":"result","subtype":"success","is_error":false,"result":"Hello.","num_turns":1}'
 done
@@ -51,6 +55,15 @@ type orchestratorGate struct {
 	mu        sync.Mutex
 	released  bool
 	byRefusal bool
+	says      int // the orch.say requests sent so far, on every connection
+}
+
+// said counts one more orch.say sent, and gives its place in the run.
+func (g *orchestratorGate) said() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.says++
+	return g.says
 }
 
 // open lets the held turn go, once. refusal says it was the suite's second
@@ -150,7 +163,7 @@ func (g *orchestratorGate) tap(dial func(context.Context) (net.Conn, error)) fun
 		if !ok {
 			return nc, nil
 		}
-		return &tapConn{UnixConn: uc, g: g, says: map[int64]bool{}}, nil
+		return &tapConn{UnixConn: uc, g: g, says: map[int64]int{}}, nil
 	}
 }
 
@@ -161,7 +174,7 @@ type tapConn struct {
 
 	mu      sync.Mutex
 	out, in []byte
-	says    map[int64]bool // ids of the orch.say requests it sent
+	says    map[int64]int // the orch.say requests it sent: id to place in the run
 }
 
 func (c *tapConn) Write(b []byte) (int, error) {
@@ -174,7 +187,7 @@ func (c *tapConn) Write(b []byte) (int, error) {
 			Op string `json:"op"`
 		}
 		if json.Unmarshal(l, &req) == nil && req.ID != nil && req.Op == "orch.say" {
-			c.says[*req.ID] = true
+			c.says[*req.ID] = c.g.said()
 		}
 	}
 	c.mu.Unlock()
@@ -193,7 +206,9 @@ func (c *tapConn) Read(b []byte) (int, error) {
 				Code string `json:"code"`
 			} `json:"error"`
 		}
-		if json.Unmarshal(l, &rep) == nil && rep.ID != nil && c.says[*rep.ID] && rep.Error != nil && rep.Error.Code == "unavailable" {
+		// Only a later orch.say than the run's first counts: a first one
+		// refused is the suite's own failure, not the order this waits for.
+		if json.Unmarshal(l, &rep) == nil && rep.ID != nil && c.says[*rep.ID] >= 2 && rep.Error != nil && rep.Error.Code == "unavailable" {
 			refused = true
 		}
 	}

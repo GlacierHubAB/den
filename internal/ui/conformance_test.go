@@ -211,7 +211,7 @@ func TestDreyInterface(t *testing.T) {
 		SocketPath: path,
 		View:       true,
 	}
-	var lastAnswer time.Time // when the last card answer was carried out
+	var lastAnswer time.Time // when the last card answer is carried out
 	// The commands the model returns run on their own goroutines and what
 	// they return comes back to Update, as Bubble Tea does: a console's turn
 	// starts the orchestrator through one and hears it through more.
@@ -248,6 +248,44 @@ func TestDreyInterface(t *testing.T) {
 			Console:   console,
 		})
 	}()
+	// handle carries out an act on the model, on this goroutine.
+	handle := func(act api.Act) {
+		if act.Focus != nil {
+			m.api.lastKey = time.Time{} // the human has not typed in Den
+		}
+		l.run(m.applyAPIAct(act))
+		if act.Grant == nil {
+			return
+		}
+		// The human answers the grant card: select it, read it to its
+		// end, ^Y. Only the app-3 request (grant.events) is answered;
+		// the others stay waiting, as a human might leave them.
+		var card *inbox.Item
+		for it, id := range m.api.grants {
+			if id == act.Grant.ID {
+				card = it
+			}
+		}
+		if card == nil || !strings.Contains(card.Title, "Stand-up board") {
+			return
+		}
+		m.tab = tabInbox
+		m.refresh()
+		m.selectItem(card)
+		for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
+			press(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		press(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+		if card.State != inbox.Resolved {
+			t.Errorf("^Y did not answer the grant card: %q", m.flash)
+		}
+	}
+	// Den unpairs a console that answers five cards in a row less than a
+	// second apart, and the suite answers faster than a person reads. Each
+	// card answer is therefore carried out a second after the last, as a
+	// reader would take: handed back to this loop when its turn comes, so
+	// that nothing waits inside it.
+	late := make(chan api.Act, 16)
 	for {
 		select {
 		case <-done:
@@ -256,46 +294,21 @@ func TestDreyInterface(t *testing.T) {
 			c.done <- c.f()
 		case msg := <-l.msgs:
 			l.feed(msg)
+		case act := <-late:
+			handle(act)
 		case act := <-m.api.srv.Acts():
 			if act.CardAnswer != nil {
-				// Den unpairs a console that answers five cards in a row
-				// less than a second apart. The suite answers faster than a
-				// person reads, so each answer waits for a second after the
-				// last, as a reader would take.
-				time.Sleep(time.Until(lastAnswer.Add(1100 * time.Millisecond)))
-			}
-			if act.Focus != nil {
-				m.api.lastKey = time.Time{} // the human has not typed in Den
-			}
-			l.run(m.applyAPIAct(act))
-			if act.CardAnswer != nil {
-				lastAnswer = time.Now()
-			}
-			if act.Grant == nil {
-				continue
-			}
-			// The human answers the grant card: select it, read it to its
-			// end, ^Y. Only the app-3 request (grant.events) is answered;
-			// the others stay waiting, as a human might leave them.
-			var card *inbox.Item
-			for it, id := range m.api.grants {
-				if id == act.Grant.ID {
-					card = it
+				at := time.Now()
+				if earliest := lastAnswer.Add(1100 * time.Millisecond); at.Before(earliest) {
+					at = earliest
+				}
+				lastAnswer = at
+				if d := time.Until(at); d > 0 {
+					time.AfterFunc(d, func() { late <- act })
+					continue
 				}
 			}
-			if card == nil || !strings.Contains(card.Title, "Stand-up board") {
-				continue
-			}
-			m.tab = tabInbox
-			m.refresh()
-			m.selectItem(card)
-			for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
-				press(tea.KeyPressMsg{Code: tea.KeyDown})
-			}
-			press(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
-			if card.State != inbox.Resolved {
-				t.Errorf("^Y did not answer the grant card: %q", m.flash)
-			}
+			handle(act)
 		case <-time.After(60 * time.Second):
 			t.Fatal("the conformance run did not finish")
 		}
