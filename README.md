@@ -190,6 +190,8 @@ den remote status devbox   the read-only checks again; also: install, remove, di
 den install-mods        put the bundled agent-badge mod into ~/.claude/skills
 den mods                what ships in this binary and where it is loaded from
 den uninstall-mods      undo
+den pair                pair your console app (Drey's dock): a code in Den's header, then your ^Y on its card
+den unpair [all]        end the console; all also ends every app pairing
 den config              the config file path and the settings in effect
 den config init         write a documented ~/.config/den/config.toml
 den version
@@ -560,6 +562,52 @@ that has no tools and cannot act. It is off until you type `/api on` and
 confirm with `Ctrl+Y`; `/api off` turns it off at once, and `/api` lists the
 apps connected. Agents' own processes are refused. See
 [docs/DREY-API.md](docs/DREY-API.md).
+
+While an app is connected, Den's header says so: `⇄ app-host connected`,
+named by the program Den read from the system, never by a name the app
+gives itself. An app that hides which program it is (it made itself
+non-dumpable) shows as `unidentified`, and its cards say "a program Den
+cannot identify" with its pid and start time: check those against what the
+app shows before you answer.
+
+**Control.** `/api pair` shows a code of eight words in Den's header for two
+minutes. Type it only into the app's own pairing window. Den then asks you on
+a card, naming the program, its path, pid and command line; only your
+`Ctrl+Y` pairs it. A paired app may speak to the orchestrator as you would
+in Den's chat. Everything that would change your fleet still waits for you
+in Den. `/api control off` stops it, and `/api unpair` revokes every pairing, your console's too.
+
+**Your console.** `den pair` in a terminal (or `/api console` in Den) shows a
+console code the same way, for the one app you make your console (Drey's
+dock). After your `Ctrl+Y` on its card, the console may:
+
+- read the cards Den shows and answer most of them, as your `Ctrl+Y` would.
+  It never answers a console or app pairing, turning the API on, guidance,
+  installing on a host, a message to an agent on a host, an app's grant,
+  skills, an agent's question, or anything about a remote host: those wait
+  for you in Den. A long card must be read before it can be answered; more
+  than 20 answers a minute are refused; five answers in a row faster than
+  one a second unpair the console.
+- send Den's commands, one line at a time, checked by Den against a fixed
+  list. Commands that answer cards (`/allow`, `/deny`, `/always`,
+  `/answer`), `/quit`, `/unprotect`, `/send`, turning the API or control on,
+  pairing, `/view rescue`, mission proposals and template runs are refused.
+  Commands that act on Den's own screen (`/open`, `/dismiss` and the like)
+  stay in Den. `/close`, `/reopen`, `/merge`, `/cleanup`, `/mission move` and
+  `/usage resume`, `set` and `clear` raise a card, as they would typed in
+  Den. Den's chat notes every command a console sent.
+
+The header shows your console while one is paired (`console: app-host pid
+N since 14:05`). `den unpair` ends it from any terminal; `den unpair all`
+ends it and every app pairing. A code typed into a chat or a command line is
+refused, and the code is cancelled.
+
+What stays: any program running as you can type into Den's window, read its
+screen (and a code on it), or drive the app you paired. A paired console
+answers for you, within the limits above, so pair only an app you trust,
+and unpair it when you are not using it. On Hyprland, `permission` rules for
+keyboard access and screen capture can keep other programs from Den's
+window.
 
 ### Dispatch cards
 
