@@ -48,7 +48,7 @@ func loadConsoleKey(state string) (ed25519.PrivateKey, error) {
 		os.Chmod(state, 0o700)
 	}
 	path := filepath.Join(state, consoleKeyFile)
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0) // a FIFO cannot block the open
 	if errors.Is(err, os.ErrNotExist) {
 		seed := make([]byte, ed25519.SeedSize)
 		if _, err := rand.Read(seed); err != nil {
