@@ -12,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/mcp"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/usage"
 )
@@ -63,6 +64,9 @@ func runMCP() {
 						return "", err
 					}
 				}
+				// Asked last: the skills card may have waited on the human,
+				// and the mode is the one in force as the agent starts.
+				req.PermissionMode = agentMode()
 				res, err := spawn.Run(ctx, req)
 				if err != nil {
 					return "", err
@@ -269,6 +273,21 @@ func usageStop() error {
 
 // askUsage reaches Den; tests replace it.
 var askUsage = bridge.Call
+
+// agentMode is the permission mode a new agent starts in: the running
+// Den's global mode. With no answer from Den, or one that is not a mode
+// on the ranked line, it is the lower of config's mode and default, so an
+// agent never starts in more than the human set without Den to ask.
+func agentMode() string {
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.ModeEvent}
+	if d, err := askMode(bridge.SocketPath(), env, 3*time.Second); err == nil && d.Behavior == "allow" && permmode.Valid(d.Message) {
+		return d.Message
+	}
+	return permmode.Lower(config.Load().Agents.PermissionMode, permmode.Default)
+}
+
+// askMode reaches Den; tests replace it.
+var askMode = bridge.Call
 
 var errDir = errorString("dir is required")
 

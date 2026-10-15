@@ -175,6 +175,38 @@ func TestCommandResumes(t *testing.T) {
 	}
 }
 
+func TestCommandPermissionMode(t *testing.T) {
+	got := Command(Request{Brief: "go", PermissionMode: "plan"}, "ui")
+	if !strings.HasPrefix(strings.Join(got, " "), "claude --name ui --permission-mode plan -- ") {
+		t.Errorf("command = %q", got)
+	}
+	got = Command(Request{Resume: "s1", PermissionMode: "acceptEdits"}, "ui")
+	if strings.Join(got, " ") != "claude --resume s1 --name ui --permission-mode acceptEdits" {
+		t.Errorf("resume command = %q", got)
+	}
+	if got := Command(Request{Brief: "go"}, "ui"); strings.Contains(strings.Join(got, " "), "--permission-mode") {
+		t.Errorf("no mode given, but %q", got)
+	}
+}
+
+func TestRunRefusesUnknownPermissionMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	Launch = func(d, title, marker string, command, env []string) error {
+		t.Fatalf("launched %q", command)
+		return nil
+	}
+	t.Cleanup(func() { Launch = launch })
+	for _, mode := range []string{"yolo", "Default", "auto\n"} {
+		if _, err := Run(t.Context(), Request{Dir: t.TempDir(), Agent: true, Brief: "go", PermissionMode: mode}); err == nil || !strings.Contains(err.Error(), "permission mode") {
+			t.Errorf("%q: err = %v", mode, err)
+		}
+	}
+}
+
 func TestRunResumesWithoutBrief(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")

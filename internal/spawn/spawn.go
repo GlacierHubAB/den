@@ -28,6 +28,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/winmark"
 	"github.com/GlacierHubAB/den/internal/worktree"
@@ -61,6 +62,9 @@ type Request struct {
 	// conversation a new session id (--fork-session).
 	Resume string
 	Fork   bool
+	// PermissionMode is the claude --permission-mode the agent starts in,
+	// "" for Claude Code's own default. Den gives its global mode.
+	PermissionMode string
 }
 
 // Worktree is spawn_agent's worktree input: true (a worktree named after
@@ -177,6 +181,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		// A resumed agent keeps the exact model id its transcript names.
 		if req.Model != "" && req.Resume == "" && !ValidModel(req.Model) {
 			return res, fmt.Errorf("unknown model %q: pick one of %s", req.Model, strings.Join(ModelNames(), ", "))
+		}
+		if req.PermissionMode != "" && !permmode.Valid(req.PermissionMode) && req.PermissionMode != permmode.Bypass {
+			return res, fmt.Errorf("unknown permission mode %q", req.PermissionMode)
 		}
 		sessions, _ = discover.Scan()
 		res.Name = PeerName(req.Name, dir, sessions)
@@ -392,6 +399,11 @@ func Command(req Request, name string) []string {
 	}
 	if req.Model != "" {
 		command = append(command, "--model", req.Model)
+	}
+	if req.PermissionMode != "" {
+		// On a resume too: a reopened agent starts in the mode in force
+		// now, not the one it last ran in.
+		command = append(command, "--permission-mode", req.PermissionMode)
 	}
 	if req.Spawner != "" {
 		// Den's server beside the user's own: the agent keeps its usual
