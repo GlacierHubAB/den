@@ -95,6 +95,17 @@ func TestPlanAndAcceptEditsAreUnranked(t *testing.T) {
 	}
 }
 
+// Only default asks before it acts: the spike saw plan and auto run what
+// the classifier allows, acceptEdits edit without asking, and dontAsk
+// deny without asking.
+func TestAsksFirst(t *testing.T) {
+	for _, m := range append(Modes(), Bypass, "", "unknown", "Default") {
+		if got := AsksFirst(m); got != (m == Default) {
+			t.Errorf("AsksFirst(%q) = %v", m, got)
+		}
+	}
+}
+
 // The shipped mode is auto, the top: config.toml at most that grants
 // nothing more than no config at all.
 func TestShippedIsTheTop(t *testing.T) {

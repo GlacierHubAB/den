@@ -75,6 +75,16 @@ func Lowers(from, to string) bool {
 	return slices.Contains(below[from], to)
 }
 
+// AsksFirst reports whether an agent in the mode asks the human before it
+// acts on anything beyond reading: only default. dontAsk does not ask (it
+// runs what was allowed in advance and denies the rest), acceptEdits edits
+// without asking, plan and auto run what the classifier allows, and Den
+// knows nothing of any other mode. This is the mode in which Den sees
+// what a message makes an agent do (standing allowances).
+func AsksFirst(mode string) bool {
+	return mode == Default
+}
+
 // Raises reports whether the change needs the human's ^Y: any change that
 // is not a lowering.
 func Raises(from, to string) bool {
