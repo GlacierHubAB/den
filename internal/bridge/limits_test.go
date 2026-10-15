@@ -3,7 +3,12 @@ package bridge
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -65,15 +70,56 @@ func TestSocketLimits(t *testing.T) {
 
 // Every question Den answers itself, not only a hook's, holds its
 // connection for Den's decision: an event missing from the held list
-// gets {"ok":true} at once and its caller never hears Den's answer.
+// gets {"ok":true} at once and its caller never hears Den's answer. The
+// events are read from the package's own *Event constants, so a new one
+// is covered without being listed here.
 func TestDenAnsweredEventsAreHeld(t *testing.T) {
+	events := []string{"PermissionRequest"}
+	fset := token.NewFileSet()
+	names, _ := filepath.Glob("*.go")
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			g, ok := d.(*ast.GenDecl)
+			if !ok || g.Tok != token.CONST {
+				continue
+			}
+			for _, s := range g.Specs {
+				vs := s.(*ast.ValueSpec)
+				for i, n := range vs.Names {
+					if !strings.HasSuffix(n.Name, "Event") || i >= len(vs.Values) {
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						t.Fatalf("%s is not a string literal", n.Name)
+					}
+					v, _ := strconv.Unquote(lit.Value)
+					events = append(events, v)
+				}
+			}
+		}
+	}
+	if len(events) < 9 {
+		t.Fatalf("found only %v", events)
+	}
 	path := filepath.Join(t.TempDir(), "den.sock")
 	srv, err := Listen(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer srv.Close()
-	for _, ev := range []string{"PermissionRequest", CloseEvent, SkillsEvent, InstallEvent, SendEvent, InboundEvent, MissionEvent, UsageEvent, OrchSendEvent} {
+	for _, ev := range events {
+		if !Held(ev) {
+			t.Errorf("%s is not held", ev)
+			continue
+		}
 		go func() {
 			r := <-srv.Requests()
 			r.Reply(Decision{Behavior: "deny", Message: "from Den: " + r.Event})
