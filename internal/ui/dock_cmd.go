@@ -133,6 +133,14 @@ var dockVerbs = []dockVerb{
 		}
 		return api.DockRefused, whyPropose
 	}},
+	{"/view", nil, "/view [rescue]", "the agent and user views", func(a []string) (string, string) {
+		// Never runs from the dock: a console switches views with
+		// view.show and view.hide, and rescue is the human's alone.
+		if len(a) > 0 && a[0] == "rescue" {
+			return api.DockRefused, "rescuing the windows is for Den only"
+		}
+		return api.DockDenScreen, "switch views with view.show and view.hide"
+	}},
 	{"/pause", nil, "/pause", "pause the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/resume", nil, "/resume", "resume the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/stop", nil, "/stop", "stop the open mission", always(api.DockDenScreen, whyScreen)},
