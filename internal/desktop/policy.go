@@ -3,6 +3,7 @@ package desktop
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -92,6 +93,9 @@ func Decide(tool string, raw json.RawMessage, m Mission, s Snapshot) Verdict {
 	if m.Paused {
 		return deny("the mission is paused: a step only the human does is in progress; wait for your_turn to return")
 	}
+	if why := checkArgs(tool, args); why != "" {
+		return deny("%s", why)
+	}
 	if b, ok := args["allow_auth"].(bool); ok && b {
 		return deny("allow_auth is never allowed: credentials and authentication are the human's")
 	}
@@ -172,6 +176,9 @@ func decidePointer(args map[string]any, m Mission, s Snapshot) Verdict {
 		if why != "" {
 			return deny("pointer %s: %s", act, why)
 		}
+		if why := layerAt(x, y, s); why != "" {
+			return deny("pointer %s: %s", act, why)
+		}
 		w := top(under)
 		if act == "drag" {
 			tx, okt := num(args, "to_x")
@@ -181,6 +188,9 @@ func decidePointer(args map[string]any, m Mission, s Snapshot) Verdict {
 			}
 			end, why := windowsAtPoint(tx, ty, m, s)
 			if why != "" {
+				return deny("pointer drag end: %s", why)
+			}
+			if why := layerAt(tx, ty, s); why != "" {
 				return deny("pointer drag end: %s", why)
 			}
 			under = append(under, end...)
@@ -220,6 +230,9 @@ func decideKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 		if text == "" {
 			return deny("keyboard type needs text")
 		}
+		if k := boundText(text, s.Binds); k != "" {
+			return deny("keyboard: %q is one of the human's Hyprland binds, so typing it would run the bind", k)
+		}
 		switch m.Outward(w) {
 		case OutwardAsk:
 			v.Kind, v.Reason = Ask, "typing into "+w.Class+", where typed text can leave the machine"
@@ -235,6 +248,9 @@ func decideKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 		}
 		if why := compositorCombo(keys); why != "" {
 			return deny("keyboard: %s", why)
+		}
+		if b := boundCombo(keys, s.Binds); b != "" {
+			return deny("keyboard: %s is one of the human's Hyprland binds", b)
 		}
 		switch m.Outward(w) {
 		case OutwardAsk:
@@ -289,6 +305,13 @@ func decideClickUI(args map[string]any, m Mission, s Snapshot) Verdict {
 	w, why := inScopeWindow(args, "window", m, s)
 	if why != "" {
 		return deny("click_ui: %s", why)
+	}
+	// Den cannot see where the control is, so any surface over the window
+	// could take the click.
+	for _, l := range s.Layers {
+		if l.Overlaps(w) {
+			return deny("click_ui: a %q surface is over window %s; wait for it to go", l.Namespace, w.Address)
+		}
 	}
 	v := Verdict{Kind: Allow, Args: args, Target: &w}
 	name := str(args, "name")
@@ -345,6 +368,80 @@ func inScopeWindow(args map[string]any, key string, m Mission, s Snapshot) (Wind
 	}
 	return w, ""
 }
+
+// layerAt says which top or overlay surface (a notification, a bar, a
+// launcher) holds a point, "" when none: a click there would go to it.
+func layerAt(x, y float64, s Snapshot) string {
+	for _, l := range s.Layers {
+		if l.Covers(x, y) {
+			return fmt.Sprintf("a %q surface is over %.0f,%.0f", l.Namespace, x, y)
+		}
+	}
+	return ""
+}
+
+// argSchema is every argument each tool takes in hypruse 0.12.1, with its
+// type: s string, n number, b boolean. Any other key denies, so nothing
+// Den did not judge reaches hypruse.
+var argSchema = map[string]map[string]byte{
+	"desktop":          {},
+	"screenshot":       {"window": 's', "region": 's', "scale": 'n', "stable": 'b', "lossless": 'b'},
+	"zoom":             {"x": 'n', "y": 'n', "size": 's', "window": 's', "stable": 'b', "lossless": 'b'},
+	"ui":               {"window": 's', "name": 's', "actionable": 'b'},
+	"marks":            {"window": 's', "name": 's'},
+	"pointer":          {"action": 's', "x": 'n', "y": 'n', "button": 's', "to_x": 'n', "to_y": 'n', "scroll_dy": 'n', "scroll_dx": 'n', "double": 'b', "then": 's', "allow_auth": 'b'},
+	"keyboard":         {"action": 's', "text": 's', "keys": 's', "window": 's', "then": 's', "allow_auth": 'b'},
+	"click_ui":         {"name": 's', "mark": 'n', "window": 's', "index": 'n', "button": 's', "double": 'b', "then": 's', "allow_auth": 'b'},
+	"hypr":             {"action": 's', "target": 's', "workspace": 's', "then": 's'},
+	"request_approval": {"intent": 's'},
+	"your_turn":        {"step": 's'},
+}
+
+// checkArgs says why a call's arguments are not ones Den judges, "" when
+// they are: only known keys, of their types, with the values that change
+// what is clicked or how (button, size) from a fixed set.
+func checkArgs(tool string, args map[string]any) string {
+	schema, ok := argSchema[tool]
+	if !ok {
+		return ""
+	}
+	for k, v := range args {
+		t, known := schema[k]
+		if !known {
+			return fmt.Sprintf("%s takes no argument %q here", tool, k)
+		}
+		var good bool
+		switch t {
+		case 's':
+			_, good = v.(string)
+		case 'n':
+			_, good = v.(float64)
+		case 'b':
+			_, good = v.(bool)
+		}
+		if !good {
+			return fmt.Sprintf("%s: %q has the wrong type", tool, k)
+		}
+	}
+	if b, ok := args["button"].(string); ok && b != "left" && b != "right" && b != "middle" {
+		return "button is left, right or middle"
+	}
+	if v, ok := args["scale"].(float64); ok && (v < 0 || v > 1) {
+		return "scale is 0 to 1"
+	}
+	if v, ok := args["size"].(string); ok && v != "" && !sizeRe.MatchString(v) {
+		return "size is WxH in pixels"
+	}
+	if w, ok := args["workspace"].(string); ok && w != "" && !digits.MatchString(w) {
+		return "hypr workspace is a number"
+	}
+	return ""
+}
+
+var (
+	sizeRe = regexp.MustCompile(`^[1-9][0-9]{0,4}x[1-9][0-9]{0,4}$`)
+	digits = regexp.MustCompile(`^[0-9]{1,3}$`)
+)
 
 // windowsAtPoint lists the windows under a point, all of which must be
 // the mission's: with any other window there, Den does not guess the

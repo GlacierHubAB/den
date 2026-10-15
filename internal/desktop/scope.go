@@ -46,7 +46,9 @@ func (m Monitor) Contains(x, y float64) bool {
 type Snapshot struct {
 	Windows  []Window
 	Monitors []Monitor
-	Active   string // the focused window's address
+	Active   string  // the focused window's address
+	Layers   []Layer // layer-shell surfaces: bars, notifications, launchers
+	Binds    []Bind  // the human's Hyprland key binds
 }
 
 // Window returns the window with that address.
@@ -161,6 +163,9 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 			w, h = h, w
 		}
 		s.Monitors = append(s.Monitors, Monitor{Name: m.Name, X: m.X, Y: m.Y, W: w, H: h, Workspace: m.ActiveWorkspace.ID, Special: m.SpecialWorkspace.ID != 0 || m.SpecialWorkspace.Name != ""})
+	}
+	if err := readExtras(ctx, &s); err != nil {
+		return s, err
 	}
 	out, err = hyprctl(ctx, "activewindow", "-j")
 	if err == nil {
