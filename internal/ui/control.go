@@ -474,14 +474,26 @@ func (m *Model) controlEvent(ev orch.Event) (tea.Cmd, bool) {
 // askControlTool puts a tool the orchestrator wants in an app's turn on an
 // inbox card, whole, and tells the app that something waits in Den.
 func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
+	if m.consoleRuns(ev) {
+		// Your choice: your console's chat lists and messages agents as
+		// yours in Den's chat does, with no card.
+		m.orch.proc.AnswerPermission(ev.RequestID, true, "")
+		return nil
+	}
 	if m.ctl.asks == nil {
 		m.ctl.asks = map[*inbox.Item]string{}
 	}
 	who := "an app"
-	if m.ctl.turn != nil {
-		who = appName(m.ctl.turn.Exe)
+	if y := m.ctl.turn; y != nil && y.Console != "" {
+		who = api.ConsoleLabel
+	} else if y != nil {
+		who = appName(y.Exe)
 	}
-	title := "Requested from " + who + ": " + firstLineOf(orch.Describe(ev.Tool, ev.Input))
+	what := firstLineOf(orch.Describe(ev.Tool, ev.Input))
+	if t := m.sendTitle(ev); t != "" {
+		what = t
+	}
+	title := "Requested from " + who + ": " + what
 	body := []string{
 		"In a turn " + who + " sent, the orchestrator wants this tool. Nothing runs unless you allow it; it is denied in a minute without an answer.",
 		"tool: " + sanitize.Label(ev.Tool, 80),
@@ -518,6 +530,37 @@ func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
 	m.refresh()
 	return nil
 }
+
+// consoleRuns reports whether a tool the orchestrator wants runs without a
+// card: in a turn from the console that is paired now (its proof, by its
+// pairing id, never anything the text says) while it has its powers,
+// asked again at each tool, and only ListAgents, or send_message to an
+// agent Den would deliver to. Every other tool, and every tool in an app
+// pairing's turn, still asks.
+func (m Model) consoleRuns(ev orch.Event) bool {
+	y := m.ctl.turn
+	if y == nil || y.Console == "" || m.api.srv == nil || m.orch.proc == nil || !consolePowered(m, y.Console) {
+		return false
+	}
+	switch ev.Tool {
+	case "ListAgents":
+		return true
+	case orch.SendMessageTool:
+		var in struct {
+			To string `json:"to"`
+		}
+		if json.Unmarshal(ev.Input, &in) != nil {
+			return false
+		}
+		_, why := m.sendTarget(in.To)
+		return why == ""
+	}
+	return false
+}
+
+// consolePowered asks the API whether console id is paired now with its
+// powers; tests replace it.
+var consolePowered = func(m Model, id string) bool { return m.api.srv.ConsolePowered(id) }
 
 // decideControlTool is the human's ^Y or ^N on a tool card from an app's
 // turn, after the whole card was shown. It is answered once.

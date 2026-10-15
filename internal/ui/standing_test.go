@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -262,5 +263,86 @@ func TestNoStandingInAConsolesTurn(t *testing.T) {
 	m.ctl.turn = &api.Say{Turn: "t-2", Pairing: "p-1"}
 	if _, why := m.standingOffer(ev); why != "" {
 		t.Errorf("an app's turn: %q", why)
+	}
+}
+
+// Your choice: in a turn from your console, while it has its powers, the
+// orchestrator lists agents and messages one Den would deliver to with no
+// card. Anything else still asks; so does every tool once its powers are
+// locked, from that tool on, and every tool in an app pairing's turn. A
+// card that remains names the console and the message readably.
+func TestConsoleTurnRunsListAndMessageWithoutACard(t *testing.T) {
+	l, _ := standingModel(t, "default")
+	m := l.m
+	m.orch.proc = &orch.Orchestrator{}
+	powered := true
+	defer func(f func(Model, string) bool) { consolePowered = f }(consolePowered)
+	consolePowered = func(_ Model, id string) bool { return powered && id == "c-1" }
+	cards := func() int {
+		n := 0
+		for _, it := range m.store.Items() {
+			if it.Kind == inbox.ControlAsk && it.Answerable() {
+				n++
+			}
+		}
+		return n
+	}
+	ask := func(tool, input string) {
+		m.askControlTool(orch.Event{Kind: orch.PermissionAsk, RequestID: "r-" + tool, Tool: tool, Input: json.RawMessage(input)})
+	}
+	msg := `{"to":"worker-otter","message":"run the tests\nand tell me"}`
+	// The turns here have no connection to tell "needs approval" on: as
+	// ended, the cards still come but nothing is sent.
+	m.ctl.ended = true
+	m.ctl.turn = &api.Say{Turn: "t-1", Console: "c-1"}
+	ask("ListAgents", `{}`)
+	ask(orch.SendMessageTool, msg)
+	if n := cards(); n != 0 {
+		t.Fatalf("%d cards in the powered console's turn", n)
+	}
+	ask(orch.SendMessageTool, `{"to":"nobody-here","message":"hi"}`)
+	ask(orch.SpawnAgentTool, `{"dir":"/tmp","brief":"x"}`)
+	if n := cards(); n != 2 {
+		t.Errorf("%d cards for a message Den would not deliver and a spawn, want 2", n)
+	}
+	// Locked in the middle of the turn: the next tool asks.
+	powered = false
+	ask(orch.SendMessageTool, msg)
+	if n := cards(); n != 3 {
+		t.Fatalf("%d cards after the lock, want 3", n)
+	}
+	var title string
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.ControlAsk && strings.Contains(it.Title, "worker-otter") {
+			title = it.Title
+		}
+	}
+	if want := "Requested from the console: to "; !strings.HasPrefix(title, want) || !strings.Contains(title, "(worker-otter): run the tests") || strings.Contains(title, "tell me") {
+		t.Errorf("the card's title: %q", title)
+	}
+	// Another console's turn, or an app pairing's, asks.
+	powered = true
+	m.ctl.turn = &api.Say{Turn: "t-2", Console: "c-other"}
+	ask("ListAgents", `{}`)
+	m.ctl.turn = &api.Say{Turn: "t-3", Pairing: "p-1", Exe: "/usr/bin/some-app"}
+	ask("ListAgents", `{}`)
+	if n := cards(); n != 5 {
+		t.Errorf("%d cards after another console's and an app's turn, want 5", n)
+	}
+}
+
+// /api lock is for a console that is paired; without one it says so, and
+// the dock may send it, since it only takes powers away.
+func TestAPILock(t *testing.T) {
+	m := consoleModel(t)
+	mm, _ := m.apiCommand([]string{"lock"})
+	m = mm.(Model)
+	if !strings.Contains(m.flash, "No console is paired") {
+		t.Errorf("/api lock with no console: %q", m.flash)
+	}
+	r := &api.CommandRun{Text: "/api lock", Console: "app-host", Reply: make(chan api.CommandResult, 1)}
+	m.runFromDock(r)
+	if res := <-r.Reply; res.Code == api.CodeRefusedFromDock {
+		t.Errorf("/api lock from the dock: %+v", res)
 	}
 }

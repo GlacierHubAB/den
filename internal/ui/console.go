@@ -98,6 +98,21 @@ func (m Model) consoleCommand() (tea.Model, tea.Cmd) {
 	return m.say("Console code shown above for two minutes. Type it only into the app's own console window.", false)
 }
 
+// consoleLockCommand is /api lock: the console keeps its pairing but
+// loses its powers (answering cards, running commands, and chat tools
+// without a card) until your Ctrl+Y on Den's powers card. It only lowers,
+// so the dock may send it too.
+func (m Model) consoleLockCommand() (tea.Model, tea.Cmd) {
+	if m.api.srv == nil {
+		return m.say("The API is not running.", true)
+	}
+	if _, ok := m.api.srv.CurrentConsole(); !ok {
+		return m.say("No console is paired.", false)
+	}
+	m.api.srv.LockConsolePowers("you locked them in Den")
+	return m.say("The console's powers are locked: it answers no cards, runs no commands, and its chat's tools wait for you. Den's powers card gives them back.", false)
+}
+
 // startConsoleCode puts a console code on Den's screen; "" when it did, else
 // why not.
 func (m *Model) startConsoleCode() string {

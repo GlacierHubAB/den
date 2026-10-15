@@ -301,3 +301,20 @@ func TestReconnectSignatureCoversAll(t *testing.T) {
 		}
 	}
 }
+
+// ConsolePowered is true only for the console paired now, while it has its
+// powers: not for another id, and not once they are locked.
+func TestConsolePowered(t *testing.T) {
+	h, _ := provedConsole(t)
+	cur, ok := h.s.CurrentConsole()
+	if !ok || !h.s.ConsolePowered(cur.ID) {
+		t.Fatalf("a freshly paired console without its powers: %+v %v", cur, ok)
+	}
+	if h.s.ConsolePowered("") || h.s.ConsolePowered(cur.ID+"x") {
+		t.Error("powers for another id")
+	}
+	h.s.LockConsolePowers("a test")
+	if h.s.ConsolePowered(cur.ID) {
+		t.Error("powers after the lock")
+	}
+}

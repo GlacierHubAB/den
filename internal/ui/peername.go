@@ -43,6 +43,27 @@ func (m Model) peerWithCritter(peer string) string {
 // sendTargetLine is the line a send_message card adds above the tool's
 // input, which names its target by peer name only: "to Critter (peer)".
 // It is "" when the target is not a live agent Den can name.
+// sendTitle is a send_message card's title: "to <critter> (<peer>):" and
+// the message's first words, "" for any other tool.
+func (m Model) sendTitle(ev orch.Event) string {
+	if ev.Tool != orch.SendMessageTool {
+		return ""
+	}
+	var in struct {
+		To      string `json:"to"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(ev.Input, &in) != nil {
+		return ""
+	}
+	peer := sanitize.Label(orch.PeerName(in.To), 60)
+	to := peer
+	if c := m.critterOf(orch.PeerName(in.To)); c != "" {
+		to = c + " (" + peer + ")"
+	}
+	return "to " + to + ": " + sanitize.Label(firstLineOf(in.Message), 120)
+}
+
 func (m Model) sendTargetLine(ev orch.Event) string {
 	if ev.Tool != orch.SendMessageTool {
 		return ""
