@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Den keeps its side of the console across its own restarts: the console's
@@ -18,13 +20,16 @@ import (
 // private key in memory only). The record is Den's alone, so Den watches it:
 //
 //   - at most one console: more than one entry is a tamper;
-//   - a clean exit writes a mark (the record's and Den's key's hashes, and
-//     how many consoles); at start, a missing or wrong mark, more consoles
-//     than it counted, or another key drop every console;
+//   - a clean exit writes a mark of Den's own state (the hash of the
+//     record as Den last wrote it, its public key's hash, how many
+//     consoles), and only when the file still is that record; at start, a
+//     missing or wrong mark, more consoles than it counted, or another key
+//     drop every console;
 //   - an entry from another boot, or whose process is gone or started
 //     again, is dropped;
-//   - while Den runs, the record's hash is checked on a timer and on each
-//     console proof: a change Den did not make unpairs the console loudly.
+//   - while Den runs, the record's hash is checked on a timer, on each
+//     console proof and at exit: a change Den did not make unpairs the
+//     console, and the file is rewritten to what Den knows, loudly.
 //
 // Any program of the user can still write both files and the mark: the
 // restored console is therefore announced (ConsoleEvent restored, a note
@@ -53,7 +58,7 @@ type storedConsoles struct {
 // cleanMark is what a clean exit leaves.
 type cleanMark struct {
 	Record   string `json:"record_sha256"`
-	Key      string `json:"key_sha256"`
+	Key      string `json:"key_sha256"` // of Den's public key, in hex
 	Consoles int    `json:"consoles"`
 }
 
@@ -148,7 +153,7 @@ func (s *Server) loadConsole() string {
 		return drop("Den did not exit cleanly last time, so its console was not restored; pair again with den pair")
 	case mark.Record != sha256Hex(raw) || mark.Consoles < len(rec.Consoles):
 		return drop("Den's console record was changed while Den was stopped: every console was dropped")
-	case mark.Key != sha256Hex(s.ckey.priv):
+	case mark.Key != sha256Hex([]byte(s.ckey.pubHex)):
 		return drop("Den's key changed since it last exited, so its console was not restored")
 	}
 	c := rec.Consoles[0]
@@ -173,7 +178,7 @@ func (s *Server) loadConsole() string {
 	}
 	s.con.recordHash = sha256Hex(raw)
 	s.con.mu.Unlock()
-	s.note("console restored from before Den's restart: " + ExeLabel(c.Exe) + " pid " + itoa(c.PID) + ", started " + hhmmss(c.Started) + ". If that is not your console, unpair it: den unpair all")
+	s.note("console restored from before Den's restart: " + sanitize.Label(ExeLabel(c.Exe), 40) + " pid " + itoa(c.PID) + ", started " + hhmmss(c.Started) + ". If that is not your console, unpair it: den unpair all")
 	s.act(Act{ConsoleChanged: true})
 	return ""
 }
@@ -213,8 +218,20 @@ func (s *Server) checkConsoleRecord() {
 		return
 	}
 	if err != nil || sha256Hex(raw) != want {
-		s.UnpairConsole("Den's console record was changed by another program: the console is unpaired; pair again with den pair")
+		s.recordTampered()
 	}
+}
+
+// recordTampered handles a record Den did not write: the console, if any,
+// is unpaired, the file is rewritten to what Den knows, and Den says so.
+func (s *Server) recordTampered() {
+	const why = "Den's console record was changed by another program: Den rewrote it, and any console is unpaired; pair again with den pair"
+	if s.UnpairConsole("") == 0 {
+		s.con.mu.Lock()
+		s.saveConsoleLocked()
+		s.con.mu.Unlock()
+	}
+	s.note(why)
 }
 
 // watchConsoleRecord checks the record every consoleCheckEvery until stop.
@@ -237,11 +254,18 @@ func (s *Server) writeCleanMark() {
 		return
 	}
 	raw, err := os.ReadFile(s.consolePath())
-	if err != nil {
+	s.con.mu.Lock()
+	want, n := s.con.recordHash, 0
+	if s.con.cur != nil {
+		n = 1
+	}
+	s.con.mu.Unlock()
+	if err != nil || want == "" || sha256Hex(raw) != want {
+		// The file is not what Den wrote: no mark, so nothing on it is
+		// restored at the next start.
+		s.recordTampered()
 		return
 	}
-	var rec storedConsoles
-	json.Unmarshal(raw, &rec)
-	b, _ := json.Marshal(cleanMark{Record: sha256Hex(raw), Key: sha256Hex(s.ckey.priv), Consoles: len(rec.Consoles)})
+	b, _ := json.Marshal(cleanMark{Record: want, Key: sha256Hex([]byte(s.ckey.pubHex)), Consoles: n})
 	writeAtomic(s.markPath(), b)
 }

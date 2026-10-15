@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -44,10 +45,7 @@ func pairedStore(t *testing.T) (store string, priv ed25519.PrivateKey, d *dock, 
 	p = d.pair(h.s.StartConsoleCode())
 	// What a clean exit does first: the watch stops and the mark is
 	// written, so this server never touches the record again.
-	h.s.closeOnce.Do(func() {
-		close(h.s.stopWatch)
-		h.s.writeCleanMark()
-	})
+	cleanExit(h.s)
 	return store, priv, d, p
 }
 
@@ -140,7 +138,7 @@ func TestConsoleNotRestoredForAnotherProcess(t *testing.T) {
 			os.WriteFile(store, b, 0o600)
 			// The mark as a clean exit would have written it for this record:
 			// the check that catches this is the process's, not the mark's.
-			mark, _ := json.Marshal(cleanMark{Record: sha256Hex(b), Key: sha256Hex(priv), Consoles: 1})
+			mark, _ := json.Marshal(cleanMark{Record: sha256Hex(b), Key: sha256Hex([]byte(pubHex(priv))), Consoles: 1})
 			os.WriteFile(store+".clean", mark, 0o600)
 			h := storeHarness(t, store, priv)
 			if _, ok := h.s.CurrentConsole(); ok {
@@ -151,7 +149,7 @@ func TestConsoleNotRestoredForAnotherProcess(t *testing.T) {
 }
 
 // While Den runs, a change to the record it did not make unpairs the
-// console.
+// console, and the file is rewritten to what Den knows.
 func TestConsoleRecordTamperUnpairs(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
@@ -164,6 +162,50 @@ func TestConsoleRecordTamperUnpairs(t *testing.T) {
 		t.Error("still paired after the record changed")
 	}
 	noteWith(t, h.s, "changed by another program")
+	raw, _ := os.ReadFile(store)
+	if sha256Hex(raw) != h.s.con.recordHash {
+		t.Error("the tampered file was left as it was")
+	}
+}
+
+func pubHex(priv ed25519.PrivateKey) string {
+	return hex.EncodeToString(priv.Public().(ed25519.PublicKey))
+}
+
+// cleanExit does what Close does first: stop the watch, write the mark.
+func cleanExit(s *Server) {
+	s.closeOnce.Do(func() {
+		close(s.stopWatch)
+		s.writeCleanMark()
+	})
+}
+
+// An entry written into the record while Den runs, with or without a
+// console, is never blessed by the clean-exit mark: nothing of it is
+// restored at the next start, and Den says the record was changed.
+func TestConsoleInjectedWhileRunningIsNotRestored(t *testing.T) {
+	for _, withConsole := range []bool{false, true} {
+		store := filepath.Join(t.TempDir(), "consoles.json")
+		_, priv, _ := ed25519.GenerateKey(rand.Reader)
+		h := storeHarness(t, store, priv)
+		d := newDock(t, h)
+		if withConsole {
+			d.pair(h.s.StartConsoleCode())
+		}
+		// An agent's own entry: this process, its own key.
+		evil := storedConsoles{Consoles: []storedConsole{{ID: randHex(), Identity: d.identity, Key: d.pub, Exe: "/usr/bin/evil", PID: os.Getpid(), Start: func() uint64 { st, _, _ := procStat(os.Getpid()); return st }(), Since: time.Now()}}}
+		b, _ := json.Marshal(evil)
+		os.WriteFile(store, b, 0o600)
+		cleanExit(h.s) // the exit comes before the next 10 s check
+		noteWith(t, h.s, "changed by another program")
+		if _, err := os.Stat(store + ".clean"); err == nil {
+			t.Errorf("console %v: a mark was written over a tampered record", withConsole)
+		}
+		h2 := storeHarness(t, store, priv)
+		if cur, ok := h2.s.CurrentConsole(); ok {
+			t.Errorf("console %v: the injected entry was restored: %+v", withConsole, cur)
+		}
+	}
 }
 
 func TestIdentityParts(t *testing.T) {

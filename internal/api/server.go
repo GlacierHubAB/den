@@ -130,6 +130,13 @@ func Listen(o Options) (*Server, error) {
 		if why := s.loadConsole(); why != "" {
 			s.note(why)
 		}
+		s.con.mu.Lock()
+		if s.con.recordHash == "" {
+			// No record yet: write Den's (empty) one, so any file that
+			// appears later is a change Den did not make.
+			s.saveConsoleLocked()
+		}
+		s.con.mu.Unlock()
 		go s.watchConsoleRecord(s.stopWatch)
 	}
 	s.bp.Store(b)
