@@ -557,6 +557,39 @@ other users, not against your own processes.
 `den ask` from the command line starts a fresh orchestrator and doesn't load
 guidance.
 
+### God mode
+
+God mode lets the agents you start act without asking, and lets Den answer
+some of its own cards. It is turned on only in Den's own window: type
+`/god on`, read the warning, then type `let agents act without asking`
+within a minute. Nothing else turns it on (no config key, environment
+variable, command from an app or socket verb), and every Den start begins
+with it off. `/god off`, `den god off` in a terminal, your console and any
+unpair end it.
+
+While it is on, Den's header says so in red, and:
+
+- agents Den starts on this machine run in `bypassPermissions`; remote
+  hosts keep their own policy;
+- Den answers, yes, its own close, cleanup, restore, mission-update and
+  mission-move cards that came after God mode went on, with a line in its
+  chat for each;
+- pairings, app grants, turning the API on, installs, guidance, skills,
+  budgets and usage, messages to hosts, an app's turn, merges and your
+  console stay yours, and only Den's own window answers them;
+- every message to an agent that runs without asking goes through Den: a
+  hook Den gives that agent lets a peer message in only if Den delivered
+  it, and Den shows a red notice for any it blocked. If that agent's Den
+  settings file or the den binary changes, Den marks it unguarded in red
+  and delivers nothing more to it.
+
+What stays open: an agent that runs without asking can do anything you
+can, including changing Den itself. Any program or agent that can run
+commands as you without asking (including agents in auto, plan or God
+mode) can type into a God-mode agent's terminal, or write to its inbox
+socket, and is not stopped. Den lowers the chance that an injection
+reaches such an agent; it cannot contain one that has.
+
 ### Apps (den-api.sock)
 
 Den can serve a local API to apps on your machine: the
