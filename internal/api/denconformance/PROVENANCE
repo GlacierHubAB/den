@@ -2,22 +2,22 @@ The Den API conformance suite, as Den carries it
 
 This folder is a copy of the conformance suite for den-api.sock
 (docs/DREY-API.md), written by the client's authors, who check their client
-against the same suite. Den changes none of its code, and its README only as
-noted below: a finding is fixed upstream and the copy pinned again.
+against the same suite. Den changes none of it: a finding is fixed upstream
+and the copy pinned again.
 
 Source        the client's conformance package, pinned at commit
-              613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0
-Code          client.go, d1.go, denconformance.go at commit
-              613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0
-              client.go         00a38c499b49839a11f7d4aa22644fe8d9b494cf725a60f897c4b0f8d1484372
+              030b342ee2f527f95d58ab04006360020bebea35
+Code          client.go, console.go, d1.go, denconformance.go at commit
+              030b342ee2f527f95d58ab04006360020bebea35
+              client.go         c0ff8aeb0058f18369c08d2e3b51643b37b92a4370dadf1c6fae67ff40f11ed0
+              console.go        74e98414f64515ed420de438ea63fcb6c0a89f47da0da67bb08b5d4e80e53951
               d1.go             e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416
-              denconformance.go 31ee8a6292ced9dbed6eeb98ebb67dd01766ea62c192592259a62d0e0669ed65
+              denconformance.go 46f62aa850416844da744b443a484afab8d3027f7b5d4bd06c891b3aa1adf681
               package hash (sha256sum of the .go files in name order, hashed)
-                                d251218a9b2f46804bbca41e47439d2e783b990a5711aa979b1f5e9bb40b075f
-README.md     at commit 1a47af4, the one that records the pin above, with
-              one source line removed and the cd step dropped from the hash
-              command; all other files byte-identical
-              b98f23695951a0d149c1ff5ca9849e4d13cccfe3e10059f19ccf2c1ca6de782b
+                                3fc9017eed5116b84f2a3982e1713eb75278fac6d344cf33acb1eb1298cf0c20
+README.md     at commit 9ac9dde, the one that records the pin above;
+              byte-identical, as every file here
+              31fc3eb9744605848d29f8bdbbcc24c4559b3965c70421f2d7eca07f0f12a0b0
 License       MIT, in README.md and the files' own headers
 
 It is test-only. It imports nothing but the standard library, only

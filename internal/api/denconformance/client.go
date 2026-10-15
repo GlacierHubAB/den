@@ -93,6 +93,9 @@ type conn struct {
 	nc   net.Conn
 	r    *bufio.Reader
 	next int64
+	// lastChallenge paces console.challenge to one a second on this
+	// connection, as the server allows.
+	lastChallenge time.Time
 }
 
 func (c *conn) close() { _ = c.nc.Close() }
@@ -285,8 +288,9 @@ var askIDRe = regexp.MustCompile(`^a-[0-9a-f]{32}$`)
 
 // The parts of the wire types the suite checks.
 type info struct {
-	Version  string `json:"version"`
-	Versions []int  `json:"versions"`
+	Version  string   `json:"version"`
+	Versions []int    `json:"versions"`
+	Features []string `json:"features"`
 }
 
 func (i info) supports(v int) bool {

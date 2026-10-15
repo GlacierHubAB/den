@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -58,6 +59,9 @@ type Options struct {
 	Focusable string
 	// Skip names subtests not to run (D1Skip for Den's first release).
 	Skip []string
+	// Console, when set, runs the console subtests (ConsoleSubtests);
+	// left nil, they are skipped.
+	Console *ConsoleOptions
 }
 
 // Subtests lists every subtest name, in the order Run runs them.
@@ -81,7 +85,7 @@ func Run(t *testing.T, o Options) {
 		skip[name] = true
 	}
 	known := map[string]bool{}
-	for _, name := range Subtests {
+	for _, name := range append(slices.Clone(Subtests), ConsoleSubtests...) {
 		known[name] = true
 	}
 	for _, name := range o.Skip {
@@ -673,6 +677,8 @@ func Run(t *testing.T, o Options) {
 			t.Error("a connection from another user stayed open")
 		}
 	})
+
+	runConsole(t, o, run)
 }
 
 func dialRaw(t *testing.T, ctx context.Context, dial Dialer) net.Conn {

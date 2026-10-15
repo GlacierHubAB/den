@@ -15,14 +15,15 @@ import (
 	"testing"
 )
 
-// The conformance copy's code is byte-identical to the pinned upstream
-// files, and its README is as PROVENANCE says.
+// The conformance copy is byte-identical to the pinned upstream files,
+// README included.
 func TestConformanceCopyIsPinned(t *testing.T) {
 	want := map[string]string{
-		"client.go":         "00a38c499b49839a11f7d4aa22644fe8d9b494cf725a60f897c4b0f8d1484372",
+		"client.go":         "c0ff8aeb0058f18369c08d2e3b51643b37b92a4370dadf1c6fae67ff40f11ed0",
+		"console.go":        "74e98414f64515ed420de438ea63fcb6c0a89f47da0da67bb08b5d4e80e53951",
 		"d1.go":             "e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416",
-		"denconformance.go": "31ee8a6292ced9dbed6eeb98ebb67dd01766ea62c192592259a62d0e0669ed65",
-		"README.md":         "b98f23695951a0d149c1ff5ca9849e4d13cccfe3e10059f19ccf2c1ca6de782b",
+		"denconformance.go": "46f62aa850416844da744b443a484afab8d3027f7b5d4bd06c891b3aa1adf681",
+		"README.md":         "31fc3eb9744605848d29f8bdbbcc24c4559b3965c70421f2d7eca07f0f12a0b0",
 	}
 	var sums strings.Builder
 	var goFiles []string
@@ -49,7 +50,7 @@ func TestConformanceCopyIsPinned(t *testing.T) {
 		fmt.Fprintf(&sums, "%s  %s\n", want[name], name)
 	}
 	h := sha256.Sum256([]byte(sums.String()))
-	if got := hex.EncodeToString(h[:]); got != "d251218a9b2f46804bbca41e47439d2e783b990a5711aa979b1f5e9bb40b075f" {
+	if got := hex.EncodeToString(h[:]); got != "3fc9017eed5116b84f2a3982e1713eb75278fac6d344cf33acb1eb1298cf0c20" {
 		t.Errorf("package hash %s", got)
 	}
 }
