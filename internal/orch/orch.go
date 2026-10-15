@@ -157,6 +157,10 @@ type Orchestrator struct {
 	stdin  io.WriteCloser
 	events chan Event
 	done   chan struct{} // closed once the process has been reaped
+	// quit is closed by Close, and ctx is Start's: either ends a send of
+	// Backstop or Exited that waits for room in events (emitMust).
+	quit   chan struct{}
+	ctx    context.Context
 	mu     sync.Mutex
 	closed bool
 	// sent maps the hash of each prompt Den wrote to when it wrote it,
@@ -197,7 +201,7 @@ func Start(ctx context.Context, o Options) (*Orchestrator, error) {
 	o.SettingsFile = path
 	args := Argv(o)
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	orc, err := start(cmd, o)
+	orc, err := start(ctx, cmd, o)
 	if err != nil {
 		os.Remove(path)
 	}
@@ -320,7 +324,7 @@ func hookBlocked(exit int, stdout string) bool {
 	return exit == 0 && json.Unmarshal([]byte(strings.TrimSpace(stdout)), &d) == nil && d.Decision == "block"
 }
 
-func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
+func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	cmd.Dir = o.Dir
 	// The user settings' env (copiedEnv) in place of their settings files,
 	// then Den's marker last, so nothing overrides it.
@@ -329,32 +333,42 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
+	// Output goes through Den's own pipes, copied by os/exec, so that
+	// WaitDelay applies: something the orchestrator started that keeps its
+	// stdout or stderr open (a backgrounded tool, say) would otherwise hold
+	// the readers, and with them Wait and Close, until it exits.
+	stdout, outW := io.Pipe()
+	stderr, errW := io.Pipe()
+	cmd.Stdout, cmd.Stderr = outW, errW
+	cmd.WaitDelay = 3 * time.Second
 	if err := cmd.Start(); err != nil {
+		stdin.Close()
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
 	exe := denExecutable(o)
 	if r, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = r
 	}
-	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
-	read := make(chan struct{})
+	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
+	read, readErr := make(chan struct{}), make(chan struct{})
 	go func() {
-		orc.readStdout(stdout)
+		// A line too long for the scanner, or a read error, leaves Den
+		// reading nothing while the orchestrator may still run tools: kill
+		// it before Den's end closes, so the failure is never an open pipe
+		// nobody reads.
+		if err := orc.readStdout(stdout); err != nil {
+			orc.trip("unreadable orchestrator output")
+		}
+		stdout.Close() // a reader that stopped early never blocks the copy
 		close(read)
 	}()
+	var tail []string
+	first := ""
 	go func() {
+		defer close(readErr)
+		defer stderr.Close()
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
-		var tail []string
-		first := ""
 		for sc.Scan() {
 			line := sanitize.Label(sc.Text(), maxStderrLine)
 			if first == "" {
@@ -365,12 +379,19 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 				tail = tail[1:]
 			}
 		}
-		// Wait closes the pipes, so it waits for the stdout reader to finish
-		// first; otherwise the reader could emit after events is closed. It
+	}()
+	go func() {
+		// Wait returns once the process has exited and its output has been
+		// copied, or WaitDelay after the exit when something else still
+		// holds the pipes. Closing Den's ends then gives the readers EOF
+		// after the last line, and Exited follows everything they emit. It
 		// is the only Wait on this process: a second concurrent Wait can
 		// block forever once the first has reaped the child.
-		<-read
 		err := cmd.Wait()
+		outW.Close()
+		errW.Close()
+		<-read
+		<-readErr
 		orc.dropSettings()
 		msg := "orchestrator exited"
 		if err != nil {
@@ -379,7 +400,7 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 		if len(tail) > 0 {
 			msg += " · " + strings.Join(tail, " | ")
 		}
-		orc.emit(Event{Kind: Exited, Text: msg, Stderr: first})
+		orc.emitMust(Event{Kind: Exited, Text: msg, Stderr: first})
 		close(orc.events)
 		close(orc.done)
 	}()
@@ -466,7 +487,7 @@ func (o *Orchestrator) trip(why string) {
 	if o.cmd != nil && o.cmd.Process != nil {
 		o.cmd.Process.Kill()
 	}
-	o.emit(Event{Kind: Backstop, Text: why})
+	o.emitMust(Event{Kind: Backstop, Text: why})
 }
 
 // Tripped reports whether the backstop killed the process.
@@ -484,6 +505,9 @@ func (o *Orchestrator) Close() {
 		return
 	}
 	o.closed = true
+	if o.quit != nil {
+		close(o.quit)
+	}
 	if o.cmd == nil || o.cmd.Process == nil {
 		o.mu.Unlock()
 		return // never started
@@ -508,6 +532,27 @@ func (o *Orchestrator) emit(e Event) {
 	select {
 	case o.events <- e:
 	default:
+	}
+}
+
+// emitMust is emit for Backstop and Exited, which a full events buffer must
+// not drop: it waits for room, until Close or Start's context ends the wait,
+// so a consumer that stopped reading never holds Den.
+func (o *Orchestrator) emitMust(e Event) {
+	e.Text, e.Tool = sanitize.Text(e.Text), sanitize.Line(e.Tool)
+	select {
+	case o.events <- e: // room: delivered even after Close
+		return
+	default:
+	}
+	var ctxDone <-chan struct{}
+	if o.ctx != nil {
+		ctxDone = o.ctx.Done()
+	}
+	select {
+	case o.events <- e:
+	case <-o.quit:
+	case <-ctxDone:
 	}
 }
 
@@ -555,7 +600,9 @@ type block struct {
 	IsError   bool            `json:"is_error"`
 }
 
-func (o *Orchestrator) readStdout(r io.Reader) {
+// readStdout turns the stream-json on r into events until EOF, and returns
+// the scanner's error: a line over 4 MiB, or a failed read.
+func (o *Orchestrator) readStdout(r io.Reader) error {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 4<<20), 4<<20)
 	for sc.Scan() {
@@ -637,6 +684,7 @@ func (o *Orchestrator) readStdout(r io.Reader) {
 			o.emit(Event{Kind: Error, Text: firstNonEmpty(l.ErrorText, string(raw))})
 		}
 	}
+	return sc.Err()
 }
 
 func blocks(raw json.RawMessage) []block {

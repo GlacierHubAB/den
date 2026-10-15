@@ -19,6 +19,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
 	"github.com/GlacierHubAB/den/internal/tree"
+	"github.com/GlacierHubAB/den/internal/usage"
 )
 
 func (m Model) View() tea.View {
@@ -143,6 +144,16 @@ func (m Model) header(w int) []string {
 		if n := m.missions.Running(); n > 0 {
 			links = append(links, fmt.Sprintf("%d missions running", n))
 		}
+	}
+	switch label := usage.Label(m.use.reading, m.use.ok, m.use.st, time.Now()); {
+	case !usage.Shown(m.use.ok, m.use.st):
+		// Never a reading, a figure or a stop: nothing to say.
+	case m.use.st.Stopped:
+		links = append(links, s.err.Render(label))
+	case m.use.ok && m.use.reading.Percent >= 80:
+		links = append(links, s.attn.Render(label))
+	default:
+		links = append(links, label) // "usage unknown" once a reading has gone stale
 	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
@@ -412,7 +423,9 @@ func (m Model) agentsPane(w, h int) string {
 			if last != "" {
 				b.WriteString("\n")
 			}
-			if host, ok := strings.CutPrefix(sec, "@"); ok {
+			if name, ok := projectHeader(sec); ok {
+				b.WriteString("  " + s.section.Render(fmt.Sprintf("%s · %d", strings.ToUpper(name), counts[sec])) + "\n")
+			} else if host, ok := strings.CutPrefix(sec, "@"); ok {
 				for _, r := range m.hostRows(host, w) {
 					b.WriteString(r + "\n")
 				}
@@ -619,6 +632,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
 	case it.Answerable() && it.Kind == inbox.MissionUpdate:
 		out = append(out, key("^Y", "apply it")+"  "+key("^N", "leave it"))
+	case it.Answerable() && it.Kind == inbox.MissionMove:
+		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
 		out = append(out, key("^Y", "reopen")+"  "+key("^N", "leave closed"))
 	case it.Answerable() && it.Kind == inbox.Merge:
@@ -631,6 +646,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
 	case it.Answerable() && it.Kind == inbox.Guidance:
 		out = append(out, key("^Y", "load it")+"  "+key("^N", "leave it off"))
+	case it.Answerable() && it.Kind == inbox.UsageResume:
+		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -736,6 +753,8 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
+	case it.Kind == inbox.Usage && it.State != inbox.Resolved:
+		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {
 		case strings.HasPrefix(it.Resolved, "failed"):
@@ -848,6 +867,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		if it.Kind == inbox.MissionUpdate {
 			acts = key("^Y", "apply it") + sp + sp + key("^N", "leave it")
 		}
+		if it.Kind == inbox.MissionMove {
+			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")
+		}
 		if it.Kind == inbox.Restore {
 			acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
 		}
@@ -865,6 +887,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Guidance {
 			acts = key("^Y", "load it") + sp + sp + key("^N", "leave it off")
+		}
+		if it.Kind == inbox.UsageResume {
+			acts = key("^Y", "let the fleet go on") + sp + sp + key("^N", "stay stopped")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
@@ -1180,7 +1205,7 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/mission <goal>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/fleet project · flat", "the Fleet by project, or not"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/mission <goal> · move <project>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
@@ -1285,6 +1310,9 @@ func (m Model) activityLines(tail []transcript.Entry, a fleet.Agent, textW int, 
 	// A remote host's text is never handed to a lexer: the bytes are the
 	// host's to choose, and a lexer can be made slow.
 	m.plainCode = m.plainCode || a.Host != ""
+	// Nor are names coloured: these are the agent's own words, and a
+	// coloured @Name is Den's word that the agent is in the fleet.
+	m.quietMentions = true
 	textW = max(12, textW)
 	var out []string
 	prose := func(prefix string, pstyle lipgloss.Style, text string, plain bool) {

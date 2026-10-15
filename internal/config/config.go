@@ -53,6 +53,15 @@ type Config struct {
 	Events struct {
 		Log bool // den hook appends metadata-only events to events.jsonl
 	}
+	Usage struct {
+		// StopPercent stops the fleet at that share of the weekly limit:
+		// "USAGE STOP" to every agent, and no new agents or mission runs
+		// until you resume. 0 (the default) never stops.
+		StopPercent int
+		// WeeklyUSD is a weekly $ budget Den estimates usage against when
+		// Claude Code reports none; 0 for none.
+		WeeklyUSD float64
+	}
 	// On holds a shell command per event kind, run by Den with the event's
 	// metadata. Empty runs nothing.
 	On struct {
@@ -191,6 +200,16 @@ func (c *Config) apply(kv map[string]string) {
 	count(&c.Stuck.Stalled, "stuck.stalled")
 	count(&c.Stuck.ToolFailures, "stuck.tool_failures")
 	boolean(&c.Events.Log, "events.log")
+	if v, ok := kv["usage.stop_percent"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
+			c.Usage.StopPercent = n
+		}
+	}
+	if v, ok := kv["usage.weekly_usd"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f < 1e9 {
+			c.Usage.WeeklyUSD = f
+		}
+	}
 	for key, dst := range map[string]*string{
 		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
 		"done": &c.On.Done, "needs_you": &c.On.NeedsYou, "idle": &c.On.Idle, "turn_failed": &c.On.TurnFailed,
@@ -326,6 +345,10 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
+
+[usage]
+stop_percent = 0            # off; e.g. 95 sends "USAGE STOP" to every agent at 95% of the weekly limit and holds new work
+weekly_usd = 0              # none; a weekly $ budget to estimate usage against when Claude Code reports none
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

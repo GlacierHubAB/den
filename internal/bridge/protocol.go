@@ -121,6 +121,11 @@ type MissionInput struct {
 	Summary string `json:"summary"`
 }
 
+// UsageEvent is not a hook event: `den mcp` sends it before it starts an
+// agent or a terminal, to ask whether Den has the fleet stopped for
+// usage. Den answers deny, with why, while it does. Read-only.
+const UsageEvent = "UsageQuery"
+
 // The behaviours of a SendEvent answer besides allow and deny.
 const (
 	SendDeclined  = "declined"  // the human answered ^N

@@ -47,7 +47,7 @@ func (m *Model) proposeMission(text string) tea.Cmd {
 		return tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 	}
 	now := time.Now()
-	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, Text: text, State: mission.Proposed, Created: now, Updated: now}
+	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: text, State: mission.Proposed, Created: now, Updated: now}
 	m.missions.Save(ms)
 	m.ov.proposal = ms.ID
 	prompt := fmt.Sprintf("Propose a mission for project %s (repository %s, branch %s). The human's words:\n%s", p.Name, p.Root, p.Branch, text)
@@ -141,6 +141,10 @@ func (m *Model) startMission() tea.Cmd {
 	if ms == nil || ms.Mission == "" {
 		return nil
 	}
+	if why := m.usageStopped(); why != "" {
+		m.flash, m.flashErr = why, true
+		return nil
+	}
 	ms.State = mission.Running
 	ms.Updated = time.Now()
 	m.ov.proposal = ""
@@ -161,6 +165,12 @@ func (m *Model) dropMission() {
 
 // runMission opens a run and asks the orchestrator to dispatch it.
 func (m *Model) runMission(ms *mission.Mission, verb string) tea.Cmd {
+	// A usage stop holds every run, a scheduled one included: it fires
+	// once the human lets the fleet go on.
+	if why := m.usageStopped(); why != "" {
+		m.flash, m.flashErr = why, true
+		return nil
+	}
 	if len(ms.Runs) >= maxRuns {
 		ms.State, ms.Updated = mission.Failed, time.Now()
 		m.missions.Save(ms)
@@ -222,6 +232,7 @@ func (m *Model) attachCardTo(d *dispatch, missionID string) {
 	}
 	r.Cards = append(r.Cards, d.ID)
 	ms.Updated = time.Now()
+	m.assign(ms, d, ms.Updated)
 	m.missions.Save(ms)
 }
 

@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Shape is how the orchestrator runs a mission.
@@ -75,8 +77,12 @@ type Run struct {
 
 // Mission is one standing goal on one project.
 type Mission struct {
-	ID          string    `json:"id"`
-	Project     string    `json:"project"` // repository root
+	ID      string `json:"id"`
+	Project string `json:"project"` // repository root
+	// ProjectName is the project's name as Den shows it, set from the
+	// root when the mission is made. Only the human's /mission move
+	// changes Project and ProjectName; the orchestrator never does.
+	ProjectName string    `json:"project_name,omitempty"`
 	Name        string    `json:"name"`    // a few words, for the row
 	Text        string    `json:"text"`    // what the human typed
 	Mission     string    `json:"mission"` // the purpose in one sentence
@@ -95,6 +101,118 @@ type Mission struct {
 	Budget      Budget    `json:"budget,omitzero"`
 
 	Template string `json:"template,omitempty"` // the template it was seeded from
+	// Assigned are the sessions Den put on the mission, oldest first;
+	// History is what happened to the mission itself, the last few.
+	Assigned []Assignment `json:"assigned,omitempty"`
+	History  []Event      `json:"history,omitempty"`
+}
+
+// Assignment is one session Den put on a mission: a dispatch to it, or a
+// spawn for it. Den writes these, never the orchestrator or an agent.
+type Assignment struct {
+	Session string    `json:"session"`
+	Host    string    `json:"host,omitempty"` // Den's name for the remote host, "" for this machine
+	Peer    string    `json:"peer,omitempty"` // the agent's name when it was assigned
+	Role    string    `json:"role,omitempty"`
+	Since   time.Time `json:"since"`
+	Until   time.Time `json:"until,omitzero"` // when its card ended or the session went
+}
+
+// Open reports whether the assignment still holds.
+func (a Assignment) Open() bool { return a.Until.IsZero() }
+
+// Event is one line of a mission's history.
+type Event struct {
+	At   time.Time `json:"at"`
+	What string    `json:"what"`
+}
+
+// Caps on what a mission keeps: its record is rewritten whole on each save.
+const (
+	maxAssigned = 200
+	maxHistory  = 50
+	maxLabel    = 80
+)
+
+// ProjectLabel is the name a project at root goes by: its folder's name,
+// one clean line of at most 80 characters.
+func ProjectLabel(root string) string {
+	if root == "" {
+		return ""
+	}
+	return sanitize.Label(filepath.Base(root), maxLabel)
+}
+
+// SetProject puts a new mission in the project at root.
+func (m *Mission) SetProject(root string) {
+	m.Project, m.ProjectName = root, ProjectLabel(root)
+}
+
+// Note adds a line to the history, keeping the last maxHistory.
+func (m *Mission) Note(at time.Time, what string) {
+	m.History = append(m.History, Event{At: at, What: sanitize.Line(what)})
+	if n := len(m.History) - maxHistory; n > 0 {
+		m.History = append([]Event(nil), m.History[n:]...)
+	}
+}
+
+// MoveTo moves the mission to the project at root and notes it. Only the
+// human's /mission move calls it.
+func (m *Mission) MoveTo(root string, at time.Time) {
+	from := m.ProjectName
+	m.SetProject(root)
+	m.Updated = at
+	m.Note(at, "moved from "+orNone(from)+" to "+orNone(m.ProjectName)+" by you")
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "no project"
+	}
+	return s
+}
+
+// Assign records that Den put a session on the mission. A session already
+// on it keeps its entry, with the name and role brought up to date.
+func (m *Mission) Assign(a Assignment) {
+	a.Peer, a.Role = sanitize.Label(a.Peer, maxLabel), sanitize.Label(a.Role, maxLabel)
+	a.Host = sanitize.Label(a.Host, maxLabel)
+	a.Until = time.Time{}
+	for i := range m.Assigned {
+		if o := &m.Assigned[i]; o.Open() && o.Session == a.Session && o.Host == a.Host {
+			if a.Peer != "" {
+				o.Peer = a.Peer
+			}
+			if a.Role != "" {
+				o.Role = a.Role
+			}
+			return
+		}
+	}
+	m.Assigned = append(m.Assigned, a)
+	// Over the cap, the oldest closed entries go first, then the oldest.
+	for len(m.Assigned) > maxAssigned {
+		drop := 0
+		for i, o := range m.Assigned {
+			if !o.Open() {
+				drop = i
+				break
+			}
+		}
+		m.Assigned = append(m.Assigned[:drop:drop], m.Assigned[drop+1:]...)
+	}
+}
+
+// Release closes the session's open assignment; it reports whether there
+// was one.
+func (m *Mission) Release(session, host string, at time.Time) bool {
+	done := false
+	for i := range m.Assigned {
+		if o := &m.Assigned[i]; o.Open() && o.Session == session && o.Host == host {
+			o.Until, done = at, true
+		}
+	}
+	return done
 }
 
 // Member is a role the orchestrator means to start for the mission.
@@ -170,6 +288,11 @@ func Load(path string) *Store {
 		var m Mission
 		if json.Unmarshal(sc.Bytes(), &m) != nil || m.ID == "" {
 			continue
+		}
+		if m.ProjectName == "" {
+			// A record from before project names: named from its root,
+			// written with the name on its next save.
+			m.ProjectName = ProjectLabel(m.Project)
 		}
 		s.put(&m)
 	}

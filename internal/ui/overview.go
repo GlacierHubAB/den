@@ -20,6 +20,9 @@ type overviewState struct {
 	proposal string // mission id of the pending proposal
 	scroll   int    // lines from the bottom of the open mission or proposal
 	listing  bool   // the template list is showing in place of the missions
+	// moves are the /mission move questions in the inbox: item id → what
+	// ^Y on it does.
+	moves map[string]pendingMove
 }
 
 // projectStrip is the row under the tabs that names the projects and the
@@ -320,6 +323,7 @@ func (m Model) fieldLines(ms *mission.Mission, w int) []string {
 			out = append(out, label+style.Render(l))
 		}
 	}
+	kv("project", ms.ProjectName, s.fg)
 	kv("mission", ms.Mission, s.fg)
 	kv("done when", ms.DoneWhen, s.fg)
 	kv("template", ms.Template, s.fg)
@@ -502,8 +506,12 @@ func (m Model) missionLines(w int) []string {
 		}
 		out = append(out, ansi.Truncate(justify(head, trail, w), w, "…"))
 	}
+	for i := len(ms.History) - 1; i >= 0 && i >= len(ms.History)-3; i-- {
+		h := ms.History[i]
+		out = append(out, ansi.Truncate(s.dim.Render("  "+h.At.Format("Jan 2 15:04")+" · "+h.What), w, "…"))
+	}
 	out = append(out, "")
 	out = append(out, m.threadLines(ms, w)...)
-	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop /budget")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
+	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop /budget /mission move")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
 	return out
 }

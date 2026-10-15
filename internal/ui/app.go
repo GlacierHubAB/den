@@ -33,6 +33,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
+	"github.com/GlacierHubAB/den/internal/usage"
 )
 
 // pane is which half of the Fleet view has the arrow keys.
@@ -101,6 +102,14 @@ type Model struct {
 	// the human's ^Y, by inbox item (mission_update.go).
 	peers          peerState
 	missionUpdates map[string]mission.Update
+	// use is the usage guard (usage.go).
+	use usageGuard
+	// ments are the agents names in rendered text are coloured for
+	// (mention_color.go), rebuilt with the fleet.
+	ments *mentionSet
+	// quietMentions leaves mentions uncoloured: text a host or an agent
+	// report wrote, where a name in someone's colour would vouch for it.
+	quietMentions bool
 	// hl is the code colouring this frame may still do, set by View;
 	// plainCode draws fenced code uncoloured (remote agents' text).
 	hl        *hlBudget
@@ -199,6 +208,8 @@ func New(cfg config.Config) Model {
 	m.store.AnswerQuestions(cfg.Hooks.AnswerQuestions)
 	m.store.Restore(inbox.LoadHistory(inbox.HistoryPath(), cfg.Inbox.History))
 	m.chatLog = ChatLogPath()
+	m.use.path = usage.Path()
+	m.use.st = usage.Load(m.use.path)
 	m.orch.chat, m.orch.resume = loadChatLog(m.chatLog, maxChatLog)
 	m.orch.reconcile = len(m.liveCards()) > 0
 	m.backfillEdges()
@@ -398,6 +409,7 @@ func (m *Model) refresh() {
 		m.agents = append(m.agents, a)
 	}
 	m.agents = append(m.agents, m.remote.agents...)
+	m.ments = buildMentions(m.base, m.isOrchestrator)
 	m.findTwins()
 	for i := range m.agents {
 		a := &m.agents[i]
@@ -411,6 +423,7 @@ func (m *Model) refresh() {
 		m.reconcileCards()
 	}
 	m.settleCards()
+	m.releaseAssignments(time.Now())
 	sort.SliceStable(m.agents, func(i, j int) bool {
 		if oi, oj := m.remoteOrder(m.agents[i]), m.remoteOrder(m.agents[j]); oi != oj {
 			return oi < oj // a host's last known agents after everyone live, under its row
@@ -422,6 +435,7 @@ func (m *Model) refresh() {
 	})
 	m.buildTree()
 	m.buildProjects()
+	m.groupByProject()
 	m.cursor = 0
 	for i, a := range m.agents {
 		if a.Session.SessionID == keep {
@@ -481,7 +495,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.store.Prune(2*time.Minute, 30)
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -617,6 +631,14 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleInbound(r)
 		}
 		return m.handleMissionUpdate(r)
+	}
+	if r.Event == bridge.UsageEvent {
+		if why := m.usageStopped(); why != "" {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: m.use.st.StopWhy})
+		} else {
+			r.Reply(bridge.Decision{Behavior: "allow"})
+		}
+		return nil
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
@@ -1264,6 +1286,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Budget {
 		return m.decideBudget(it, verb)
 	}
+	if it.Kind == inbox.MissionMove {
+		return m.decideMove(it, verb)
+	}
 	if it.Kind == inbox.Restore {
 		return m.decideRestore(it, verb)
 	}
@@ -1284,6 +1309,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.MissionUpdate {
 		return m.decideMissionUpdate(it, verb)
+	}
+	if it.Kind == inbox.UsageResume {
+		return m.decideUsageResume(it, verb)
 	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
@@ -1383,6 +1411,18 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "/fleet":
 		m.tab = tabFleet
+		if len(fields) > 1 {
+			switch strings.ToLower(fields[1]) {
+			case "project", "projects":
+				m.proj.byProject = true
+			case "flat":
+				m.proj.byProject = false
+			default:
+				return m.say("/fleet project groups the Fleet by project; /fleet flat goes back.", true)
+			}
+			m.saveProjectPick()
+			m.refresh()
+		}
 	case "/inbox":
 		m.tab = tabInbox
 	case "/delete", "/del":
@@ -1440,6 +1480,11 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		if len(fields) < 2 {
 			return m.say("Describe the mission: /mission <goal>", true)
 		}
+		// "/mission move <project>" names a project Den lists; any other
+		// goal that starts with "move" is a goal.
+		if len(fields) > 2 && strings.EqualFold(fields[1], "move") && m.listsProject(strings.Join(fields[2:], " ")) {
+			return m.askMove(strings.Join(fields[2:], " "))
+		}
 		m.tab = tabOverview
 		return m, m.proposeMission(strings.Join(fields[1:], " "))
 	case "/template", "/templates":
@@ -1448,6 +1493,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
 			return m.say(note, isErr)
 		}
+	case "/usage":
+		return m.usageCommand(fields[1:])
 	case "/budget":
 		note, isErr := m.budgetCommand(fields[1:])
 		return m.say(note, isErr)
@@ -1473,7 +1520,7 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession {
 		return "Den"
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {

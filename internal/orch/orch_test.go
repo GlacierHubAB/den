@@ -3,9 +3,11 @@ package orch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -176,5 +178,57 @@ func TestSpawnInputWorktree(t *testing.T) {
 	line := Describe(SpawnAgentTool, json.RawMessage(`{"dir":"/r","brief":"x","worktree":true}`))
 	if !strings.Contains(line, "in its own worktree") {
 		t.Errorf("describe = %q", line)
+	}
+}
+
+// TestCloseWhenAChildHoldsTheOutput: something the orchestrator started
+// that keeps its stdout and stderr open does not hold Close: the readers
+// get EOF WaitDelay after the process exits, every line it printed first
+// is still delivered, and Exited follows.
+func TestCloseWhenAChildHoldsTheOutput(t *testing.T) {
+	dir := t.TempDir()
+	pidFile := filepath.Join(dir, "child")
+	script := filepath.Join(dir, "claude")
+	os.WriteFile(script, []byte(`#!/bin/sh
+printf '%s\n' '`+fakeInit+`'
+sleep 60 &
+printf '%s\n' $! > `+pidFile+`.tmp && mv `+pidFile+`.tmp `+pidFile+`
+while IFS= read -r line; do :; done
+printf '%s\n' '`+answer+`'
+`), 0o755)
+	t.Cleanup(func() {
+		if b, err := os.ReadFile(pidFile); err == nil {
+			var pid int
+			if _, err := fmt.Sscan(string(b), &pid); err == nil && pid > 1 {
+				syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	o, err := Start(context.Background(), Options{Command: []string{script}, Dir: dir, HookCommand: testHook()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(pidFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fake's child never started")
+		}
+	}
+	closed := make(chan struct{})
+	start := time.Now()
+	go func() { o.Close(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Close still waits for a child that holds the orchestrator's output")
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("Close took %v", d)
+	}
+	k := kinds(collect(t, o, time.Second))
+	if k[Started] != 1 || k[Result] != 1 || k[Exited] != 1 {
+		t.Errorf("events %v: the lines before the exit, then Exited", k)
 	}
 }

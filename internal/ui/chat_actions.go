@@ -137,7 +137,7 @@ func (m Model) memoTextLines(e chatEntry, w int) []string {
 	if e.memo == nil {
 		return m.orchTextLines(e, w)
 	}
-	look := fmt.Sprintf("%v|%v|%v|%v", m.st.pal, m.st.code.GetForeground(), m.plainCode, e.expanded)
+	look := fmt.Sprintf("%v|%v|%v|%v|%s", m.st.pal, m.st.code.GetForeground(), m.plainCode, e.expanded, m.mentionKey())
 	if mm := e.memo; mm.lines != nil && mm.width == w && mm.look == look && mm.text == e.text {
 		return append([]string(nil), mm.lines...)
 	}

@@ -20,8 +20,9 @@ You need `git`, `make` and Go. The script builds with the Go version that
 ## What it does
 
 1. Refuses to run while Den is running (the TUI, `den events`, `den remote
-   serve`). The `den hook` and `den mcp` processes that Claude Code starts
-   don't count: a hook starts the new binary on its next event, and a
+   serve`) from the binary it replaces. A `den` built elsewhere doesn't
+   count, and neither do the `den hook` and `den mcp` processes that Claude
+   Code starts: a hook starts the new binary on its next event, and a
    session's `den mcp` when the session restarts. Quit Den first, or pass
    `--force`. A running Den keeps the binary it started with until you
    restart it.

@@ -41,6 +41,9 @@ const (
 	Message                   // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
 	Guidance                  // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
 	MissionUpdate             // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
+	Usage                     // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
+	UsageResume               // Den asks: let the fleet go on after a usage stop? y/n answer it
+	MissionMove               // Den asks: move this mission to another project, as you typed? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -65,6 +68,10 @@ func (k Kind) String() string {
 		return "budget"
 	case MissionUpdate:
 		return "mission update"
+	case Usage:
+		return "usage"
+	case UsageResume:
+		return "usage resume"
 	case Restore:
 		return "restore"
 	case Stalled:
@@ -81,6 +88,8 @@ func (k Kind) String() string {
 		return "message"
 	case Guidance:
 		return "guidance"
+	case MissionMove:
+		return "move"
 	}
 	return "?"
 }
@@ -139,7 +148,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -715,6 +724,31 @@ const GuidanceSession = "den:guidance"
 // the human's ^Y answers it; nothing else can.
 func (s *Store) AddGuidance(title string, body []string) *Item {
 	return s.add(&Item{SessionID: GuidanceSession, Kind: Guidance, Tool: "orchestrator_guidance", Title: title, Body: body})
+}
+
+// UsageSession is the SessionID of Den's notices and questions about the
+// weekly limit, which concern no one agent.
+const UsageSession = "den:usage"
+
+// AddUsage adds Den's notice about the weekly limit.
+func (s *Store) AddUsage(title string, body []string) *Item {
+	return s.add(&Item{SessionID: UsageSession, Kind: Usage, Title: title, Body: body})
+}
+
+// AddUsageResume adds Den's question: let the fleet go on after a usage
+// stop? Only the human's ^Y answers it, once its whole text was shown.
+func (s *Store) AddUsageResume(title string, body []string) *Item {
+	if s.hasOpen("", UsageSession, UsageResume) {
+		return nil
+	}
+	return s.add(&Item{SessionID: UsageSession, Kind: UsageResume, Tool: "usage_resume", Title: title, Body: body})
+}
+
+// AddMissionMove adds Den's question: move this mission to another
+// project? sessionID is "mission:<id>". Only the human's /mission move
+// raises it, and only the human's ^Y answers it.
+func (s *Store) AddMissionMove(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: MissionMove, Tool: "mission_move", Title: title, Body: body})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's
