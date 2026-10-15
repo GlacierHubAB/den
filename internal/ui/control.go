@@ -286,7 +286,11 @@ func (m *Model) tryAppTurn() tea.Cmd {
 		m.orch.status = "starting…"
 		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, true)
 	}
-	if !m.orch.started || len(m.orch.origins) > 0 || m.orch.thinking {
+	// Not started (no init yet) is no reason to wait: Claude Code sends its
+	// init only after the first message it reads, so an app's turn on an
+	// orchestrator that never had one would wait for an init that waits
+	// for it. The human's turns go the same way.
+	if len(m.orch.origins) > 0 || m.orch.thinking {
 		y.Status("Waiting for the orchestrator to finish another turn…")
 		return nil
 	}

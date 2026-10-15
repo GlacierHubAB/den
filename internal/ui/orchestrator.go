@@ -417,6 +417,9 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 		cmds = append(cmds, m.sendToOrchestrator(p, origin))
 	}
 	m.orch.pending, m.orch.pendingOrigins = nil, nil
+	// An app's turn that waited for this start goes now, or after the
+	// human's turns just sent (tryAppTurn waits for their results).
+	cmds = append(cmds, m.tryAppTurn())
 	return tea.Batch(cmds...)
 }
 

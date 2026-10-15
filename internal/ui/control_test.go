@@ -541,3 +541,32 @@ func TestReportHeldBehindAnAppTurn(t *testing.T) {
 		t.Error("the app's turn outlived its result")
 	}
 }
+
+// Claude Code sends its init only once it has read a first message. An
+// app's turn on a fresh Den, with nothing from the human, still goes out
+// and gets its reply: Den does not wait for an init that waits for it.
+func TestAppTurnBeforeTheOrchestratorsInit(t *testing.T) {
+	l, dir, _ := controlModel(t)
+	initLine := `echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'`
+	late := strings.Replace(controlClaude, initLine+"\n", "", 1)
+	late = strings.Replace(late, `  printf '%s\n' "$line" >> "$D/turns"`, `  if [ -z "$inited" ]; then `+initLine+`; inited=1; fi
+  printf '%s\n' "$line" >> "$D/turns"`, 1)
+	if late == controlClaude || strings.Count(late, `"subtype":"init"`) != 1 || !strings.Contains(late, "inited=1") {
+		t.Fatal("the fake did not change as meant")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(late), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := pairApp(t, l)
+	if l.m.orch.started || l.m.orch.proc != nil {
+		t.Fatal("not a fresh Den: the orchestrator already runs")
+	}
+	appTurn(t, l, c, "hi", "")
+	if !l.m.orch.started {
+		t.Error("no init after the app's turn")
+	}
+	turns, _ := os.ReadFile(filepath.Join(dir, "turns"))
+	if !strings.Contains(string(turns), "hi") {
+		t.Errorf("the app's turn did not reach the orchestrator: %s", turns)
+	}
+}
