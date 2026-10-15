@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/events"
@@ -157,5 +158,28 @@ func TestRemoteHeldQuestionStandsAlone(t *testing.T) {
 	soft(s)
 	if n, _ := open(s); n != 1 {
 		t.Errorf("a question in the next turn: %d open items, want 1", n)
+	}
+	// Later in the same turn, a question the host could not hold shows:
+	// only a notice soon after a held one is taken to be the same.
+	old := heldQuiet
+	t.Cleanup(func() { heldQuiet = old })
+	s = New()
+	s.AnswerQuestions(true)
+	it = held(s)
+	s.AnswerQuestion(it, "2")
+	s.AnswerQuestion(it, "1 3")
+	heldQuiet = 0
+	soft(s)
+	if n, _ := open(s); n != 1 {
+		t.Errorf("a later question in the same turn: %d open items, want 1", n)
+	}
+	// A host whose link went down forgets its held questions.
+	heldQuiet = time.Hour
+	s = New()
+	s.AnswerQuestions(true)
+	held(s)
+	s.ReleaseHost("devbox", "the link to devbox was lost")
+	if len(s.heldQ) != 0 {
+		t.Errorf("held questions kept after the host was released: %v", s.heldQ)
 	}
 }

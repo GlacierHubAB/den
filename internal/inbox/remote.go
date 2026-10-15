@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -39,9 +40,11 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		case "plan":
 			kind, title = Plan, "Plan ready for review"+on
 		case "question":
-			// A question held for Den this turn is the question; the
-			// event can come after it was answered, and says no more.
-			if s.heldQ[agentKey(host, sid)] {
+			// A question held for Den lately is this question; the event
+			// can come after it was answered, and says no more. One that
+			// comes later is another question, maybe one the host could
+			// not hold, and shows.
+			if at, ok := s.heldQ[agentKey(host, sid)]; ok && time.Since(at) < heldQuiet {
 				return nil
 			}
 			kind, title = Question, "Has a question for you"+on
@@ -99,9 +102,18 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 	return nil
 }
 
+// heldQuiet is how long after a question was held for Den the host's own
+// notice of a question from that agent is taken to be the same one.
+var heldQuiet = 30 * time.Second
+
 // ReleaseHost lets go of everything open for agents on a host whose link
 // is down: nothing from it may look answerable or still waiting here.
 func (s *Store) ReleaseHost(host, why string) bool {
+	for k := range s.heldQ {
+		if strings.HasPrefix(k, host+"\x00") {
+			delete(s.heldQ, k)
+		}
+	}
 	changed := false
 	for _, it := range s.items {
 		if it.Host != host || it.State == Resolved || it.Kind == Sent {

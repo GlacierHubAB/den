@@ -147,7 +147,10 @@ type Result struct {
 var (
 	WindowWait  = 8 * time.Second
 	SessionWait = 45 * time.Second
-	pollEvery   = 300 * time.Millisecond
+	// HoldWait is how long, once a session with the agent's name shows,
+	// Den waits for one that runs in its marked window.
+	HoldWait  = 5 * time.Second
+	pollEvery = 300 * time.Millisecond
 )
 
 // Launch starts the terminal process; tests replace it. dir and title are
@@ -260,13 +263,17 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	deadline := time.Now().Add(SessionWait)
+	var seen time.Time // when a session with the name first showed
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		sessions, _ := discover.Scan()
 		// Another session may have taken the name too. The one that runs
-		// in the marked window is the agent, and only it gets the marker;
-		// when Den cannot tell, the first is the agent, as before, and the
-		// marker stays unbound, so closing never touches the window.
+		// in the marked window is the agent, and only it gets the marker.
+		// Den waits a little (HoldWait) for it, since a rival can register
+		// first; then, when it still cannot tell, the first is the agent,
+		// as before, and the marker stays unbound, so closing never
+		// touches the window.
 		var first *discover.Session
+		holds := false
 		for i, s := range sessions {
 			if !s.Alive || s.Name != res.Name || s.Started().Before(started.Add(-time.Second)) {
 				continue
@@ -279,9 +286,16 @@ func Run(ctx context.Context, req Request) (Result, error) {
 			}
 			pid := s.PID
 			if ok, _ := winmark.Bind(res.Name, s.SessionID, func(mk string) bool { return hypr.MarkerHolds(mk, pid) }); ok {
-				first = &sessions[i]
+				first, holds = &sessions[i], true
 				break
 			}
+		}
+		if first != nil && seen.IsZero() {
+			seen = time.Now()
+		}
+		if first != nil && !holds && marker != "" && hyprOK && time.Since(seen) < HoldWait && time.Now().Add(pollEvery).Before(deadline) {
+			sleep(ctx, pollEvery)
+			continue
 		}
 		if first != nil {
 			res.SessionID = first.SessionID
