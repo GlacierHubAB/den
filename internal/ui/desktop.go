@@ -49,12 +49,15 @@ type deskMission struct {
 	// The executables of the agent, the proxy and hypruse, as Den read
 	// them when each started: a stop checks them again.
 	AgentExe, ProxyExe, ChildExe string
-	report                       string    // the agent's last words, from its Stop hook
-	endedAt                      time.Time // when it ended: its private files go deskKeepFor later
-	launchedAt                   time.Time // when its terminal opened: its server must call in by deskStartWait
-	kept, purged                 bool      // the human kept its files; they were deleted
-	tokens                       map[string]deskToken
-	turn                         string // the open your-turn card's item id
+	// Claude is the Claude Code binary Den launched the agent with: its
+	// process must run that very file (device and inode).
+	Claude       string
+	report       string    // the agent's last words, from its Stop hook
+	endedAt      time.Time // when it ended: its private files go deskKeepFor later
+	launchedAt   time.Time // when its terminal opened: its server must call in by deskStartWait
+	kept, purged bool      // the human kept its files; they were deleted
+	tokens       map[string]deskToken
+	turn         string // the open your-turn card's item id
 }
 
 // deskToken lets the proxy forward the rest of an allowed typed text.

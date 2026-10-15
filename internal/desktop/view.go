@@ -10,11 +10,16 @@ import (
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
+// viewMaxLines caps the lines one message shows: a long reply cannot
+// flood the terminal. A tool result is always one cut line.
+const viewMaxLines = 40
+
 // View turns a desktop agent's stream-json (claude -p --output-format
 // stream-json --verbose) into lines for its terminal, so the human can
 // follow it there: its words, each tool call and what came of it. Every
 // string is sanitised and cut; nothing it prints is ever read back.
-func View(in io.Reader, out io.Writer) error {
+func View(in io.Reader, out io.Writer, mission string) error {
+	fmt.Fprintf(out, "── desktop agent for mission %s · Ctrl+C stops it ──\n", sanitize.Label(mission, 60))
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64<<10), MaxMessage)
 	for sc.Scan() {
@@ -51,13 +56,17 @@ func viewLines(raw []byte) []string {
 	switch ev.Type {
 	case "system":
 		if ev.Subtype == "init" {
-			out = append(out, fmt.Sprintf("── desktop agent started by Den · %d tools · Den's gate decides every action ──", len(ev.Tools)))
+			out = append(out, fmt.Sprintf("   started with %d tools; Den's gate decides every action", len(ev.Tools)))
 		}
 	case "assistant":
 		for _, c := range ev.Message.Content {
 			switch c.Type {
 			case "text":
-				for _, l := range strings.Split(sanitize.Text(strings.TrimSpace(c.Text)), "\n") {
+				lines := strings.Split(sanitize.Text(strings.TrimSpace(c.Text)), "\n")
+				if len(lines) > viewMaxLines {
+					lines = append(lines[:viewMaxLines], fmt.Sprintf("[%d more lines]", len(lines)-viewMaxLines))
+				}
+				for _, l := range lines {
 					out = append(out, "  "+cut(l, 200))
 				}
 			case "tool_use":

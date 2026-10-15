@@ -58,15 +58,28 @@ func missionRig(t *testing.T, joined bool) (*Model, *[]spawn.Request, *[]string)
 		closed = append(closed, addr)
 		return nil
 	}
+	oldFocus := deskFocus
+	t.Cleanup(func() { deskFocus = oldFocus })
+	deskFocus = func(addr string) error {
+		focusedBack = append(focusedBack, addr)
+		return nil
+	}
 	var spawned []spawn.Request
 	deskSpawn = func(_ context.Context, req spawn.Request) (spawn.Result, error) {
 		spawned = append(spawned, req)
 		return spawn.Result{Name: "desktop", Registered: true}, nil
 	}
 	deskSession = func(string) (int, bool) { return 500, true }
+	oldClaude, oldSame := deskClaude, deskSameExe
+	t.Cleanup(func() { deskClaude, deskSameExe = oldClaude, oldSame })
+	deskClaude = func() (string, error) { return "/opt/claude/claude", nil }
+	deskSameExe = func(pid int, path string) bool { return pid == 500 && path == "/opt/claude/claude" }
 	_ = moved
 	return &m, &spawned, &closed
 }
+
+// focusedBack records where Den gave the focus back after a launch.
+var focusedBack []string
 
 func missionReq(apps ...string) *bridge.Request {
 	payload, _ := json.Marshal(bridge.DesktopMissionInput{Plan: "write a note in the editor", Apps: apps, HumanSteps: []string{"sign in to Gmail"}, Dir: "/", AskedBy: "den-orchestrator"})
@@ -123,6 +136,11 @@ func TestDesktopMissionCardAndStart(t *testing.T) {
 	}
 	if len(*spawned) != 1 {
 		t.Fatalf("spawns %d", len(*spawned))
+	}
+	// The human had the editor (0xe) focused: the focus goes back there,
+	// so no new window keeps the keyboard.
+	if len(focusedBack) == 0 || focusedBack[len(focusedBack)-1] != "0xe" {
+		t.Fatalf("focus given back to %v", focusedBack)
 	}
 	argv := (*spawned)[0].Custom("desktop")
 	joined := strings.Join(argv, " ")

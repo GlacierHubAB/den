@@ -20,8 +20,12 @@ import (
 // for Enter (ten minutes at most) so the human can read the end before
 // the window closes. It exits with the agent's status.
 func desktopView(args []string) {
+	mission := ""
+	if len(args) >= 2 && args[0] == "--mission" {
+		mission, args = args[1], args[2:]
+	}
 	if len(args) < 3 || args[0] != "--exec" || args[1] != "--" {
-		fail("usage: den desktop-view --exec -- <command…>")
+		fail("usage: den desktop-view [--mission <id>] --exec -- <command…>")
 	}
 	argv := args[2:]
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -44,7 +48,7 @@ func desktopView(args []string) {
 			cmd.Process.Signal(s)
 		}
 	}()
-	desktop.View(out, os.Stdout)
+	desktop.View(out, os.Stdout, mission)
 	err = cmd.Wait()
 	signal.Stop(sigs)
 	status := 0

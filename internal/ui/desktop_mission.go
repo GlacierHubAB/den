@@ -52,6 +52,7 @@ type deskLaunched struct {
 // deskPrepared is a mission whose workspace and apps are ready.
 type deskPrepared struct {
 	itemID    string
+	focused   string // the window the human had focused before Den opened anything
 	offer     deskOffer
 	id        string
 	workspace int
@@ -63,6 +64,7 @@ type deskPrepared struct {
 // deskSpawned is the agent's start.
 type deskSpawned struct {
 	itemID  string
+	focused string // give focus back here once the agent's window is up
 	mission string
 	res     spawn.Result
 	err     error
@@ -75,6 +77,7 @@ var (
 	deskLaunch = launchApp
 	deskMove   = func(addr string, ws int) error { return hypr.MoveToWorkspace(addr, strconv.Itoa(ws)) }
 	deskClose  = hypr.CloseWindow
+	deskFocus  = hypr.Focus
 	deskSpawn  = spawn.Run
 	// deskSession finds a session's Claude Code process by session id.
 	deskSession = func(id string) (int, bool) {
@@ -229,6 +232,7 @@ func prepareMission(itemID string, offer deskOffer) deskPrepared {
 		p.err = err
 		return p
 	}
+	p.focused = snap.Active
 	if p.workspace = freeWorkspace(snap); p.workspace == 0 {
 		p.err = errors.New("no empty workspace from 9 down to 5; Den never moves your windows away to make one")
 		return p
@@ -331,7 +335,14 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	m.addDeskMission(dm)
 	dm.save() // its session id is on disk before the agent starts
 	prompt := desktop.Brief(p.offer.in.Plan, p.offer.apps, p.workspace, p.offer.in.HumanSteps)
-	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: guard.Settings, Model: p.offer.in.Model, Prompt: prompt}
+	claude, err := deskClaude()
+	if err != nil {
+		m.endDeskMission(dm, err.Error())
+		return fail(err.Error())
+	}
+	dm.Claude = claude
+	missionID := dm.ID
+	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: guard.Settings, Model: p.offer.in.Model, Prompt: prompt, Claude: claude}
 	if _, err := desktop.AgentArgv(launch); err != nil {
 		m.endDeskMission(dm, err.Error())
 		return fail(err.Error())
@@ -340,16 +351,22 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		Custom: func(name string) []string {
 			launch.Name = name
 			argv, _ := desktop.AgentArgv(launch)
-			return desktop.TerminalArgv(argv, den)
+			return desktop.TerminalArgv(argv, den, missionID)
 		},
 		NoSessionWait: true,
 	}
-	id, missionID := p.itemID, dm.ID
+	id, focused := p.itemID, p.focused
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		res, err := deskSpawn(ctx, req)
-		return deskSpawned{itemID: id, mission: missionID, res: res, err: err}
+		// New windows take the keyboard when they map: the apps Den
+		// opened and the agent's terminal must never catch what the human
+		// is typing elsewhere, so the focus goes back where it was.
+		if focused != "" {
+			deskFocus(focused)
+		}
+		return deskSpawned{itemID: id, mission: missionID, res: res, err: err, focused: focused}
 	}
 }
 
@@ -376,7 +393,7 @@ func (m *Model) finishSpawn(s deskSpawned) tea.Cmd {
 	}
 	dm.AgentName = s.res.Name
 	dm.launchedAt = time.Now()
-	if pid, ok := deskSession(dm.SessionID); ok && dm.AgentPID == 0 {
+	if pid, ok := deskSession(dm.SessionID); ok && dm.AgentPID == 0 && deskSameExe(pid, dm.Claude) {
 		dm.AgentPID, dm.AgentStart, dm.AgentExe = pid, deskStart(pid), deskExeOf(pid)
 	}
 	dm.save()
@@ -403,7 +420,7 @@ func adoptAgent(dm *deskMission, proxyPID int) bool {
 		// must be Claude Code started with this mission's session id.
 		pid, ok = parent, claudeWithSession(parent, dm.SessionID)
 	}
-	if !ok || pid != parent {
+	if !ok || pid != parent || !deskSameExe(pid, dm.Claude) {
 		return false
 	}
 	dm.AgentPID, dm.AgentStart, dm.AgentExe = pid, deskStart(pid), deskExeOf(pid)
@@ -485,13 +502,14 @@ var deskCmdline = func(pid int) []string {
 	return strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
 }
 
-// claudeWithSession reports whether pid is Claude Code run with
-// --session-id id.
+// claudeWithSession reports whether pid was run with --session-id id.
+// That it runs the very Claude Code binary Den launched is checked by
+// deskSameExe (device and inode), which holds for the native installer's
+// …/claude/versions/<version> too; the command line alone could say
+// anything.
 func claudeWithSession(pid int, id string) bool {
-	// The executable /proc reports, which a process cannot set, must be
-	// Claude Code's; the command line alone could say anything.
 	argv := deskCmdline(pid)
-	if len(argv) == 0 || filepath.Base(deskExeOf(pid)) != "claude" {
+	if len(argv) == 0 {
 		return false
 	}
 	for i := 0; i+1 < len(argv); i++ {
@@ -500,4 +518,31 @@ func claudeWithSession(pid int, id string) bool {
 		}
 	}
 	return false
+}
+
+// deskClaude is the Claude Code binary a desktop agent is launched with,
+// resolved once: absolute, links followed. Tests replace it.
+var deskClaude = func() (string, error) {
+	p, err := exec.LookPath("claude")
+	if err != nil {
+		return "", errors.New("no claude on PATH")
+	}
+	if p, err = filepath.EvalSymlinks(p); err != nil {
+		return "", err
+	}
+	return filepath.Abs(p)
+}
+
+// deskSameExe reports whether pid runs the very file at path (the same
+// device and inode), not merely a file of the same name. Tests replace it.
+var deskSameExe = func(pid int, path string) bool {
+	if path == "" {
+		return false
+	}
+	a, err := os.Stat(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
+	if err != nil {
+		return false
+	}
+	b, err := os.Stat(path)
+	return err == nil && os.SameFile(a, b)
 }

@@ -17,11 +17,11 @@ func TestView(t *testing.T) {
 		`not json`,
 	}, "\n")
 	var out bytes.Buffer
-	if err := View(strings.NewReader(in), &out); err != nil {
+	if err := View(strings.NewReader(in), &out, "m-42"); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
-	for _, want := range []string{"2 tools", "I will type.", `keyboard: type "hi⏎there"`, "✓ typed 8 characters", `click_ui: "Send"`, "✗ Den: deny: the human said no", "── done ──"} {
+	for _, want := range []string{"desktop agent for mission m-42 · Ctrl+C stops it", "2 tools", "I will type.", `keyboard: type "hi⏎there"`, "✓ typed 8 characters", `click_ui: "Send"`, "✗ Den: deny: the human said no", "── done ──"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("view lacks %q:\n%s", want, got)
 		}

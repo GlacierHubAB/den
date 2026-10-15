@@ -90,6 +90,13 @@ func TestAgentArgv(t *testing.T) {
 	if argv[len(argv)-2] != "--" || argv[len(argv)-1] != "plan" {
 		t.Fatal("the prompt must follow --")
 	}
+	abs, _ := AgentArgv(AgentLaunch{Name: "d", Mission: "m", Den: "/d", Socket: "/s", Settings: "/x", Claude: "/opt/claude/claude"})
+	if abs[0] != "/opt/claude/claude" {
+		t.Fatalf("launched %q, not the resolved binary", abs[0])
+	}
+	if _, err := AgentArgv(AgentLaunch{Den: "/d", Socket: "/s", Settings: "/x", Claude: "claude"}); err == nil {
+		t.Fatal("a relative claude must fail")
+	}
 	if _, err := AgentArgv(AgentLaunch{Den: "den", Socket: "/s", Settings: "/x"}); err == nil {
 		t.Fatal("a relative den must fail")
 	}

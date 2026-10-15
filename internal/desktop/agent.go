@@ -88,6 +88,9 @@ type AgentLaunch struct {
 	Settings  string // the Den-written --settings file
 	Model     string
 	Prompt    string
+	// Claude is the Claude Code binary Den resolved, absolute: launched by
+	// that path, and the agent's process must run that very file.
+	Claude string
 }
 
 // AgentArgv is the claude command line for a desktop agent, launched like
@@ -105,11 +108,18 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 		MCPServer: map[string]any{"command": l.Den, "args": []string{"desktop-mcp", "--mission", l.Mission, "--socket", l.Socket}, "alwaysLoad": true},
 	}})
 	tools := strings.Join(AllowedToolNames(), ",")
+	claude := "claude"
+	if l.Claude != "" {
+		if !filepath.IsAbs(l.Claude) {
+			return nil, errors.New("the claude binary must be an absolute path")
+		}
+		claude = l.Claude
+	}
 	argv := []string{
 		// Print mode: interactive Claude Code sends the first turn before
 		// MCP servers connect (alwaysLoad does not hold it for an
 		// --mcp-config server); -p waits for them (MCP_TIMEOUT, 30 s).
-		"claude", "-p", "--name", l.Name,
+		claude, "-p", "--name", l.Name,
 		"--session-id", l.SessionID,
 		// MCP tool names here empty the built-in tools (Bash, Read, Write,
 		// WebFetch, Task, SendMessage and the rest).
@@ -131,8 +141,8 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 // TerminalArgv is what the agent's terminal runs: `den desktop-view`,
 // which starts the agent itself (an argv, no shell between Den and the
 // prompt) and shows its words and tool calls, sanitised.
-func TerminalArgv(agent []string, den string) []string {
-	return append([]string{den, "desktop-view", "--exec", "--"}, agent...)
+func TerminalArgv(agent []string, den, mission string) []string {
+	return append([]string{den, "desktop-view", "--mission", mission, "--exec", "--"}, agent...)
 }
 
 // DeniedTools are the settings deny rules of a desktop agent: Claude Code's
