@@ -79,31 +79,35 @@ func TestHeaderPairingCodeNeverCut(t *testing.T) {
 	}
 	m.srvErr = errors.New("a long error from the bridge, to crowd the line")
 	words := strings.Join(m.ctl.code, " ")
+	// shown checks a header line: exactly one of the whole code (its
+	// prefix and all its words) or the note, and "Pairing" nowhere else,
+	// so no cut of the code, its prefix included, can pass. cut allows
+	// the note itself to be cut, at the narrowest widths.
+	shown := func(w int, line string, cut bool) (code bool) {
+		code = strings.Contains(line, "Pairing code (") && strings.Contains(line, words)
+		note := strings.Contains(line, codeHidden) || cut && strings.Contains(line, "Pairing code live")
+		if code == note {
+			t.Errorf("w=%d: want the whole code or the note, once: %q", w, line)
+		}
+		if n := strings.Count(line, "Pairing"); n != 1 {
+			t.Errorf("w=%d: %d times \"Pairing\" in %q", w, n, line)
+		}
+		return code
+	}
 	// The narrow header has one line: the code or the note is on it.
 	for w := 40; w < 72; w++ {
-		line := ansi.Strip(m.header(w)[0])
-		// The note may be cut at the narrowest widths; the code never is.
-		if !strings.Contains(line, words) && !strings.Contains(line, "Pairing code live") {
-			t.Errorf("w=%d: a live code is not shown in %q", w, line)
-		}
+		shown(w, ansi.Strip(m.header(w)[0]), true)
 		if lipgloss.Width(m.header(w)[0]) > w {
 			t.Errorf("w=%d: the line is wider than the window", w)
 		}
 	}
 	for w := 72; w <= 200; w++ {
 		line := ansi.Strip(m.header(w)[3])
-		if strings.Contains(line, words) {
+		if shown(w, line, false) {
 			continue
 		}
 		if room := headerRoom(m.logoRows()[2]+"      ", "  ", w); room >= ansi.StringWidth(m.codeLine()) {
-			t.Errorf("w=%d: the code is not whole in %q", w, line)
-		} else if !strings.Contains(line, codeHidden) {
-			t.Errorf("w=%d: neither the code nor the note in %q", w, line)
-		}
-		// Not whole means not at all: no part of the code's own line (the
-		// code's words are random, so they are not looked for one by one).
-		if strings.Contains(line, "Pairing code (") {
-			t.Errorf("w=%d: part of the code is drawn in %q", w, line)
+			t.Errorf("w=%d: the code fits but is not shown whole in %q", w, line)
 		}
 	}
 }
