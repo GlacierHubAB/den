@@ -82,6 +82,9 @@ func (m *Model) handleDesktopInstallRequest(r *bridge.Request) tea.Cmd {
 
 // decideDesktopInstall is ^Y or ^N on the install question.
 func (m Model) decideDesktopInstall(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	if why := deskTTYOnly(it, verb); why != "" {
+		return m.say(why, true)
+	}
 	plan, ok := m.desktopInstalls[it.ID]
 	if !ok {
 		m.store.Settle(it, false, "the plan was lost; nothing installed")

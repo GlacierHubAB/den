@@ -194,6 +194,9 @@ func (m Model) header(w int) []string {
 	if chip := m.consoleChip(); chip != "" {
 		sys = append(sys, headerPart{chip, 0})
 	}
+	if m.desk.chip != "" {
+		sys = append(sys, headerPart{s.err.Render(m.desk.chip), 0})
+	}
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
 	flash := ""
@@ -811,6 +814,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.DesktopAct:
 		out = append(out, key("^Y", "allow once")+"  "+key("^N", "deny"))
+	case it.Answerable() && it.Kind == inbox.DesktopMission:
+		out = append(out, key("^Y", "start it")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.YourTurn:
 		out = append(out, key("^Y", "done, go on")+"  "+key("^N", "end the mission"))
 	case it.Answerable() && it.Kind == inbox.Message:
@@ -1073,6 +1078,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.DesktopAct {
 			acts = key("^Y", "allow once") + sp + sp + key("^N", "deny")
+		}
+		if it.Kind == inbox.DesktopMission {
+			acts = key("^Y", "start it") + sp + sp + key("^N", "decline")
 		}
 		if it.Kind == inbox.YourTurn {
 			acts = key("^Y", "done, go on") + sp + sp + key("^N", "end the mission")

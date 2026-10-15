@@ -41,10 +41,17 @@ type deskMission struct {
 	Dir        string // the mission's private folder: journal, crops
 	// Guard says why the agent's guard no longer holds (its settings file
 	// or den changed), "" while it holds. nil: no guard to check.
-	Guard  func() string
-	Ended  string // why the mission ended, "" while it is live
-	tokens map[string]deskToken
-	turn   string // the open your-turn card's item id
+	Guard func() string
+	Ended string // why the mission ended, "" while it is live
+	// AskedBy is who dispatched it (its peer name, as it said), AgentName
+	// the agent's peer name once it started.
+	AskedBy, AgentName string
+	// The executables of the agent, the proxy and hypruse, as Den read
+	// them when each started: a stop checks them again.
+	AgentExe, ProxyExe, ChildExe string
+	report                       string // the agent's last words, from its Stop hook
+	tokens                       map[string]deskToken
+	turn                         string // the open your-turn card's item id
 }
 
 // deskToken lets the proxy forward the rest of an allowed typed text.
@@ -66,6 +73,8 @@ type deskPending struct {
 type deskState struct {
 	missions map[string]*deskMission
 	pending  map[string]deskPending // card item id -> its call
+	offers   map[string]deskOffer   // mission card item id -> its request
+	chip     string                 // the header chip while a mission is live
 }
 
 // Seams for tests.
@@ -82,6 +91,7 @@ var (
 	deskChildOf = procs.ChildOf
 	deskStart   = procs.StartTicks
 	deskParent  = procs.Parent
+	deskExeOf   = procs.Exe
 	// deskCardWait is how long a desktop card waits before it denies.
 	deskCardWait = 5 * time.Minute
 )
@@ -155,7 +165,10 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 	case "start":
 		// Only the agent's own MCP server: Den's binary, started by that
 		// agent's Claude Code, once.
-		if dm.AgentPID <= 1 || !deskChildOf(r.PeerPID, dm.AgentPID, dm.AgentStart, deskExe()) {
+		if dm.AgentPID <= 1 && !adoptAgent(dm, r.PeerPID) {
+			return deny("the mission agent has not started")
+		}
+		if !deskChildOf(r.PeerPID, dm.AgentPID, dm.AgentStart, deskExe()) {
 			return deny("only the mission agent's own desktop server may start it")
 		}
 		if dm.ProxyPID != 0 && deskStart(dm.ProxyPID) == dm.ProxyStart {
@@ -164,8 +177,8 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 		if err := deskVerify(); err != nil {
 			return deny(sanitize.Line(err.Error()))
 		}
-		dm.ProxyPID, dm.ProxyStart = r.PeerPID, deskStart(r.PeerPID)
-		dm.ChildPID, dm.ChildStart = 0, ""
+		dm.ProxyPID, dm.ProxyStart, dm.ProxyExe = r.PeerPID, deskStart(r.PeerPID), deskExe()
+		dm.ChildPID, dm.ChildStart, dm.ChildExe = 0, "", ""
 		paths := desktop.DefaultPaths()
 		data, _ := json.Marshal(desktop.StartInfo{Argv: paths.ServerArgv(), Env: desktop.HypruseEnv(dm.Workspace, filepath.Join(dm.Dir, "journal.ndjson"))})
 		r.Reply(bridge.Decision{Behavior: "allow", Data: data})
@@ -178,7 +191,8 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 		if !ok || pp != dm.ProxyPID || in.ChildStart == "" || deskStart(in.ChildPID) != in.ChildStart {
 			return deny("that is not the desktop server's child")
 		}
-		dm.ChildPID, dm.ChildStart = in.ChildPID, in.ChildStart
+		dm.ChildPID, dm.ChildStart, dm.ChildExe = in.ChildPID, in.ChildStart, deskExeOf(in.ChildPID)
+		dm.save()
 		r.Reply(bridge.Decision{Behavior: "allow"})
 		return nil
 	case "call":
@@ -369,8 +383,25 @@ func (m *Model) finishDeskCrop(msg deskCropMsg) {
 	m.refresh()
 }
 
+// deskTTYOnly says why a desktop card cannot take this answer, "" when it
+// can: only the human at Den's own window answers desktop cards, once
+// each. The dock never gets the verbs (dockMayAnswer); this holds even if
+// that changes.
+func deskTTYOnly(it *inbox.Item, verb string) string {
+	if it.AnsweredBy == "console" {
+		return "Desktop control is answered only in Den's own window."
+	}
+	if verb == "always" {
+		return "Desktop cards are answered once: ^Y or ^N."
+	}
+	return ""
+}
+
 // decideDesktopCard is ^Y or ^N on a desktop action or your-turn card.
 func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	if why := deskTTYOnly(it, verb); why != "" {
+		return m.say(why, true)
+	}
 	p, ok := m.desk.pending[it.ID]
 	delete(m.desk.pending, it.ID)
 	dm := m.deskMission(p.mission)

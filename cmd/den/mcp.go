@@ -149,6 +149,11 @@ func runMCP() {
 			},
 		},
 	}}
+	asker := lead
+	if asker == "" {
+		asker = orcName
+	}
+	s.Tools = append(s.Tools, desktopMissionTool(asker))
 	// Missions are the orchestrator's alone: an agent Den started (which
 	// runs this server too) never gets the tool, and one started with
 	// --missions-only gets nothing else.

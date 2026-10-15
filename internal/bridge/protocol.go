@@ -177,6 +177,31 @@ const DesktopEvent = "DesktopRequest"
 // live desktop agent's allowed tools, else deny.
 const DesktopGateEvent = "DesktopGate"
 
+// DesktopStopEvent is not a hook event: `den desktop stop` sends it (a
+// Hyprland bind the human adds runs it). Den stops every desktop mission
+// at once and answers what it did. It only lowers, so it is never refused
+// for who asks.
+const DesktopStopEvent = "DesktopStop"
+
+// DesktopMissionEvent is not a hook event: `den mcp` sends it for the
+// desktop_mission tool, asking the human, on a card, to start an agent
+// that drives the desktop in a scope Den derives (a free workspace, the
+// apps the human configured). It waits for the outcome: the agent's name,
+// or why not.
+const DesktopMissionEvent = "DesktopMissionRequest"
+
+// DesktopMissionInput is the payload of a DesktopMissionEvent. It names
+// apps from the human's config and nothing more: no command, class,
+// workspace or scope comes from the asker.
+type DesktopMissionInput struct {
+	Plan       string   `json:"plan"`
+	Apps       []string `json:"apps"`
+	HumanSteps []string `json:"human_steps,omitempty"`
+	Dir        string   `json:"dir"`
+	Model      string   `json:"model,omitempty"`
+	AskedBy    string   `json:"asked_by"` // the asker's peer name, for the card and the report
+}
+
 // DesktopInput is the payload of a DesktopEvent.
 type DesktopInput struct {
 	Kind    string          `json:"kind"` // "start", "child" or "call"

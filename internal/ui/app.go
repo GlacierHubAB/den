@@ -645,6 +645,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deskCropMsg:
 		m.finishDeskCrop(msg)
 		return m, nil
+	case deskTickMsg:
+		return m, m.deskOnTick()
+	case deskPrepared:
+		return m, m.finishPrepare(msg)
+	case deskSpawned:
+		return m, m.finishSpawn(msg)
 	case askedSentMsg:
 		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
@@ -717,6 +723,16 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.DesktopGateEvent {
 		return m.handleDesktopGate(r)
 	}
+	if r.Event == bridge.DesktopMissionEvent {
+		return m.handleDesktopMissionRequest(r)
+	}
+	if r.Event == bridge.DesktopStopEvent {
+		return m.handleDesktopStop(r)
+	}
+	var deskCmd tea.Cmd
+	if r.Event == "Stop" {
+		deskCmd = m.deskAgentStopped(r)
+	}
 	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
@@ -775,7 +791,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			_ = inbox.AppendHistory(inbox.HistoryPath(), it) // best effort
 		}
 	}
-	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it)}
+	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it), deskCmd}
 	switch r.Event {
 	case "SessionStart", "SessionEnd":
 		cmds = append(cmds, snapshot)
@@ -1449,6 +1465,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.DesktopAct || it.Kind == inbox.YourTurn {
 		return m.decideDesktopCard(it, verb)
 	}
+	if it.Kind == inbox.DesktopMission {
+		return m.decideDesktopMission(it, verb)
+	}
 	if it.Kind == inbox.APIOn {
 		return m.decideAPIOn(it, verb)
 	}
@@ -1667,6 +1686,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.usageCommand(fields[1:])
 	case "/mode":
 		return m.modeCommand(fields[1:])
+	case "/desktop":
+		return m.desktopCommand(fields[1:])
 	case "/budget":
 		note, isErr := m.budgetCommand(fields[1:])
 		return m.say(note, isErr)

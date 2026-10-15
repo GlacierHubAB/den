@@ -131,19 +131,26 @@ func SettingsJSON(den, socket string) ([]byte, error) {
 	if !filepath.IsAbs(den) || !filepath.IsAbs(socket) {
 		return nil, errors.New("den and its socket must be absolute paths")
 	}
+	entry := func(matcher, args string, timeout int) []any {
+		return []any{map[string]any{
+			"matcher": matcher,
+			"hooks": []any{map[string]any{
+				"type":    "command",
+				"command": shellQuote(den) + " hook " + args + "--socket " + shellQuote(socket),
+				"timeout": timeout,
+			}},
+		}}
+	}
+	hooks := map[string]any{"PreToolUse": entry(".*", "desktop-gate ", 10)}
+	// Only Den's settings load for this agent, so Den's usual hooks never
+	// reach it: these let Den follow it (its turns, its report, its end).
+	for _, ev := range []string{"SessionStart", "SessionEnd", "Stop", "StopFailure", "Notification", "PostToolUse"} {
+		hooks[ev] = entry("", "", 10)
+	}
 	return json.MarshalIndent(map[string]any{
 		"disableAllHooks":     false,
 		"crossSessionInbound": "refuse",
-		"hooks": map[string]any{
-			"PreToolUse": []any{map[string]any{
-				"matcher": ".*",
-				"hooks": []any{map[string]any{
-					"type":    "command",
-					"command": shellQuote(den) + " hook desktop-gate --socket " + shellQuote(socket),
-					"timeout": 10,
-				}},
-			}},
-		},
+		"hooks":               hooks,
 	}, "", "  ")
 }
 

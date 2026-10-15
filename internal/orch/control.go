@@ -184,7 +184,7 @@ type permission struct {
 func humanTools(o Options) map[string]bool {
 	set := map[string]bool{SendMessageTool: true, MissionTool: true}
 	if o.Spawn {
-		for _, t := range []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool} {
+		for _, t := range []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool, DesktopMissionTool} {
 			set[t] = true
 		}
 	}

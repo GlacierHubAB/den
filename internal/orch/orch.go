@@ -152,6 +152,9 @@ const (
 	CloseAgentTool   = "mcp__den__close_agent"
 	SkillsTool       = "mcp__den__propose_skills"
 	MissionTool      = "mcp__den__update_mission"
+	// DesktopMissionTool asks the human, on a Den card, to start an agent
+	// that drives the desktop in a scope they approve.
+	DesktopMissionTool = "mcp__den__desktop_mission"
 )
 
 // MissionsOnly is the `den mcp` argument that offers update_mission alone,
@@ -339,7 +342,7 @@ func Argv(o Options) []string {
 			args = append(args, "--mcp-config", controlMCPConfig(exe, o.Spawn), "--strict-mcp-config")
 		case o.Spawn:
 			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
-			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool
+			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool + "," + DesktopMissionTool
 		default:
 			args = append(args, "--mcp-config", missionsMCPConfig(exe), "--strict-mcp-config")
 			allowed += "," + MissionTool

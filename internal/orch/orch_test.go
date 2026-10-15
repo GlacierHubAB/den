@@ -166,7 +166,7 @@ func TestArgv(t *testing.T) {
 		"--include-hook-events",
 		"--replay-user-messages",
 		"--mcp-config", MCPConfig("/usr/bin/den"), "--strict-mcp-config",
-		"--allowedTools", "ListAgents,SendMessage," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool,
+		"--allowedTools", "ListAgents,SendMessage," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool + "," + DesktopMissionTool,
 		"--resume", "sess-1",
 		"--model", "sonnet",
 	}
