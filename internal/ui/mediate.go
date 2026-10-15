@@ -72,7 +72,9 @@ type agentHook struct {
 // agentHooks are what an agent's --settings file holds: the inbound
 // mediation hook when Inbound (God mode's guarded agents), and Extra hooks
 // other parts of Den need (a desktop agent's tool gate). One file per
-// agent, so one tamper check covers it all.
+// agent, so one tamper check covers it all. Without Inbound, peer
+// messages are refused outright: an agent with a Den-written file never
+// takes them unmediated.
 type agentHooks struct {
 	Inbound bool
 	Extra   []agentHook
@@ -100,7 +102,7 @@ func mediationSettings(den, sock string, h agentHooks) ([]byte, error) {
 		}
 		hooks[x.Event] = append(hooks[x.Event], entry)
 	}
-	settings := map[string]any{"disableAllHooks": false}
+	settings := map[string]any{"disableAllHooks": false, "crossSessionInbound": "refuse"}
 	if h.Inbound {
 		add(agentHook{Event: "UserPromptSubmit", Args: []string{"agent-inbound"}, Timeout: 10})
 		settings["crossSessionInbound"] = "accept"

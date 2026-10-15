@@ -70,8 +70,8 @@ func TestMediationSettingsFile(t *testing.T) {
 }
 
 // Another part of Den's hooks share the one file: a tool gate with its
-// matcher, and hooks still never off; without the inbound hook there is no
-// crossSessionInbound.
+// matcher, and hooks still never off; without the inbound hook, peer
+// messages are refused outright, never left to the agent's own settings.
 func TestAgentSettingsExtraHooks(t *testing.T) {
 	raw, err := mediationSettings("/usr/bin/den", "/run/den.sock", agentHooks{Extra: []agentHook{{Event: "PreToolUse", Matcher: "mcp__hypruse__.*", Args: []string{"desktop-gate"}, Timeout: 10}}})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestAgentSettingsExtraHooks(t *testing.T) {
 	}
 	var s map[string]any
 	json.Unmarshal(raw, &s)
-	if s["disableAllHooks"] != false || s["crossSessionInbound"] != nil {
+	if s["disableAllHooks"] != false || s["crossSessionInbound"] != "refuse" {
 		t.Errorf("%s", raw)
 	}
 	if !strings.Contains(string(raw), `"matcher":"mcp__hypruse__.*"`) || !strings.Contains(string(raw), `'/usr/bin/den' hook 'desktop-gate' --socket '/run/den.sock'`) {
