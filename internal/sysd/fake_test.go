@@ -46,6 +46,14 @@ func newFakeManager(t *testing.T, unit string) *fakeManager {
 
 func (f *fakeManager) socket() string { return f.ln.Addr().String() }
 
+// fail makes the next stall connections get no answer, then the next
+// drop ones closed at once.
+func (f *fakeManager) fail(stall, drop int) {
+	f.mu.Lock()
+	f.stall, f.drop = stall, drop
+	f.mu.Unlock()
+}
+
 // taken is how many connections the manager has taken.
 func (f *fakeManager) taken() int {
 	f.mu.Lock()

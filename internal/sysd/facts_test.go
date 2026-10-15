@@ -495,7 +495,7 @@ func TestReadTriesAgain(t *testing.T) {
 	savedTimeout := CallTimeout
 	t.Cleanup(func() { CallTimeout = savedTimeout })
 	CallTimeout = 200 * time.Millisecond
-	f.m.stall, f.m.drop = 1, 1
+	f.m.fail(1, 1)
 	v, err := Read(testUnit, f.peer)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -515,7 +515,7 @@ func TestReadGivesUp(t *testing.T) {
 	savedTimeout, savedWithin := CallTimeout, ReadWithin
 	t.Cleanup(func() { CallTimeout, ReadWithin = savedTimeout, savedWithin })
 	CallTimeout, ReadWithin = 100*time.Millisecond, time.Second
-	f.m.stall = 1000
+	f.m.fail(1000, 0)
 	began := time.Now()
 	_, err := Read(testUnit, f.peer)
 	took := time.Since(began)
