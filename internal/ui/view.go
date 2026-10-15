@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -154,6 +155,14 @@ func (m Model) header(w int) []string {
 		links = append(links, s.attn.Render(label))
 	default:
 		links = append(links, label) // "usage unknown" once a reading has gone stale
+	}
+	// The mode agents start in, when it is not default, and how many
+	// running agents reported another; /mode names them.
+	switch n := m.modeKnownDiffers(); {
+	case n > 0:
+		links = append(links, s.attn.Render(fmt.Sprintf("mode %s · %d in another", m.agentMode(), n)))
+	case m.agentMode() != permmode.Shipped:
+		links = append(links, "mode "+m.agentMode())
 	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
@@ -808,6 +817,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
 	case it.Answerable() && it.Kind == inbox.UsageSet:
 		out = append(out, key("^Y", "take the figure")+"  "+key("^N", "keep yours"))
+	case it.Answerable() && it.Kind == inbox.ModeSet:
+		out = append(out, key("^Y", "start agents in it")+"  "+key("^N", "keep the mode"))
 	case it.Answerable() && it.Kind == inbox.APIOn:
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.Grant:
@@ -1067,6 +1078,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.UsageSet {
 			acts = key("^Y", "take the figure") + sp + sp + key("^N", "keep yours")
+		}
+		if it.Kind == inbox.ModeSet {
+			acts = key("^Y", "start agents in it") + sp + sp + key("^N", "keep the mode")
 		}
 		if it.Kind == inbox.APIOn {
 			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")

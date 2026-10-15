@@ -56,7 +56,7 @@ func runMCP() {
 				if !ok {
 					return "", errDir
 				}
-				req := spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Worktree: in.Worktree, Spawner: exe}
+				req := spawnRequest(in, orcName, lead, exe)
 				note := ""
 				if strings.TrimSpace(in.Role) != "" {
 					var err error
@@ -274,16 +274,22 @@ func usageStop() error {
 // askUsage reaches Den; tests replace it.
 var askUsage = bridge.Call
 
+// spawnRequest is the agent spawn_agent's input asks for. Nothing in the
+// input picks its permission mode: the caller sets agentMode()'s.
+func spawnRequest(in orch.SpawnInput, orcName, lead, exe string) spawn.Request {
+	return spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Worktree: in.Worktree, Spawner: exe}
+}
+
 // agentMode is the permission mode a new agent starts in: the running
-// Den's global mode. With no answer from Den, or one that is not a mode
-// on the ranked line, it is the lower of config's mode and default, so an
-// agent never starts in more than the human set without Den to ask.
+// Den's global mode. With no answer from Den, or one that is not a ranked
+// mode, it is config's mode at most permmode.Shipped, as Den itself would
+// start: never bypassPermissions, whatever answers on den.sock.
 func agentMode() string {
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.ModeEvent}
 	if d, err := askMode(bridge.SocketPath(), env, 3*time.Second); err == nil && d.Behavior == "allow" && permmode.Valid(d.Message) {
 		return d.Message
 	}
-	return permmode.Lower(config.Load().Agents.PermissionMode, permmode.Default)
+	return permmode.Lower(config.Load().Agents.PermissionMode, permmode.Shipped)
 }
 
 // askMode reaches Den; tests replace it.

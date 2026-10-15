@@ -27,6 +27,8 @@ func TestMain(m *testing.M) {
 	}
 	gitenvtest.Scrub() // git must not work on a repository the test run inherited
 	os.Setenv("XDG_STATE_HOME", dir)
+	// Nor may one write the human's config.toml (/mode writes it).
+	os.Setenv("DEN_CONFIG", filepath.Join(dir, "config.toml"))
 	// No test may reach the compositor the run happens to sit in: close
 	// plans list windows and a close may close one.
 	os.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")

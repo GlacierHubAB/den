@@ -9,6 +9,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -155,6 +156,16 @@ var dockVerbs = []dockVerb{
 		}
 		return api.DockRefused, "no such /usage command"
 	}},
+	{"/mode", nil, "/mode [dontAsk|plan|default|acceptEdits|auto]", "agents' permission mode; one that asks less waits on a card", func(a []string) (string, string) {
+		if len(a) == 0 {
+			return api.DockOK, ""
+		}
+		if _, ok := permmode.Parse(a[0]); !ok || len(a) > 1 {
+			return api.DockRefused, "one of dontAsk, plan, default, acceptEdits, auto; bypassPermissions is God mode's, never the dock's"
+		}
+		// A lowering applies at once; a raise waits on a card.
+		return api.DockCard, ""
+	}},
 	{"/budget", nil, "/budget", "the open mission's budget", always(api.DockDenScreen, whyScreen)},
 	{"/orchestrator", []string{"/orch"}, "/orchestrator [new|restart]", "the orchestrator", func(a []string) (string, string) {
 		if len(a) > 0 && (a[0] == "new" || a[0] == "restart") {
@@ -169,7 +180,7 @@ var dockVerbs = []dockVerb{
 // dockJudged is how many leading words each verb's verdict judges: they
 // run in the form judged (lowercased), so what runs is what was checked;
 // the words after (names, notes, paths) run as typed.
-var dockJudged = map[string]int{"/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1}
+var dockJudged = map[string]int{"/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1}
 
 // dockVerbOf is the verb a command word names, by its name or an alias.
 func dockVerbOf(word string) (dockVerb, bool) {
