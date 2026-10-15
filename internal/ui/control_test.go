@@ -22,10 +22,13 @@ import (
 // controlClaude is a fake claude for control mode: it replays each user
 // turn as Claude Code does (--replay-user-messages), and for a turn that
 // says SPAWN-PLEASE wants mcp__den__spawn_agent, asking its host and
-// waiting for the answer. Every line Den writes goes to its folder.
+// waiting for the answer. Every line Den writes goes to its folder. As
+// Claude Code in stream-json input does, it sends its init only once it
+// has read its first message, so nothing in Den may wait for an init
+// before sending one.
 const controlClaude = `#!/bin/sh
 D=$(dirname "$0")
-echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
+inited=""
 while IFS= read -r line; do
   case "$line" in
     *'"control_response"'*) printf '%s\n' "$line" >> "$D/answers"; continue ;;
@@ -33,6 +36,10 @@ while IFS= read -r line; do
       case "$line" in *'"interrupt"'*) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","num_turns":1}' ;; esac
       continue ;;
   esac
+  if [ -z "$inited" ]; then
+    echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
+    inited=1
+  fi
   printf '%s\n' "$line" >> "$D/turns"
   printf '%s\n' "$line" | sed 's/}$/,"isReplay":true}/'
   case "$line" in
@@ -542,21 +549,12 @@ func TestReportHeldBehindAnAppTurn(t *testing.T) {
 	}
 }
 
-// Claude Code sends its init only once it has read a first message. An
+// Claude Code sends its init only once it has read a first message
+// (controlClaude does the same). An
 // app's turn on a fresh Den, with nothing from the human, still goes out
 // and gets its reply: Den does not wait for an init that waits for it.
 func TestAppTurnBeforeTheOrchestratorsInit(t *testing.T) {
-	l, dir, _ := controlModel(t)
-	initLine := `echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'`
-	late := strings.Replace(controlClaude, initLine+"\n", "", 1)
-	late = strings.Replace(late, `  printf '%s\n' "$line" >> "$D/turns"`, `  if [ -z "$inited" ]; then `+initLine+`; inited=1; fi
-  printf '%s\n' "$line" >> "$D/turns"`, 1)
-	if late == controlClaude || strings.Count(late, `"subtype":"init"`) != 1 || !strings.Contains(late, "inited=1") {
-		t.Fatal("the fake did not change as meant")
-	}
-	if err := os.WriteFile(filepath.Join(dir, "claude"), []byte(late), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	l, dir, _ := controlModel(t) // controlClaude sends init after its first message
 	c := pairApp(t, l)
 	if l.m.orch.started || l.m.orch.proc != nil {
 		t.Fatal("not a fresh Den: the orchestrator already runs")
