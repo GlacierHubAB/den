@@ -61,3 +61,29 @@ func TestDesktopSessionsFromMissionFiles(t *testing.T) {
 		t.Fatal("a mission folder without its file must fail closed")
 	}
 }
+
+// The permanent list keeps a desktop agent out of restore after its
+// mission folder is gone, and an unreadable list fails closed.
+func TestDesktopSessionsList(t *testing.T) {
+	dir := t.TempDir()
+	old := deskStateDir
+	t.Cleanup(func() { deskStateDir = old })
+	deskStateDir = func() string { return dir }
+	m := Model{}
+	if m.isDesktopSession("gone-agent") {
+		t.Fatal("nothing recorded yet")
+	}
+	if err := recordDeskSession("gone-agent"); err != nil {
+		t.Fatal(err)
+	}
+	if !m.isDesktopSession("gone-agent") || !m.knownDesktopSession("gone-agent") || m.isDesktopSession("other") {
+		t.Fatal("the list is not read")
+	}
+	if st, _ := os.Stat(deskSessionsPath()); st.Mode().Perm() != 0o600 {
+		t.Fatalf("list mode %v", st.Mode())
+	}
+	os.Chmod(deskSessionsPath(), 0)
+	if os.Getuid() != 0 && !m.isDesktopSession("other") {
+		t.Fatal("an unreadable list must fail closed")
+	}
+}

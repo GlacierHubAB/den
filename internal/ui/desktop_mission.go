@@ -323,6 +323,11 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 			dm.PIDs[l.PID] = true
 		}
 	}
+	if err := recordDeskSession(dm.SessionID); err != nil {
+		// Without the record, a restore could later resume it with
+		// ordinary tools: no agent starts.
+		return fail("cannot record the desktop session: " + err.Error())
+	}
 	m.addDeskMission(dm)
 	dm.save() // its session id is on disk before the agent starts
 	prompt := desktop.Brief(p.offer.in.Plan, p.offer.apps, p.workspace, p.offer.in.HumanSteps)
@@ -335,8 +340,9 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		Custom: func(name string) []string {
 			launch.Name = name
 			argv, _ := desktop.AgentArgv(launch)
-			return argv
+			return desktop.TerminalArgv(argv, den)
 		},
+		NoSessionWait: true,
 	}
 	id, missionID := p.itemID, dm.ID
 	return func() tea.Msg {
@@ -369,6 +375,7 @@ func (m *Model) finishSpawn(s deskSpawned) tea.Cmd {
 		return nil
 	}
 	dm.AgentName = s.res.Name
+	dm.launchedAt = time.Now()
 	if pid, ok := deskSession(dm.SessionID); ok && dm.AgentPID == 0 {
 		dm.AgentPID, dm.AgentStart, dm.AgentExe = pid, deskStart(pid), deskExeOf(pid)
 	}
@@ -391,6 +398,11 @@ func adoptAgent(dm *deskMission, proxyPID int) bool {
 		return false
 	}
 	pid, ok := deskSession(dm.SessionID)
+	if !ok {
+		// A print-mode agent may write no session file: then its parent
+		// must be Claude Code started with this mission's session id.
+		pid, ok = parent, claudeWithSession(parent, dm.SessionID)
+	}
 	if !ok || pid != parent {
 		return false
 	}
@@ -462,4 +474,30 @@ func newSessionID() string {
 	b[8] = b[8]&0x3f | 0x80
 	h := hex.EncodeToString(b)
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
+}
+
+// deskCmdline is a process's argv; tests replace it.
+var deskCmdline = func(pid int) []string {
+	raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
+}
+
+// claudeWithSession reports whether pid is Claude Code run with
+// --session-id id.
+func claudeWithSession(pid int, id string) bool {
+	// The executable /proc reports, which a process cannot set, must be
+	// Claude Code's; the command line alone could say anything.
+	argv := deskCmdline(pid)
+	if len(argv) == 0 || filepath.Base(deskExeOf(pid)) != "claude" {
+		return false
+	}
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "--session-id" && argv[i+1] == id && id != "" {
+			return true
+		}
+	}
+	return false
 }

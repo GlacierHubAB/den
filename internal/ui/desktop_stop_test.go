@@ -102,6 +102,24 @@ func TestDesktopTickNoticesAgentGone(t *testing.T) {
 	}
 }
 
+// An agent whose desktop server never calls in does not hold the mission
+// slot: the mission ends after deskStartWait and its windows close.
+func TestDesktopAgentThatNeverStarts(t *testing.T) {
+	m, _, closed := stopRig(t)
+	dm := m.deskMission("m1")
+	dm.AgentPID, dm.AgentStart = 0, ""
+	dm.launchedAt = time.Now()
+	m.deskOnTick()
+	if m.deskLive() == nil {
+		t.Fatal("ended before its time")
+	}
+	dm.launchedAt = time.Now().Add(-deskStartWait - time.Second)
+	m.deskOnTick()
+	if m.deskLive() != nil || len(*closed) != 2 {
+		t.Fatalf("live %v, closed %v", m.deskLive() != nil, *closed)
+	}
+}
+
 func TestDesktopStopIsADockCommand(t *testing.T) {
 	for _, v := range dockVerbs {
 		if v.name == "/desktop" {

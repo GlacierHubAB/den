@@ -158,6 +158,13 @@ func (m *Model) deskOnTick() tea.Cmd {
 		m.finishDeskMission(dm, "the agent's session ended")
 		return nil
 	}
+	if dm.AgentPID <= 1 && !dm.launchedAt.IsZero() && time.Since(dm.launchedAt) > deskStartWait {
+		// Den learns the agent's process when its desktop server first
+		// calls; one that never does would hold the one mission slot.
+		m.finishDeskMission(dm, "the agent did not start")
+		m.restoreDeskMission(dm)
+		return nil
+	}
 	b, active := desktop.ReadBeacon(deskBeacon())
 	switch {
 	case active && b.PID == dm.ChildPID && b.Acting(time.Now()):
@@ -252,11 +259,23 @@ func (m Model) knownDesktopSession(id string) bool {
 	return recorded[id]
 }
 
-// deskRecorded is every session id in Den's desktop mission files, and
-// whether any mission folder's file could not be read.
+// deskRecorded is every session id Den recorded as a desktop agent's (the
+// permanent list, then the mission files), and whether any record could
+// not be read.
 var deskRecorded = func() (map[string]bool, bool) {
 	out := map[string]bool{}
 	unsure := false
+	raw, err := os.ReadFile(deskSessionsPath())
+	switch {
+	case err == nil:
+		for _, line := range strings.Split(string(raw), "\n") {
+			if id := strings.TrimSpace(line); id != "" {
+				out[id] = true
+			}
+		}
+	case !os.IsNotExist(err):
+		unsure = true
+	}
 	dirs, _ := filepath.Glob(filepath.Join(deskStateDir(), "*"))
 	for _, d := range dirs {
 		if st, err := os.Stat(d); err != nil || !st.IsDir() {
@@ -299,3 +318,26 @@ func (m *Model) deskPurge(now time.Time) bool {
 	}
 	return waiting
 }
+
+// deskSessionsPath is Den's permanent list of desktop agents' session ids:
+// appended before each agent starts, never purged, so a desktop agent
+// stays out of restore even when its mission folder is gone.
+func deskSessionsPath() string { return filepath.Join(deskStateDir(), "sessions") }
+
+// recordDeskSession appends a session id to the permanent list (0600).
+func recordDeskSession(id string) error {
+	if err := os.MkdirAll(deskStateDir(), 0o700); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(deskSessionsPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(id + "\n")
+	return err
+}
+
+// deskStartWait is how long after its terminal opens an agent's desktop
+// server has to call in before Den ends the mission.
+var deskStartWait = time.Minute

@@ -106,7 +106,10 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 	}})
 	tools := strings.Join(AllowedToolNames(), ",")
 	argv := []string{
-		"claude", "--name", l.Name,
+		// Print mode: interactive Claude Code sends the first turn before
+		// MCP servers connect (alwaysLoad does not hold it for an
+		// --mcp-config server); -p waits for them (MCP_TIMEOUT, 30 s).
+		"claude", "-p", "--name", l.Name,
 		"--session-id", l.SessionID,
 		// MCP tool names here empty the built-in tools (Bash, Read, Write,
 		// WebFetch, Task, SendMessage and the rest).
@@ -120,7 +123,16 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 	if l.Model != "" {
 		argv = append(argv, "--model", l.Model)
 	}
+	// Its terminal shows the stream through den desktop-view.
+	argv = append(argv, "--output-format", "stream-json", "--verbose")
 	return append(argv, "--", l.Prompt), nil
+}
+
+// TerminalArgv is what the agent's terminal runs: `den desktop-view`,
+// which starts the agent itself (an argv, no shell between Den and the
+// prompt) and shows its words and tool calls, sanitised.
+func TerminalArgv(agent []string, den string) []string {
+	return append([]string{den, "desktop-view", "--exec", "--"}, agent...)
 }
 
 // DeniedTools are the settings deny rules of a desktop agent: Claude Code's

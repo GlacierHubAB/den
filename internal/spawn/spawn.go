@@ -71,6 +71,9 @@ type Request struct {
 	// place of Command's: a desktop agent is launched like the
 	// orchestrator, with its own tools, settings and prompt.
 	Custom func(name string) []string
+	// NoSessionWait returns once the window is up, without waiting for a
+	// session to register: a print-mode agent may never write one.
+	NoSessionWait bool
 }
 
 // Worktree is spawn_agent's worktree input: true (a worktree named after
@@ -270,6 +273,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	if !req.Agent {
+		return res, nil
+	}
+	if req.NoSessionWait {
 		return res, nil
 	}
 	if res.Untrusted = !Trusted(dir); res.Untrusted {

@@ -113,6 +113,8 @@ func main() {
 		remoteCmd(os.Args[2:])
 	case "desktop":
 		desktopCmd(os.Args[2:])
+	case "desktop-view":
+		desktopView(os.Args[2:])
 	case "desktop-mcp":
 		runDesktopMCP(os.Args[2:])
 	case "install-hypruse":
