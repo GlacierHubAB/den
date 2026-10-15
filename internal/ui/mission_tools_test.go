@@ -269,6 +269,19 @@ func TestMissionMetIsTypedInDen(t *testing.T) {
 	}
 }
 
+// The orchestrator's own den mcp passes Spawned: propose_mission and
+// update_mission are handled before the orchestrator's restriction, so
+// they are answered, never "may only list and message sessions".
+func TestOrchestratorsDenMCPStillReachesMissions(t *testing.T) {
+	m, _ := missionUpdateModel(t, originHuman)
+	if d := callDen(t, &m, bridge.ProposeEvent, goodProposal(), orchChildPID); d.Behavior != "allow" || strings.Contains(d.Message, "may only list") {
+		t.Errorf("propose_mission from the orchestrator's den mcp: %+v", d)
+	}
+	if d := callDen(t, &m, bridge.MissionEvent, bridge.MissionInput{ID: "m1", State: "continue", Summary: "on it"}, orchChildPID); d.Behavior != "allow" || strings.Contains(d.Message, "may only list") {
+		t.Errorf("update_mission from the orchestrator's den mcp: %+v", d)
+	}
+}
+
 // A project's root can come from an agent's repository: in Den's prompts it
 // is one line with no tags, so it cannot add framing to the human's turn.
 func TestPromptsQuoteTheProject(t *testing.T) {

@@ -404,6 +404,32 @@ func TestChatShowsMissionsOnTop(t *testing.T) {
 	}
 }
 
+// The opened proposal makes the strip taller and pushes no row out: with
+// more missions than the strip shows, its last line still says how many
+// are out of view.
+func TestOpenedProposalKeepsTheOverflowLine(t *testing.T) {
+	m := missionModel()
+	now := time.Now()
+	for i := 0; i < 4; i++ {
+		m.missions.Save(&mission.Mission{ID: fmt.Sprintf("live%d", i), Project: m.proj.cur, Name: fmt.Sprintf("Live %d", i), Mission: "x", State: mission.Running, Created: now.Add(-time.Hour), Updated: now})
+	}
+	p := &mission.Mission{ID: "mp", Project: m.proj.cur, Name: "Proposal", Mission: "the goal", Shape: mission.Once, State: mission.Proposed, Created: now, Updated: now}
+	p.SetCriteria([]string{"done"})
+	p.AddGoal(mission.SubGoal{Text: "do it", Role: "writer"})
+	m.missions.Save(p)
+	m.focusProposal("mp")
+	lines := boxed(m.missionStrip(78, 40))
+	var last string
+	for _, l := range lines {
+		if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "─") {
+			last = t
+		}
+	}
+	if !strings.Contains(strings.Join(lines, "\n"), "GOAL  the goal") || last != "+2 more · /missions" {
+		t.Errorf("last line %q:\n%s", last, strings.Join(lines, "\n"))
+	}
+}
+
 // waitingProposals is a model with two proposals ready to start, read long
 // ago, and a live card in the chat.
 func waitingProposals(t *testing.T) (Model, *dispatch) {
