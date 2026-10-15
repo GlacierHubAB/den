@@ -105,10 +105,11 @@ func TestStandingSendMessage(t *testing.T) {
 	}
 }
 
-// A session that does not ask (bypassPermissions, or a mode Den does not
-// know) gets no /always: the card says why, and /always is refused.
+// A session that does not ask (bypassPermissions, plan, auto, acceptEdits,
+// or a mode Den does not know) gets no /always: the card says why, and
+// /always is refused.
 func TestNoStandingForASessionThatDoesNotAsk(t *testing.T) {
-	for _, mode := range []string{"bypassPermissions", ""} {
+	for _, mode := range []string{"bypassPermissions", "plan", "auto", "acceptEdits", ""} {
 		l, _ := standingModel(t, mode)
 		c := pairApp(t, l)
 		c.call("orch.say", map[string]string{"text": "ping MSG-PLEASE"})
@@ -193,7 +194,7 @@ func TestStandingEndsWhenTheTargetDoesNotAsk(t *testing.T) {
 	l.m.ctl.watch = map[string]bool{"s-otter": true} // what delivery under the allowance sets
 	r := bridge.TestRequest(bridge.Envelope{Event: "UserPromptSubmit", SessionID: "s-otter"})
 	r.SessionID = "s-otter"
-	r.Input.PermissionMode = "acceptEdits"
+	r.Input.PermissionMode = "plan" // plan runs approved Bash without asking
 	l.m.noteMode(r)
 	if len(l.m.api.srv.AllRules()) != 0 {
 		t.Error("the allowance survived a target that does not ask")
