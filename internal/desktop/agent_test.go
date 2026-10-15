@@ -118,6 +118,14 @@ func TestSettingsAndGuard(t *testing.T) {
 	if len(s.Hooks.Pre) != 1 || s.Hooks.Pre[0].Matcher != ".*" || s.Hooks.Pre[0].Hooks[0].Command != "'"+den+"' hook desktop-gate --socket '/run/user/1/den.sock'" {
 		t.Fatalf("hook %s", raw)
 	}
+	for _, never := range []string{"PostToolUse", "PermissionRequest", "UserPromptSubmit"} {
+		if strings.Contains(string(raw), never) {
+			t.Errorf("the desktop agent's settings carry a %s hook", never)
+		}
+	}
+	if !strings.Contains(string(raw), `"Stop"`) || !strings.Contains(string(raw), `"SessionEnd"`) {
+		t.Errorf("Den could not follow the agent: %s", raw)
+	}
 	if why := g.Check(); why != "" {
 		t.Fatalf("fresh guard: %s", why)
 	}

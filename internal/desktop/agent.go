@@ -144,7 +144,10 @@ func SettingsJSON(den, socket string) ([]byte, error) {
 	hooks := map[string]any{"PreToolUse": entry(".*", "desktop-gate ", 10)}
 	// Only Den's settings load for this agent, so Den's usual hooks never
 	// reach it: these let Den follow it (its turns, its report, its end).
-	for _, ev := range []string{"SessionStart", "SessionEnd", "Stop", "StopFailure", "Notification", "PostToolUse"} {
+	// Status only, none decides anything. No PostToolUse: its tool_response
+	// is screen content (screenshots, accessibility trees), which must not
+	// reach Den's event log or activity lines.
+	for _, ev := range []string{"SessionStart", "SessionEnd", "Stop", "StopFailure", "Notification"} {
 		hooks[ev] = entry("", "", 10)
 	}
 	return json.MarshalIndent(map[string]any{
