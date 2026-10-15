@@ -331,15 +331,11 @@ func TestDesktopSettingsThroughGuardAgent(t *testing.T) {
 	}
 }
 
-// A hook with no timeout of its own gets Claude Code's, never a timeout
-// of 0.
+// A hook without a timeout of its own is refused when its file is
+// written: every hook Den writes states one.
 func TestHookWithoutATimeout(t *testing.T) {
-	raw, err := mediationSettings("/usr/bin/den", "/run/user/1/den.sock", agentHooks{Extra: []agentHook{{Event: "Stop"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), `"timeout"`) {
-		t.Errorf("a timeout written for a hook that has none: %s", raw)
+	if raw, err := mediationSettings("/usr/bin/den", "/run/user/1/den.sock", agentHooks{Extra: []agentHook{{Event: "Stop"}}}); err == nil {
+		t.Errorf("a hook with no timeout was written: %s", raw)
 	}
 }
 

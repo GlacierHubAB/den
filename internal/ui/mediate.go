@@ -96,6 +96,13 @@ func mediationSettings(den, sock string, h agentHooks) ([]byte, error) {
 	if !filepath.IsAbs(den) || !filepath.IsAbs(sock) {
 		return nil, errors.New("den and its socket must be absolute paths")
 	}
+	// Every hook states its own timeout: a hook that hangs lets its tool
+	// run, so none is left to Claude Code's default.
+	for _, x := range h.Extra {
+		if x.Timeout <= 0 {
+			return nil, errors.New("the " + x.Event + " hook has no timeout")
+		}
+	}
 	hooks := map[string][]any{}
 	add := func(x agentHook) {
 		cmd := shellQuote(den) + " hook"
@@ -103,11 +110,7 @@ func mediationSettings(den, sock string, h agentHooks) ([]byte, error) {
 			cmd += " " + shellQuote(a)
 		}
 		cmd += " --socket " + shellQuote(sock)
-		hook := map[string]any{"type": "command", "command": cmd}
-		if x.Timeout > 0 {
-			hook["timeout"] = x.Timeout // none: Claude Code's own
-		}
-		entry := map[string]any{"hooks": []any{hook}}
+		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": x.Timeout}}}
 		if x.Matcher != "" {
 			entry["matcher"] = x.Matcher
 		}
