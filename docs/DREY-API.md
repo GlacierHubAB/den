@@ -544,19 +544,30 @@ all` does in a terminal.
 
 ### Commands
 
-- `cmd.list` is every Den command with `dock`: `ok` (runs), `card` (runs,
-  and asks you on a card in Den), `needs_den_screen` (it acts on Den's own
-  screen) or `refused`.
-- `cmd.complete {prefix}` lists the commands that start with it, refused
-  ones left out, at most ten a second per connection. Use it only to fill
-  the input.
+- `cmd.list` is a bare array of `{name, usage, help, dock}`, one row per
+  command in the order Den's help lists them. `name` is the command with
+  its `/`, lower-case letters only (`/fleet`, `/orchestrator`); aliases
+  are not rows, but `cmd.run` takes them. `usage` and `help` are one line
+  of plain text of at most 120 characters. `dock` is `ok` (runs), `card`
+  (runs, and asks you on a card in Den), `needs_den_screen` (it acts on
+  Den's own screen) or `refused`, for the command as it may run with some
+  arguments: `/fleet project` runs, a bare `/fleet` needs Den's screen.
+  Den judges each line.
+- `cmd.complete {prefix}` is the same rows, a bare array, of the commands
+  whose name starts with `prefix` (with its `/`; any case), refused ones
+  left out, at most 64, at most ten calls a second per connection. Use it
+  only to fill the input.
 - `cmd.run {text}`: one command, at most 512 bytes, 30 a minute. Den takes
   it after Unicode NFKC: no control or format characters, no line or
   paragraph separators, no `;`, `&&`, `||`, `` ` `` or `$(`, no second
   command word. It maps it onto one of its own commands, by name or alias
   in any case, and runs it as typed in Den, with a note in Den's chat
   naming the console; anything else is `refused_from_dock` with why. A
-  command's own error comes back `unavailable` with Den's words.
+  command's own error comes back `unavailable` with Den's words. `note`,
+  and the message of a refusal, is what Den said: one line of plain text
+  (not markdown), at most 200 characters, "" when Den said nothing. A card
+  the command raises comes as a `card` event; `note` may mention it, but
+  only the event says so for sure.
 - From the dock, `/usage set` and `/usage clear` put the figure on a card
   ("A lower figure can hold off your usage stop."), and no command proposes
   a mission or runs a template: those wait for Den.

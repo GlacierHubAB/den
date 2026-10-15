@@ -72,6 +72,12 @@ func TestDockLine(t *testing.T) {
 	for _, c := range dockCommands() {
 		flags[c.Name] = c.Dock
 	}
+	// The names as pinned for consoles: "/" and lower-case letters.
+	for _, c := range dockCommands() {
+		if len(c.Name) < 2 || c.Name[0] != '/' || strings.TrimLeft(c.Name[1:], "abcdefghijklmnopqrstuvwxyz") != "" {
+			t.Errorf("command name %q", c.Name)
+		}
+	}
 	for name, want := range map[string]string{"/quit": api.DockRefused, "/allow": api.DockRefused, "/open": api.DockDenScreen, "/close": api.DockCard, "/fleet": api.DockOK, "/api": api.DockOK} {
 		if flags[name] != want {
 			t.Errorf("%s listed as %q, want %q", name, flags[name], want)
