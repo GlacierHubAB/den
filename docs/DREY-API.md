@@ -233,7 +233,9 @@ Den: the app never approves, answers or starts anything.
   or came within two minutes of another claim), `revoked: the code was used
   by another program too` (a waiting claim, answered at once when another
   claim revoked it), `denied in Den` (`Ctrl+N`) or `not confirmed in time`.
-  `Den is busy` comes with `unavailable`.
+  `Den is busy` comes with `unavailable` when Den cannot take the card now
+  (its queue to its screen is full): that claim did not count, the code is
+  still live, and the same claim may be sent again.
 - The code is single use. A second `pair.claim` within a claimed code's two
   minutes, or a claimed code again within ten minutes (even after another
   `/api pair`), means another program had the code too (anything that can

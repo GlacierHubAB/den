@@ -493,12 +493,22 @@ func (s *Server) claim(c *conn, req Request) {
 	st.mu.Unlock()
 	ask := PairAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
 	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
-	s.act(Act{CodeGone: true})
 	if !s.act(Act{Pair: &ask}) {
-		s.Unpair(id, "")
+		// Den could not take the card (its queue to the screen is full):
+		// the claim did not happen. The code stays live, unspent, and the
+		// same claim may be sent again.
+		st.mu.Lock()
+		delete(st.pairings, id)
+		code.spent, code.claimed = time.Time{}, ""
+		st.spent = st.spent[:len(st.spent)-1]
+		if st.code == nil {
+			st.code = code
+		}
+		st.mu.Unlock()
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return
 	}
+	s.act(Act{CodeGone: true})
 	go func() {
 		ok, why := false, ClaimTimeout
 		select {
