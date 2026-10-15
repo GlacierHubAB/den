@@ -422,6 +422,7 @@ func (s *Server) leaked(text string) bool {
 		switch {
 		case now.Sub(sp.spent) >= pairLeakAfter:
 		case holds(sp):
+			sp.dead = true
 			revoke = append(revoke, sp.claimed)
 		default:
 			kept = append(kept, sp)
@@ -543,13 +544,22 @@ func (s *Server) claim(c *conn, req Request) {
 			c.fail(req.ID, CodeForbidden, ClaimRevoked)
 			return
 		}
-		delete(st.pairings, id)
+		found := false
 		for i, sp := range st.spent {
 			if sp == code {
 				st.spent = append(st.spent[:i], st.spent[i+1:]...)
+				found = true
 				break
 			}
 		}
+		if !found {
+			// Something took the code out of the list meanwhile (a race, a
+			// leak): it counts as dead, whatever did it.
+			st.mu.Unlock()
+			c.fail(req.ID, CodeForbidden, ClaimRevoked)
+			return
+		}
+		delete(st.pairings, id)
 		code.spent, code.claimed = time.Time{}, ""
 		if st.code == nil {
 			st.code = code

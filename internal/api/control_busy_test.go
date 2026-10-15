@@ -83,3 +83,27 @@ func TestBusyClaimAfterAMarkStaysDead(t *testing.T) {
 		t.Error("a code marked dead came back live")
 	}
 }
+
+// Any path that took the code out of the spent list meanwhile (a leak,
+// say) leaves it dead, flag or not.
+func TestBusyClaimAfterARemovalStaysDead(t *testing.T) {
+	h := newHarness(t, 2)
+	words := h.s.StartPairing()
+	for len(h.s.acts) < cap(h.s.acts) {
+		h.s.acts <- Act{}
+	}
+	defer func(f func(string)) { beforePairAct = f }(beforePairAct)
+	beforePairAct = func(string) {
+		h.s.ctl.mu.Lock()
+		h.s.ctl.spent = nil // removed without the flag
+		h.s.ctl.mu.Unlock()
+	}
+	c := h.dial()
+	c.hello()
+	if l := c.call("pair.claim", map[string]string{"code": strings.Join(words, " ")}); code(l) != CodeForbidden || l.Error.Message != ClaimRevoked {
+		t.Fatalf("claim %+v", l)
+	}
+	if _, live := h.s.CodeLive(); live {
+		t.Error("a code taken out of the list came back live")
+	}
+}
