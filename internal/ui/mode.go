@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -323,6 +324,16 @@ func (m Model) modeKnownDiffers() int {
 
 // modeQuery answers den mcp's question: which mode does a new agent start
 // in?
-func (m Model) modeQuery(r *bridge.Request) {
+func (m *Model) modeQuery(r *bridge.Request) {
+	var in struct {
+		Lead string `json:"lead"`
+	}
+	json.Unmarshal(r.Envelope.Payload, &in)
+	if m.god.on && in.Lead == "" {
+		if d, ok := m.godSpawn(); ok {
+			r.Reply(d)
+			return
+		}
+	}
 	r.Reply(bridge.Decision{Behavior: "allow", Message: m.agentMode()})
 }

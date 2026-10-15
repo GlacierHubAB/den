@@ -43,7 +43,8 @@ type agentGuard struct {
 	settingsSHA string
 	den         string // the den binary its hook runs
 	denSHA      string
-	unguarded   string // why Den no longer trusts the guard, "" while it holds
+	unguarded   string    // why Den no longer trusts the guard, "" while it holds
+	launched    time.Time // when Den handed the guard out for a new agent
 }
 
 // mediationUI is the mediation's part of the model.

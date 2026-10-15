@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -66,7 +68,7 @@ func runMCP() {
 				}
 				// Asked last: the skills card may have waited on the human,
 				// and the mode is the one in force as the agent starts.
-				req.PermissionMode = agentMode()
+				startMode(&req, lead)
 				res, err := spawn.Run(ctx, req)
 				if err != nil {
 					return "", err
@@ -285,17 +287,40 @@ func spawnRequest(in orch.SpawnInput, orcName, lead, exe string) spawn.Request {
 	return spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Worktree: in.Worktree, Spawner: exe}
 }
 
-// agentMode is the permission mode a new agent starts in: the running
-// Den's global mode. With no answer from Den, or one that is not a ranked
-// mode, it is config's mode at most permmode.Shipped, as Den itself would
-// start: never bypassPermissions, whatever answers on den.sock.
-func agentMode() string {
-	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.ModeEvent}
-	if d, err := askMode(bridge.SocketPath(), env, 3*time.Second); err == nil && d.Behavior == "allow" && permmode.Valid(d.Message) {
-		return d.Message
+// startMode sets the permission mode a new agent starts in: the running
+// Den's answer, for an agent started by lead ("" for the orchestrator).
+// With no answer from Den, or one that is not a ranked mode, it is
+// config's mode at most permmode.Shipped, as Den itself would start. Den
+// answers bypassPermissions only in God mode, and then with the session id
+// and --settings file of the guard it wrote; without both it is the
+// fallback, never bypass. A bypass agent gets no spawn tool: it leads no
+// team.
+func startMode(req *spawn.Request, lead string) {
+	payload, _ := json.Marshal(map[string]string{"lead": lead})
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.ModeEvent, Payload: payload}
+	d, err := askMode(bridge.SocketPath(), env, 3*time.Second)
+	switch {
+	case err != nil || d.Behavior != "allow":
+	case permmode.Valid(d.Message):
+		req.PermissionMode = d.Message
+		return
+	case d.Message == permmode.Bypass && lead == "" && filepath.IsAbs(d.Answers["settings"]) && sessionIDRe.MatchString(d.Answers["session_id"]):
+		req.PermissionMode, req.SessionID, req.Settings, req.Spawner = permmode.Bypass, d.Answers["session_id"], d.Answers["settings"], ""
+		return
 	}
-	return permmode.Lower(config.Load().Agents.PermissionMode, permmode.Shipped)
+	req.PermissionMode = permmode.Lower(config.Load().Agents.PermissionMode, permmode.Shipped)
 }
+
+// agentMode is the mode startMode picks for an agent the orchestrator
+// starts.
+func agentMode() string {
+	var req spawn.Request
+	startMode(&req, "")
+	return req.PermissionMode
+}
+
+// sessionIDRe is a session id Den drew for a guarded agent.
+var sessionIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // askMode reaches Den; tests replace it.
 var askMode = bridge.Call

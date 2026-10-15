@@ -1,12 +1,17 @@
 package ui
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/permmode"
 )
 
 // typeLine submits text from Den's own command line.
@@ -102,6 +107,44 @@ func TestGodModeFromOutside(t *testing.T) {
 	m.applyAPIAct(api.Act{GodOff: "the console was unpaired"})
 	if m.godOn() {
 		t.Error("an unpair left God mode on")
+	}
+}
+
+// den mcp's mode question: in God mode, an agent the orchestrator starts
+// gets bypassPermissions with a guard Den wrote (a fresh session id and its
+// --settings file); one a lead starts, or any with God mode off, gets the
+// global mode.
+func TestGodModeSpawnsGuarded(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	m := testModel(140, 40)
+	ask := func(lead string) bridge.Decision {
+		payload, _ := json.Marshal(map[string]string{"lead": lead})
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.ModeEvent, Payload: payload})
+		m.modeQuery(r)
+		d, _ := r.Decided()
+		return d
+	}
+	if d := ask(""); d.Message == permmode.Bypass {
+		t.Fatalf("bypass with God mode off: %+v", d)
+	}
+	typeLine(&m, "/god on")
+	typeLine(&m, godPhrase)
+	d := ask("")
+	sid, path := d.Answers["session_id"], d.Answers["settings"]
+	if d.Message != permmode.Bypass || len(sid) != 36 || !filepath.IsAbs(path) {
+		t.Fatalf("God mode's agent: %+v", d)
+	}
+	if g := m.med.guards[sid]; g == nil || g.settings != path || g.launched.IsZero() {
+		t.Errorf("no guard recorded for %s", sid)
+	}
+	if raw, err := os.ReadFile(path); err != nil || !strings.Contains(string(raw), `"disableAllHooks":false`) {
+		t.Errorf("settings %s: %v", raw, err)
+	}
+	if d2 := ask(""); d2.Answers["session_id"] == sid {
+		t.Error("a session id given out twice")
+	}
+	if d := ask("otter"); d.Message == permmode.Bypass || d.Answers != nil {
+		t.Errorf("a lead's agent: %+v", d)
 	}
 }
 

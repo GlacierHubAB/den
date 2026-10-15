@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -8,6 +10,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -54,7 +57,7 @@ var godAutoKinds = map[inbox.Kind]bool{
 var godTTYKinds = map[inbox.Kind]bool{
 	inbox.Pair: true, inbox.Grant: true, inbox.APIOn: true, inbox.Install: true, inbox.Guidance: true,
 	inbox.Skills: true, inbox.Budget: true, inbox.UsageResume: true, inbox.UsageSet: true, inbox.Message: true,
-	inbox.ControlAsk: true, inbox.Merge: true, inbox.Console: true,
+	inbox.ControlAsk: true, inbox.Merge: true, inbox.Console: true, inbox.ModeSet: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.
@@ -158,6 +161,30 @@ func (m *Model) godSweep() tea.Cmd {
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
+}
+
+// godSpawn is the answer to den mcp for an agent the orchestrator starts
+// in God mode: bypassPermissions, a session id Den draws, and the guarded
+// --settings file Den wrote for that id. False when Den cannot write the
+// guard: the agent then starts in the global mode. Agents a lead starts
+// are never bypass (a bypass agent leads no team), nor are reopened ones.
+func (m *Model) godSpawn() (bridge.Decision, bool) {
+	den, err := os.Executable()
+	if err == nil {
+		den, err = filepath.EvalSymlinks(den)
+	}
+	sock, serr := filepath.Abs(bridge.SocketPath())
+	if err != nil || serr != nil {
+		return bridge.Decision{}, false
+	}
+	sid := newSessionID()
+	path, err := m.guardAgent(sid, den, sock, agentHooks{Inbound: true})
+	if err != nil {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "God mode: Den could not write a new agent's guard (" + sanitize.Label(err.Error(), 80) + "), so it starts in " + m.agentMode() + ".", at: time.Now()}))
+		return bridge.Decision{}, false
+	}
+	m.med.guards[sid].launched = time.Now()
+	return bridge.Decision{Behavior: "allow", Message: permmode.Bypass, Answers: map[string]string{"session_id": sid, "settings": path}}, true
 }
 
 // handleGodOff is `den god off` over den.sock. It only lowers, so it is
