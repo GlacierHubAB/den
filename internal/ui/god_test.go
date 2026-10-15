@@ -179,6 +179,49 @@ func TestGodModeSpawnsGuarded(t *testing.T) {
 	}
 }
 
+// God mode never changes the global permission mode: it only answers
+// bypassPermissions for the orchestrator's new agents while it is on. So
+// every way off lands on the mode Den had before it went on (D6), and new
+// agents start in it again.
+func TestGodOffLandsOnTheGlobalMode(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	old := fromOrchestrator
+	t.Cleanup(func() { fromOrchestrator = old })
+	fromOrchestrator = func(*Model, int) bool { return true }
+	spawnMode := func(m *Model) string {
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.ModeEvent})
+		m.modeQuery(r)
+		d, _ := r.Decided()
+		return d.Message
+	}
+	for _, off := range []struct {
+		name string
+		do   func(m *Model)
+	}{
+		{"/god off", func(m *Model) { typeLine(m, "/god off") }},
+		{"den god off", func(m *Model) { m.handleGodOff(bridge.TestRequest(bridge.Envelope{Event: bridge.GodOffEvent})) }},
+		{"the console's god.off", func(m *Model) { m.applyAPIAct(api.Act{GodOff: "the console turned it off"}) }},
+		{"an unpair", func(m *Model) { m.applyAPIAct(api.Act{GodOff: "the console was unpaired"}) }},
+		{"den unpair", func(m *Model) { m.handleConsoleUnpair(bridge.TestRequest(bridge.Envelope{Event: bridge.ConsoleUnpairEvent})) }},
+	} {
+		m := testModel(140, 40)
+		m.orch.control = true
+		m.mode.global = permmode.AcceptEdits
+		typeLine(&m, "/god on")
+		typeLine(&m, godPhrase)
+		if got := spawnMode(&m); got != permmode.Bypass {
+			t.Fatalf("%s: in God mode a new agent gets %q", off.name, got)
+		}
+		off.do(&m)
+		if m.godOn() || m.mode.global != permmode.AcceptEdits || m.agentMode() != permmode.AcceptEdits {
+			t.Errorf("%s: on %v, global %q, agents start in %q", off.name, m.godOn(), m.mode.global, m.agentMode())
+		}
+		if got := spawnMode(&m); got != permmode.AcceptEdits {
+			t.Errorf("%s: after it a new agent gets %q", off.name, got)
+		}
+	}
+}
+
 // In God mode Den answers its own cards in godAutoKinds, by rule, and
 // only the human answers the kinds in godTTYKinds, in Den's window.
 func TestGodModeCards(t *testing.T) {
