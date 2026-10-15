@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,6 +18,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Den reads, of the console's service, what it can check itself: that
@@ -141,12 +144,46 @@ func (p Problems) Error() string {
 // Read reads the unit as the manager runs it now and checks it, for the
 // process peer (the console's): the verifier and every problem found. An
 // error that is not Problems means Den could not read the manager at all.
+//
+// A manager that does not answer in time, or drops the connection, is
+// read again on a new one, after a short wait, for up to ReadWithin: the
+// console's service reconnects while the manager may still be busy with
+// its restart.
 func Read(unit string, peer ProcID) (Verifier, error) {
 	path, err := managerSocket()
 	if err != nil {
 		return Verifier{}, err
 	}
-	return readFrom(path, unit, peer)
+	deadline := time.Now().Add(ReadWithin)
+	wait := 100 * time.Millisecond
+	for {
+		v, err := readFrom(path, unit, peer)
+		if !transient(err) || time.Until(deadline) < wait+CallTimeout {
+			return v, err
+		}
+		time.Sleep(wait)
+		wait = min(2*wait, time.Second)
+	}
+}
+
+// ReadWithin bounds Read's tries: no new one starts unless it could end
+// by then.
+var ReadWithin = 10 * time.Second
+
+// transient is a read that failed for want of the manager's answer, not
+// for what it answered: a timeout, or a connection refused or dropped.
+// What the manager answers (a CallError) and every Problem are final.
+func transient(err error) bool {
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	for _, e := range []error{syscall.ECONNREFUSED, syscall.EAGAIN, syscall.ECONNRESET, syscall.EPIPE, io.EOF, io.ErrUnexpectedEOF} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	return false
 }
 
 func readFrom(socket, unit string, peer ProcID) (Verifier, error) {
@@ -241,7 +278,9 @@ func readFrom(socket, unit string, peer ProcID) (Verifier, error) {
 		probs = append(probs, p)
 	}
 	menv, err := c.call(managerPath, propsIface, "Get", "ss", "v", managerIface, "Environment")
-	if err != nil {
+	if transient(err) {
+		return v, fmt.Errorf("the manager's environment: %w", err)
+	} else if err != nil {
 		fail("the manager's environment does not read: %v", err)
 	} else if mv := menv[0].(Variant); mv.Sig != "as" {
 		fail("the manager's environment is %q, not as", mv.Sig)
@@ -417,7 +456,7 @@ func checkMain(pid, manager int, cgroup string, startedUs uint64) (uint64, error
 		return start, err
 	}
 	started := bt.Add(time.Duration(float64(start) / clkTck * float64(time.Second)))
-	// btime is in whole seconds and ticks are hundredths: two seconds.
+	// Ticks are hundredths and the two clocks are read apart: two seconds.
 	said := time.UnixMicro(int64(startedUs))
 	if d := started.Sub(said); d > 2*time.Second || d < -2*time.Second {
 		return start, errors.New("its main process did not start when the manager started it")
@@ -458,8 +497,10 @@ func checkBinary(argv []string, mainStart uint64) (FileID, error) {
 	}
 	id.Dev, id.Ino = st.Dev, st.Ino
 	if bt, err := bootTime(); err == nil && mainStart > 0 {
+		// The ticks are cut to a whole tick: the process started at this
+		// or within a tick after, so a change at it may be after.
 		started := bt.Add(time.Duration(float64(mainStart) / clkTck * float64(time.Second)))
-		if time.Unix(st.Ctim.Sec, st.Ctim.Nsec).After(started) {
+		if !time.Unix(st.Ctim.Sec, st.Ctim.Nsec).Before(started) {
 			return id, errors.New("its program changed after the process started")
 		}
 	}
@@ -846,17 +887,17 @@ func readClkTck() float64 {
 	return 100
 }
 
-// readBootTime is when the machine booted (btime in /proc/stat).
+// readBootTime is when the machine booted, by the wall clock: the time
+// now less the time since boot on the clock a process's start ticks
+// count (CLOCK_BOOTTIME). /proc/stat's btime is the same cut to a whole
+// second, up to a second early: a program installed just before a
+// restart would seem changed after its process started. The wall clock
+// is read first, so the boot can only seem earlier, and a start with it.
 func readBootTime() (time.Time, error) {
-	b, err := os.ReadFile("/proc/stat")
-	if err != nil {
+	now := time.Now().Round(0)
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_BOOTTIME, &ts); err != nil {
 		return time.Time{}, err
 	}
-	for _, l := range strings.Split(string(b), "\n") {
-		if v, ok := strings.CutPrefix(l, "btime "); ok {
-			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
-			return time.Unix(n, 0), err
-		}
-	}
-	return time.Time{}, errors.New("no btime")
+	return now.Add(-time.Duration(ts.Nano())), nil
 }
