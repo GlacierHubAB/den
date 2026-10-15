@@ -20,8 +20,9 @@ are in [GITHUB-SETUP.md](GITHUB-SETUP.md).
 
 `main` is merged into with merge commits and never squashed, so after a release
 `dev` is still an ancestor of `main` and the next release pull request has no
-conflicts of its own making. The last step of a release fast-forwards `dev` to
-`main`, so the two branches are the same commit again (step 7 below).
+conflicts of its own making. `dev` is not moved up to `main` after a release
+(step 7 below): it takes pull requests only, and the next release branch merges
+`main` back in.
 
 ## Versions
 
@@ -152,37 +153,19 @@ There is no CHANGELOG file; the releases page is the changelog.
    chmod +x den_linux_amd64 && ./den_linux_amd64 version
    ```
 
-7. **Fast-forward `dev` to `main`.** The release merge commits land only on
-   `main`, so after a release `dev` is an ancestor of `main` and GitHub shows it
-   "N commits behind" although the two trees are the same. Moving `dev` up to
-   `main` is a plain fast-forward (no force, nothing rewritten). Try it as a
-   normal push:
-
-   ```
-   R=GlacierHubAB/den
-   MAIN=$(gh api "repos/$R/git/ref/heads/main" --jq .object.sha)
-   DEV=$(gh api "repos/$R/git/ref/heads/dev" --jq .object.sha)
-   gh pr list --repo "$R" --base dev --state open      # none, or wait
-   git fetch origin
-   git merge-base --is-ancestor "$DEV" "$MAIN" && echo fast-forward   # stop if not
-   git push origin "$MAIN:refs/heads/dev"
-   ```
-
-   The `dev` ruleset requires a pull request and linear history, so it may
-   refuse the push. **If it does, stop and ask the human** with the exact
-   refusal. Never switch a ruleset off or work around it, even for one push,
-   and never pass `--force`. Then check that the branches agree:
-
-   ```
-   gh api "repos/$R/compare/main...dev" --jq '{status, ahead_by, behind_by}'   # "identical", 0, 0
-   ```
-
-   If the push is refused as a non-fast-forward, `dev` has commits `main`
-   lacks; leave it, and the next release brings them together.
+7. **Leave `dev` as it is.** The release merge commits land only on `main`,
+   so after a release `dev` is an ancestor of `main` and GitHub shows it
+   "N commits behind" although the two trees are the same. `dev` takes changes
+   by pull request only (its ruleset refuses any push, even a plain
+   fast-forward: "Changes must be made through a pull request"), so it cannot
+   be moved up to `main` with a push. Do not switch the ruleset off and do not
+   use a bypass to do it. Nothing is lost: the next release branch merges
+   `main` back in (step 2), with no content change, and pull requests keep
+   squash-merging into `dev` as usual.
 
    Between releases `dev` is normally ahead of `main` by the pull requests
-   merged since the last release, and after a release and before this step it
-   is behind by the release merges. Both are expected.
+   merged since the last release and behind it by the release merges. Both
+   are expected.
 
 ## When the release workflow fails
 
