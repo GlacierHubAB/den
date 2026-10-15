@@ -419,3 +419,55 @@ func TestCopiedEnvReachesTheProcess(t *testing.T) {
 		t.Errorf("environment:\n%s", raw)
 	}
 }
+
+// TestBackstopOnUnreadableOutput: a stream-json line over the reader's 4 MiB
+// leaves Den reading nothing, so the orchestrator is killed rather than
+// left running with its output unread.
+func TestBackstopOnUnreadableOutput(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s\\n' '"+fakeInit+"'\nIFS= read -r line\nhead -c 5242880 /dev/zero | tr '\\0' a\nprintf '\\n%s\\n' '"+answer+"'\nwhile IFS= read -r line; do :; done\n"), 0o755)
+	proc, err := Start(context.Background(), Options{Command: []string{script}, Dir: dir, HookCommand: testHook()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Close()
+	proc.Send("hello")
+	evs := collect(t, proc, 10*time.Second)
+	var order []Kind
+	for _, e := range evs {
+		if e.Kind == Backstop || e.Kind == Exited || e.Kind == Result {
+			order = append(order, e.Kind)
+		}
+	}
+	if len(order) != 2 || order[0] != Backstop || order[1] != Exited || !proc.Tripped() {
+		t.Errorf("after a 5 MiB line: %v, want Backstop then Exited", kinds(evs))
+	}
+}
+
+// TestBackstopWithAFullBuffer: Backstop and Exited wait for room rather
+// than being dropped when the events buffer is full.
+func TestBackstopWithAFullBuffer(t *testing.T) {
+	perTurn := make([]string, 0, 301)
+	for range 300 {
+		perTurn = append(perTurn, `{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"x"}]}}`)
+	}
+	perTurn = append(perTurn, `{"type":"system","subtype":"hook_response","hook_event":"UserPromptSubmit","stdout":"","output":"/bin/sh: den: not found","exit_code":127,"outcome":"error"}`)
+	o, _ := fakeWith(t, perTurn...)
+	proc, err := Start(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proc.Close()
+	proc.Send("hello")
+	for deadline := time.Now().Add(10 * time.Second); len(proc.events) < cap(proc.events); time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("the buffer never filled: %d of %d", len(proc.events), cap(proc.events))
+		}
+	}
+	time.Sleep(200 * time.Millisecond) // the trip line arrives while it is full
+	k := kinds(collect(t, proc, 10*time.Second))
+	if k[Backstop] != 1 || k[Exited] != 1 || !proc.Tripped() {
+		t.Errorf("events %v: Backstop and Exited after a full buffer", k)
+	}
+}
