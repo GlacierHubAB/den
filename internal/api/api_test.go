@@ -89,7 +89,15 @@ func newHarness(t *testing.T, budget float64) *harness {
 // Listen.
 func newHarnessWith(t *testing.T, budget float64, change func(*Options)) *harness {
 	t.Helper()
-	run := filepath.Join(t.TempDir(), "run")
+	// The socket's folder is short whatever the test is called: a unix
+	// socket's path may not pass 108 bytes, and t.TempDir has the test's
+	// name in it.
+	short, err := os.MkdirTemp("", "dn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(short) })
+	run := filepath.Join(short, "run")
 	if err := os.Mkdir(run, 0o700); err != nil {
 		t.Fatal(err)
 	}
