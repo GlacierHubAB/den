@@ -61,6 +61,7 @@ const (
 	maxRestoredText = 32 << 10  // per text of a record; the rest stays in the log
 	restoreBudget   = 512 << 10 // all restored text, newest first; older records stay in the log
 	maxChatLine     = 4 << 20   // a longer line is skipped, and the lines after it still read
+	maxRestoredWord = 1 << 10   // the short fields (names, states, ids), which Den writes short
 )
 
 // cutMark ends a text that was cut on restore.
@@ -76,6 +77,32 @@ func cutText(s string, max int) string {
 		i--
 	}
 	return s[:i] + cutMark
+}
+
+// cutShort cuts the record's short fields: only an edited log has long
+// ones, and they are drawn whole.
+func cutShort(r *chatRecord) {
+	for _, f := range []*string{&r.To, &r.Status, &r.Session, &r.Mission} {
+		*f = cutWord(*f)
+	}
+	if c := r.Card; c != nil {
+		for _, f := range []*string{&c.ID, &c.SessionID, &c.Agent, &c.Summary, &c.Reason, &c.Ticker, &c.MissionID, &c.Thread} {
+			*f = cutWord(*f)
+		}
+	}
+}
+
+// cutWord keeps at most maxRestoredWord bytes of s, ending on a whole
+// character.
+func cutWord(s string) string {
+	if len(s) <= maxRestoredWord {
+		return s
+	}
+	i := maxRestoredWord
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
 }
 
 // recordText is how much text a record brings back.
@@ -183,11 +210,13 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 	}
 	defer f.Close()
 	var records []chatRecord
+	older := 0
 	eachLine(f, maxChatLine, func(line []byte) {
 		var r chatRecord
 		if json.Unmarshal(line, &r) != nil {
 			return
 		}
+		cutShort(&r)
 		if r.Kind == "session" {
 			session = r.Session
 			return
@@ -197,15 +226,22 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			r.Card.Brief, r.Card.Result = cutText(r.Card.Brief, maxRestoredText), cutText(r.Card.Result, maxRestoredText)
 		}
 		records = append(records, r)
+		// Only the newest n are kept, so a long log holds no more than
+		// 2n records in memory while it is read.
+		if len(records) > 2*n {
+			older += len(records) - n
+			records = append(records[:0], records[len(records)-n:]...)
+		}
 	})
 	if len(records) > n {
+		older += len(records) - n
 		records = records[len(records)-n:]
 	}
 	// Newest first, until the budget is spent.
-	left, older := restoreBudget, 0
+	left := restoreBudget
 	for i := len(records) - 1; i >= 0; i-- {
 		if left -= recordText(records[i]); left < 0 {
-			older, records = i+1, records[i+1:]
+			older, records = older+i+1, records[i+1:]
 			break
 		}
 	}

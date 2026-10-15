@@ -2,8 +2,11 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +128,10 @@ func TestChatLogRestoreIsCapped(t *testing.T) {
 	at := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
 	appendChatRecord(log, chatRecord{Kind: "session", At: at, Session: "s1"})
 	appendChatRecord(log, chatRecord{Kind: "orchestrator", At: at, Text: strings.Repeat("x", maxChatLine)})
+	// More small records than are kept, read before the big ones.
+	for i := range 1100 {
+		appendChatRecord(log, chatRecord{Kind: "note", At: at.Add(-time.Hour), Text: fmt.Sprint("note ", i)})
+	}
 	// About 100 KB of markdown, and a text where the cut falls inside a character.
 	para := strings.Repeat("Some **bold** words, a `code` span and a [link](https://example.com).\n", 1500)
 	wide := "a" + strings.Repeat("é", 60000)
@@ -135,7 +142,8 @@ func TestChatLogRestoreIsCapped(t *testing.T) {
 		}
 		appendChatRecord(log, chatRecord{Kind: "orchestrator", At: at.Add(time.Duration(i) * time.Minute), Text: text})
 	}
-	appendChatRecord(log, chatRecord{Kind: "card", At: at.Add(time.Hour), Card: &cardRecord{ID: "t1", SessionID: "s", Agent: "Mossy Lemur", Brief: para, Result: para, SentAt: at.Add(time.Hour), State: cardDone}})
+	long := strings.Repeat("y", 100<<10)
+	appendChatRecord(log, chatRecord{Kind: "card", At: at.Add(time.Hour), Card: &cardRecord{ID: "t1", SessionID: "s", Agent: "Mossy Lemur", Brief: para, Result: para, Summary: long, Reason: long, Ticker: long, SentAt: at.Add(time.Hour), State: cardDone}})
 	appendChatRecord(log, chatRecord{Kind: "session", At: at, Session: "s2"})
 
 	chat, session := loadChatLog(log, maxChatLog)
@@ -161,8 +169,18 @@ func TestChatLogRestoreIsCapped(t *testing.T) {
 	if e := chat[len(chat)-1]; e.card == nil {
 		t.Error("the newest record, the card, was not restored")
 	}
-	if !strings.Contains(chat[0].text, "older records stay in the log") {
-		t.Errorf("the note does not say older records were left: %q", chat[0].text)
+	var shown, older int
+	note := regexp.MustCompile(`^restored (\d+) entries .* · (\d+) older records stay in the log$`).FindStringSubmatch(chat[0].text)
+	if note == nil {
+		t.Fatalf("the note does not count the older records: %q", chat[0].text)
+	}
+	shown, _ = strconv.Atoi(note[1])
+	older, _ = strconv.Atoi(note[2])
+	if all := 1100 + 40 + 1; shown+older != all {
+		t.Errorf("note: %d restored and %d older, want %d in all: %q", shown, older, all, chat[0].text)
+	}
+	if d := chat[len(chat)-1].card; d != nil && (len(d.Summary) > maxRestoredWord || len(d.Reason) > maxRestoredWord || len(d.Ticker) > maxRestoredWord) {
+		t.Errorf("a card's short fields came back long: %d, %d, %d bytes", len(d.Summary), len(d.Reason), len(d.Ticker))
 	}
 
 	m := testModel(120, 40)
