@@ -572,8 +572,10 @@ func TestGodModeKeepsDensWindow(t *testing.T) {
 	if wm.where("0xden") == api.ViewWorkspace {
 		t.Error("a hide in God mode hid Den's window")
 	}
-	if !strings.Contains(rep.Result.Reason, "God mode is on") {
-		t.Errorf("the hide's reason: %q", rep.Result.Reason)
+	// Why is viewKeep's: the reply's one line keeps what fits in 40
+	// characters, the count first.
+	if m.viewKeep() != "God mode is on" || !strings.HasPrefix(rep.Result.Reason, "1 of 3 not hidden") {
+		t.Errorf("keep %q, the hide's reason %q", m.viewKeep(), rep.Result.Reason)
 	}
 	if wm.where("0xa") != api.ViewWorkspace || wm.where("0xb") != api.ViewWorkspace {
 		t.Error("the agents' windows were not hidden")
