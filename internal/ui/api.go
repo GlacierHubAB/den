@@ -276,8 +276,11 @@ func (m Model) lanePID() int {
 
 // publishAPI hands the API the fleet as it is now. It runs on the UI's own
 // goroutine and never blocks.
+// publishedHook, set by tests only, sees each snapshot as it is published.
+var publishedHook func(api.Snapshot)
+
 func (m *Model) publishAPI() {
-	if m.api.srv == nil {
+	if m.api.srv == nil && publishedHook == nil {
 		return
 	}
 	snap := api.Snapshot{
@@ -308,7 +311,12 @@ func (m *Model) publishAPI() {
 	if m.missions != nil {
 		snap.Missions = m.missions.All()
 	}
-	m.api.srv.Publish(api.Project(snap))
+	if publishedHook != nil {
+		publishedHook(snap)
+	}
+	if m.api.srv != nil {
+		m.api.srv.Publish(api.Project(snap))
+	}
 }
 
 // laneRoster is the roster the lane reads: the orchestrator's, without

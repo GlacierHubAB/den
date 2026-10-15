@@ -33,6 +33,49 @@ func dockAnswer(m *Model, it *inbox.Item, hash, verb string) api.CardResult {
 	return <-a.Reply
 }
 
+// The view published when a card settles already says how: the verb and
+// who answered, for the console's settled event, at that publish, not
+// after it.
+func TestSettledAtPublish(t *testing.T) {
+	for _, c := range []struct {
+		by   string
+		verb string
+	}{{"console", "deny"}, {"den", "allow"}} {
+		m := testModel(140, 40)
+		m.base = append(m.base, m.agents...)
+		it := permissionCard(t, &m)
+		var first *api.Snapshot // the first published without the card
+		publishedHook = func(s api.Snapshot) {
+			if first != nil {
+				return
+			}
+			for _, card := range s.Cards {
+				if card.ID == it.ID {
+					return
+				}
+			}
+			first = &s
+		}
+		if c.by == "console" {
+			dockAnswer(&m, it, api.ProjectCard(m.dockCard(it)).Hash, c.verb)
+		} else {
+			mm, _ := m.answerItem(it, c.verb)
+			m = mm.(Model)
+		}
+		publishedHook = nil
+		if first == nil {
+			t.Fatalf("%s: no view was published without the card", c.by)
+		}
+		found := false
+		for _, s := range first.Settled {
+			found = found || s == (api.Settled{ID: it.ID, Verb: c.verb, By: c.by})
+		}
+		if !found {
+			t.Errorf("%s: the view that settled the card says %+v", c.by, first.Settled)
+		}
+	}
+}
+
 // A console's answer goes the way the human's ^Y does, and Den's chat says
 // who answered; a changed card, a card Den has open, or a kind the console
 // may not answer is refused.
