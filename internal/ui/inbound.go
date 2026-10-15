@@ -174,6 +174,15 @@ func (m *Model) noteRefusal(sender, why string) {
 func (m *Model) sendReport(a fleet.Agent, body string) tea.Cmd {
 	content := peermsg.Report(a.Name, body)
 	m.addChat(chatEntry{role: "fan", to: a.Name, sid: a.Session.SessionID, tool: "report to the orchestrator", text: actionSummary("", body), full: sanitize.Text(body), fromAgent: true, status: "passed on", at: time.Now()})
+	if m.holdReport(content) {
+		return nil // after the app's turn, as it is
+	}
+	return m.sendReportTurn(content)
+}
+
+// sendReportTurn writes a report Den composed (peermsg.Report) as a turn
+// of its own.
+func (m *Model) sendReportTurn(content string) tea.Cmd {
 	m.peers.inFlight++
 	m.orch.thinking = true
 	m.orch.status = "thinking…"

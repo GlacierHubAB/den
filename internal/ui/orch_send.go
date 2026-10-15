@@ -27,6 +27,12 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: "give to (a peer name) and message"})
 		return nil
 	}
+	if !m.orch.control {
+		// send_message exists only with control on; one from anywhere
+		// else is refused whoever asks.
+		r.Reply(bridge.Decision{Behavior: "deny", Message: "send_message works only while a paired app has control; use SendMessage"})
+		return nil
+	}
 	if !orch.SendVerifiedVersion(m.orch.version) {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: "send_message needs a Claude Code release Den has checked (" + strings.Join(orch.SendVerified, ", ") + "); this orchestrator runs " + m.orch.version})
 		return nil

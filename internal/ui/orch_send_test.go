@@ -60,6 +60,7 @@ func TestOrchSendLooksLikeSendMessage(t *testing.T) {
 	orchSock := "/run/user/" + strconv.Itoa(os.Getuid()) + "/cc-socks/7001.sock"
 	m.orch.proc = &orch.Orchestrator{PID: 7001}
 	m.orch.version = "2.1.296"
+	m.orch.control = true
 	m.base = append(m.base,
 		fleet.Agent{Name: "Orchestrator", Status: fleet.Idle, Session: discover.Session{PID: 7001, SessionID: "s-orch", Name: OrchestratorName, Socket: orchSock, Alive: true}},
 		fleet.Agent{Name: "Busy Otter", Status: fleet.Idle, Session: discover.Session{PID: 7002, SessionID: "s-otter", Name: "worker-otter", Socket: sock, Version: "2.1.296", Alive: true}},
@@ -137,10 +138,25 @@ func TestOrchSendNeedsACheckedRelease(t *testing.T) {
 	m := testModel(120, 40)
 	m.orch.proc = &orch.Orchestrator{PID: 7001}
 	m.orch.version = "2.1.300"
+	m.orch.control = true
 	raw, _ := json.Marshal(bridge.OrchSendInput{To: "worker-otter", Message: "x"})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.OrchSendEvent, Payload: raw})
 	m.handleOrchSend(r)
 	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "2.1.289, 2.1.296") {
+		t.Errorf("decision %+v", d)
+	}
+}
+
+// Without control the orchestrator has SendMessage and no send_message:
+// Den refuses one, whoever asks.
+func TestOrchSendOnlyWithControl(t *testing.T) {
+	m := testModel(120, 40)
+	m.orch.proc = &orch.Orchestrator{PID: 7001}
+	m.orch.version = "2.1.296"
+	raw, _ := json.Marshal(bridge.OrchSendInput{To: "worker-otter", Message: "x"})
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.OrchSendEvent, Payload: raw})
+	m.handleOrchSend(r)
+	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "only while a paired app has control") {
 		t.Errorf("decision %+v", d)
 	}
 }

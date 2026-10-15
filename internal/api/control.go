@@ -62,6 +62,9 @@ type PairAsk struct {
 	PID     int
 	Started time.Time // when the process started, zero when unknown
 	Parent  string    // its parent's name
+	// Cmdline is its command line, sanitised and capped: under an
+	// interpreter (python3, node) the executable alone names no app.
+	Cmdline string
 }
 
 // Pairing is one pairing as /api lists it.
@@ -91,11 +94,28 @@ type pairCode struct {
 }
 
 type control struct {
-	mu       sync.Mutex
-	code     *pairCode
+	mu   sync.Mutex
+	code *pairCode // the live code, nil for none
+	// spent are the codes claimed in the last pairLeakAfter, apart from
+	// any newer live code: reusing or leaking one revokes the pairing it
+	// made.
+	spent    []*pairCode
 	pairings map[string]*pairing
 	turn     *Say // the app turn running, nil for none
 }
+
+// Claim refusals: pair.claim's error message is exactly one of these, so
+// an app can tell the human what happened.
+const (
+	ClaimNoCode    = "no code waiting"
+	ClaimWrong     = "wrong code"
+	ClaimSpent     = "code spent"
+	ClaimRevoked   = "revoked: the code was used by another program too"
+	ClaimDenied    = "denied in Den"
+	ClaimTimeout   = "not confirmed in time"
+	ClaimBusy      = "Den is busy"
+	ClaimNoPairing = "no such pairing"
+)
 
 func newControl() *control { return &control{pairings: map[string]*pairing{}} }
 
@@ -230,32 +250,51 @@ func codeWords(text string) []string {
 // it was spent. Den then cancels the code (it is no longer secret) and
 // notes it; the text itself is never kept.
 func (s *Server) leaked(text string) bool {
-	s.ctl.mu.Lock()
-	c := s.ctl.code
+	words := codeWords(text)
+	holds := func(c *pairCode) bool {
+		want := map[string]bool{}
+		for _, w := range c.words {
+			want[w] = true
+		}
+		hit := map[string]bool{}
+		for _, w := range words {
+			if want[w] {
+				hit[w] = true
+			}
+		}
+		return len(hit) >= pairLeakWords
+	}
 	now := time.Now()
-	live := c != nil && ((c.spent.IsZero() && now.Before(c.until)) || (!c.spent.IsZero() && now.Sub(c.spent) < pairLeakAfter))
-	if !live {
-		s.ctl.mu.Unlock()
-		return false
+	s.ctl.mu.Lock()
+	live := s.ctl.code != nil && now.Before(s.ctl.code.until) && holds(s.ctl.code)
+	if live {
+		s.ctl.code = nil
 	}
-	want := map[string]bool{}
-	for _, w := range c.words {
-		want[w] = true
-	}
-	hit := map[string]bool{}
-	for _, w := range codeWords(text) {
-		if want[w] {
-			hit[w] = true
+	var revoke []string
+	kept := s.ctl.spent[:0]
+	for _, sp := range s.ctl.spent {
+		switch {
+		case now.Sub(sp.spent) >= pairLeakAfter:
+		case holds(sp):
+			revoke = append(revoke, sp.claimed)
+		default:
+			kept = append(kept, sp)
 		}
 	}
-	if len(hit) < pairLeakWords {
-		s.ctl.mu.Unlock()
+	s.ctl.spent = kept
+	s.ctl.mu.Unlock()
+	if !live && len(revoke) == 0 {
 		return false
 	}
-	s.ctl.code = nil
-	s.ctl.mu.Unlock()
+	if live {
+		s.act(Act{CodeGone: true})
+	}
 	s.note("The pairing code was typed into a chat; pair again.")
-	s.act(Act{CodeGone: true})
+	for _, id := range revoke {
+		// The code that made a pairing is out: that pairing is not to be
+		// trusted either.
+		s.Unpair(id, "")
+	}
 	return true
 }
 
@@ -274,25 +313,39 @@ func (s *Server) claim(c *conn, req Request) {
 	st := s.ctl
 	st.mu.Lock()
 	code := st.code
-	if code != nil && !code.spent.IsZero() {
-		// The code was claimed already. A second claim in its two minutes,
-		// or with the same code later, means another program had it too:
-		// the pairing it made is not to be trusted.
-		race := now.Sub(code.spent) < pairCodeLife || (got == strings.Join(code.words, " ") && now.Sub(code.spent) < pairLeakAfter)
-		claimed := code.claimed
-		st.mu.Unlock()
-		if race && claimed != "" {
-			s.Unpair(claimed, "the pairing code was used by another program ("+sanitize.Label(filepath.Base(c.peer.Exe), 40)+", pid "+itoa(c.peer.PID)+"); pair again")
+	live := code != nil && !now.After(code.until)
+	matchesLive := live && hmac.Equal([]byte(got), []byte(strings.Join(code.words, " ")))
+	if !matchesLive {
+		// A code was claimed already. Another claim in its two minutes,
+		// or that code again later, means another program had it too: the
+		// pairing it made is not to be trusted.
+		var revoke []string
+		kept := st.spent[:0]
+		for _, sp := range st.spent {
+			switch {
+			case now.Sub(sp.spent) >= pairLeakAfter:
+			case now.Sub(sp.spent) < pairCodeLife || got == strings.Join(sp.words, " "):
+				revoke = append(revoke, sp.claimed)
+			default:
+				kept = append(kept, sp)
+			}
 		}
-		c.fail(req.ID, CodeForbidden, "the pairing code was already used; pair again in Den")
-		return
+		st.spent = kept
+		if len(revoke) > 0 {
+			st.mu.Unlock()
+			for _, id := range revoke {
+				s.Unpair(id, "the pairing code was used by another program ("+sanitize.Label(filepath.Base(c.peer.Exe), 40)+", pid "+itoa(c.peer.PID)+"); pair again")
+			}
+			c.fail(req.ID, CodeForbidden, ClaimSpent)
+			return
+		}
 	}
-	if code == nil || now.After(code.until) {
+	if !live {
 		st.mu.Unlock()
-		c.fail(req.ID, CodeForbidden, "no pairing code is waiting: run /api pair in Den")
+		c.fail(req.ID, CodeForbidden, ClaimNoCode)
 		return
 	}
-	if !hmac.Equal([]byte(got), []byte(strings.Join(code.words, " "))) {
+	if !matchesLive {
 		code.wrong++
 		ended := code.wrong >= pairWrongMax
 		if ended {
@@ -303,7 +356,7 @@ func (s *Server) claim(c *conn, req Request) {
 			s.note("Three wrong pairing codes: the attempt ended. /api pair starts another.")
 			s.act(Act{CodeGone: true})
 		}
-		c.fail(req.ID, CodeForbidden, "wrong code")
+		c.fail(req.ID, CodeForbidden, ClaimWrong)
 		return
 	}
 	id := randHex()
@@ -311,21 +364,24 @@ func (s *Server) claim(c *conn, req Request) {
 	rand.Read(key)
 	pr := &pairing{Pairing: Pairing{ID: id, Exe: c.peer.Exe, PID: c.peer.PID, Since: now}, key: key, confirm: make(chan bool, 1)}
 	code.spent, code.claimed = now, id
+	st.code, st.spent = nil, append(st.spent, code)
 	st.pairings[id] = pr
 	confirm := pr.confirm
 	st.mu.Unlock()
 	ask := PairAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
-	ask.Started, ask.Parent = procInfo(c.peer.PID)
+	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
 	s.act(Act{CodeGone: true})
 	if !s.act(Act{Pair: &ask}) {
 		s.Unpair(id, "")
-		c.fail(req.ID, CodeUnavailable, "Den is busy; run /api pair again")
+		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return
 	}
 	go func() {
-		ok := false
+		ok, why := false, ClaimTimeout
 		select {
-		case ok = <-confirm:
+		case answer, open := <-confirm:
+			// Closed: the pairing was revoked while it waited.
+			ok, why = answer, map[bool]string{true: ClaimDenied, false: ClaimRevoked}[open]
 		case <-time.After(pairConfirmLife):
 		case <-c.done:
 		}
@@ -338,7 +394,7 @@ func (s *Server) claim(c *conn, req Request) {
 		if !ok || pr2 == nil {
 			s.Unpair(id, "")
 			s.act(Act{PairDone: id})
-			c.fail(req.ID, CodeForbidden, "the pairing was not confirmed in Den")
+			c.fail(req.ID, CodeForbidden, why)
 			return
 		}
 		s.act(Act{PairDone: id, Paired: true})
@@ -346,19 +402,21 @@ func (s *Server) claim(c *conn, req Request) {
 	}()
 }
 
-// procInfo is when pid started and its parent's name, for the pairing
-// card; zero and "" when /proc cannot tell.
-func procInfo(pid int) (time.Time, string) {
+// procInfo is when pid started, its parent's name and its command line,
+// for the pairing card; zero and "" when /proc cannot tell.
+func procInfo(pid int) (time.Time, string, string) {
+	raw, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+	cmdline := sanitize.Label(strings.Join(strings.Fields(strings.ReplaceAll(string(raw), "\x00", " ")), " "), 200)
 	start, ppid, err := procStatFn(pid)
 	if err != nil {
-		return time.Time{}, ""
+		return time.Time{}, "", cmdline
 	}
 	var at time.Time
 	if boot, err := bootTime(); err == nil {
 		at = boot.Add(time.Duration(start) * time.Second / clockTicks)
 	}
 	comm, _ := os.ReadFile("/proc/" + strconv.Itoa(ppid) + "/comm")
-	return at, sanitize.Label(strings.TrimSpace(string(comm)), 40)
+	return at, sanitize.Label(strings.TrimSpace(string(comm)), 40), cmdline
 }
 
 // pairMAC is a proof over a connection's nonce, for one direction:
@@ -409,7 +467,7 @@ func (s *Server) auth(c *conn, req Request) {
 	pr := st.pairings[p.Pairing]
 	if pr == nil || !pr.Confirmed {
 		st.mu.Unlock()
-		c.fail(req.ID, CodeNotFound, "no such pairing: pair again")
+		c.fail(req.ID, CodeNotFound, ClaimNoPairing)
 		return
 	}
 	if pr.Exe != c.peer.Exe {
@@ -448,12 +506,15 @@ func (s *Server) auth(c *conn, req Request) {
 // SayText applies orch.say's rules: NFKC; lines broken at \n, \r\n, \r,
 // U+0085, U+2028 and U+2029; every C0 and C1 control removed; a line that
 // starts with "/", "!" or "#" once trimmed refuses the whole text, as does
-// a bidi or invisible character. The lines are joined with \n.
+// a bidi or invisible character; < and > become ‹ and ›, so the text cannot
+// open or close a block of Den's (an <agent_report>, a peer's envelope).
+// The lines are joined with \n.
 func SayText(text string) (string, error) {
 	if len(text) > MaxAskText {
 		return "", errors.New("the text is over 16 KiB")
 	}
 	t := norm.NFKC.String(text)
+	t = strings.NewReplacer("<", "‹", ">", "›").Replace(t)
 	t = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", " ", "\n", " ", "\n").Replace(t)
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {

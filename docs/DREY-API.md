@@ -222,17 +222,24 @@ Den: the app never approves, answers or starts anything.
   `/api pair` starts another.
 - A correct claim does not pair yet. Den puts a card in its inbox, "Pair
   <program> (pid N, started HH:MM) for dock control?", which also names the
-  program's path and its parent. Only your `Ctrl+Y` on it, once the whole
-  card has been shown, completes the pairing; `Ctrl+N`, two minutes without
-  an answer or the app's connection closing refuse it. Until then
-  `pair.claim` has no answer; afterwards it answers `{pairing, key,
-  control}` (`pairing` and `key` 32 lowercase hex digits each, `key` 128
-  random bits), or `forbidden` if it was not confirmed.
-- The code is single use. A second `pair.claim` within the code's two
-  minutes, or the spent code again later, means another program had the
-  code too (anything that can read Den's screen can): Den revokes the
-  pairing that the first claim made, closes its connections and notes "the
-  pairing code was used by another program (<program>, pid N); pair again".
+  program's path, its command line and its parent. Only your `Ctrl+Y` on
+  it, once the whole card has been shown, completes the pairing; `Ctrl+N`,
+  two minutes without an answer or the app's connection closing refuse it.
+  Until then `pair.claim` has no answer, for at most two minutes from the
+  claim; afterwards it answers `{pairing, key, control}` (`pairing` and
+  `key` 32 lowercase hex digits each, `key` 128 random bits).
+- A refused claim answers `forbidden` with one of these messages, exactly:
+  `no code waiting`, `wrong code`, `code spent` (this claim reused a code,
+  or came within two minutes of another claim), `revoked: the code was used
+  by another program too` (a waiting claim, answered at once when another
+  claim revoked it), `denied in Den` (`Ctrl+N`) or `not confirmed in time`.
+  `Den is busy` comes with `unavailable`.
+- The code is single use. A second `pair.claim` within a claimed code's two
+  minutes, or a claimed code again within ten minutes (even after another
+  `/api pair`), means another program had the code too (anything that can
+  read Den's screen can): Den revokes the pairing that code made, closes its
+  connections and notes "the pairing code was used by another program
+  (<program>, pid N); pair again".
 - Den and the app keep the key in memory only; when either restarts, pair
   again. A pairing is bound to the program Den read for the app (its
   executable): no other program can use it.
@@ -243,8 +250,9 @@ Den: the app never approves, answers or starts anything.
   and lower case, five or more of its eight words as whole words, in any
   order, while the code is live and for ten minutes after it was claimed),
   Den refuses the text with `bad_request`, cancels the code (it is no longer
-  secret) and notes "The pairing code was typed into a chat; pair again."
-  Den never keeps the refused text.
+  secret), revokes the pairing a claimed code made, and notes "The pairing
+  code was typed into a chat; pair again." Den never keeps the refused
+  text.
 
 ### Proving the key
 
@@ -281,8 +289,9 @@ afterwards, so no later message carries a MAC.
   `\r\n`, `\r`, U+0085, U+2028 and U+2029, removes every C0 and C1 control
   (tab, escape and bracketed-paste markers included), refuses a bidi or
   invisible character, and refuses the whole text with `bad_request` if any
-  line starts with `/`, `!` or `#` once leading white space is trimmed. The
-  lines are joined with `\n`.
+  line starts with `/`, `!` or `#` once leading white space is trimmed. `<`
+  and `>` become `‹` and `›`, so the text cannot open or close a block of
+  Den's. The lines are joined with `\n`.
 - The orchestrator reads the text after Den's fixed preface, at most 512
   bytes, which names the program and says that every tool in the turn waits
   for you in Den; then the roster, as for your own messages.
@@ -292,9 +301,14 @@ afterwards, so no later message carries a MAC.
   `{"type":"status","seq":n,"text":"…"}` (Den's fixed sentences),
   `{"type":"needs_approval","card":"…","item":"…"}` and `{"type":"done"}` or
   `{"type":"error","message":"…"}`. `card` is the inbox card's title, one
-  line of at most 200 characters written from what the orchestrator asked
-  for: show it in your own fixed words ("Needs approval in Den"), as text,
-  with "Open in Den" as the only action. `item` is the card's inbox id.
+  line of at most 200 runes, already sanitised by Den but written from what
+  the orchestrator asked for: show it as text under your own fixed words
+  ("Needs approval in Den"), with "Open in Den" as the only action. `item`
+  is the card's id in Den's own inbox ("i-" and a number), opaque to the
+  app: Den's cards are not served by `inbox.list` or `inbox.body`. `focus`
+  with `item:<id>` still answers `unavailable` in this release; a later one
+  brings Den forward on that card, under the same guard against your own
+  typing.
 - Closing the connection ends the turn: Den stops it, and the stream ends
   with `error "cancelled"` if it can still be written. A turn ends with an
   error after ten minutes, or two minutes without a word from the
@@ -348,6 +362,9 @@ The read-only `ask` lane is a separate process: an app turn never holds an
   the screen cannot pair in silence. On Hyprland, its `permission` rules
   for keyboard access and for screen capture (screencopy) can keep other
   programs from both.
+- A pairing is bound to the program Den read for the app. An app run by an
+  interpreter (`python3`, `node`) is that interpreter to Den, so the card
+  also shows its command line: read it before you pair.
 - Claude Code's inbox sockets accept messages from any process of your user
   without proof of who sent them; Den's `send_message` relies on that to
   deliver as SendMessage does. It is a property of Claude Code running as

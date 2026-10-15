@@ -455,3 +455,30 @@ func TestControlNeedsACheckedRelease(t *testing.T) {
 		return strings.Contains(string(raw), "hello")
 	}, nil)
 }
+
+// An agent's report that Den admits while an app's turn runs waits for
+// that turn's end, then goes as its own turn, composed once (the security
+// review's PoC: pair, orch.say, sendReport while the turn is open).
+func TestReportHeldBehindAnAppTurn(t *testing.T) {
+	l, dir, _ := controlModel(t)
+	c := pairApp(t, l)
+	c.call("orch.say", map[string]string{"text": "slow one SLOW-PLEASE"})
+	l.until("the app's turn to go out", func() bool { return l.m.ctl.sent }, nil)
+	l.run(l.m.sendReport(l.m.base[0], "REPORT-BODY tests pass"))
+	time.Sleep(200 * time.Millisecond)
+	turns := func() string { raw, _ := os.ReadFile(filepath.Join(dir, "turns")); return string(raw) }
+	if strings.Contains(turns(), "REPORT-BODY") {
+		t.Fatal("the report reached the orchestrator inside the app's turn")
+	}
+	if len(l.m.ctl.held) != 1 || len(l.m.orch.origins) != 1 || l.m.orch.origins[0] != originApp {
+		t.Fatalf("held %d, origins %v", len(l.m.ctl.held), l.m.orch.origins)
+	}
+	c.nc.Close() // the app's turn ends: Den stops it
+	l.until("the report to go out", func() bool { return strings.Contains(turns(), "REPORT-BODY") }, nil)
+	if n := strings.Count(turns(), "agent_report"); n != 2 { // its open and close tags, once
+		t.Errorf("the report was composed %d/2 times: %s", n, turns())
+	}
+	if l.m.ctl.turn != nil {
+		t.Error("the app's turn outlived its result")
+	}
+}

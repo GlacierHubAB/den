@@ -47,8 +47,12 @@ type controlState struct {
 	noControl string // why the orchestrator runs without control, "" when it does or need not
 }
 
-// heldTurn is a turn held while an app's turn runs.
-type heldTurn struct{ prompt, origin string }
+// heldTurn is a turn held while an app's turn runs; report is an agent's
+// report Den composed already, sent as it is.
+type heldTurn struct {
+	prompt, origin string
+	report         bool
+}
 
 // orchVersion is the Claude Code release a command runs; tests replace it.
 var orchVersion = orch.LaneVersion
@@ -123,6 +127,7 @@ func (m *Model) applyControlAct(act api.Act) tea.Cmd {
 			"The program below sent the pairing code you showed. Pair it only if you just typed the code into Drey's pairing window.",
 			"program: " + sanitize.Label(p.Exe, 160),
 			"pid " + strconv.Itoa(p.PID) + " · " + started + " · parent " + sanitize.Label(parent, 40),
+			"command line: " + sanitize.Label(p.Cmdline, 200),
 			"Paired, it may send turns to your orchestrator; every tool those turns want waits for you here. /api unpair revokes it.",
 		}
 		it := m.store.AddPair(title, body)
@@ -298,6 +303,17 @@ func (m *Model) holdTurn(prompt, origin string) bool {
 	return true
 }
 
+// holdReport holds an admitted agent's report while an app's turn runs,
+// like any other turn: the orchestrator answers it on its own turn, never
+// inside the app's.
+func (m *Model) holdReport(content string) bool {
+	if m.ctl.turn == nil || !m.ctl.sent {
+		return false
+	}
+	m.ctl.held = append(m.ctl.held, heldTurn{prompt: content, origin: originReport, report: true})
+	return true
+}
+
 // endAppTurn tells the app its turn ended (why, "" for done). Den still
 // waits for the turn's result before anything else is sent, if it was
 // sent.
@@ -335,6 +351,12 @@ func (m *Model) appTurnOver() tea.Cmd {
 	m.ctl.held = nil
 	var cmds []tea.Cmd
 	for _, h := range held {
+		if h.report {
+			if m.orch.proc != nil {
+				cmds = append(cmds, m.sendReportTurn(h.prompt))
+			}
+			continue // a report to a process that is gone is not owed
+		}
 		if m.orch.proc == nil {
 			m.orch.pending = append(m.orch.pending, h.prompt)
 			m.orch.pendingOrigins = append(m.orch.pendingOrigins, h.origin)
