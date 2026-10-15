@@ -68,7 +68,7 @@ func TestFilterDesktop(t *testing.T) {
 	"workspaces":[{"id":1,"name":"1"},{"id":9,"name":"9"}],
 	"windows":[{"address":"0xb","title":"Inbox"},{"address":"0xe","title":"note"},{"address":"0xs","title":"stranger"},{"address":"0xh","title":"~/secret"}],
 	"active_window":"0xe","cursor":[100,100],"layers":[{"namespace":"notifications"}]}`
-	out, err := FilterDesktop([]byte(raw), m, s)
+	out, err := FilterDesktop([]byte(raw), ScopeOf(m, s))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,13 +85,13 @@ func TestFilterDesktop(t *testing.T) {
 	}
 	// The focused window is the human's: not shown.
 	s.Active = "0xh"
-	out, _ = FilterDesktop([]byte(strings.Replace(raw, `"active_window":"0xe"`, `"active_window":"0xh"`, 1)), m, s)
+	out, _ = FilterDesktop([]byte(strings.Replace(raw, `"active_window":"0xe"`, `"active_window":"0xh"`, 1)), ScopeOf(m, s))
 	var back map[string]any
 	json.Unmarshal(out, &back)
 	if back["active_window"] != nil {
 		t.Errorf("active window %v shown", back["active_window"])
 	}
-	if _, err := FilterDesktop([]byte(`{"windows":"x"}`), m, s); err == nil {
+	if _, err := FilterDesktop([]byte(`{"windows":"x"}`), ScopeOf(m, s)); err == nil {
 		t.Error("a snapshot of another shape must fail")
 	}
 }

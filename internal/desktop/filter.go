@@ -8,13 +8,50 @@ import (
 	"unicode/utf8"
 )
 
+// Scope is what the proxy needs to filter a desktop snapshot, as Den sends
+// it with its allow: the mission workspace, the monitor showing it (zero
+// when hidden), the mission's windows, and the focused window when it is
+// one of them.
+type Scope struct {
+	Workspace int      `json:"workspace"`
+	Monitor   *Monitor `json:"monitor,omitempty"`
+	Windows   []string `json:"windows"`
+	Active    string   `json:"active,omitempty"`
+}
+
+// ScopeOf is the Scope of a mission on the desktop as it is.
+func ScopeOf(m Mission, s Snapshot) Scope {
+	sc := Scope{Workspace: m.Workspace, Windows: []string{}}
+	if mon, ok := s.Shown(m.Workspace); ok {
+		sc.Monitor = &mon
+	}
+	for _, w := range s.Windows {
+		if m.InScope(w) {
+			sc.Windows = append(sc.Windows, w.Address)
+			if w.Address == s.Active {
+				sc.Active = w.Address
+			}
+		}
+	}
+	return sc
+}
+
+func (sc Scope) has(addr string) bool {
+	for _, a := range sc.Windows {
+		if a == addr && addr != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // FilterDesktop rewrites hypruse's desktop snapshot so the agent sees only
 // its mission: the monitor showing the mission workspace, that workspace,
 // the mission's windows, the focused window only when it is one of them,
 // and the cursor only when it is on that monitor. Layers (bars,
 // notifications, launchers) are dropped. A snapshot that does not parse as
 // hypruse 0.12.1 writes it is an error: the proxy then denies.
-func FilterDesktop(raw []byte, m Mission, s Snapshot) ([]byte, error) {
+func FilterDesktop(raw []byte, sc Scope) ([]byte, error) {
 	var snap struct {
 		Monitors []struct {
 			Name string `json:"name"`
@@ -39,20 +76,19 @@ func FilterDesktop(raw []byte, m Mission, s Snapshot) ([]byte, error) {
 		len(rawMons) != len(snap.Monitors) || len(rawWins) != len(snap.Windows) {
 		return nil, errors.New("desktop: unexpected shape")
 	}
-	mon, shown := s.Shown(m.Workspace)
 	for i, mm := range snap.Monitors {
-		if shown && mm.Name == mon.Name {
+		if sc.Monitor != nil && mm.Name == sc.Monitor.Name {
 			monitors = append(monitors, rawMons[i])
 		}
 	}
 	for i, w := range snap.Windows {
-		if sw, ok := s.Window(w.Address); ok && m.InScope(sw) {
+		if sc.has(w.Address) {
 			windows = append(windows, rawWins[i])
 		}
 	}
 	var workspaces []map[string]any
 	for _, ws := range snap.Workspaces {
-		if fmt.Sprint(ws["id"]) == fmt.Sprint(m.Workspace) {
+		if fmt.Sprint(ws["id"]) == fmt.Sprint(sc.Workspace) {
 			workspaces = append(workspaces, ws)
 		}
 	}
@@ -62,15 +98,15 @@ func FilterDesktop(raw []byte, m Mission, s Snapshot) ([]byte, error) {
 		"windows":       nonNil(windows),
 		"active_window": nil,
 		"cursor":        nil,
-		"note":          fmt.Sprintf("Den shows only this mission: workspace %d and its windows.", m.Workspace),
+		"note":          fmt.Sprintf("Den shows only this mission: workspace %d and its windows.", sc.Workspace),
 	}
 	if workspaces == nil {
 		out["workspaces"] = []any{}
 	}
-	if aw, ok := s.Window(snap.Active); ok && m.InScope(aw) && snap.Active == s.Active {
+	if sc.Active != "" && snap.Active == sc.Active {
 		out["active_window"] = snap.Active
 	}
-	if len(snap.Cursor) == 2 && shown && mon.Contains(snap.Cursor[0], snap.Cursor[1]) {
+	if len(snap.Cursor) == 2 && sc.Monitor != nil && sc.Monitor.Contains(snap.Cursor[0], snap.Cursor[1]) {
 		out["cursor"] = snap.Cursor
 	}
 	return json.Marshal(out)
