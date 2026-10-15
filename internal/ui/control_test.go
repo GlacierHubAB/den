@@ -37,6 +37,13 @@ while IFS= read -r line; do
   printf '%s\n' "$line" | sed 's/}$/,"isReplay":true}/'
   case "$line" in
     *SLOW-PLEASE*) continue ;;
+    *MSG-PLEASE*)
+      echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u2","name":"mcp__den__send_message","input":{"to":"worker-otter","message":"run the tests"}}]}}'
+      echo '{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"mcp__den__send_message","tool_use_id":"u2","input":{"to":"worker-otter","message":"run the tests"}}}'
+      while IFS= read -r ans; do printf '%s\n' "$ans" >> "$D/answers"; case "$ans" in *'"r2"'*) break ;; esac; done
+      err=true; case "$ans" in *'"allow"'*) err=false ;; esac
+      echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u2","content":"sent","is_error":'$err'}]}}'
+      ;;
     *SPAWN-PLEASE*)
       echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u1","name":"mcp__den__spawn_agent","input":{"dir":"/tmp","brief":"x"}}]}}'
       echo '{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"mcp__den__spawn_agent","tool_use_id":"u1","input":{"dir":"/tmp","brief":"x"}}}'
