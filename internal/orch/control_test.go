@@ -290,3 +290,36 @@ func TestControlStandingAllowance(t *testing.T) {
 		t.Error("an allowance outlived the turn it was given for")
 	}
 }
+
+// Taking an allowance back reaches the turn that is running: its next
+// request asks.
+func TestControlStandingTakenBackMidTurn(t *testing.T) {
+	o, in := controlOrch(true)
+	o.SendApp("t-1", "hello", AllowRule(MissionTool, ""))
+	feed(o, canUse("r1", MissionTool, "u1"))
+	o.SetStanding()
+	feed(o, canUse("r2", MissionTool, "u2"))
+	if a := in.answers(); a["r1"] != "allow" || a["r2"] != "" {
+		t.Errorf("answers %v", a)
+	}
+}
+
+// Standing allowances answer at most StandingMax requests in one turn.
+func TestControlStandingCap(t *testing.T) {
+	o, in := controlOrch(true)
+	o.SendApp("t-1", "hello", AllowRule(MissionTool, ""))
+	var lines []string
+	for i := 0; i < StandingMax+2; i++ {
+		lines = append(lines, canUse("r"+string(rune('a'+i)), MissionTool, "u"+string(rune('a'+i))))
+	}
+	feed(o, lines...)
+	allowed := 0
+	for _, b := range in.answers() {
+		if b == "allow" {
+			allowed++
+		}
+	}
+	if allowed != StandingMax {
+		t.Errorf("%d answered by standing allowances, want %d", allowed, StandingMax)
+	}
+}
