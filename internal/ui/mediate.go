@@ -1,0 +1,211 @@
+package ui
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/peer"
+)
+
+// Den mediates every message to an agent that runs without asking (God
+// mode's bypass agents). Each such agent starts with a --settings file
+// Den writes in its own state (guardAgent): a UserPromptSubmit hook, `den
+// hook agent-inbound`, that passes a peer envelope only when Den says it
+// delivered exactly those bytes to that session (deliverTo records each
+// one), and blocks it otherwise, Den not answering included. The file
+// carries "disableAllHooks": false, which wins over the agent's user,
+// project and local settings: without it a project's own
+// .claude/settings.json could switch the hook off.
+//
+// A same-uid program can still change that file or the den binary; Den
+// hashes both at launch, before every delivery and on its tick, and a
+// change marks the agent unguarded: Den delivers nothing more to it.
+
+// deliveredFor is how long a recorded delivery may be matched by the hook.
+const deliveredFor = 2 * time.Minute
+
+// agentGuard is one guarded agent's --settings file and what it relies on.
+type agentGuard struct {
+	settings    string // the --settings file Den wrote
+	settingsSHA string
+	den         string // the den binary its hook runs
+	denSHA      string
+	unguarded   string // why Den no longer trusts the guard, "" while it holds
+}
+
+// mediationUI is the mediation's part of the model.
+type mediationUI struct {
+	sent   map[string]map[string]time.Time // session id → envelope hash → when Den delivered it
+	guards map[string]*agentGuard          // session id → its guard
+}
+
+// sendAs is peer.SendAs; tests replace it.
+var sendAs = peer.SendAs
+
+// mediationSettings is the --settings JSON for a guarded agent: the hook,
+// with den and its socket as absolute paths (never a PATH lookup or the
+// agent's environment), every peer message reaching the hook, and hooks
+// never switched off.
+func mediationSettings(den, sock string) ([]byte, error) {
+	if !filepath.IsAbs(den) || !filepath.IsAbs(sock) {
+		return nil, errors.New("den and its socket must be absolute paths")
+	}
+	cmd := shellQuote(den) + " hook agent-inbound --socket " + shellQuote(sock)
+	return json.Marshal(map[string]any{
+		"disableAllHooks":     false,
+		"crossSessionInbound": "accept",
+		"hooks": map[string]any{
+			"UserPromptSubmit": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": 10}}}},
+		},
+	})
+}
+
+// shellQuote quotes s for sh, as Claude Code runs a hook's command.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// fileSHA is the SHA-256 of a file's bytes, "" when it cannot be read.
+func fileSHA(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// guardAgent writes the --settings file for a new guarded agent, in Den's
+// own state (never the project, 0600 in a 0700 folder), and records what
+// it relies on. It returns the file's path for the agent's --settings.
+func (m *Model) guardAgent(sessionID, den, sock string) (string, error) {
+	raw, err := mediationSettings(den, sock)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(stateDir(), "mediation")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	name := sha256.Sum256([]byte(sessionID))
+	path := filepath.Join(dir, hex.EncodeToString(name[:16])+".json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return "", err
+	}
+	if m.med.guards == nil {
+		m.med.guards = map[string]*agentGuard{}
+	}
+	m.med.guards[sessionID] = &agentGuard{settings: path, settingsSHA: fileSHA(path), den: den, denSHA: fileSHA(den)}
+	return path, nil
+}
+
+// checkGuards hashes every guarded agent's --settings file and den binary
+// again; a change marks it unguarded, loudly, once.
+func (m *Model) checkGuards() {
+	for sid, g := range m.med.guards {
+		if g.unguarded != "" {
+			continue
+		}
+		switch {
+		case fileSHA(g.settings) != g.settingsSHA:
+			g.unguarded = "its Den settings file changed"
+		case fileSHA(g.den) != g.denSHA:
+			g.unguarded = "the den binary its hook runs changed"
+		default:
+			continue
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "UNGUARDED: " + m.nameFor(sid) + ": " + g.unguarded + ". Den delivers no more messages to it; close it, or restart it from Den.", at: time.Now()}))
+		m.flash, m.flashErr = "UNGUARDED: "+m.nameFor(sid)+" ("+g.unguarded+")", true
+	}
+}
+
+// unguarded is why Den no longer trusts a guarded session's guard, "" for
+// a session Den does not guard or whose guard holds.
+func (m Model) unguarded(sessionID string) string {
+	if g := m.med.guards[sessionID]; g != nil {
+		return g.unguarded
+	}
+	return ""
+}
+
+// deliverTo is every message Den sends to a session as another session
+// (send_message, relays): the one place Den calls peer.SendAs. On the
+// model's goroutine it checks the session's guard and records the
+// envelope's hash for its hook; the write itself, which may block, is the
+// send it returns, to run off that goroutine.
+func (m *Model) deliverTo(sessionID, sock, from, fromName, body string) (send func() error, err error) {
+	if m.med.guards[sessionID] != nil {
+		m.checkGuards()
+		if why := m.unguarded(sessionID); why != "" {
+			return nil, errors.New(m.nameFor(sessionID) + " is unguarded (" + why + "): Den delivers nothing more to it")
+		}
+	}
+	if m.med.sent == nil {
+		m.med.sent = map[string]map[string]time.Time{}
+	}
+	if m.med.sent[sessionID] == nil {
+		m.med.sent[sessionID] = map[string]time.Time{}
+	}
+	hash := sha256.Sum256([]byte(peer.Envelope(from, fromName, body)))
+	m.med.sent[sessionID][hex.EncodeToString(hash[:])] = time.Now()
+	return func() error { return sendAs(sock, from, fromName, body) }, nil
+}
+
+// handleAgentInbound answers a guarded agent's hook: may this envelope
+// reach it? Only from that session's own hook process, and only for one
+// Den delivered to it in the last deliveredFor, once.
+func (m *Model) handleAgentInbound(r *bridge.Request) tea.Cmd {
+	deny := func(why string) tea.Cmd {
+		r.Reply(bridge.Decision{Behavior: "deny", Message: why})
+		return nil
+	}
+	var in struct {
+		SHA256 string `json:"sha256"`
+	}
+	if json.Unmarshal(r.Envelope.Payload, &in) != nil || len(in.SHA256) != 64 {
+		return deny("den: unreadable request")
+	}
+	var a fleet.Agent
+	found := false
+	for _, x := range m.base {
+		if x.Host == "" && x.Session.SessionID == r.SessionID && x.Session.Alive {
+			a, found = x, true
+		}
+	}
+	if !found || !modeCaller(r.PeerPID, a) {
+		return deny("den: only the session's own hook may ask")
+	}
+	at, ok := m.med.sent[r.SessionID][in.SHA256]
+	if ok {
+		delete(m.med.sent[r.SessionID], in.SHA256)
+	}
+	if !ok || time.Since(at) > deliveredFor {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den blocked a message to " + a.Name + " that Den did not deliver.", at: time.Now()}))
+		return deny("Den did not deliver this message; it was blocked")
+	}
+	r.Reply(bridge.Decision{Behavior: "allow"})
+	return nil
+}

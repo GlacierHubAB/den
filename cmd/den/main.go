@@ -92,6 +92,10 @@ func main() {
 		if len(args) > 0 && args[0] == "desktop-gate" {
 			runDesktopGate(args[1:])
 		}
+		if len(args) > 0 && args[0] == "agent-inbound" {
+			runAgentInbound(args[1:])
+			return
+		}
 		if len(args) > 0 && args[0] == "orchestrator-inbound" {
 			runInbound(args[1:])
 		}

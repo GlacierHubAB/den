@@ -214,6 +214,13 @@ type DesktopInput struct {
 	ChildStart string `json:"child_start,omitempty"`
 }
 
+// AgentInboundEvent is not a hook event either: a guarded agent's own
+// UserPromptSubmit hook (`den hook agent-inbound`) sends it for a prompt
+// that holds a peer envelope, with the SHA-256 of the prompt as Payload
+// {"sha256"}. Den allows it only if Den delivered exactly that to the
+// session; anything else, and no answer, blocks it.
+const AgentInboundEvent = "AgentInbound"
+
 // GodOffEvent is not a hook event: `den god off` sends it. It only
 // lowers, so anyone may ask; nothing on den.sock turns God mode on.
 const GodOffEvent = "GodOff"

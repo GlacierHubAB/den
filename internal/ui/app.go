@@ -119,6 +119,8 @@ type Model struct {
 	mode modeState
 	// god is God mode (god.go): in memory only, off at every start.
 	god godUI
+	// med is the mediation of messages to guarded agents (mediate.go).
+	med mediationUI
 	// fromDock is set while a console's command runs, and dockFrom names
 	// that console; what the dock may not do is decided on fromDock, never
 	// on the name, which may be empty.
@@ -537,6 +539,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
+		m.checkGuards()
 		m.refresh()
 		m.restartForGuidance()
 		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
@@ -769,6 +772,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.GodOffEvent {
 		return m.handleGodOff(r)
+	}
+	if r.Event == bridge.AgentInboundEvent {
+		return m.handleAgentInbound(r)
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
