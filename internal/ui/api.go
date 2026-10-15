@@ -283,6 +283,8 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 	switch sub {
 	case "pair", "unpair":
 		return m.controlCommand(sub)
+	case "disallow", "control":
+		return m.standingCommand(sub, args[1:])
 	case "", "status", "list":
 		m.logEntry(m.addChat(chatEntry{role: "note", text: m.apiReport(), at: time.Now()}))
 		return m.say("den-api.sock: see the note in the orchestrator chat (^O).", false)
@@ -331,7 +333,7 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 		m.api.warned = false
 		return m.say("Apps may connect again; the read-only lane may try to start again.", false)
 	}
-	return m.say("/api [on|off|disconnect|resume|pair|unpair]", true)
+	return m.say("/api [on|off|disconnect|resume|pair|unpair|disallow|control]", true)
 }
 
 // decideAPIOn is the human's ^Y or ^N on /api on, after the whole question
@@ -412,7 +414,10 @@ func (m Model) apiReport() string {
 	}
 	for _, p := range m.api.srv.Pairings() {
 		state := "waiting for your ^Y"
-		if p.Confirmed {
+		switch {
+		case p.Confirmed && p.Off:
+			state = "control off (/api control on)"
+		case p.Confirmed:
 			state = "control on"
 		}
 		used := "never"
@@ -421,6 +426,7 @@ func (m Model) apiReport() string {
 		}
 		b.WriteString("\npaired: " + sanitize.Label(p.Exe, 120) + " · pid " + strconv.Itoa(p.PID) + " · since " + p.Since.Format("15:04") + " · last used " + used + " · " + state + " · /api unpair revokes")
 	}
+	b.WriteString(m.standingReport())
 	if m.ctl.noControl != "" {
 		b.WriteString("\ncontrol: " + m.ctl.noControl)
 	}

@@ -661,7 +661,11 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 	case it.Answerable() && it.Kind == inbox.Pair:
 		out = append(out, key("^Y", "pair it")+"  "+key("^N", "refuse"))
 	case it.Answerable() && it.Kind == inbox.ControlAsk:
-		out = append(out, key("^Y", "allow it once")+"  "+key("^N", "deny"))
+		line := key("^Y", "allow it once") + "  " + key("^N", "deny")
+		if _, ok := m.ctl.always[it]; ok {
+			line += "  " + key("/always", "and from now on (read the card)")
+		}
+		out = append(out, line)
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":

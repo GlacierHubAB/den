@@ -67,8 +67,29 @@ type control struct {
 	uses    map[string]string
 	allowed map[string]bool
 	// standing are the human's standing allowances for the app whose turn
-	// is open (AllowRule keys), set with SendApp.
-	standing map[string]bool
+	// is open (AllowRule keys), set with SendApp and SetStanding;
+	// standingUsed counts the requests they answered in that turn.
+	standing     map[string]bool
+	standingUsed int
+}
+
+// StandingMax is how many requests standing allowances answer in one app
+// turn; after that every request asks.
+const StandingMax = 5
+
+// SetStanding replaces the open app turn's standing allowances at once:
+// when the human takes one back, or control off, the turn running is
+// asked again from its next request.
+func (o *Orchestrator) SetStanding(rules ...string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.ctl == nil || !o.ctl.app.open {
+		return
+	}
+	o.ctl.standing = map[string]bool{}
+	for _, r := range rules {
+		o.ctl.standing[r] = true
+	}
 }
 
 // AllowRule is the key of a standing allowance for a paired app: a tool
@@ -175,7 +196,7 @@ func (o *Orchestrator) SendApp(id, content string, standing ...string) error {
 	}
 	h := peermsg.Hash(content)
 	o.ctl.app = appTurn{open: true, id: id, hash: h}
-	o.ctl.uses, o.ctl.allowed, o.ctl.standing = map[string]string{}, map[string]bool{}, map[string]bool{}
+	o.ctl.uses, o.ctl.allowed, o.ctl.standing, o.ctl.standingUsed = map[string]string{}, map[string]bool{}, map[string]bool{}, 0
 	for _, r := range standing {
 		o.ctl.standing[r] = true
 	}
@@ -265,7 +286,8 @@ func (o *Orchestrator) canUseTool(id, tool, toolUseID string, input json.RawMess
 		return
 	}
 	turn := c.app.id
-	if Allowable(tool) && c.standing[RuleOf(tool, input)] {
+	if Allowable(tool) && c.standing[RuleOf(tool, input)] && c.standingUsed < StandingMax {
+		c.standingUsed++
 		if toolUseID != "" {
 			c.allowed[toolUseID] = true
 		}

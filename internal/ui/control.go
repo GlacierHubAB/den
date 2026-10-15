@@ -45,6 +45,13 @@ type controlState struct {
 	last      time.Time // when the orchestrator last said anything in it
 	held      []heldTurn
 	noControl string // why the orchestrator runs without control, "" when it does or need not
+	// modes is each local session's last permission mode, from its hooks;
+	// always the standing allowance /always on a tool card would give;
+	// expect the session a standing send_message in this turn may reach,
+	// by peer name.
+	modes  map[string]string
+	always map[*inbox.Item]api.Rule
+	expect map[string]string
 }
 
 // heldTurn is a turn held while an app's turn runs; report is an agent's
@@ -145,6 +152,7 @@ func (m *Model) applyControlAct(act api.Act) tea.Cmd {
 	}
 	if act.Paired {
 		m.restartForControl()
+		m.pushStanding() // a revoked pairing's allowances end now
 	}
 	if y := act.Say; y != nil {
 		return m.startAppTurn(y)
@@ -271,7 +279,8 @@ func (m *Model) tryAppTurn() tea.Cmd {
 	}
 	prompt := sayPreface(y.Exe) + "\n\n" + y.Text
 	content := orch.ComposeWith(m.roster(), m.templateInfos(), prompt)
-	if err := m.orch.proc.SendApp(y.Turn, content); err != nil {
+	m.ctl.expect = nil
+	if err := m.orch.proc.SendApp(y.Turn, content, m.standingFor(y.Pairing)...); err != nil {
 		m.endAppTurn("Den could not send it: " + sanitize.Label(err.Error(), 120))
 		return nil
 	}
@@ -346,6 +355,7 @@ func (m *Model) appTurnOver() tea.Cmd {
 			m.store.Settle(it, false, "the app's turn ended")
 		}
 		delete(m.ctl.asks, it)
+		delete(m.ctl.always, it)
 	}
 	held := m.ctl.held
 	m.ctl.held = nil
@@ -381,11 +391,16 @@ func (m *Model) controlEvent(ev orch.Event) (tea.Cmd, bool) {
 	case orch.PermissionAsk:
 		m.ctl.last = time.Now()
 		return m.askControlTool(ev), true
+	case orch.PermissionStanding:
+		m.ctl.last = time.Now()
+		m.noteStanding(ev)
+		return nil, true
 	case orch.PermissionExpired:
 		for it, id := range m.ctl.asks {
 			if id == ev.RequestID {
 				m.store.Settle(it, false, "no answer in a minute; denied")
 				delete(m.ctl.asks, it)
+				delete(m.ctl.always, it)
 			}
 		}
 		m.refresh()
@@ -432,8 +447,19 @@ func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
 		body = append(body, sanitize.Line(l))
 	}
 	body = append(body, "──── end ────")
+	rule, why := m.standingOffer(ev)
+	if orch.Allowable(ev.Tool) {
+		body = append(body, m.standingLines(who, rule, why)...)
+	}
 	it := m.store.AddControlAsk(title, body)
 	m.ctl.asks[it] = ev.RequestID
+	if why == "" && m.ctl.turn != nil {
+		if m.ctl.always == nil {
+			m.ctl.always = map[*inbox.Item]api.Rule{}
+		}
+		rule.From = title
+		m.ctl.always[it] = rule
+	}
 	if y := m.ctl.turn; y != nil && !m.ctl.ended {
 		y.NeedsApproval(title, it.ID)
 	}
@@ -450,15 +476,29 @@ func (m Model) decideControlTool(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		m.refresh()
 		return m.say("That request is stale; nothing ran.", true)
 	}
-	if verb == "always" {
-		return m.say("An app's request is answered once: ^Y allows it, ^N denies it.", true)
+	rule, offered := m.ctl.always[it]
+	if verb == "always" && !offered {
+		return m.say("No standing allowance for this one (the card says why): ^Y allows it once, ^N denies it.", true)
 	}
 	delete(m.ctl.asks, it)
-	allow := verb == "allow"
+	delete(m.ctl.always, it)
+	allow := verb == "allow" || verb == "always"
 	if !m.orch.proc.AnswerPermission(id, allow, "the human declined in Den") {
 		m.store.Settle(it, false, "already answered; nothing more ran")
 		m.refresh()
 		return m.say("That request was already answered.", true)
+	}
+	if verb == "always" && m.ctl.turn != nil && m.api.srv != nil {
+		if err := m.api.srv.AddRule(m.ctl.turn.Pairing, rule); err != nil {
+			m.store.Settle(it, true, "allowed once; "+err.Error())
+			m.refresh()
+			return m.say("Allowed once; "+err.Error()+".", true)
+		}
+		m.pushStanding()
+		m.store.Settle(it, true, "allowed, and from now on for this app")
+		m.refresh()
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "den-api.sock: a standing allowance for " + appName(m.ctl.turn.Exe) + ": " + firstLineOf(rule.From) + " · /api lists it, /api disallow takes it back", at: time.Now()}))
+		return m.say("Allowed, and from now on for this app.", false)
 	}
 	m.store.Settle(it, allow, map[bool]string{true: "allowed", false: "denied"}[allow])
 	m.refresh()

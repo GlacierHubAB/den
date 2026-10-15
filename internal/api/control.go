@@ -75,6 +75,7 @@ type Pairing struct {
 	Since     time.Time
 	LastUsed  time.Time
 	Confirmed bool
+	Off       bool // control off for it (/api control off)
 }
 
 type pairing struct {
@@ -83,6 +84,128 @@ type pairing struct {
 	confirm chan bool // the human's answer, while unconfirmed
 	fails   []time.Time
 	says    []time.Time
+	rules   []Rule
+}
+
+// Rule is a standing allowance the human gave a pairing with /always on a
+// card: one Den tool the orchestrator may use in that app's turns without
+// asking, and for send_message one session, bound by its id, pid and start
+// so that another session that takes its name is asked about again. It
+// lives as long as the pairing.
+type Rule struct {
+	Tool      string
+	Peer      string // send_message: the peer name (orch.PeerName)
+	SessionID string
+	PID       int
+	Start     uint64
+	At        time.Time
+	From      string // the card it was granted on
+}
+
+// RulesMax is the most standing allowances a pairing holds.
+const RulesMax = 16
+
+// ErrRules is AddRule's refusal at RulesMax.
+var ErrRules = errors.New("this app has 16 standing allowances; /api disallow removes some")
+
+// AddRule gives a confirmed pairing a standing allowance; one already there
+// is not added twice.
+func (s *Server) AddRule(pairing string, r Rule) error {
+	s.ctl.mu.Lock()
+	defer s.ctl.mu.Unlock()
+	pr := s.ctl.pairings[pairing]
+	if pr == nil || !pr.Confirmed {
+		return errors.New("the pairing is gone")
+	}
+	for _, o := range pr.rules {
+		if o.Tool == r.Tool && o.Peer == r.Peer && o.SessionID == r.SessionID {
+			return nil
+		}
+	}
+	if len(pr.rules) >= RulesMax {
+		return ErrRules
+	}
+	pr.rules = append(pr.rules, r)
+	return nil
+}
+
+// Rules are a pairing's standing allowances, in the order given; none
+// while control is off for it.
+func (s *Server) Rules(pairing string) []Rule {
+	s.ctl.mu.Lock()
+	defer s.ctl.mu.Unlock()
+	pr := s.ctl.pairings[pairing]
+	if pr == nil || !pr.Confirmed || pr.Off {
+		return nil
+	}
+	return append([]Rule(nil), pr.rules...)
+}
+
+// AllRules lists every pairing's allowances, numbered from 1 in Pairings'
+// order, for /api and /api disallow.
+func (s *Server) AllRules() []NumberedRule {
+	var out []NumberedRule
+	for _, p := range s.Pairings() {
+		s.ctl.mu.Lock()
+		pr := s.ctl.pairings[p.ID]
+		var rules []Rule
+		if pr != nil {
+			rules = append(rules, pr.rules...)
+		}
+		s.ctl.mu.Unlock()
+		for _, r := range rules {
+			out = append(out, NumberedRule{N: len(out) + 1, Pairing: p.ID, Exe: p.Exe, Rule: r})
+		}
+	}
+	return out
+}
+
+// NumberedRule is one allowance as /api lists it.
+type NumberedRule struct {
+	N       int
+	Pairing string
+	Exe     string
+	Rule
+}
+
+// Disallow removes allowance n (AllRules' numbering), or every one with
+// n 0; false when there is no such allowance.
+func (s *Server) Disallow(n int) bool {
+	all := s.AllRules()
+	s.ctl.mu.Lock()
+	defer s.ctl.mu.Unlock()
+	if n == 0 {
+		for _, pr := range s.ctl.pairings {
+			pr.rules = nil
+		}
+		return len(all) > 0
+	}
+	for _, r := range all {
+		if r.N != n {
+			continue
+		}
+		pr := s.ctl.pairings[r.Pairing]
+		if pr == nil {
+			return false
+		}
+		for i, o := range pr.rules {
+			if o == r.Rule {
+				pr.rules = append(pr.rules[:i], pr.rules[i+1:]...)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// SetControl turns control on or off for every pairing: off, orch.say is
+// refused and no allowance applies, until it is on again.
+func (s *Server) SetControl(on bool) {
+	s.ctl.mu.Lock()
+	defer s.ctl.mu.Unlock()
+	for _, pr := range s.ctl.pairings {
+		pr.Off = !on
+	}
 }
 
 type pairCode struct {
@@ -542,9 +665,10 @@ func SayText(text string) (string, error) {
 // Say is an app's turn for the orchestrator, handed to Den (Act.Say); Den
 // streams its chunks back through it, and exactly one Done or Fail ends it.
 type Say struct {
-	Turn string
-	Text string // after SayText
-	Exe  string // the program, as Den read it
+	Turn    string
+	Text    string // after SayText
+	Exe     string // the program, as Den read it
+	Pairing string // the pairing the connection proved
 
 	c      *conn
 	s      *Server
@@ -644,6 +768,11 @@ func (s *Server) say(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "pair.auth first")
 		return
 	}
+	if pr.Off {
+		st.mu.Unlock()
+		c.fail(req.ID, CodeForbidden, "control is off for this pairing in Den")
+		return
+	}
 	st.mu.Unlock()
 	if s.leaked(p.Text) {
 		c.fail(req.ID, CodeBadRequest, "the text holds the pairing code; Den cancelled it")
@@ -673,7 +802,7 @@ func (s *Server) say(c *conn, req Request) {
 		return
 	}
 	pr.says, pr.LastUsed = append(recent, now), now
-	y := &Say{Turn: "t-" + randHex(), Text: text, Exe: c.peer.Exe, c: c, s: s, cancel: make(chan struct{}), fin: make(chan struct{})}
+	y := &Say{Turn: "t-" + randHex(), Text: text, Exe: c.peer.Exe, Pairing: paired, c: c, s: s, cancel: make(chan struct{}), fin: make(chan struct{})}
 	st.turn = y
 	st.mu.Unlock()
 	c.mu.Lock()

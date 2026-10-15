@@ -47,6 +47,15 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: why})
 		return nil
 	}
+	if sid, ok := m.ctl.expect[orch.PeerName(in.To)]; ok {
+		// Let through by a standing allowance: only to the session it was
+		// given for.
+		delete(m.ctl.expect, orch.PeerName(in.To))
+		if to.Session.SessionID != sid {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: "the standing allowance was for another session of that name"})
+			return nil
+		}
+	}
 	from, name, sock, peerName := "uds:"+self.Session.Socket, self.Session.Name, to.Session.Socket, to.Session.Name
 	body := peermsg.Defuse(in.Message)
 	return func() tea.Msg {
