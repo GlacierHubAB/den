@@ -80,20 +80,20 @@ func TestConsoleRestoredAcrossARestart(t *testing.T) {
 }
 
 // Every way the record can be wrong at start drops the console, loudly.
-func TestConsoleNotRestoredWhenTheRecordIsWrong(t *testing.T) {
+func TestConsoleBadRecord(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		spoil func(store string, rec *storedConsoles, priv *ed25519.PrivateKey)
 		note  string
 	}{
-		{"no clean exit", func(store string, _ *storedConsoles, _ *ed25519.PrivateKey) { os.Remove(store + ".clean") }, "did not exit cleanly"},
-		{"two consoles", func(_ string, rec *storedConsoles, _ *ed25519.PrivateKey) {
+		{"nomark", func(store string, _ *storedConsoles, _ *ed25519.PrivateKey) { os.Remove(store + ".clean") }, "did not exit cleanly"},
+		{"two", func(_ string, rec *storedConsoles, _ *ed25519.PrivateKey) {
 			rec.Consoles = append(rec.Consoles, rec.Consoles[0])
 		}, "more than one console"},
-		{"changed while stopped", func(_ string, rec *storedConsoles, _ *ed25519.PrivateKey) {
+		{"edited", func(_ string, rec *storedConsoles, _ *ed25519.PrivateKey) {
 			rec.Consoles[0].Key = strings.Repeat("ab", 32)
 		}, "changed while Den was stopped"},
-		{"another key", func(_ string, _ *storedConsoles, priv *ed25519.PrivateKey) {
+		{"key", func(_ string, _ *storedConsoles, priv *ed25519.PrivateKey) {
 			_, *priv, _ = ed25519.GenerateKey(rand.Reader)
 		}, "key changed"},
 	} {
@@ -104,7 +104,7 @@ func TestConsoleNotRestoredWhenTheRecordIsWrong(t *testing.T) {
 			json.Unmarshal(raw, &rec)
 			before := len(raw)
 			c.spoil(store, &rec, &priv)
-			if b, _ := json.Marshal(rec); len(b) != before || c.name == "changed while stopped" {
+			if b, _ := json.Marshal(rec); len(b) != before || c.name == "edited" {
 				os.WriteFile(store, b, 0o600)
 			}
 			h := storeHarness(t, store, priv)
@@ -118,12 +118,12 @@ func TestConsoleNotRestoredWhenTheRecordIsWrong(t *testing.T) {
 
 // A console from another boot, or whose process started again, is not
 // restored, and a record that does not parse is not either.
-func TestConsoleNotRestoredForAnotherProcess(t *testing.T) {
+func TestConsoleOtherProc(t *testing.T) {
 	for name, spoil := range map[string]func(*storedConsole){
-		"another boot": func(c *storedConsole) {
+		"boot": func(c *storedConsole) {
 			c.Identity = strings.Replace(c.Identity, ":"+bootID()+":", ":00000000-0000-0000-0000-000000000000:", 1)
 		},
-		"started again": func(c *storedConsole) {
+		"restart": func(c *storedConsole) {
 			c.Start++
 			c.Identity = c.Identity[:strings.LastIndex(c.Identity, ":")+1] + itoa(int(c.Start))
 		},
