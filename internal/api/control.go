@@ -821,6 +821,12 @@ func (y *Say) Fail(why string) { y.end(why) }
 // Cancelled is closed when the app's connection goes.
 func (y *Say) Cancelled() <-chan struct{} { return y.cancel }
 
+// end ends the turn once. The turn is freed (Den's one app turn, the
+// connection's count) before its last chunk goes out, so an app that says
+// again the moment it reads done or error is not refused as busy. Once
+// ended is set under mu no other chunk of the turn is pushed, so the last
+// one still comes last; it is pushed outside mu, as mu is never held with
+// ctl.mu or the connection's.
 func (y *Say) end(why string) {
 	y.mu.Lock()
 	if y.ended {
@@ -829,11 +835,6 @@ func (y *Say) end(why string) {
 	}
 	y.ended = true
 	close(y.fin)
-	if why == "" {
-		y.push(Chunk{Type: "done"})
-	} else {
-		y.push(Chunk{Type: "error", Message: why})
-	}
 	y.mu.Unlock()
 	y.s.ctl.mu.Lock()
 	if y.s.ctl.turn == y {
@@ -843,6 +844,11 @@ func (y *Say) end(why string) {
 	y.c.mu.Lock()
 	y.c.asks--
 	y.c.mu.Unlock()
+	if why == "" {
+		y.push(Chunk{Type: "done"})
+	} else {
+		y.push(Chunk{Type: "error", Message: why})
+	}
 }
 
 // say is orch.say: from a connection that passed pair.auth, or one proved
