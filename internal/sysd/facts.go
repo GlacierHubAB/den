@@ -103,14 +103,15 @@ func denied(name string) bool {
 
 // The checks' hooks: what the running system says, replaced in tests.
 var (
-	procStat    = readProcStat
-	procCgroup  = readProcCgroup
-	procTracer  = readProcTracer
-	procExe     = func(pid int) (os.FileInfo, error) { return os.Stat("/proc/" + strconv.Itoa(pid) + "/exe") }
-	procCapEff  = readProcCapEff
-	ptraceScope = func() (string, error) { return readTrim("/proc/sys/kernel/yama/ptrace_scope") }
-	bootID      = func() (string, error) { return readTrim("/proc/sys/kernel/random/boot_id") }
-	bootTime    = readBootTime
+	procStat       = readProcStat
+	procCgroup     = readProcCgroup
+	procTracer     = readProcTracer
+	procExe        = func(pid int) (os.FileInfo, error) { return os.Stat("/proc/" + strconv.Itoa(pid) + "/exe") }
+	procCapEff     = readProcCapEff
+	procInitUserNS = readProcInitUserNS
+	ptraceScope    = func() (string, error) { return readTrim("/proc/sys/kernel/yama/ptrace_scope") }
+	bootID         = func() (string, error) { return readTrim("/proc/sys/kernel/random/boot_id") }
+	bootTime       = readBootTime
 	// rootUID is whom system files must belong to; a test may make its
 	// own files count as the system's.
 	rootUID = 0
@@ -362,15 +363,27 @@ func checkManager(p Peer) (ProcID, error) {
 	fi, err := procExe(p.PID)
 	switch {
 	case errors.Is(err, fs.ErrPermission):
+		// Exactly that capability, in the machine's own user namespace: a
+		// process of the user's in a namespace of its own shows every
+		// capability there.
+		const unsure = "Den cannot tell this is your systemd user manager"
 		mgr, err1 := procCapEff(p.PID)
 		self, err2 := procCapEff(os.Getpid())
-		if err1 != nil || err2 != nil || mgr&capWakeAlarm == 0 || self&capWakeAlarm != 0 {
-			return id, errors.New("Den cannot tell this is your systemd user manager")
+		initNS, err3 := procInitUserNS(p.PID)
+		switch {
+		case err1 != nil || err2 != nil || err3 != nil:
+			return id, errors.New(unsure + ": its capabilities or user namespace do not read")
+		case !initNS:
+			return id, errors.New(unsure + ": it runs in a user namespace of its own")
+		case mgr != capWakeAlarm:
+			return id, fmt.Errorf("%s: its capabilities are %#x, not CAP_WAKE_ALARM (%#x) alone", unsure, mgr, uint64(capWakeAlarm))
+		case self&capWakeAlarm != 0:
+			return id, errors.New(unsure + ": Den holds CAP_WAKE_ALARM itself")
 		}
 		// Still the process Den read at first: a pid reused meanwhile
 		// lends it no capability.
 		if _, again, err := procStat(p.PID); err != nil || again != start {
-			return id, errors.New("Den cannot tell this is your systemd user manager")
+			return id, errors.New(unsure + ": it is no longer the process Den read")
 		}
 	case err != nil:
 		return id, fmt.Errorf("the manager's program does not read: %v", err)
@@ -785,6 +798,16 @@ func readProcCapEff(pid int) (uint64, error) {
 		}
 	}
 	return 0, errors.New("no CapEff")
+}
+
+// readProcInitUserNS reports whether a process is in the machine's own
+// user namespace: its uid_map maps every uid to itself.
+func readProcInitUserNS(pid int) (bool, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/uid_map")
+	if err != nil {
+		return false, err
+	}
+	return strings.Join(strings.Fields(string(b)), " ") == "0 0 4294967295", nil
 }
 
 // readProcTracer is a process's TracerPid.

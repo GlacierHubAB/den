@@ -53,7 +53,8 @@ func newFixture(t *testing.T) *fixture {
 		4242: "/user.slice/user-" + uid + ".slice/user@" + uid + ".service/app.slice/" + testUnit,
 	}
 	starts := map[int]uint64{self: 777, 4242: startTicks}
-	saved := []any{procStat, procCgroup, procTracer, procExe, ptraceScope, bootID, bootTime, rootUID, systemPathFn, clkTck, gtkSystemDirs, procCapEff}
+	saved := []any{procStat, procCgroup, procTracer, procExe, ptraceScope, bootID, bootTime, rootUID, systemPathFn, clkTck, gtkSystemDirs, procCapEff, procInitUserNS}
+	procInitUserNS = func(int) (bool, error) { return true, nil }
 	procCapEff = func(int) (uint64, error) { return 0, nil }
 	gtkSystemDirs = []string{filepath.Join(dir, "sysgtk")}
 	clkTck = 100
@@ -88,6 +89,7 @@ func newFixture(t *testing.T) *fixture {
 		clkTck = saved[9].(float64)
 		gtkSystemDirs = saved[10].([]string)
 		procCapEff = saved[11].(func(int) (uint64, error))
+		procInitUserNS = saved[12].(func(int) (bool, error))
 	})
 
 	cmd := func(path string) []any {
@@ -271,6 +273,8 @@ func TestCheckManagerImageOrCapability(t *testing.T) {
 		{"refused, the manager holds the capability", denied, capWakeAlarm, 0, nil, ""},
 		{"refused, the manager restarts as its capabilities are read", denied, capWakeAlarm, 0, nil, "cannot tell"},
 		{"refused, other capabilities only", denied, 1 << 3, 0, nil, "cannot tell"},
+		{"refused, more capabilities than that one", denied, capWakeAlarm | 1<<21, 0, nil, "0x800200000"},
+		{"refused, in a user namespace of its own", denied, capWakeAlarm, 0, nil, "user namespace of its own"},
 		{"refused, Den holds the capability too", denied, capWakeAlarm, capWakeAlarm, nil, "cannot tell"},
 		{"refused, capabilities do not read", denied, 0, 0, errors.New("no status"), "cannot tell"},
 		{"another error", func(int) (os.FileInfo, error) { return nil, fs.ErrNotExist }, 0, 0, nil, "does not read"},
@@ -292,6 +296,9 @@ func TestCheckManagerImageOrCapability(t *testing.T) {
 					return c.mgrCap, nil
 				}
 				return c.ownCap, nil
+			}
+			if c.name == "refused, in a user namespace of its own" {
+				procInitUserNS = func(int) (bool, error) { return false, nil }
 			}
 			if c.name == "refused, the manager restarts as its capabilities are read" {
 				// Another process takes the pid once the capabilities
@@ -400,6 +407,19 @@ func TestCheckBinary(t *testing.T) {
 	os.Symlink(filepath.Join(dir, "b2"), filepath.Join(dir, "l"))
 	if _, err := checkBinary([]string{filepath.Join(dir, "l")}, 0); err == nil {
 		t.Error("a symlink passed")
+	}
+}
+
+// The machine's own user namespace maps every uid to itself; this test's
+// process is in it, unless the run is itself in a namespace.
+func TestReadInitUserNS(t *testing.T) {
+	in, err := readProcInitUserNS(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile("/proc/self/uid_map")
+	if want := strings.Join(strings.Fields(string(raw)), " ") == "0 0 4294967295"; in != want {
+		t.Errorf("in the machine's own namespace: %v, uid_map %q", in, raw)
 	}
 }
 

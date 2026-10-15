@@ -483,7 +483,8 @@ runs it; you still match what the dock shows with Den's card.
   - the manager is yours, a child of init, in its own scope, and running
     a root-owned systemd; where the kernel keeps the manager's program
     from you (a manager started with `CAP_WAKE_ALARM`, as systemd's own
-    `user@.service` does), it must hold that capability and Den must not;
+    `user@.service` does), it must hold exactly that capability, in the
+    machine's own user namespace, and Den must not hold it;
   - the asking process is the unit's main process, the manager's child,
     in the unit's cgroup, started when the manager says, and not traced
     (and `kernel.yama.ptrace_scope` is at least 1);
