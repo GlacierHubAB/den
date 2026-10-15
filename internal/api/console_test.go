@@ -262,7 +262,10 @@ func TestConsoleRefusesOtherPrograms(t *testing.T) {
 		if l, _, _, _ := d.auth(c, p); code(l) != CodeForbidden || l.Error.Message != "another program holds this console" {
 			t.Fatalf("another program %d: %+v", i, l)
 		}
-		ctlAct(t, h.s, func(a Act) bool { return a.ConsoleIntruder != nil })
+		if i == 0 {
+			// One card per program in the strike window.
+			ctlAct(t, h.s, func(a Act) bool { return a.ConsoleIntruder != nil })
+		}
 		if i < consoleStrikesMax-1 {
 			var ev ConsoleEvent
 			if e := mine.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "refused" || ev.Program != "other" {
@@ -272,6 +275,17 @@ func TestConsoleRefusesOtherPrograms(t *testing.T) {
 	}
 	if _, ok := h.s.CurrentConsole(); ok {
 		t.Error("still paired after three other programs")
+	}
+	for {
+		select {
+		case a := <-h.s.Acts():
+			if a.ConsoleIntruder != nil {
+				t.Fatal("a second intruder card for the same program")
+			}
+			continue
+		default:
+		}
+		break
 	}
 }
 

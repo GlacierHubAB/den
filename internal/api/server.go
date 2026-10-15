@@ -43,6 +43,9 @@ type Options struct {
 	// ConsoleKey is Den's Ed25519 key for console proofs (console.go);
 	// nil leaves console pairing off.
 	ConsoleKey ed25519.PrivateKey
+	// ConsoleStore is where Den keeps its side of the console across
+	// restarts (console_store.go); "" keeps it in memory only.
+	ConsoleStore string
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -61,13 +64,17 @@ type Server struct {
 	opts Options
 	// con is the console (console.go); ckey Den's half of its proofs, nil
 	// when console pairing is off.
-	con   consoleState
-	ckey  *consoleKey
-	bp    atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
-	view  atomic.Pointer[View]
-	chat  *chatStore
-	lane  *lane
-	notes chan string
+	con  consoleState
+	ckey *consoleKey
+	// stopWatch ends the console record's watch; closeOnce makes Close's
+	// clean-exit mark once.
+	stopWatch chan struct{}
+	closeOnce sync.Once
+	bp        atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
+	view      atomic.Pointer[View]
+	chat      *chatStore
+	lane      *lane
+	notes     chan string
 
 	paused atomic.Bool // /api off or /api disconnect: answer unavailable
 	// draining counts refused connections still reading out what their
@@ -118,6 +125,13 @@ func Listen(o Options) (*Server, error) {
 		s.ckey = newConsoleKey(o.ConsoleKey)
 	}
 	s.grants, s.acts, s.lastConn, s.ctl = newGrants(), make(chan Act, 64), map[string]time.Time{}, newControl()
+	s.stopWatch = make(chan struct{})
+	if s.ckey != nil {
+		if why := s.loadConsole(); why != "" {
+			s.note(why)
+		}
+		go s.watchConsoleRecord(s.stopWatch)
+	}
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	s.lane.changed = s.asksChanged
@@ -370,6 +384,10 @@ func (s *Server) Healthy() bool { return s.bp.Load().ours() }
 // Close stops the server: connections, the lane, and the path if it is
 // still Den's.
 func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		close(s.stopWatch)
+		s.writeCleanMark()
+	})
 	s.lane.close()
 	s.bp.Load().close()
 	s.mu.Lock()

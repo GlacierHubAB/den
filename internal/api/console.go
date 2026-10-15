@@ -120,6 +120,10 @@ type consoleState struct {
 	pending     *consoleRec // a claim waiting for the human
 	cooldown    time.Time
 	unpairedAll time.Time
+	// recordHash is the record's hash as Den last wrote it; intruders
+	// when each identity last raised an intruder card.
+	recordHash string
+	intruders  map[string]time.Time
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches
@@ -196,6 +200,25 @@ func macHex(key []byte, msg string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+// codeBytes is the code as the MACs use it: its words joined by single
+// spaces, built into one buffer that zero can clear. Zeroing is best
+// effort: Go may have copied the words elsewhere, and the code is spent by
+// the time it matters.
+func codeBytes(words []string) []byte {
+	n := len(words)
+	for _, w := range words {
+		n += len(w)
+	}
+	b := make([]byte, 0, n)
+	for i, w := range words {
+		if i > 0 {
+			b = append(b, ' ')
+		}
+		b = append(b, w...)
+	}
+	return b
+}
+
 func zero(b []byte) {
 	for i := range b {
 		b[i] = 0
@@ -265,6 +288,9 @@ func (s *Server) UnpairConsole(why string) int {
 	s.con.mu.Lock()
 	rec, pending := s.con.cur, s.con.pending
 	s.con.cur, s.con.pending = nil, nil
+	if rec != nil {
+		s.saveConsoleLocked()
+	}
 	if pending != nil && pending.confirm != nil {
 		close(pending.confirm)
 		pending.confirm = nil
@@ -396,7 +422,8 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		return
 	}
 	st.code = nil // one attempt per code, right or wrong
-	text := []byte(strings.Join(code.words, " "))
+	text := codeBytes(code.words)
+	code.words = nil
 	st.mu.Unlock()
 	s.act(Act{ConsoleCodeGone: true})
 	claimKey := codeKey(text, salt, consoleClaimInfo)
@@ -471,6 +498,7 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		var old *consoleRec
 		if ok && mine {
 			old, st.cur = st.cur, rec
+			s.saveConsoleLocked()
 		} else if why == ClaimDenied && mine {
 			st.cooldown = time.Now().Add(consoleCooldown)
 		}
@@ -532,6 +560,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		c.fail(req.ID, CodeBadRequest, "console.challenge first")
 		return
 	}
+	s.checkConsoleRecord()
 	identity, known := consoleIdentity(c.peer)
 	now := time.Now()
 	st := &s.con
@@ -544,8 +573,22 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 	}
 	if !known || identity != rec.identity {
 		unpair := rec.strike(now)
+		key := identity
+		if !known {
+			key = c.peer.Exe
+		}
+		if st.intruders == nil {
+			st.intruders = map[string]time.Time{}
+		}
+		card := now.Sub(st.intruders[key]) >= consoleStrikeWindow
+		if card {
+			st.intruders[key] = now
+		}
 		st.mu.Unlock()
-		s.act(Act{ConsoleIntruder: &ConsoleIntruder{Exe: c.peer.Exe, PID: c.peer.PID}})
+		if card {
+			// One card per program in the strike window, across pairings.
+			s.act(Act{ConsoleIntruder: &ConsoleIntruder{Exe: c.peer.Exe, PID: c.peer.PID}})
+		}
 		for _, cc := range s.consoleConns(rec.ID) {
 			if cc.subscribed(EventConsole) {
 				cc.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "refused", PID: c.peer.PID, StartTicks: c.peer.Start, Program: sanitize.Label(ExeLabel(c.peer.Exe), 40)}}, false)

@@ -1,0 +1,183 @@
+package api
+
+import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// storeHarness is a console harness that keeps its console in store.
+func storeHarness(t *testing.T, store string, priv ed25519.PrivateKey) *harness {
+	t.Helper()
+	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore = priv, store })
+}
+
+// noteWith waits for a note of Den's that contains want.
+func noteWith(t *testing.T, s *Server, want string) {
+	t.Helper()
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case n := <-s.Notes():
+			if strings.Contains(n, want) {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no note with %q", want)
+		}
+	}
+}
+
+// pairedStore pairs this test process as the console of a server keeping
+// it in a fresh store, and leaves a clean-exit mark as Den's exit would.
+func pairedStore(t *testing.T) (store string, priv ed25519.PrivateKey, d *dock, p consolePaired) {
+	t.Helper()
+	store = filepath.Join(t.TempDir(), "consoles.json")
+	_, priv, _ = ed25519.GenerateKey(rand.Reader)
+	h := storeHarness(t, store, priv)
+	d = newDock(t, h)
+	p = d.pair(h.s.StartConsoleCode())
+	// What a clean exit does first: the watch stops and the mark is
+	// written, so this server never touches the record again.
+	h.s.closeOnce.Do(func() {
+		close(h.s.stopWatch)
+		h.s.writeCleanMark()
+	})
+	return store, priv, d, p
+}
+
+// A console survives Den's restart: it is announced, and the console's
+// first subscribed connection hears it was restored.
+func TestConsoleRestoredAcrossARestart(t *testing.T) {
+	store, priv, d, p := pairedStore(t)
+	h := storeHarness(t, store, priv)
+	if cur, ok := h.s.CurrentConsole(); !ok || cur.ID != p.ID {
+		t.Fatalf("not restored: %+v", cur)
+	}
+	noteWith(t, h.s, "console restored from before Den's restart")
+	d.h = h
+	c := h.dial()
+	c.hello()
+	if l, _, _, _ := d.auth(c, p); !l.OK {
+		t.Fatalf("auth after the restart: %+v", l.Error)
+	}
+	c.call("console.events", nil)
+	var ev ConsoleEvent
+	if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "restored" {
+		t.Errorf("first event %+v", e)
+	}
+	c2 := h.dial()
+	c2.hello()
+	time.Sleep(challengeEvery)
+	d.auth(c2, p)
+	c2.call("console.events", nil)
+	if e := c2.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "connected" {
+		t.Errorf("a later connection hears %+v", e)
+	}
+}
+
+// Every way the record can be wrong at start drops the console, loudly.
+func TestConsoleNotRestoredWhenTheRecordIsWrong(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		spoil func(store string, rec *storedConsoles, priv *ed25519.PrivateKey)
+		note  string
+	}{
+		{"no clean exit", func(store string, _ *storedConsoles, _ *ed25519.PrivateKey) { os.Remove(store + ".clean") }, "did not exit cleanly"},
+		{"two consoles", func(_ string, rec *storedConsoles, _ *ed25519.PrivateKey) {
+			rec.Consoles = append(rec.Consoles, rec.Consoles[0])
+		}, "more than one console"},
+		{"changed while stopped", func(_ string, rec *storedConsoles, _ *ed25519.PrivateKey) {
+			rec.Consoles[0].Key = strings.Repeat("ab", 32)
+		}, "changed while Den was stopped"},
+		{"another key", func(_ string, _ *storedConsoles, priv *ed25519.PrivateKey) {
+			_, *priv, _ = ed25519.GenerateKey(rand.Reader)
+		}, "key changed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store, priv, _, _ := pairedStore(t)
+			raw, _ := os.ReadFile(store)
+			var rec storedConsoles
+			json.Unmarshal(raw, &rec)
+			before := len(raw)
+			c.spoil(store, &rec, &priv)
+			if b, _ := json.Marshal(rec); len(b) != before || c.name == "changed while stopped" {
+				os.WriteFile(store, b, 0o600)
+			}
+			h := storeHarness(t, store, priv)
+			if _, ok := h.s.CurrentConsole(); ok {
+				t.Error("restored")
+			}
+			noteWith(t, h.s, c.note)
+		})
+	}
+}
+
+// A console from another boot, or whose process started again, is not
+// restored, and a record that does not parse is not either.
+func TestConsoleNotRestoredForAnotherProcess(t *testing.T) {
+	for name, spoil := range map[string]func(*storedConsole){
+		"another boot": func(c *storedConsole) {
+			c.Identity = strings.Replace(c.Identity, ":"+bootID()+":", ":00000000-0000-0000-0000-000000000000:", 1)
+		},
+		"started again": func(c *storedConsole) {
+			c.Start++
+			c.Identity = c.Identity[:strings.LastIndex(c.Identity, ":")+1] + itoa(int(c.Start))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store, priv, _, _ := pairedStore(t)
+			raw, _ := os.ReadFile(store)
+			var rec storedConsoles
+			json.Unmarshal(raw, &rec)
+			spoil(&rec.Consoles[0])
+			b, _ := json.Marshal(rec)
+			os.WriteFile(store, b, 0o600)
+			// The mark as a clean exit would have written it for this record:
+			// the check that catches this is the process's, not the mark's.
+			mark, _ := json.Marshal(cleanMark{Record: sha256Hex(b), Key: sha256Hex(priv), Consoles: 1})
+			os.WriteFile(store+".clean", mark, 0o600)
+			h := storeHarness(t, store, priv)
+			if _, ok := h.s.CurrentConsole(); ok {
+				t.Error("restored")
+			}
+		})
+	}
+}
+
+// While Den runs, a change to the record it did not make unpairs the
+// console.
+func TestConsoleRecordTamperUnpairs(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "consoles.json")
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	h := storeHarness(t, store, priv)
+	d := newDock(t, h)
+	d.pair(h.s.StartConsoleCode())
+	os.WriteFile(store, []byte(`{"consoles":[]}`), 0o600)
+	h.s.checkConsoleRecord()
+	if _, ok := h.s.CurrentConsole(); ok {
+		t.Error("still paired after the record changed")
+	}
+	noteWith(t, h.s, "changed by another program")
+}
+
+func TestIdentityParts(t *testing.T) {
+	boot, pid, start, ok := identityParts(unreadablePrefix + "b-1:42:7")
+	if !ok || boot != "b-1" || pid != 42 || start != 7 {
+		t.Errorf("unreadable: %q %d %d %v", boot, pid, start, ok)
+	}
+	boot, pid, start, ok = identityParts("exe:2f78:b-2:43:8")
+	if !ok || boot != "b-2" || pid != 43 || start != 8 {
+		t.Errorf("exe: %q %d %d %v", boot, pid, start, ok)
+	}
+	for _, bad := range []string{"", "exe:2f78:b:x:8", "unreadable:b:1", "other:a:b:c:d", "exe::b:1:2:3"} {
+		if _, _, _, ok := identityParts(bad); ok {
+			t.Errorf("%q parsed", bad)
+		}
+	}
+}
