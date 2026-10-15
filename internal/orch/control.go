@@ -228,7 +228,7 @@ func (o *Orchestrator) AnswerPermission(id string, allow bool, why string) bool 
 }
 
 func (o *Orchestrator) answerLocked(id string, allow bool, why string) bool {
-	if o.ctl == nil {
+	if o.ctl == nil || o.exited {
 		return false
 	}
 	p := o.ctl.perms[id]

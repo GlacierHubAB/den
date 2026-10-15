@@ -2,6 +2,7 @@ package orch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -321,5 +322,39 @@ func TestControlStandingCap(t *testing.T) {
 	}
 	if allowed != StandingMax {
 		t.Errorf("%d answered by standing allowances, want %d", allowed, StandingMax)
+	}
+}
+
+// A request still waiting for the human when the process dies goes with
+// it: its deadline never fires into the closed events channel (a send on
+// it would crash Den), and a late answer finds nothing.
+func TestControlPendingPermissionOutlivesNoProcess(t *testing.T) {
+	defer func(d time.Duration) { PermissionDeadline = d }(PermissionDeadline)
+	PermissionDeadline = 100 * time.Millisecond
+	o, _ := fakeWith(t, canUse("r1", SpawnAgentTool, "u1"))
+	o.Control = true
+	proc, err := Start(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := proc.SendApp("t-1", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	asked := false
+	for e := range proc.Events() {
+		if e.Kind == PermissionAsk {
+			asked = true
+			break
+		}
+	}
+	if !asked {
+		t.Fatal("no PermissionAsk")
+	}
+	proc.Kill()
+	for range proc.Events() {
+	}
+	time.Sleep(3 * PermissionDeadline) // past the deadline: no panic
+	if proc.AnswerPermission("r1", true, "") {
+		t.Error("a request answered after its process was gone")
 	}
 }

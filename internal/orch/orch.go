@@ -202,6 +202,13 @@ type Orchestrator struct {
 	settings string
 	// ctl is control's state, nil without Options.Control.
 	ctl *control
+	// exited is set, under mu, once the process has been reaped: nothing
+	// is answered after that. emitMu and eventsClosed keep emit from
+	// sending on events once it is closed, whatever goroutine calls it (a
+	// permission's deadline timer, say).
+	exited       bool
+	emitMu       sync.Mutex
+	eventsClosed bool
 
 	SessionID string
 	Model     string
@@ -455,8 +462,24 @@ func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string, ctl *con
 		if len(tail) > 0 {
 			msg += " · " + strings.Join(tail, " | ")
 		}
+		orc.mu.Lock()
+		orc.exited = true
+		if c := orc.ctl; c != nil {
+			// A request the human has not answered goes with the process:
+			// its deadline must not fire into a closed channel.
+			for id, p := range c.perms {
+				if p.timer != nil {
+					p.timer.Stop()
+				}
+				delete(c.perms, id)
+			}
+		}
+		orc.mu.Unlock()
 		orc.emitMust(Event{Kind: Exited, Text: msg, Stderr: first})
+		orc.emitMu.Lock()
+		orc.eventsClosed = true
 		close(orc.events)
+		orc.emitMu.Unlock()
 		close(orc.done)
 	}()
 	return orc, nil
@@ -631,6 +654,11 @@ func (o *Orchestrator) Close() {
 // its ESC in the first, so the rest shows as plain text.
 func (o *Orchestrator) emit(e Event) {
 	e.Text, e.Tool = sanitize.Text(e.Text), sanitize.Line(e.Tool)
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
+	if o.eventsClosed {
+		return // the process is gone: nothing more to say
+	}
 	select {
 	case o.events <- e:
 	default:
@@ -642,21 +670,37 @@ func (o *Orchestrator) emit(e Event) {
 // so a consumer that stopped reading never holds Den.
 func (o *Orchestrator) emitMust(e Event) {
 	e.Text, e.Tool = sanitize.Text(e.Text), sanitize.Line(e.Tool)
-	select {
-	case o.events <- e: // room: delivered even after Close
-		return
-	default:
-	}
 	var ctxDone <-chan struct{}
 	if o.ctx != nil {
 		ctxDone = o.ctx.Done()
 	}
-	select {
-	case o.events <- e:
-	case <-o.quit:
-	case <-ctxDone:
+	// Each try sends, or sees events closed, under emitMu; the wait for
+	// room is outside it, so a full buffer holds up no other emit.
+	for {
+		o.emitMu.Lock()
+		if o.eventsClosed {
+			o.emitMu.Unlock()
+			return
+		}
+		select {
+		case o.events <- e: // room: delivered even after Close
+			o.emitMu.Unlock()
+			return
+		default:
+		}
+		o.emitMu.Unlock()
+		select {
+		case <-o.quit:
+			return
+		case <-ctxDone:
+			return
+		case <-time.After(emitRetry):
+		}
 	}
 }
+
+// emitRetry is how often emitMust looks for room in a full buffer.
+const emitRetry = 10 * time.Millisecond
 
 // stream-json shapes Den reads. Unknown lines are ignored.
 type line struct {
