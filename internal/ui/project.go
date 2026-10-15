@@ -13,14 +13,18 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
+	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/transcript"
 	"github.com/GlacierHubAB/den/internal/worktree"
 )
 
-// A project is a repository agents work in: found through the files their
-// transcripts say they edited, and through session folders that are
-// checkouts. The Overview and Review views show one project at a time.
+// A project is a repository agents work in. Each agent is under one
+// project: that of the live mission it serves, else of the mission Den
+// last put it on, else the checkout its folder is in. Projects with live
+// missions and pinned ones are listed with nobody on them too. The
+// Overview and Review views show one project at a time.
 type project struct {
 	Root   string
 	Name   string // repository name
@@ -35,7 +39,10 @@ type projectState struct {
 	pinned []string // roots listed whether or not anyone works there
 	loose  int      // agents in no repository
 	path   string   // where the pick is remembered
-	loaded bool
+	// byProject shows the Fleet grouped by project (/fleet project),
+	// remembered with the pick.
+	byProject bool
+	loaded    bool
 }
 
 var (
@@ -87,10 +94,12 @@ func (m *Model) loadProjectPick() {
 	var v struct {
 		Project string   `json:"project"`
 		Pinned  []string `json:"pinned"`
+		Fleet   string   `json:"fleet"`
 	}
 	if json.Unmarshal(raw, &v) == nil {
 		m.proj.cur = v.Project
 		m.proj.pinned = v.Pinned
+		m.proj.byProject = v.Fleet == "project"
 	}
 }
 
@@ -98,7 +107,11 @@ func (m *Model) saveProjectPick() {
 	if m.proj.path == "" {
 		return
 	}
-	raw, _ := json.Marshal(map[string]any{"project": m.proj.cur, "pinned": m.proj.pinned})
+	v := map[string]any{"project": m.proj.cur, "pinned": m.proj.pinned}
+	if m.proj.byProject {
+		v["fleet"] = "project"
+	}
+	raw, _ := json.Marshal(v)
 	if os.MkdirAll(filepath.Dir(m.proj.path), 0o755) == nil {
 		_ = os.WriteFile(m.proj.path, raw, 0o644)
 	}
@@ -165,6 +178,7 @@ const recentEdits = 30 * time.Minute
 
 // rootsOf lists the repositories an agent works in: the one its folder is
 // in, the one it edited last, and any it edited in the last recentEdits.
+// The close guard checks them all; the project list uses one (agentRoot).
 func rootsOf(a fleet.Agent) []string {
 	return rootsAt(a, time.Now())
 }
@@ -214,6 +228,7 @@ func (m *Model) buildProjects() {
 	byRoot := map[string]*project{}
 	m.proj.loose = 0
 	byCard := m.cardMissions()
+	assigned := m.assignments()
 	for _, a := range m.agents {
 		if a.Status == fleet.Gone {
 			continue
@@ -234,20 +249,13 @@ func (m *Model) buildProjects() {
 			p.Agents = append(p.Agents, a.Session.SessionID)
 			continue
 		}
-		roots := rootsOf(a)
-		// An agent serving a live mission works for that mission's project
-		// too, even from a checkout of its own (a scratch clone, a landing
-		// copy) that is listed apart.
-		if root := m.missionProject(a.Session.SessionID, byCard); root != "" && !slices.Contains(roots, root) {
-			roots = append(roots, root)
-		}
-		if len(roots) == 0 {
+		root := m.agentRoot(a, byCard, assigned)
+		if root == "" {
 			m.proj.loose++
+			continue
 		}
-		for _, r := range roots {
-			p := addProject(byRoot, r)
-			p.Agents = append(p.Agents, a.Session.SessionID)
-		}
+		p := addProject(byRoot, root)
+		p.Agents = append(p.Agents, a.Session.SessionID)
 	}
 	// Projects with missions stay listed while the missions live, and
 	// pinned ones always, even with nobody on them right now.
@@ -282,6 +290,11 @@ func (m *Model) buildProjects() {
 			}
 		}
 	}
+	// A folder's name, a branch and a remote repository's name are
+	// anyone's to choose: shown, they are one clean line.
+	for i := range list {
+		list[i].Name, list[i].Branch = sanitize.Line(list[i].Name), sanitize.Line(list[i].Branch)
+	}
 	sort.SliceStable(list, func(i, j int) bool {
 		if len(list[i].Agents) != len(list[j].Agents) {
 			return len(list[i].Agents) > len(list[j].Agents)
@@ -297,21 +310,83 @@ func (m *Model) buildProjects() {
 	}
 }
 
-// missionProject is the local project of the live mission the agent
-// serves, "" for none.
-func (m Model) missionProject(id string, byCard map[string]string) string {
+// held is one mission a session was put on, from the mission's record.
+type held struct {
+	ms    *mission.Mission
+	since time.Time
+	open  bool
+}
+
+// assignments indexes the missions' records by the local session they put
+// on a mission. Only missions in a project on this machine count.
+func (m Model) assignments() map[string][]held {
+	out := map[string][]held{}
 	if m.missions == nil {
-		return ""
+		return out
 	}
-	mid := m.missionVia(id, byCard)
-	if mid == "" {
-		return ""
+	for _, ms := range m.missions.All() {
+		if ms.Project == "" || projectHost(ms.Project) != "" || ms.State == mission.Dropped {
+			continue
+		}
+		for _, as := range ms.Assigned {
+			if as.Host == "" {
+				out[as.Session] = append(out[as.Session], held{ms, as.Since, as.Open()})
+			}
+		}
 	}
-	ms := m.missions.Get(mid)
-	if ms == nil || !ms.Live() || ms.Project == "" || projectHost(ms.Project) != "" {
-		return ""
+	return out
+}
+
+// agentRoot is the one project a local agent shows under: that of the live
+// mission it serves that started last for it (Den put it on the mission,
+// or it works for an agent Den did); else that of the mission Den last put
+// it on; else the checkout its folder is in. "" when it is in none.
+func (m Model) agentRoot(a fleet.Agent, byCard map[string]string, assigned map[string][]held) string {
+	sid := a.Session.SessionID
+	var best *mission.Mission
+	var bestAt time.Time
+	consider := func(ms *mission.Mission, at time.Time) {
+		if ms == nil || !ms.Live() || ms.Project == "" || projectHost(ms.Project) != "" {
+			return
+		}
+		if best == nil || at.After(bestAt) {
+			best, bestAt = ms, at
+		}
 	}
-	return ms.Project
+	mine := map[*mission.Mission]bool{}
+	for _, h := range assigned[sid] {
+		if h.open {
+			consider(h.ms, h.since)
+			mine[h.ms] = true
+		}
+	}
+	// Through a card or the agent that directs it, when Den's record has
+	// no open assignment of its own: since the mission's current run.
+	if m.missions != nil {
+		if ms := m.missions.Get(m.missionVia(sid, byCard)); ms != nil && !mine[ms] {
+			at := ms.Created
+			if r := ms.CurrentRun(); r != nil {
+				at = r.StartedAt
+			}
+			consider(ms, at)
+		}
+	}
+	if best != nil {
+		return best.Project
+	}
+	var last held
+	for _, h := range assigned[sid] {
+		if last.ms == nil || h.since.After(last.since) {
+			last = h
+		}
+	}
+	if last.ms != nil {
+		return last.ms.Project
+	}
+	if a.HasGit {
+		return gitRootOf(a.Session.CWD)
+	}
+	return ""
 }
 
 func (m Model) projectByRoot(root string) (project, bool) {

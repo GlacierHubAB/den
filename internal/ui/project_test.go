@@ -13,6 +13,32 @@ import (
 	"github.com/GlacierHubAB/den/internal/mission"
 )
 
+// A folder's name is anyone's to choose: the project strip and the
+// Overview's titles show it as one clean line.
+func TestProjectNamesAreShownClean(t *testing.T) {
+	m := missionModel()
+	m.proj.path = filepath.Join(t.TempDir(), "overview.json")
+	m.width, m.height, m.tab = 120, 30, tabOverview
+	dir := filepath.Join(t.TempDir(), "evil\x1b[2J\x1b]0;owned\x07name")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p, err := m.pinProject(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(p.Name, "\x1b\x07") || !strings.Contains(p.Name, "name") {
+		t.Errorf("listed as %q", p.Name)
+	}
+	frame := m.View().Content
+	if strings.Contains(frame, "\x1b[2J") || strings.Contains(frame, "\x1b]0;") || strings.Contains(frame, "\x07") {
+		t.Errorf("the frame carries the folder's escapes: %q", frame)
+	}
+	if !strings.Contains(frame, "name") {
+		t.Error("the project is not shown")
+	}
+}
+
 func TestPinnedProjectIsListedWithNobodyOnIt(t *testing.T) {
 	m := missionModel()
 	m.proj.path = filepath.Join(t.TempDir(), "overview.json")
@@ -76,8 +102,8 @@ func TestOldSideEditDoesNotKeepAgentOnProject(t *testing.T) {
 }
 
 // An agent working in a checkout of its own (a scratch clone outside the
-// usual projects) still shows on the project of the mission it serves, as
-// well as on its own checkout's.
+// usual projects) shows on the project of the live mission it serves, and
+// there only; with its mission done, on its own checkout's.
 func TestMissionAgentInOwnCheckoutShowsOnMissionProject(t *testing.T) {
 	home, clone := t.TempDir(), t.TempDir()
 	for _, r := range []string{home, clone} {
@@ -109,7 +135,7 @@ func TestMissionAgentInOwnCheckoutShowsOnMissionProject(t *testing.T) {
 	if got := on(home); !slices.Contains(got, "quiet-panda") || slices.Contains(got, "tiny-moth") {
 		t.Errorf("mission project %s lists %v, want quiet-panda (live mission) and not tiny-moth (done)", home, got)
 	}
-	if got := on(clone); !slices.Contains(got, "quiet-panda") || !slices.Contains(got, "tiny-moth") {
-		t.Errorf("own checkout %s lists %v, want both", clone, got)
+	if got := on(clone); slices.Contains(got, "quiet-panda") || !slices.Contains(got, "tiny-moth") {
+		t.Errorf("own checkout %s lists %v, want tiny-moth only", clone, got)
 	}
 }

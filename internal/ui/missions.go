@@ -47,7 +47,7 @@ func (m *Model) proposeMission(text string) tea.Cmd {
 		return tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
 	}
 	now := time.Now()
-	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, Text: text, State: mission.Proposed, Created: now, Updated: now}
+	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: text, State: mission.Proposed, Created: now, Updated: now}
 	m.missions.Save(ms)
 	m.ov.proposal = ms.ID
 	prompt := fmt.Sprintf("Propose a mission for project %s (repository %s, branch %s). The human's words:\n%s", p.Name, p.Root, p.Branch, text)
@@ -232,6 +232,7 @@ func (m *Model) attachCardTo(d *dispatch, missionID string) {
 	}
 	r.Cards = append(r.Cards, d.ID)
 	ms.Updated = time.Now()
+	m.assign(ms, d, ms.Updated)
 	m.missions.Save(ms)
 }
 
