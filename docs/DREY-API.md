@@ -583,7 +583,10 @@ runs it; you still match what the dock shows with Den's card.
   (`1a2b 3c4d 5e6f 7a8b`).
 - `console.request {public_key, pages_sha256?}`, on any connection, at most
   one a second on each. Den reads the unit from the manager's own socket
-  (`$XDG_RUNTIME_DIR/systemd/private`) and checks that:
+  (`$XDG_RUNTIME_DIR/systemd/private`); a manager slow to answer, as just
+  after a restart, is read again for up to ten seconds, so allow Den
+  that long before it answers, here and in `console.reconnect`. It checks
+  that:
   - the manager is yours, a child of init, in its own scope, and running
     a root-owned systemd; where the kernel keeps the manager's program
     from you (a manager started with `CAP_WAKE_ALARM`, as systemd's own
