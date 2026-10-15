@@ -675,3 +675,42 @@ func TestSettleHidesANewWindowOnlyInUserView(t *testing.T) {
 		t.Errorf("came back to %q", r.wm.where("0xa2"))
 	}
 }
+
+// TestARecordedOriginIsOnlyWhatDenWrites: a record that was edited to say
+// something else is not handed to the window manager; the window goes to
+// where the human is.
+func TestARecordedOriginIsOnlyWhatDenWrites(t *testing.T) {
+	for _, w := range []string{"", "0", "-1", "3; exec x", `2" }) os.exit(`, "special:", "special:A b", "name:foo", "1234567890"} {
+		if validWorkspace(w) {
+			t.Errorf("%q is taken for an origin", w)
+		}
+	}
+	for _, w := range []string{"1", "12", "special:other", "special:den-2"} {
+		if !validWorkspace(w) {
+			t.Errorf("%q is refused", w)
+		}
+	}
+	r := newRig(t, 1)
+	r.must(User)
+	raw, err := os.ReadFile(r.sw.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := strings.Replace(string(raw), `"from":"2"`, `"from":"2; exec x"`, 1)
+	if edited == string(raw) {
+		t.Fatalf("record: %s", raw)
+	}
+	if err := os.WriteFile(r.sw.StatePath, []byte(edited), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.wm.active = hypr.Workspace{ID: 6}
+	r.must(Agent)
+	for _, m := range r.wm.moves() {
+		if strings.Contains(m, "exec") {
+			t.Errorf("an edited origin reached the window manager: %s", m)
+		}
+	}
+	if got := r.wm.where("0xa1"); got != "6" {
+		t.Errorf("the window is on %q, want the active workspace 6", got)
+	}
+}

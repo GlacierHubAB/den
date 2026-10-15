@@ -461,6 +461,9 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 			moves = append(moves, move{it, Workspace})
 		case rq.Want == Agent && onSpecial(c):
 			to := st.originOf(it)
+			if !validWorkspace(to) {
+				to = ""
+			}
 			if to == "" {
 				if ws, ok := sw.Ops.Active(ctx); ok {
 					to = strconv.Itoa(ws.ID)
@@ -587,6 +590,32 @@ func origin(c hypr.Client) string {
 		return c.Workspace.Name
 	}
 	return ""
+}
+
+// validWorkspace says whether a recorded origin is what Den writes: a
+// workspace number, or the name of a special workspace. The record is a
+// file; what it says is not passed to the window manager otherwise.
+func validWorkspace(w string) bool {
+	if rest, ok := strings.CutPrefix(w, "special:"); ok {
+		if rest == "" || len(rest) > 32 {
+			return false
+		}
+		for _, r := range rest {
+			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
+				return false
+			}
+		}
+		return true
+	}
+	if w == "" || len(w) > 9 {
+		return false
+	}
+	for _, r := range w {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return w != "0"
 }
 
 func windowsOf(all []hypr.Client, marker string) []hypr.Client {
