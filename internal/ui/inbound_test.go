@@ -343,7 +343,7 @@ func TestBackstopNeverResumes(t *testing.T) {
 	m, _ := inboundModel(t)
 	m.orch.proc.SessionID = "killed-session"
 	m.orch.resume = "killed-session"
-	cmd := m.handleOrchEvent(orch.Event{Kind: orch.Backstop, Text: "a peer's message reached the orchestrator"})
+	cmd := m.handleOrchEvent(orch.Event{Kind: orch.Backstop, Text: "a peer's message reached the orchestrator", Trip: orch.TripPeer})
 	if cmd == nil {
 		t.Fatal("no fresh start")
 	}
@@ -356,12 +356,19 @@ func TestBackstopNeverResumes(t *testing.T) {
 	}
 	found := false
 	for _, e := range m.orch.chat {
-		if strings.Contains(e.text, "Den stopped the orchestrator") {
+		if strings.Contains(e.text, "Den stopped the orchestrator") && strings.Contains(e.text, "A message from another session may have reached it") {
 			found = true
 		}
 	}
 	if !found {
 		t.Error("no note in the chat")
+	}
+	// The note says why by the backstop's kind: only a peer's trip speaks
+	// of a message from another session.
+	for kind, want := range map[string]string{orch.TripTool: "used a tool control does not allow", orch.TripOutput: "could not read what it wrote"} {
+		if got := backstopWhy(kind); !strings.Contains(got, want) || strings.Contains(got, "another session") {
+			t.Errorf("%s: %q", kind, got)
+		}
 	}
 	// Even if the id came back (a restored log), it is not resumed.
 	m.orch.resume = "killed-session"

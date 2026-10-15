@@ -30,6 +30,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -183,6 +184,9 @@ type Model struct {
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
 
 	guide guidanceState // orchestrator guidance and its approval (guidance.go)
+
+	api apiState     // den-api.sock (api.go); zero while the API is off
+	ctl controlState // a paired app's control (control.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -223,6 +227,14 @@ func New(cfg config.Config) Model {
 	m.fitInput()
 	m.openRemote(cfg)
 	m.startGuidance(cfg.Orchestrator.Guidance)
+	if cfg.API.Enabled {
+		// Only the Den that holds den.sock serves the API too.
+		if m.srv != nil {
+			m.startAPI()
+		} else {
+			m.api.err = "another Den is running"
+		}
+	}
 	return m
 }
 
@@ -236,12 +248,16 @@ func (m Model) Close() {
 		m.remote.feed.Close()
 	}
 	m.closeOrchestrator()
+	m.closeAPI()
 }
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
+	}
+	if m.api.srv != nil {
+		cmds = append(cmds, waitAPINote(m.api.srv), waitAPIAct(m.api.srv))
 	}
 	if m.remote.feed != nil {
 		m.remote.pump.start(m.remote.feed)
@@ -442,6 +458,7 @@ func (m *Model) refresh() {
 			m.cursor = i
 		}
 	}
+	m.publishAPI()
 	m.followSelection()
 	if t := m.answerTarget(); t != nil && t.ID != m.shown.id {
 		m.shown = shownTarget{id: t.ID, since: answerNow()}
@@ -493,9 +510,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, animTick()
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
+		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.controlTick(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -531,6 +549,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case orchStartedMsg:
 		return m, m.handleOrchStarted(msg)
+	case appCancelMsg:
+		if y := m.ctl.turn; y != nil && y.Turn == msg.turn {
+			if !m.ctl.sent {
+				m.ctl.turn = nil
+			} else if !m.ctl.ended {
+				m.ctl.ended = true // the app was told "cancelled"
+				if m.orch.proc != nil {
+					m.orch.proc.Interrupt()
+				}
+			}
+		}
+		return m, nil
 	case orchEventMsg:
 		if msg.from != nil && msg.from != m.orch.proc {
 			return m, nil // a process that was restarted away; its tail is noise
@@ -543,6 +573,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
+	case apiActMsg:
+		if msg.from != m.api.srv {
+			return m, nil
+		}
+		cmd := m.applyAPIAct(msg.act)
+		return m, tea.Batch(cmd, waitAPIAct(msg.from))
+	case apiNoteMsg:
+		if msg.from != m.api.srv {
+			return m, nil
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: sanitize.Text(msg.text), at: time.Now()}))
+		return m, waitAPINote(msg.from)
 	case cliSentMsg:
 		m.applyCLISent(msg)
 		m.refresh()
@@ -576,6 +618,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case flashClearMsg:
 		m.flash = ""
 	case tea.KeyPressMsg:
+		m.api.lastKey = time.Now()
 		return m.handleKey(msg)
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
 		if m.tab == tabReview {
@@ -605,6 +648,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return m.remoteHeld(r.Host, r)
 	}
+	m.noteMode(r)
 	if r.Event == bridge.CloseEvent {
 		m.handleCloseRequest(r)
 		return nil
@@ -619,7 +663,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent {
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -627,8 +671,11 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: only the orchestrator's own hook and tools may ask this"})
 			return nil
 		}
-		if r.Event == bridge.InboundEvent {
+		switch r.Event {
+		case bridge.InboundEvent:
 			return m.handleInbound(r)
+		case bridge.OrchSendEvent:
+			return m.handleOrchSend(r)
 		}
 		return m.handleMissionUpdate(r)
 	}
@@ -1310,6 +1357,18 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.APIOn {
+		return m.decideAPIOn(it, verb)
+	}
+	if it.Kind == inbox.Grant {
+		return m.decideGrant(it, verb)
+	}
+	if it.Kind == inbox.Pair {
+		return m.decidePair(it, verb)
+	}
+	if it.Kind == inbox.ControlAsk {
+		return m.decideControlTool(it, verb)
+	}
 	if it.Kind == inbox.Guidance {
 		return m.decideGuidance(it, verb)
 	}
@@ -1368,6 +1427,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m.say(questionHint(it), true)
 		}
 		return m.answerQuestion(it, text)
+	case "/api":
+		return m.apiCommand(fields[1:])
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":
@@ -1526,7 +1587,7 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession {
 		return "Den"
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {

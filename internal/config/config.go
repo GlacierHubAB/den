@@ -62,6 +62,12 @@ type Config struct {
 		// Claude Code reports none; 0 for none.
 		WeeklyUSD float64
 	}
+	// API is den-api.sock, Den's local API for apps on this machine. Off
+	// unless the human turns it on (/api on in Den writes enabled = true).
+	API struct {
+		Enabled      bool
+		AskBudgetUSD float64 // what apps' questions may spend a day
+	}
 	// On holds a shell command per event kind, run by Den with the event's
 	// metadata. Empty runs nothing.
 	On struct {
@@ -112,6 +118,7 @@ func Defaults() Config {
 	c.Stuck.Stalled = 20
 	c.Stuck.ToolFailures = 3
 	c.Events.Log = true
+	c.API.AskBudgetUSD = 2
 	return c
 }
 
@@ -210,6 +217,12 @@ func (c *Config) apply(kv map[string]string) {
 			c.Usage.WeeklyUSD = f
 		}
 	}
+	boolean(&c.API.Enabled, "api.enabled")
+	if v, ok := kv["api.ask_budget_usd"]; ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			c.API.AskBudgetUSD = f
+		}
+	}
 	for key, dst := range map[string]*string{
 		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
 		"done": &c.On.Done, "needs_you": &c.On.NeedsYou, "idle": &c.On.Idle, "turn_failed": &c.On.TurnFailed,
@@ -242,6 +255,70 @@ func (c *Config) env() {
 		c.Notify.NeedsYou, c.Notify.Done, c.Notify.Failed, c.Notify.Stalled, c.Notify.WithoutDen = false, false, false, false, false
 		c.Notify.Remind = 0
 	}
+}
+
+// SetKey writes one key of the config file, for the settings Den changes
+// on the human's own command (/api on). value is written as given (a
+// boolean or number; a string must come quoted). The key's line in its
+// section is replaced, or added under the section, which is added at the
+// end when it is missing; every other line stays as it was. The file is
+// replaced atomically and keeps its mode (0644 for a new one).
+func SetKey(section, key, value string) error {
+	path := Path()
+	if path == "" {
+		return errors.New("no config path")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	line := key + " = " + value
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(raw) == 0 {
+		lines = nil
+	}
+	cur, inSection, header, done := "", false, -1, false
+	for i, l := range lines {
+		t := strings.TrimSpace(stripComment(l))
+		if strings.HasPrefix(t, "[") && strings.HasSuffix(t, "]") {
+			cur = strings.TrimSpace(t[1 : len(t)-1])
+			inSection = cur == section
+			if inSection && header < 0 {
+				header = i
+			}
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if k, _, ok := strings.Cut(t, "="); ok && strings.TrimSpace(k) == key {
+			lines[i] = line
+			done = true
+			break
+		}
+	}
+	switch {
+	case done:
+	case header >= 0:
+		lines = append(lines[:header+1], append([]string{line}, lines[header+1:]...)...)
+	default:
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, "["+section+"]", line)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")+"\n"), mode); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // GuidanceSetting reads orchestrator.guidance from the file as it is now,
@@ -349,6 +426,10 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 [usage]
 stop_percent = 0            # off; e.g. 95 sends "USAGE STOP" to every agent at 95% of the weekly limit and holds new work
 weekly_usd = 0              # none; a weekly $ budget to estimate usage against when Claude Code reports none
+
+[api]
+enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
+ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

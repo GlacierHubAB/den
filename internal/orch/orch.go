@@ -43,7 +43,31 @@ type Event struct {
 	Stderr string
 	// Peer is set on Blocked for a peer's envelope.
 	Peer bool
+	// Tools and MCPServers are what the process has, on Started (the init
+	// event): the lane must start with neither (LaneInitOK).
+	Tools      []string
+	MCPServers []string
+	// ClaudeVersion is the Claude Code release, on Started.
+	ClaudeVersion string
+	// RequestID and Response are a Control event's: the request it answers
+	// and its response object ("" and nil for an error, in Text).
+	RequestID string
+	Response  json.RawMessage
+	// Turn is the app turn (SendApp) a PermissionAsk or
+	// PermissionExpired belongs to, and that a Result ends.
+	Turn string
+	// Trip is a Backstop's kind: TripPeer, TripTool or TripOutput.
+	Trip string
 }
+
+// The kinds of Backstop: a message from another session may have reached
+// the orchestrator; a tool control disallows ran; or Den could not read
+// what the orchestrator wrote.
+const (
+	TripPeer   = "peer"
+	TripTool   = "tool"
+	TripOutput = "output"
+)
 
 // maxStderrLine caps a line of the process's stderr in an event.
 const maxStderrLine = 200
@@ -82,6 +106,15 @@ const (
 	// block or Den's own pass, or a peer's message reached the model); the
 	// process has been killed and its session must never be resumed.
 	Backstop
+	Control // the answer to a control request (RequestID, Response)
+	// PermissionAsk: in an app's turn the orchestrator wants a tool
+	// (Tool, Input); Den's human answers (AnswerPermission). It is denied
+	// after PermissionDeadline: PermissionExpired.
+	PermissionAsk
+	PermissionExpired
+	// PermissionStanding: allowed at once in an app's turn by a standing
+	// allowance the human gave that app (SendApp).
+	PermissionStanding
 )
 
 // SystemPrompt is appended to Claude Code's default prompt.
@@ -149,6 +182,10 @@ type Options struct {
 	SettingsFile string
 	// Socket is den.sock for the hooks, default bridge.SocketPath().
 	Socket string
+	// Control runs the orchestrator for a paired app: manual mode, its
+	// permission prompts answered by Den, send_message for SendMessage
+	// (control.go).
+	Control bool
 }
 
 // Orchestrator is a running orchestrator process.
@@ -174,6 +211,15 @@ type Orchestrator struct {
 	// settings is the settings file, removed once read (at init) and on
 	// exit.
 	settings string
+	// ctl is control's state, nil without Options.Control.
+	ctl *control
+	// exited is set, under mu, once the process has been reaped: nothing
+	// is answered after that. emitMu and eventsClosed keep emit from
+	// sending on events once it is closed, whatever goroutine calls it (a
+	// permission's deadline timer, say).
+	exited       bool
+	emitMu       sync.Mutex
+	eventsClosed bool
 
 	SessionID string
 	Model     string
@@ -218,6 +264,13 @@ func Argv(o Options) []string {
 		args = []string{"claude"}
 	}
 	allowed := "ListAgents,SendMessage"
+	tools, mode := "ListAgents,SendMessage", "dontAsk"
+	prompt := PromptFor(o.Guidance, o.Control)
+	if o.Control {
+		// SendMessage never asks permission, so it could not be held for
+		// the human: Den's send_message takes its place.
+		allowed, tools, mode = "ListAgents", "ListAgents", "manual"
+	}
 	args = append(args,
 		"-p",
 		"--input-format", "stream-json",
@@ -225,8 +278,8 @@ func Argv(o Options) []string {
 		"--include-partial-messages",
 		"--verbose",
 		"--name", o.Name,
-		"--tools", "ListAgents,SendMessage",
-		"--append-system-prompt", Prompt(o.Guidance),
+		"--tools", tools,
+		"--append-system-prompt", prompt,
 		// Claude Code records a session's system prompt and, by default,
 		// sends that record again on every resume, whatever a later launch
 		// passes: guidance turned off or changed would stay in force. Off,
@@ -241,8 +294,9 @@ func Argv(o Options) []string {
 		"--setting-sources", "",
 		"--settings", o.SettingsFile,
 		// With no settings sources the mode would be Claude Code's default;
-		// dontAsk runs the allowed tools and refuses anything else.
-		"--permission-mode", "dontAsk",
+		// dontAsk runs the allowed tools and refuses anything else. With
+		// control, manual sends every other tool's request to Den.
+		"--permission-mode", mode,
 		"--include-hook-events",
 		"--replay-user-messages",
 	)
@@ -251,13 +305,20 @@ func Argv(o Options) []string {
 		// orchestrator tools it must not have. Missions are always updated
 		// through it; opening terminals and starting agents only with
 		// Spawn.
-		if o.Spawn {
+		switch {
+		case o.Control:
+			// Every Den tool asks Den first (control.go).
+			args = append(args, "--mcp-config", controlMCPConfig(exe, o.Spawn), "--strict-mcp-config")
+		case o.Spawn:
 			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
-			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool
-		} else {
+			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool
+		default:
 			args = append(args, "--mcp-config", missionsMCPConfig(exe), "--strict-mcp-config")
+			allowed += "," + MissionTool
 		}
-		allowed += "," + MissionTool
+	}
+	if o.Control {
+		args = append(args, "--permission-prompt-tool", "stdio", "--disallowedTools", "SendMessage")
 	}
 	args = append(args, "--allowedTools", allowed)
 	if o.Resume != "" {
@@ -329,6 +390,21 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 	// The user settings' env (copiedEnv) in place of their settings files,
 	// then Den's marker last, so nothing overrides it.
 	cmd.Env = append(append(os.Environ(), copiedEnv()...), "DEN_ORCHESTRATOR=1")
+	exe := denExecutable(o)
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	var ctl *control
+	if o.Control {
+		ctl = newControl(o)
+	}
+	return startCmd(ctx, cmd, o.SettingsFile, exe, ctl)
+}
+
+// startCmd starts a prepared stream-json claude command; settings is a
+// settings file of Den's to remove when it exits ("" for none), exe the
+// den binary its hooks and MCP server run ("" for none).
+func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string, ctl *control) (*Orchestrator, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -345,11 +421,7 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 		stdin.Close()
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
-	exe := denExecutable(o)
-	if r, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = r
-	}
-	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
+	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), quit: make(chan struct{}), ctx: ctx, PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: settings, start: procs.StartTicks(cmd.Process.Pid), exe: exe, ctl: ctl}
 	read, readErr := make(chan struct{}), make(chan struct{})
 	go func() {
 		// A line too long for the scanner, or a read error, leaves Den
@@ -357,7 +429,7 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 		// it before Den's end closes, so the failure is never an open pipe
 		// nobody reads.
 		if err := orc.readStdout(stdout); err != nil {
-			orc.trip("unreadable orchestrator output")
+			orc.trip("unreadable orchestrator output", TripOutput)
 		}
 		stdout.Close() // a reader that stopped early never blocks the copy
 		close(read)
@@ -400,8 +472,25 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 		if len(tail) > 0 {
 			msg += " · " + strings.Join(tail, " | ")
 		}
+		orc.mu.Lock()
+		orc.exited = true
+		if c := orc.ctl; c != nil {
+			// A request the human has not answered goes with the process:
+			// its deadline must not fire into a closed channel.
+			for id, p := range c.perms {
+				if p.timer != nil {
+					p.timer.Stop()
+				}
+				delete(c.perms, id)
+			}
+			clear(c.sends)
+		}
+		orc.mu.Unlock()
 		orc.emitMust(Event{Kind: Exited, Text: msg, Stderr: first})
+		orc.emitMu.Lock()
+		orc.eventsClosed = true
 		close(orc.events)
+		orc.emitMu.Unlock()
 		close(orc.done)
 	}()
 	return orc, nil
@@ -428,6 +517,11 @@ func (o *Orchestrator) Send(content string) error {
 		}
 	}
 	o.sent[peermsg.Hash(content)] = now
+	return o.writeUser(content)
+}
+
+// writeUser writes one user turn; o.mu is held.
+func (o *Orchestrator) writeUser(content string) error {
 	line, err := json.Marshal(map[string]any{
 		"type":    "user",
 		"message": map[string]any{"role": "user", "content": content},
@@ -475,8 +569,9 @@ func (o *Orchestrator) Sent(hash string) bool {
 }
 
 // trip is the backstop: kill the process at once, before it can act on
-// what got through, and say why.
-func (o *Orchestrator) trip(why string) {
+// what got through, and say why and of which kind (TripPeer, TripTool,
+// TripOutput).
+func (o *Orchestrator) trip(why, kind string) {
 	o.mu.Lock()
 	if o.tripped {
 		o.mu.Unlock()
@@ -487,7 +582,7 @@ func (o *Orchestrator) trip(why string) {
 	if o.cmd != nil && o.cmd.Process != nil {
 		o.cmd.Process.Kill()
 	}
-	o.emitMust(Event{Kind: Backstop, Text: why})
+	o.emitMust(Event{Kind: Backstop, Text: why, Trip: kind})
 }
 
 // Tripped reports whether the backstop killed the process.
@@ -495,6 +590,48 @@ func (o *Orchestrator) Tripped() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.tripped
+
+}
+
+// Kill stops the process at once (SIGKILL), with no chance to finish a
+// turn, and waits for it to be reaped.
+func (o *Orchestrator) Kill() {
+	o.mu.Lock()
+	if !o.closed && o.quit != nil {
+		close(o.quit) // as Close does: a Backstop or Exited waiting for room gives up
+	}
+	o.closed = true
+	if o.cmd == nil || o.cmd.Process == nil {
+		o.mu.Unlock()
+		return
+	}
+	o.cmd.Process.Kill()
+	o.mu.Unlock()
+	select {
+	case <-o.done:
+	case <-time.After(5 * time.Second):
+	}
+}
+
+// ControlRequest sends a stream-json control request (initialize,
+// mcp_status, interrupt ...); its answer arrives as a Control event with
+// the same id.
+func (o *Orchestrator) ControlRequest(id, subtype string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.closed {
+		return errors.New("orchestrator is closed")
+	}
+	line, err := json.Marshal(map[string]any{
+		"type":       "control_request",
+		"request_id": id,
+		"request":    map[string]any{"subtype": subtype},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = o.stdin.Write(append(line, '\n'))
+	return err
 }
 
 // Close ends the conversation and stops the process.
@@ -529,6 +666,11 @@ func (o *Orchestrator) Close() {
 // its ESC in the first, so the rest shows as plain text.
 func (o *Orchestrator) emit(e Event) {
 	e.Text, e.Tool = sanitize.Text(e.Text), sanitize.Line(e.Tool)
+	o.emitMu.Lock()
+	defer o.emitMu.Unlock()
+	if o.eventsClosed {
+		return // the process is gone: nothing more to say
+	}
 	select {
 	case o.events <- e:
 	default:
@@ -540,21 +682,37 @@ func (o *Orchestrator) emit(e Event) {
 // so a consumer that stopped reading never holds Den.
 func (o *Orchestrator) emitMust(e Event) {
 	e.Text, e.Tool = sanitize.Text(e.Text), sanitize.Line(e.Tool)
-	select {
-	case o.events <- e: // room: delivered even after Close
-		return
-	default:
-	}
 	var ctxDone <-chan struct{}
 	if o.ctx != nil {
 		ctxDone = o.ctx.Done()
 	}
-	select {
-	case o.events <- e:
-	case <-o.quit:
-	case <-ctxDone:
+	// Each try sends, or sees events closed, under emitMu; the wait for
+	// room is outside it, so a full buffer holds up no other emit.
+	for {
+		o.emitMu.Lock()
+		if o.eventsClosed {
+			o.emitMu.Unlock()
+			return
+		}
+		select {
+		case o.events <- e: // room: delivered even after Close
+			o.emitMu.Unlock()
+			return
+		default:
+		}
+		o.emitMu.Unlock()
+		select {
+		case <-o.quit:
+			return
+		case <-ctxDone:
+			return
+		case <-time.After(emitRetry):
+		}
 	}
 }
+
+// emitRetry is how often emitMust looks for room in a full buffer.
+const emitRetry = 10 * time.Millisecond
 
 // stream-json shapes Den reads. Unknown lines are ignored.
 type line struct {
@@ -570,10 +728,31 @@ type line struct {
 	Outcome   string `json:"outcome"`
 	Content   string `json:"content"`
 	IsReplay  bool   `json:"isReplay"`
-	Message   struct {
+	// Tools and MCPServers are on the init event: what the process has.
+	Tools         []string `json:"tools"`
+	ClaudeVersion string   `json:"claude_code_version"`
+	MCPServers    []struct {
+		Name string `json:"name"`
+	} `json:"mcp_servers"`
+	Message struct {
 		Role    string          `json:"role"`
 		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+	// RequestID and Request are a control_request's (can_use_tool).
+	RequestID string `json:"request_id"`
+	Request   struct {
+		Subtype   string          `json:"subtype"`
+		ToolName  string          `json:"tool_name"`
+		ToolUseID string          `json:"tool_use_id"`
+		Input     json.RawMessage `json:"input"`
+	} `json:"request"`
+	// Response is a control_response's.
+	Response struct {
+		Subtype   string          `json:"subtype"`
+		RequestID string          `json:"request_id"`
+		Response  json.RawMessage `json:"response"`
+		Error     string          `json:"error"`
+	} `json:"response"`
 	Result    string  `json:"result"`
 	NumTurns  *int    `json:"num_turns"`
 	IsError   bool    `json:"is_error"`
@@ -622,7 +801,11 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 			switch l.Subtype {
 			case "init":
 				o.SessionID, o.Model = l.SessionID, l.Model
-				o.emit(Event{Kind: Started, SessionID: l.SessionID, Model: l.Model})
+				e := Event{Kind: Started, SessionID: l.SessionID, Model: l.Model, Tools: append([]string{}, l.Tools...), ClaudeVersion: l.ClaudeVersion}
+				for _, s := range l.MCPServers {
+					e.MCPServers = append(e.MCPServers, s.Name)
+				}
+				o.emit(e)
 			case "hook_response":
 				if l.HookEvent != "UserPromptSubmit" {
 					break
@@ -636,7 +819,7 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 					exit = *l.ExitCode
 				}
 				if !hookBlocked(exit, l.Stdout) && (exit != 0 || strings.TrimSpace(l.Stdout) != "") {
-					o.trip(fmt.Sprintf("the inbound hook answered exit %d (%s)", exit, sanitize.Label(l.Outcome, 40)))
+					o.trip(fmt.Sprintf("the inbound hook answered exit %d (%s)", exit, sanitize.Label(l.Outcome, 40)), TripPeer)
 				}
 			case "informational":
 				if strings.HasPrefix(l.Content, "UserPromptSubmit operation blocked by hook") {
@@ -656,18 +839,23 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 						o.emit(Event{Kind: Text, Text: b.Text})
 					}
 				case "tool_use":
+					o.controlToolUse(b.ID, b.Name)
 					o.emit(Event{Kind: ToolUse, Tool: b.Name, ToolUseID: b.ID, Input: b.Input})
 				}
 			}
 		case "user":
+			if l.IsReplay {
+				o.controlReplay(l.Message.Content)
+			}
 			for _, b := range blocks(l.Message.Content) {
 				switch {
 				case b.Type == "tool_result":
+					o.controlToolResult(b.ToolUseID, b.IsError, resultText(b.Content))
 					o.emit(Event{Kind: ToolResult, ToolUseID: b.ToolUseID, Text: resultText(b.Content), IsError: b.IsError})
 				case l.IsReplay && b.Type == "text" && peermsg.HasEnvelope(b.Text):
 					// A turn the model will see holds a peer's envelope:
 					// the hook was bypassed.
-					o.trip("a peer's message reached the orchestrator")
+					o.trip("a peer's message reached the orchestrator", TripPeer)
 				}
 			}
 		case "result":
@@ -679,7 +867,19 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 				o.emit(Event{Kind: Blocked, Peer: o.blockedPeer, CostUSD: l.CostUSD})
 				break
 			}
-			o.emit(Event{Kind: Result, Text: l.Result, IsError: l.IsError, CostUSD: l.CostUSD})
+			o.emit(Event{Kind: Result, Text: l.Result, IsError: l.IsError, CostUSD: l.CostUSD, Turn: o.controlResult()})
+		case "control_request":
+			if l.Request.Subtype == "can_use_tool" {
+				o.canUseTool(l.RequestID, l.Request.ToolName, l.Request.ToolUseID, l.Request.Input)
+			}
+		case "control_response":
+			e := Event{Kind: Control, RequestID: l.Response.RequestID}
+			if l.Response.Subtype == "success" {
+				e.Response = l.Response.Response
+			} else {
+				e.Text = firstNonEmpty(l.Response.Error, "control request failed")
+			}
+			o.emit(e)
 		case "error":
 			o.emit(Event{Kind: Error, Text: firstNonEmpty(l.ErrorText, string(raw))})
 		}

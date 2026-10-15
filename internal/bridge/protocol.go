@@ -126,6 +126,19 @@ type MissionInput struct {
 // usage. Den answers deny, with why, while it does. Read-only.
 const UsageEvent = "UsageQuery"
 
+// OrchSendEvent is not a hook event: `den mcp --control` sends it for the
+// orchestrator's send_message call, which control gives it in place of
+// SendMessage. Den delivers the message the way SendMessage would and
+// answers at once.
+const OrchSendEvent = "OrchSend"
+
+// OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.
+type OrchSendInput struct {
+	To      string `json:"to"`
+	Message string `json:"message"`
+	Summary string `json:"summary,omitempty"`
+}
+
 // The behaviours of a SendEvent answer besides allow and deny.
 const (
 	SendDeclined  = "declined"  // the human answered ^N

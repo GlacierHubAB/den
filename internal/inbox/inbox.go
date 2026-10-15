@@ -44,6 +44,10 @@ const (
 	Usage                     // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
 	UsageResume               // Den asks: let the fleet go on after a usage stop? y/n answer it
 	MissionMove               // Den asks: move this mission to another project, as you typed? y/n answer it
+	APIOn                     // Den asks: turn on den-api.sock for apps on this machine? y/n answer it
+	Grant                     // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
+	Pair                      // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
+	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
 )
 
 func (k Kind) String() string {
@@ -90,6 +94,14 @@ func (k Kind) String() string {
 		return "guidance"
 	case MissionMove:
 		return "move"
+	case APIOn:
+		return "api"
+	case Grant:
+		return "app grant"
+	case Pair:
+		return "pairing"
+	case ControlAsk:
+		return "app's turn"
 	}
 	return "?"
 }
@@ -148,7 +160,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -749,6 +761,34 @@ func (s *Store) AddUsageResume(title string, body []string) *Item {
 // raises it, and only the human's ^Y answers it.
 func (s *Store) AddMissionMove(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: MissionMove, Tool: "mission_move", Title: title, Body: body})
+}
+
+// APISession is the SessionID of Den's question about turning on
+// den-api.sock.
+const APISession = "den:api"
+
+// AddAPIOn adds Den's question: turn on den-api.sock? Only the human's ^Y
+// answers it.
+func (s *Store) AddAPIOn(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: APIOn, Tool: "api_on", Title: title, Body: body})
+}
+
+// AddGrant adds an app's grant request. body is Den's frame around the
+// app's text, which is never cut or cleaned (den-api.sock refuses text it
+// could not show as it is). Only the human's ^Y or ^N answers it.
+func (s *Store) AddGrant(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Grant, Tool: "app_grant", Title: title, Body: body})
+}
+
+// AddPair adds Den's question: may the program that claimed the pairing
+// code control the orchestrator?
+func (s *Store) AddPair(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Pair, Tool: "app_pairing", Title: title, Body: body})
+}
+
+// AddControlAsk adds a tool the orchestrator wants in a paired app's turn.
+func (s *Store) AddControlAsk(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: ControlAsk, Tool: "app_turn_tool", Title: title, Body: body})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's

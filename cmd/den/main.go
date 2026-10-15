@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -104,6 +106,11 @@ func main() {
 		runEvents()
 	case "remote":
 		remoteCmd(os.Args[2:])
+	case "lane-argv":
+		// For scripts/lane-spike.sh: the read-only lane's arguments as Den
+		// passes them, NUL-separated, for a fresh session with a budget.
+		args := orch.LaneArgv(orch.LaneOptions{SessionID: "11111111-2222-4333-8444-555555555555", BudgetUSD: 1})
+		os.Stdout.WriteString(strings.Join(args[1:], "\x00"))
 	case "mods":
 		listMods()
 	case "install-mods":

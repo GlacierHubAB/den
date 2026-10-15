@@ -418,7 +418,7 @@ func TestGuidanceChangeReachesTheNextLaunch(t *testing.T) {
 	launch := func(m *Model) []string {
 		t.Helper()
 		before := len(launched)
-		if msg := startOrchestrator(m.cfg, "sess-1", m.guide.active)(); msg == nil {
+		if msg := startOrchestrator(m.cfg, "sess-1", m.guide.active, false)(); msg == nil {
 			t.Fatal("no launch")
 		}
 		if len(launched) != before+1 {

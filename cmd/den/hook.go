@@ -15,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/question"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
@@ -63,6 +64,18 @@ func hook() {
 	}
 	if in.AgentID != "" {
 		return // subagents are not fleet members
+	}
+	if os.Getenv(orch.LaneEnv) == "1" {
+		// The read-only lane that answers apps: never a fleet member, never
+		// in the inbox, and nothing it asks for is allowed. It runs with no
+		// tools and no hooks, so this only catches a Claude Code that
+		// ignored that.
+		if in.HookEventName == "PermissionRequest" {
+			if out := permissionOutput(in, bridge.Decision{Behavior: "deny", Message: "the lane has no tools"}, config.Load()); out != nil {
+				os.Stdout.Write(out)
+			}
+		}
+		return
 	}
 	// The stream for scripts. The orchestrator's own turns stay out of it.
 	if ev, ok := events.FromHook(in); ok && os.Getenv("DEN_ORCHESTRATOR") != "1" && config.Load().Events.Log {

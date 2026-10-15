@@ -327,10 +327,10 @@ func (r Result) Describe() string {
 		return fmt.Sprintf("Opened a terminal in %s%s.", where, ws)
 	}
 	if r.Untrusted {
-		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. Claude Code has never worked in that folder, so it is first asking the human, in that terminal, whether to trust it; nothing happens until they answer. Tell the human. Once they have, the agent appears in the roster and SendMessage to %q reaches it.", where, ws, r.Name, r.Name)
+		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. Claude Code has never worked in that folder, so it is first asking the human, in that terminal, whether to trust it; nothing happens until they answer. Tell the human. Once they have, the agent appears in the roster and your messages to %q reach it.", where, ws, r.Name, r.Name)
 	}
 	if !r.Registered {
-		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. The session has not registered yet; it will appear in the roster shortly, and SendMessage to %q reaches it once it has.", where, ws, r.Name, r.Name)
+		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. The session has not registered yet; it will appear in the roster shortly, and your messages to %q reach it once it has.", where, ws, r.Name, r.Name)
 	}
 	model := ""
 	if r.Model != "" {
@@ -340,7 +340,7 @@ func (r Result) Describe() string {
 	if r.Worktree != "" {
 		tree = fmt.Sprintf(" It works in its own git worktree %s on branch %s; the human merges that branch in Den's Review.", shortDir(r.WorktreePath), r.WorktreeBranch)
 	}
-	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and SendMessage to %q reaches it.%s", r.Critter, r.Name, where, ws, model, r.Critter, r.Name, tree)
+	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and your messages to %q reach it.%s", r.Critter, r.Name, where, ws, model, r.Critter, r.Name, tree)
 }
 
 // Command is the claude command line for an agent named name.

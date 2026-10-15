@@ -95,6 +95,26 @@ const MaxLine = 1 << 20
 // dialog answers it. A var for tests.
 var MaxHeld int64 = 256
 
+// held is every event Den answers, the hook's PermissionRequest and each
+// of Den's own: its connection waits for Den's decision. Any other event
+// is told {"ok":true} at once, so one left out here never hears Den. Name
+// a new event's constant …Event: TestDenAnsweredEventsAreHeld finds them
+// by that name.
+var held = map[string]bool{
+	"PermissionRequest": true,
+	CloseEvent:          true,
+	SkillsEvent:         true,
+	InstallEvent:        true,
+	SendEvent:           true,
+	InboundEvent:        true,
+	MissionEvent:        true,
+	UsageEvent:          true,
+	OrchSendEvent:       true,
+}
+
+// Held reports whether a request of this event waits for Den's decision.
+func Held(event string) bool { return held[event] }
+
 // ErrAlreadyRunning means another Den owns the socket.
 var ErrAlreadyRunning = errors.New("another den is already listening")
 
@@ -179,7 +199,7 @@ func (s *Server) serve(conn net.Conn) {
 		req.PeerPID = pid
 	}
 	_ = json.Unmarshal(env.Payload, &req.Input)
-	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == InboundEvent || env.Event == MissionEvent || env.Event == UsageEvent {
+	if Held(env.Event) {
 		if s.held.Add(1) > MaxHeld {
 			s.held.Add(-1)
 			return // too many waiting: no decision, fail open
