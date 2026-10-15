@@ -34,7 +34,7 @@ inited=""
 while IFS= read -r line; do
   case "$line" in
     *'"control_request"'*)
-      id=$(echo "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+      id=$(printf '%s\n' "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
       case "$line" in
         *'"initialize"'*) echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"commands":[],"current_permission_mode":"dontAsk"}}}' ;;
         *'"mcp_status"'*) echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"mcpServers":[]}}}' ;;

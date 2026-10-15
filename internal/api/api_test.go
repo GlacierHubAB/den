@@ -36,7 +36,7 @@ for a in "$@"; do
   if [ "$prev" = "--session-id" ] || [ "$prev" = "--resume" ]; then sid="$a"; fi
   prev="$a"
 done
-echo "$@" > "$d/argv.txt"
+printf '%s\n' "$*" > "$d/argv.txt"
 tools='[]'
 if [ -e "$d/with-tools" ]; then tools='["Bash"]'; fi
 mcp='[]'
@@ -45,7 +45,7 @@ inited=""
 while IFS= read -r line; do
   case "$line" in
     *'"control_request"'*)
-      id=$(echo "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
+      id=$(printf '%s\n' "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
       case "$line" in
         *'"initialize"'*)
           if [ ! -e "$d/no-answer" ]; then
@@ -56,7 +56,7 @@ while IFS= read -r line; do
       esac
       continue ;;
   esac
-  echo "$line" >> "$d/turns.txt"
+  printf '%s\n' "$line" >> "$d/turns.txt"
   if [ -z "$inited" ]; then
     echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"'"$version"'","tools":'"$tools"',"mcp_servers":[]}'
     inited=1

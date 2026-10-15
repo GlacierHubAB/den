@@ -28,19 +28,19 @@ D=$(dirname "$0")
 echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
 while IFS= read -r line; do
   case "$line" in
-    *'"control_response"'*) echo "$line" >> "$D/answers"; continue ;;
-    *'"control_request"'*) echo "$line" >> "$D/controls"
+    *'"control_response"'*) printf '%s\n' "$line" >> "$D/answers"; continue ;;
+    *'"control_request"'*) printf '%s\n' "$line" >> "$D/controls"
       case "$line" in *'"interrupt"'*) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","num_turns":1}' ;; esac
       continue ;;
   esac
-  echo "$line" >> "$D/turns"
-  echo "$line" | sed 's/}$/,"isReplay":true}/'
+  printf '%s\n' "$line" >> "$D/turns"
+  printf '%s\n' "$line" | sed 's/}$/,"isReplay":true}/'
   case "$line" in
     *SLOW-PLEASE*) continue ;;
     *SPAWN-PLEASE*)
       echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"u1","name":"mcp__den__spawn_agent","input":{"dir":"/tmp","brief":"x"}}]}}'
       echo '{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"mcp__den__spawn_agent","tool_use_id":"u1","input":{"dir":"/tmp","brief":"x"}}}'
-      while IFS= read -r ans; do echo "$ans" >> "$D/answers"; case "$ans" in *'"r1"'*) break ;; esac; done
+      while IFS= read -r ans; do printf '%s\n' "$ans" >> "$D/answers"; case "$ans" in *'"r1"'*) break ;; esac; done
       err=true; case "$ans" in *'"allow"'*) err=false ;; esac
       echo '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","content":"started","is_error":'$err'}]}}'
       ;;
