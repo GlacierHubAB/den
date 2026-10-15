@@ -57,3 +57,29 @@ func TestBusyClaimAfterARaceStaysDead(t *testing.T) {
 		t.Errorf("spent codes %d, want the raced one kept", n)
 	}
 }
+
+// The same race when the second claim has marked the code dead but not yet
+// revoked the pairing: the rollback still leaves the code dead.
+func TestBusyClaimAfterAMarkStaysDead(t *testing.T) {
+	h := newHarness(t, 2)
+	words := h.s.StartPairing()
+	for len(h.s.acts) < cap(h.s.acts) {
+		h.s.acts <- Act{}
+	}
+	defer func(f func(string)) { beforePairAct = f }(beforePairAct)
+	beforePairAct = func(string) {
+		h.s.ctl.mu.Lock()
+		for _, sp := range h.s.ctl.spent {
+			sp.dead = true // what the second claim does under the lock
+		}
+		h.s.ctl.mu.Unlock()
+	}
+	c := h.dial()
+	c.hello()
+	if l := c.call("pair.claim", map[string]string{"code": strings.Join(words, " ")}); code(l) != CodeForbidden || l.Error.Message != ClaimRevoked {
+		t.Fatalf("claim %+v", l)
+	}
+	if _, live := h.s.CodeLive(); live {
+		t.Error("a code marked dead came back live")
+	}
+}

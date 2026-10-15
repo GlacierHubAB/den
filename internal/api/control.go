@@ -234,6 +234,9 @@ type pairCode struct {
 	wrong   int
 	spent   time.Time // when it was claimed, zero while live
 	claimed string    // the pairing that claim made
+	// dead is set, under the lock, once a second claim showed two
+	// programs had the code: nothing brings it back.
+	dead bool
 }
 
 type control struct {
@@ -468,6 +471,7 @@ func (s *Server) claim(c *conn, req Request) {
 			switch {
 			case now.Sub(sp.spent) >= pairLeakAfter:
 			case now.Sub(sp.spent) < pairCodeLife || got == strings.Join(sp.words, " "):
+				sp.dead = true
 				revoke = append(revoke, sp.claimed)
 			default:
 				kept = append(kept, sp)
@@ -532,7 +536,7 @@ func (s *Server) claim(c *conn, req Request) {
 		// the claim did not happen. The code stays live, unspent, and the
 		// same claim may be sent again.
 		st.mu.Lock()
-		if st.pairings[id] == nil {
+		if st.pairings[id] == nil || code.dead {
 			// Another claim with this code came in meanwhile and revoked
 			// it: two programs had the code, so it stays dead.
 			st.mu.Unlock()
