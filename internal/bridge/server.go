@@ -97,7 +97,9 @@ var MaxHeld int64 = 256
 
 // held is every event Den answers, the hook's PermissionRequest and each
 // of Den's own: its connection waits for Den's decision. Any other event
-// is told {"ok":true} at once, so one left out here never hears Den.
+// is told {"ok":true} at once, so one left out here never hears Den. Name
+// a new event's constant …Event: TestDenAnsweredEventsAreHeld finds them
+// by that name.
 var held = map[string]bool{
 	"PermissionRequest": true,
 	CloseEvent:          true,
