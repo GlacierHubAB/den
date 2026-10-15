@@ -87,6 +87,60 @@ func TestCardGetAndAnswer(t *testing.T) {
 	}
 }
 
+// The answer's reply comes before its card's settled event, on the
+// connection that answered, even when Den settles the card first.
+func TestCardAnswerReplyBeforeSettled(t *testing.T) {
+	h, c := provedConsole(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{card("i-1", 1, true)}}))
+	c.next() // new
+	g := getCard(t, c, "i-1")
+	id := answerCard(c, g, "deny")
+	a := ctlAct(t, h.s, func(a Act) bool { return a.CardAnswer != nil }).CardAnswer
+	// As Den does: the card settles (a published view), then the reply.
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Settled: []Settled{{ID: "i-1", Verb: "deny", By: "console"}}}))
+	a.Reply <- CardResult{Result: "denied", Note: "Denied from test"}
+	if l := c.next(); l.ID == nil || *l.ID != id || !l.OK {
+		t.Fatalf("first line after the answer: %+v", l)
+	}
+	var ev CardEvent
+	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.Change != "settled" || ev.By != "console" {
+		t.Errorf("then the settled event: %+v", e)
+	}
+}
+
+// The console's process may open one connection past its six proved ones,
+// to hear console_in_use; another process stays at six.
+func TestConsoleConnectionPastTheCap(t *testing.T) {
+	h, _ := consoleHarness(t)
+	d := newDock(t, h)
+	// The claim's connection stays open: it is the first proved one.
+	l, first := d.claim(h.s.StartConsoleCode(), true)
+	var r struct {
+		Pairing string `json:"pairing"`
+		DenKey  string `json:"den_public_key"`
+	}
+	if !l.OK || json.Unmarshal(l.Result, &r) != nil {
+		t.Fatalf("console.claim: %+v", l.Error)
+	}
+	p := consolePaired{ID: r.Pairing, DenKey: r.DenKey}
+	time.Sleep(challengeEvery)
+	for i := 0; i < consoleConnsMax; i++ {
+		c := first
+		if i > 0 {
+			c = h.dial()
+			c.hello()
+		}
+		if l, _, _, _ := d.auth(c, p); !l.OK {
+			t.Fatalf("proof %d: %+v", i+1, l.Error)
+		}
+	}
+	c := h.dial()
+	c.hello()
+	if l, _, _, _ := d.auth(c, p); code(l) != CodeConsoleInUse {
+		t.Errorf("proof %d: %+v", consoleConnsMax+1, l)
+	}
+}
+
 // A console that subscribes gets the cards already waiting, as new.
 func TestConsoleEventsReplayPendingCards(t *testing.T) {
 	h, _ := consoleHarness(t)

@@ -598,6 +598,9 @@ type conn struct {
 	// when it was given; console the console it proved, "" for none.
 	// reads are the cards it read, for card.answer (card.go).
 	reads cardReads
+	// answering holds, per card it is answering, the settled events
+	// pushed meanwhile: they go out after the answer's reply (card.go).
+	answering map[string][]Event
 	// completes are its cmd.complete calls in the last second.
 	completes   []time.Time
 	cnonce      string
@@ -744,6 +747,12 @@ func (s *Server) serve(nc net.Conn) {
 		return
 	}
 	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}, scope: "conn:" + randHex(), cid: randHex()}
+	// The console's process may hold one more, so that a connection past
+	// its proved ones hears console_in_use at console.auth.
+	perPIDMax := maxConnsPerPID
+	if s.isConsoleProcess(peer) {
+		perPIDMax = consoleConnsMax + 1
+	}
 	s.mu.Lock()
 	perPID := 0
 	for o := range s.conns {
@@ -751,7 +760,7 @@ func (s *Server) serve(nc net.Conn) {
 			perPID++
 		}
 	}
-	if len(s.conns) >= maxConns || perPID >= maxConnsPerPID {
+	if len(s.conns) >= maxConns || perPID >= perPIDMax {
 		s.mu.Unlock()
 		s.turnAway(nc, CodeUnavailable, "too many connections")
 		return

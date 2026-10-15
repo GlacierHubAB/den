@@ -353,6 +353,14 @@ func hhmmss(t time.Time) string {
 	return t.Local().Format("15:04:05")
 }
 
+// isConsoleProcess reports whether peer is the paired console's process.
+func (s *Server) isConsoleProcess(peer Peer) bool {
+	s.con.mu.Lock()
+	defer s.con.mu.Unlock()
+	cur := s.con.cur
+	return cur != nil && cur.PID == peer.PID && cur.start == peer.Start
+}
+
 // consoleChallenge is console.challenge: a fresh nonce for console.auth,
 // and a claim salt for a console.claim on this connection. It reveals and
 // spends nothing about any code.

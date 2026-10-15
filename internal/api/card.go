@@ -287,11 +287,25 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 	}
 	cur, _ := s.CurrentConsole()
 	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Verb: p.Verb, Console: ExeLabel(cur.Exe), Reply: make(chan CardResult, 1)}
+	// The card's settled event, if Den pushes one while it answers, waits
+	// for the reply: the reply first, then the event, on this connection.
+	c.mu.Lock()
+	if c.answering == nil {
+		c.answering = map[string][]Event{}
+	}
+	c.answering[p.ID] = nil
+	c.mu.Unlock()
 	if !s.act(Act{CardAnswer: a}) {
+		c.takeAnswering(p.ID)
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return
 	}
 	go func() {
+		defer func() {
+			for _, e := range c.takeAnswering(p.ID) {
+				c.push(e, true)
+			}
+		}()
 		select {
 		case r := <-a.Reply:
 			if r.Code != "" {
@@ -304,6 +318,31 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		case <-c.done:
 		}
 	}()
+}
+
+// takeAnswering ends an answer of card id on this connection, and returns
+// the events held for it.
+func (c *conn) takeAnswering(id string) []Event {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	q := c.answering[id]
+	delete(c.answering, id)
+	return q
+}
+
+// holdSettled holds e for after the reply when this connection is
+// answering its card; false when it is not.
+func (c *conn) holdSettled(e CardEvent) bool {
+	if e.Change != "settled" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	q, ok := c.answering[e.ID]
+	if ok {
+		c.answering[e.ID] = append(q, Event{Event: EventCard, Data: e})
+	}
+	return ok
 }
 
 func hasVerb(verbs []string, v string) bool {
@@ -347,7 +386,9 @@ func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled)
 			continue
 		}
 		for _, e := range evs {
-			c.push(Event{Event: EventCard, Data: e}, true)
+			if !c.holdSettled(e) {
+				c.push(Event{Event: EventCard, Data: e}, true)
+			}
 		}
 	}
 }
