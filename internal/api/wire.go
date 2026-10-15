@@ -1,5 +1,5 @@
 // Package api serves den-api.sock: Den's local API for apps on this
-// machine, first among them Drey (docs/DREY-API.md). It is off unless the
+// machine (docs/DREY-API.md). It is off unless the
 // human turns it on (api.enabled, /api on in Den).
 //
 // The wire is JSON lines over a Unix socket that only Den's own user may

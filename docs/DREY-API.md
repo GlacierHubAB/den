@@ -206,7 +206,7 @@ until `/api resume`. A lane session starts afresh after 50 questions. Asks stop 
 questions and resumes its session on the next one.
 
 `chat.sessions` and `chat.history` serve these ask sessions only, never your
-own orchestrator chat. They are kept in `~/.local/state/den/drey-chat.jsonl`
+own orchestrator chat. They are kept in `~/.local/state/den/api-chat.jsonl`
 (mode `0600`).
 
 ## Control
@@ -219,7 +219,7 @@ Den: the app never approves, answers or starts anything.
 ### Pairing
 
 - `/api pair` in Den shows a code of eight words for two minutes, in Den's
-  header only, with "Type this only into Drey's pairing window." It is
+  header only, with "Type this only into the app's own pairing window." It is
   never written to Den's chat or logs, and it leaves the screen once it is
   claimed or expires. The words come from a list of 256, so a code is 64
   random bits.

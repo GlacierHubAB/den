@@ -34,7 +34,7 @@ const (
 
 // D1LaneName is the session name of Den's read-only lane for apps; it
 // never reports.
-const D1LaneName = "den-drey-lane"
+const D1LaneName = "den-api-lane"
 
 // peerState is the reports' bookkeeping.
 type peerState struct {

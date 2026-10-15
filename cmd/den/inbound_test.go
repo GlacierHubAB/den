@@ -48,13 +48,13 @@ func TestInboundBlocksEveryEnvelope(t *testing.T) {
 		return bridge.Decision{Behavior: "deny", Message: "Den took it as a report"}, nil
 	}
 	// A well-formed envelope goes to Den, and is blocked all the same.
-	code, out, asked := runInboundWith(t, envelope("drey-lead", "done"), false, admit)
-	if !blocked(code, out) || len(asked) != 1 || asked[0].Kind != "envelope" || asked[0].FromName != "drey-lead" || asked[0].PID != 4242 || asked[0].Body != "done" {
+	code, out, asked := runInboundWith(t, envelope("worker-lead", "done"), false, admit)
+	if !blocked(code, out) || len(asked) != 1 || asked[0].Kind != "envelope" || asked[0].FromName != "worker-lead" || asked[0].PID != 4242 || asked[0].Body != "done" {
 		t.Errorf("code %d out %q asked %+v", code, out, asked)
 	}
 	// Den saying allow changes nothing: an envelope never passes.
 	allow := func(bridge.InboundInput) (bridge.Decision, error) { return bridge.Decision{Behavior: "allow"}, nil }
-	if code, out, _ := runInboundWith(t, envelope("drey-lead", "done"), false, allow); !blocked(code, out) {
+	if code, out, _ := runInboundWith(t, envelope("worker-lead", "done"), false, allow); !blocked(code, out) {
 		t.Error("an envelope passed")
 	}
 	// Malformed ones are blocked; Den is only told one came (to count it).
@@ -98,7 +98,7 @@ func TestInboundPassesOnlyDensOwnPrompts(t *testing.T) {
 
 func TestInboundBlocksWhenDenIsDown(t *testing.T) {
 	down := func(bridge.InboundInput) (bridge.Decision, error) { return bridge.Decision{}, bridge.ErrNoDen }
-	for _, p := range []string{"hello", envelope("drey-lead", "done")} {
+	for _, p := range []string{"hello", envelope("worker-lead", "done")} {
 		if code, out, _ := runInboundWith(t, p, false, down); !blocked(code, out) {
 			t.Errorf("Den down passed %q", p)
 		}

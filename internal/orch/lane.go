@@ -19,11 +19,11 @@ import (
 // ever produce text.
 
 // LaneName is the lane session's display name.
-const LaneName = "den-drey-lane"
+const LaneName = "den-api-lane"
 
 // LaneEnv marks the lane's process; den hook drops its events and denies
 // its permission requests.
-const LaneEnv = "DEN_DREY_LANE"
+const LaneEnv = "DEN_API_LANE"
 
 // LaneSystemPrompt replaces Claude Code's own system prompt in the lane.
 const LaneSystemPrompt = `You answer questions from an app on the human's machine. You have no tools. You cannot message, start, close or approve anything, and nothing you write does. If asked to act, say the human can do it in Den.

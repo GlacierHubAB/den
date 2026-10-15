@@ -99,7 +99,7 @@ func (m Model) controlCommand(sub string) (tea.Model, tea.Cmd) {
 	}
 	m.ctl.code = m.api.srv.StartPairing()
 	m.ctl.codeUntil = time.Now().Add(2 * time.Minute)
-	return m.say("Pairing code shown above for two minutes. Type it only into Drey's pairing window.", false)
+	return m.say("Pairing code shown above for two minutes. Type it only into the app's own pairing window.", false)
 }
 
 // codeLine is the pairing code line Den shows while a code is live; ""
@@ -112,7 +112,7 @@ func (m Model) codeLine() string {
 	if _, live := m.api.srv.CodeLive(); !live || left <= 0 {
 		return ""
 	}
-	return "Pairing code (" + left.String() + "): " + strings.Join(m.ctl.code, " ") + " · Type this only into Drey's pairing window."
+	return "Pairing code (" + left.String() + "): " + strings.Join(m.ctl.code, " ") + " · Type this only into the app's own pairing window."
 }
 
 // applyControlAct handles control's acts from den-api.sock.
@@ -134,7 +134,7 @@ func (m *Model) applyControlAct(act api.Act) tea.Cmd {
 		}
 		title := "Pair " + appName(p.Exe) + " (pid " + strconv.Itoa(p.PID) + ", " + started + ") for dock control?"
 		body := []string{
-			"The program below sent the pairing code you showed. Pair it only if you just typed the code into Drey's pairing window.",
+			"The program below sent the pairing code you showed. Pair it only if you just typed the code into the app's own pairing window.",
 			"program: " + sanitize.Label(p.Exe, 160),
 			"pid " + strconv.Itoa(p.PID) + " · " + started + " · parent " + sanitize.Label(parent, 40),
 			"command line: " + sanitize.Label(p.Cmdline, 200),

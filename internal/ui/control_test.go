@@ -184,7 +184,7 @@ func pairApp(t *testing.T, l *loop) *apiConn {
 	mm, _ := l.m.apiCommand([]string{"pair"})
 	*l.m = mm.(Model)
 	words := l.m.ctl.code
-	if len(words) != 8 || !strings.Contains(l.m.codeLine(), "Type this only into Drey's pairing window") {
+	if len(words) != 8 || !strings.Contains(l.m.codeLine(), "Type this only into the app's own pairing window") {
 		t.Fatalf("code %v, line %q", words, l.m.codeLine())
 	}
 	for _, e := range l.m.orch.chat {

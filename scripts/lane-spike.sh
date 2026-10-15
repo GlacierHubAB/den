@@ -48,7 +48,7 @@ class H(http.server.BaseHTTPRequestHandler):
             self.send_response(200); self.send_header("content-type", "application/json"); self.send_header("content-length", str(len(out))); self.end_headers(); self.wfile.write(out); return
         start = ("message_start", {"type": "message_start", "message": {"id": "m", "type": "message", "role": "assistant", "model": body.get("model", "m"), "content": [], "stop_reason": None, "stop_sequence": None, "usage": usage}})
         if role == "sender" and "tool_result" not in msgs:
-            to = "den-spike-control" if "SPIKE_TO_CONTROL" in msgs else "den-drey-lane"
+            to = "den-spike-control" if "SPIKE_TO_CONTROL" in msgs else "den-api-lane"
             inp = json.dumps({"to": to, "message": "SPIKE_PEER_MESSAGE", "summary": "spike"})
             evs = [start, ("content_block_start", {"type": "content_block_start", "index": 0, "content_block": {"type": "tool_use", "id": "toolu_1", "name": "SendMessage", "input": {}}}),
                    ("content_block_delta", {"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": inp}}),
@@ -78,13 +78,13 @@ python3 "$W/mock.py" 18090 "$W/requests.jsonl" 2> "$W/mock.err" & MOCK=$!
 sleep 1
 mkdir -p "$W/home" "$W/cfg" "$W/run" "$W/lane" "$W/control"; chmod 700 "$W/run" "$W/lane"
 echo '{"hasCompletedOnboarding":true,"mcpServers":{"evil":{"command":"/bin/true"}}}' > "$W/cfg/.claude.json"
-echo '{"permissions":{"allow":["mcp__*"],"defaultMode":"bypassPermissions"},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"echo HOOKRAN=${DEN_DREY_LANE:-other} >> '"$W"'/hook.txt"}]}]}}' > "$W/cfg/settings.json"
+echo '{"permissions":{"allow":["mcp__*"],"defaultMode":"bypassPermissions"},"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"echo HOOKRAN=${DEN_API_LANE:-other} >> '"$W"'/hook.txt"}]}]}}' > "$W/cfg/settings.json"
 echo "SPIKE_CANARY_CLAUDE_MD" > "$W/cfg/CLAUDE.md"
 envs() { echo PATH=/usr/bin:/bin HOME="$W/home" CLAUDE_CONFIG_DIR="$W/cfg" XDG_RUNTIME_DIR="$W/run" ANTHROPIC_BASE_URL=http://127.0.0.1:18090 ANTHROPIC_API_KEY=sk-ant-spike DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1; }
 mapfile -d '' -t ARGV < "$W/argv"
 # The lane, with Den's argv; its first turn arrives at once, then it waits.
 mkfifo "$W/lane.in" "$W/control.in"
-(cd "$W/lane" && env -i $(envs) DEN_DREY_LANE=1 ENABLE_CLAUDEAI_MCP_SERVERS=0 timeout 60 "$CLAUDE" "${ARGV[@]}" < "$W/lane.in" > "$W/lane.out" 2> "$W/lane.err") & LANE=$!
+(cd "$W/lane" && env -i $(envs) DEN_API_LANE=1 ENABLE_CLAUDEAI_MCP_SERVERS=0 timeout 60 "$CLAUDE" "${ARGV[@]}" < "$W/lane.in" > "$W/lane.out" 2> "$W/lane.err") & LANE=$!
 exec 7> "$W/lane.in"
 printf '%s\n' '{"type":"user","message":{"role":"user","content":"<den_fleet>\n(no other agents running)\n</den_fleet>\n\n<client_request client=\"drey\">\nwho is busy?\n</client_request>"}}' >&7
 # The control: an ordinary session that accepts peer messages.

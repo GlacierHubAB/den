@@ -15,7 +15,7 @@ import (
 )
 
 // SocketPath is den-api.sock in $XDG_RUNTIME_DIR, "" when that is unset:
-// then there is no API, as Drey's client finds none either.
+// then there is no API, as a client finds none either.
 func SocketPath() string {
 	dir := os.Getenv("XDG_RUNTIME_DIR")
 	if dir == "" {

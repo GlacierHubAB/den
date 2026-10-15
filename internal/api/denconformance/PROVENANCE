@@ -1,11 +1,12 @@
 The Den API conformance suite, as Den carries it
 
 This folder is a byte-identical copy of the conformance suite for
-den-api.sock (docs/DREY-API.md), written by Drey's authors, who check their
-client against the same suite. Den changes nothing in it: a finding is fixed
-upstream and the copy pinned again.
+den-api.sock (docs/DREY-API.md), written by the client's authors, who check
+their client against the same suite. Den changes nothing in it: a finding
+is fixed upstream and the copy pinned again.
 
-Source        the Drey repository, pkg/denconformance
+Source        the client's conformance package, pinned at commit
+              613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0
 Code          client.go, d1.go, denconformance.go at commit
               613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0
               client.go         00a38c499b49839a11f7d4aa22644fe8d9b494cf725a60f897c4b0f8d1484372

@@ -37,7 +37,7 @@ const MaxConnsPerPID = maxConnsPerPID
 type Options struct {
 	Path    string // den-api.sock; SocketPath() by default
 	Version string // Den's release, for hello
-	ChatLog string // drey-chat.jsonl
+	ChatLog string // api-chat.jsonl
 	Lane    LaneConfig
 }
 

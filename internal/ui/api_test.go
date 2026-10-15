@@ -42,6 +42,56 @@ func apiItem(m *Model) *inbox.Item {
 	return nil
 }
 
+// State an earlier test build wrote under its old names moves to the new
+// ones once: a file or folder whose new name is free; never over a file
+// that has the new name, and never a link.
+func TestAPIStateMovesToItsNewNames(t *testing.T) {
+	state := t.TempDir()
+	write := func(name, text string) {
+		if err := os.WriteFile(filepath.Join(state, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(state, name))
+		if err != nil {
+			return "missing"
+		}
+		return string(b)
+	}
+	write("drey-chat.jsonl", "old chat")
+	write("drey-chat.jsonl.1", "old rotated")
+	write("drey-spend.json", "old spend")
+	write("api-spend.json", "new spend") // already there: left alone
+	os.Mkdir(filepath.Join(state, "drey-lane"), 0o700)
+	write("drey-lane/x", "lane file")
+	os.Symlink(filepath.Join(state, "elsewhere"), filepath.Join(state, "drey-chat.jsonl.link"))
+	migrateAPIState(state)
+	for name, want := range map[string]string{
+		"api-chat.jsonl": "old chat", "api-chat.jsonl.1": "old rotated", "api-lane/x": "lane file",
+		"api-spend.json": "new spend", "drey-spend.json": "old spend",
+		"drey-chat.jsonl": "missing", "drey-chat.jsonl.1": "missing", "drey-lane/x": "missing",
+	} {
+		if got := read(name); got != want {
+			t.Errorf("%s: %q, want %q", name, got, want)
+		}
+	}
+	// Once: a second start changes nothing.
+	write("drey-chat.jsonl", "older again")
+	migrateAPIState(state)
+	if read("api-chat.jsonl") != "old chat" || read("drey-chat.jsonl") != "older again" {
+		t.Error("a second migration replaced the new file")
+	}
+	// A link under an old name is not followed or moved.
+	os.Remove(filepath.Join(state, "api-chat.jsonl"))
+	os.Remove(filepath.Join(state, "drey-chat.jsonl"))
+	os.Symlink(filepath.Join(state, "elsewhere"), filepath.Join(state, "drey-chat.jsonl"))
+	migrateAPIState(state)
+	if _, err := os.Lstat(filepath.Join(state, "api-chat.jsonl")); err == nil {
+		t.Error("a link was moved")
+	}
+}
+
 // /api on asks first; only the human's ^Y turns it on and writes the
 // config; /api off drops apps at once and keeps the path Den's.
 func TestAPIOnNeedsTheHumansYes(t *testing.T) {
@@ -296,7 +346,7 @@ func TestAPINotesHaveNoMission(t *testing.T) {
 	m := testModel(120, 40)
 	apiOn(t, &m)
 	m.orch.thread = "m-ci"
-	mm, _ := m.Update(apiNoteMsg{text: "an agent's process (drey-probe, pid 9) tried den-api.sock: refused", from: m.api.srv})
+	mm, _ := m.Update(apiNoteMsg{text: "an agent's process (app-probe, pid 9) tried den-api.sock: refused", from: m.api.srv})
 	m = mm.(Model)
 	last := m.orch.chat[len(m.orch.chat)-1]
 	if last.mission != "" || !strings.Contains(last.text, "refused") {
@@ -309,7 +359,7 @@ func TestAPINotesHaveNoMission(t *testing.T) {
 
 // Only live sessions on this machine are agents for den-api.sock: one on
 // another machine, or one that ended, has a pid that may be any process
-// here (the human's drey-host, or its systemd --user).
+// here (an app's host process, or the human's systemd --user).
 func TestAgentProcsAreLocalAndLive(t *testing.T) {
 	defer func(f func(int, int64, string) (api.AgentProc, bool)) { sessionProc = f }(sessionProc)
 	sessionProc = func(pid int, startedAt int64, name string) (api.AgentProc, bool) {

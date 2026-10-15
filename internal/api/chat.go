@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// chatStore keeps the lane's sessions and their messages in drey-chat.jsonl
+// chatStore keeps the lane's sessions and their messages in api-chat.jsonl
 // (0600, in Den's state folder). It holds lane sessions only: the human's
 // own orchestrator chat is never served.
 type chatStore struct {
@@ -31,7 +31,7 @@ type chatSession struct {
 	started  bool // claude has a session by this id: resume it, never --session-id again
 }
 
-// chatLine is one line of drey-chat.jsonl.
+// chatLine is one line of api-chat.jsonl.
 type chatLine struct {
 	Session string    `json:"session"`
 	Kind    string    `json:"kind"` // "session", "started", "message", "current"
@@ -40,7 +40,7 @@ type chatLine struct {
 	At      time.Time `json:"at"`
 }
 
-// maxChatLog is where drey-chat.jsonl is rotated, keeping one previous file.
+// maxChatLog is where api-chat.jsonl is rotated, keeping one previous file.
 const maxChatLog = 10 << 20
 
 func loadChat(path string) *chatStore {
@@ -264,7 +264,7 @@ func newUUID() string {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
 }
 
-// spendLine is drey-spend.json: what asks spent on one day.
+// spendLine is api-spend.json: what asks spent on one day.
 type spendLine struct {
 	Day string  `json:"day"`
 	USD float64 `json:"usd"`

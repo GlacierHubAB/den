@@ -94,7 +94,7 @@ func newHarness(t *testing.T, budget float64) *harness {
 	s, err := Listen(Options{
 		Path:    filepath.Join(run, "den-api.sock"),
 		Version: "test",
-		ChatLog: filepath.Join(t.TempDir(), "drey-chat.jsonl"),
+		ChatLog: filepath.Join(t.TempDir(), "api-chat.jsonl"),
 		Lane: LaneConfig{
 			Command:  []string{script},
 			Dir:      laneDir,
@@ -261,7 +261,7 @@ func TestAgentRefusalsCoalesce(t *testing.T) {
 	defer func() { identifyHook = old }()
 	for i := 0; i < 50; i++ {
 		pid := pids[i%3]
-		identifyHook = func(p Peer) Peer { p.PID, p.Exe = pid, "/usr/bin/drey-probe"; return p }
+		identifyHook = func(p Peer) Peer { p.PID, p.Exe = pid, "/usr/bin/app-probe"; return p }
 		c := h.dial()
 		c.hello()
 		c.nc.Close()
@@ -279,7 +279,7 @@ func TestAgentRefusalsCoalesce(t *testing.T) {
 		t.Errorf("notes %q", notes)
 	}
 	rs := h.s.Refusals()
-	if len(rs) != 1 || rs[0].Count != 50 || rs[0].Exe != "/usr/bin/drey-probe" || rs[0].Reason != refusedAgent {
+	if len(rs) != 1 || rs[0].Count != 50 || rs[0].Exe != "/usr/bin/app-probe" || rs[0].Reason != refusedAgent {
 		t.Errorf("refusals %+v", rs)
 	}
 }
@@ -287,7 +287,7 @@ func TestAgentRefusalsCoalesce(t *testing.T) {
 // After the first note, more refusals earn one count note a minute.
 func TestRefusalCountNote(t *testing.T) {
 	s := &Server{refusals: map[string]*refusal{}}
-	p := Peer{PID: 7, Exe: "/usr/bin/drey-probe"}
+	p := Peer{PID: 7, Exe: "/usr/bin/app-probe"}
 	t0 := time.Date(2026, 10, 13, 9, 0, 0, 0, time.Local)
 	if n := s.refuse(p, refusedAgent, "", t0); !strings.Contains(n, "tried den-api.sock") {
 		t.Errorf("first note %q", n)
@@ -320,19 +320,19 @@ func procTree(t *testing.T, tree map[int][2]uint64) {
 	}
 }
 
-// drey -> drey-host -> systemd --user -> init, as the human runs Drey: no
-// agent anywhere. A session that once had drey-host's pid (another start)
+// app -> app-host -> systemd --user -> init, as a desktop app runs: no
+// agent anywhere. A session that once had app-host's pid (another start)
 // does not make it an agent's; the real session with that pid and start
 // does, and the note names it.
-func TestDreyHostChainIsNotAnAgent(t *testing.T) {
+func TestAppHostChainIsNotAnAgent(t *testing.T) {
 	procTree(t, map[int][2]uint64{
-		70300: {9_000_000, 70200}, // drey, a child of drey-host
-		70200: {8_000_000, 7100},  // drey-host
+		70300: {9_000_000, 70200}, // app, a child of app-host
+		70200: {8_000_000, 7100},  // app-host
 		7100:  {2_000, 1},         // systemd --user
 	})
 	old := identifyHook
 	defer func() { identifyHook = old }()
-	identifyHook = func(p Peer) Peer { p.PID, p.Exe = 70300, "/home/u/.local/bin/drey"; return p }
+	identifyHook = func(p Peer) Peer { p.PID, p.Exe = 70300, "/opt/example/bin/app"; return p }
 	for name, agents := range map[string][]AgentProc{
 		"no agents":          nil,
 		"reused session pid": {{PID: 70200, Start: 3_000_000, Name: "agent Old Otter"}},
@@ -344,7 +344,7 @@ func TestDreyHostChainIsNotAnAgent(t *testing.T) {
 		c := h.dial()
 		c.hello()
 		if l := c.call("fleet.snapshot", nil); !l.OK {
-			t.Errorf("%s: drey under drey-host was refused: %+v", name, l.Error)
+			t.Errorf("%s: app under app-host was refused: %+v", name, l.Error)
 		}
 	}
 	h := newHarness(t, 2)
@@ -710,7 +710,7 @@ func TestLaneLockout(t *testing.T) {
 
 // Today's spend survives a restart of Den.
 func TestSpendIsKept(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "drey-spend.json")
+	path := filepath.Join(t.TempDir(), "api-spend.json")
 	saveSpend(path, time.Now().Format("2006-01-02"), 1.25)
 	if day, usd := loadSpend(path); usd != 1.25 || day == "" {
 		t.Errorf("loaded %q %v", day, usd)

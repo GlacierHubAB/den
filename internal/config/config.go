@@ -62,7 +62,7 @@ type Config struct {
 		// Claude Code reports none; 0 for none.
 		WeeklyUSD float64
 	}
-	// API is den-api.sock, Den's local API for apps such as Drey. Off
+	// API is den-api.sock, Den's local API for apps on this machine. Off
 	// unless the human turns it on (/api on in Den writes enabled = true).
 	API struct {
 		Enabled      bool
@@ -428,7 +428,7 @@ stop_percent = 0            # off; e.g. 95 sends "USAGE STOP" to every agent at 
 weekly_usd = 0              # none; a weekly $ budget to estimate usage against when Claude Code reports none
 
 [api]
-enabled = false             # den-api.sock for apps such as Drey; turn it on with /api on in Den
+enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
 
 # A shell command per event kind, run by Den with the event's metadata as

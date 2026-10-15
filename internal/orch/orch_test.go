@@ -98,7 +98,7 @@ func TestLaneArgv(t *testing.T) {
 		"--output-format", "stream-json",
 		"--include-partial-messages",
 		"--verbose",
-		"--name", "den-drey-lane",
+		"--name", "den-api-lane",
 		"--tools", "",
 		"--strict-mcp-config",
 		"--mcp-config", `{"mcpServers":{}}`,

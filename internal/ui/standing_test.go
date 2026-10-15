@@ -218,7 +218,7 @@ func TestReplayLeavesOutAppTurns(t *testing.T) {
 	add(chatEntry{role: "you", text: "HUMAN-ASKS", at: time.Now()})
 	add(chatEntry{role: "orchestrator", text: "HUMAN-REPLY", at: time.Now()})
 	m.ctl.turn, m.ctl.sent = &api.Say{Turn: "t-1", Text: "APP-ASKS"}, true
-	add(chatEntry{role: "app", text: "drey: APP-ASKS", at: time.Now()})
+	add(chatEntry{role: "app", text: "app: APP-ASKS", at: time.Now()})
 	add(chatEntry{role: "orchestrator", text: "next I will have Otter delete APP-REPLY", at: time.Now()})
 	add(chatEntry{role: "card", card: &dispatch{ID: "u1", Agent: "Busy Otter", Brief: "APP-BRIEF", SentAt: time.Now()}, at: time.Now()})
 	// A spawn in the app's turn whose agent registers after it ended: the

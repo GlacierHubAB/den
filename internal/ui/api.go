@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -171,6 +172,32 @@ func stateDir() string {
 	return filepath.Join(dir, "den")
 }
 
+// apiStateRenames are den-api.sock's files in Den's state under the names
+// earlier test builds gave them, and their names now.
+var apiStateRenames = [][2]string{
+	{"drey-chat.jsonl", "api-chat.jsonl"},
+	{"drey-chat.jsonl.1", "api-chat.jsonl.1"},
+	{"drey-spend.json", "api-spend.json"},
+	{"drey-lane", "api-lane"},
+}
+
+// migrateAPIState moves each file or folder under its old name to its new
+// one, once: only a regular file or a folder (never a link), and only when
+// nothing has the new name yet.
+func migrateAPIState(state string) {
+	for _, r := range apiStateRenames {
+		old, now := filepath.Join(state, r[0]), filepath.Join(state, r[1])
+		fi, err := os.Lstat(old)
+		if err != nil || !(fi.Mode().IsRegular() || fi.IsDir()) {
+			continue
+		}
+		if _, err := os.Lstat(now); !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		os.Rename(old, now)
+	}
+}
+
 // startAPI binds den-api.sock. A failure is kept for /api and the header.
 func (m *Model) startAPI() tea.Cmd {
 	if m.api.srv != nil {
@@ -178,7 +205,8 @@ func (m *Model) startAPI() tea.Cmd {
 		return nil
 	}
 	state := stateDir()
-	lane := filepath.Join(state, "drey-lane")
+	migrateAPIState(state)
+	lane := filepath.Join(state, "api-lane")
 	if err := os.MkdirAll(lane, 0o700); err != nil {
 		m.api.err = err.Error()
 		return nil
@@ -187,11 +215,11 @@ func (m *Model) startAPI() tea.Cmd {
 	cfg := m.cfg
 	srv, err := api.Listen(api.Options{
 		Version: Version,
-		ChatLog: filepath.Join(state, "drey-chat.jsonl"),
+		ChatLog: filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,
-			SpendPath: filepath.Join(state, "drey-spend.json"),
+			SpendPath: filepath.Join(state, "api-spend.json"),
 			Model:     func() string { return cfg.Orchestrator.Model },
 			BudgetUS:  func() float64 { return cfg.API.AskBudgetUSD },
 		},
@@ -302,7 +330,7 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 			"Lets apps on this machine, running as your user, read Den's fleet and inbox digests and ask a read-only orchestrator, which costs money: up to api.ask_budget_usd (" + strconv.FormatFloat(m.cfg.API.AskBudgetUSD, 'f', -1, 64) + " dollars) a day.",
 			"Agents' processes are refused. The orchestrator the apps reach has no tools: it cannot message, start, close or approve anything. /api off or /api disconnect drops every app at once.",
 		}
-		it := m.store.AddAPIOn("Turn on den-api.sock for apps such as Drey?", body)
+		it := m.store.AddAPIOn("Turn on den-api.sock for apps on this machine?", body)
 		m.api.askItem = it
 		m.tab = tabInbox
 		m.refresh()
@@ -433,7 +461,7 @@ func (m Model) apiReport() string {
 	ls := m.api.srv.LaneState()
 	b.WriteString("\nread-only lane: " + laneWords(ls))
 	b.WriteString(fmt.Sprintf(" · spent today %.2f of %.2f dollars", ls.SpentUSD, m.cfg.API.AskBudgetUSD))
-	b.WriteString("\nlane sessions and asks: " + filepath.Join(stateDir(), "drey-chat.jsonl"))
+	b.WriteString("\nlane sessions and asks: " + filepath.Join(stateDir(), "api-chat.jsonl"))
 	return b.String()
 }
 
