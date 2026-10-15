@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -15,19 +16,78 @@ import (
 // Peer is who is on the other end of a connection, as the kernel and
 // /proc say: never what the client says about itself.
 type Peer struct {
-	UID   int
-	PID   int
-	Exe   string // /proc/<pid>/exe at accept, "" when unreadable
+	UID int
+	PID int
+	// Exe is /proc/<pid>/exe at accept, the peer's identity: the key
+	// grants, pairings, groups and limits go by. When the kernel will not
+	// let Den read it (a non-dumpable process), it is unreadableExe's
+	// identity of that one process instead; never "".
+	Exe   string
 	Start uint64 // the process's start time (clock ticks since boot)
 }
 
-// Label is how Den names the peer to the human: the exe's base name, or
-// "app" when it could not be read.
-func (p Peer) Label() string {
-	if p.Exe == "" {
-		return "app"
+// Label is how Den names the peer to the human (ExeLabel).
+func (p Peer) Label() string { return ExeLabel(p.Exe) }
+
+// unreadablePrefix starts the identity of a peer whose executable Den
+// cannot read: a process that made itself non-dumpable (PR_SET_DUMPABLE
+// 0), whose /proc/<pid>/exe the kernel keeps from other processes of the
+// same user. Any program can do that, so "unreadable" is no evidence of
+// which program it is: the identity is that one process in this boot,
+// so it never matches another process, nor any path.
+const unreadablePrefix = "unreadable:"
+
+// unreadableExe is the identity of process pid, started at start ticks
+// after this boot began.
+func unreadableExe(pid int, start uint64) string {
+	return unreadablePrefix + bootID() + ":" + strconv.Itoa(pid) + ":" + strconv.FormatUint(start, 10)
+}
+
+// bootID is this boot's id (pids and start ticks begin again at each
+// boot), "unknown" when it cannot be read.
+var bootID = sync.OnceValue(func() string {
+	raw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	if id := strings.TrimSpace(string(raw)); err == nil && id != "" {
+		return id
 	}
-	return filepath.Base(p.Exe)
+	return "unknown"
+})
+
+// Unidentified reports whether exe is the identity of a peer whose
+// executable Den could not read.
+func Unidentified(exe string) bool { return exe == "" || strings.HasPrefix(exe, unreadablePrefix) }
+
+// unidentified names such a peer, for the human.
+const unidentified = "a program Den cannot identify"
+
+// ExeLabel is how Den names a peer to the human: its executable's base
+// name, or, when Den could not read it, unidentified; never a path's
+// "." or the identity itself.
+func ExeLabel(exe string) string {
+	if Unidentified(exe) {
+		return unidentified
+	}
+	if b := filepath.Base(exe); b != "." && b != "/" {
+		return b
+	}
+	return unidentified
+}
+
+// ExeShownShort is the path Den read, or unidentified, for one-line notes.
+func ExeShownShort(exe string) string {
+	if Unidentified(exe) {
+		return unidentified
+	}
+	return exe
+}
+
+// ExeShown is the executable as a card shows it: the path Den read, or
+// why there is none.
+func ExeShown(exe string) string {
+	if Unidentified(exe) {
+		return "cannot be read (the program hides it), so Den cannot check which program this is"
+	}
+	return exe
 }
 
 // peerCred reads SO_PEERCRED.
@@ -67,18 +127,24 @@ func (s *Server) identify(c net.Conn) (Peer, error) {
 	}
 	p := Peer{UID: uid, PID: pid}
 	if pid <= 0 {
+		// No pid (another pid namespace): this connection alone.
+		p.Exe = unreadablePrefix + bootID() + ":conn:" + randHex()
 		return p, nil
 	}
 	start, _, err := procStat(pid)
 	if err != nil {
 		return p, fmt.Errorf("peer %d: %w", pid, err)
 	}
-	p.Exe, _ = os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+	exe, exeErr := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	again, _, err := procStat(pid)
 	if err != nil || again != start {
 		return p, fmt.Errorf("peer %d changed while it was read", pid)
 	}
 	p.Start = start
+	p.Exe = exe
+	if exeErr != nil || exe == "" {
+		p.Exe = unreadableExe(pid, start)
+	}
 	if f := s.idHook.Load(); f != nil {
 		p = (*f)(p)
 	}

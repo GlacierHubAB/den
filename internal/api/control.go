@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -498,11 +497,11 @@ func (s *Server) claim(c *conn, req Request) {
 			first := map[string]string{}
 			for _, id := range revoke {
 				if pr := st.pairings[id]; pr != nil {
-					first[id] = sanitize.Label(filepath.Base(pr.Exe), 40) + ", pid " + itoa(pr.PID)
+					first[id] = sanitize.Label(ExeLabel(pr.Exe), 40) + ", pid " + itoa(pr.PID)
 				}
 			}
 			st.mu.Unlock()
-			second := sanitize.Label(filepath.Base(c.peer.Exe), 40) + ", pid " + itoa(c.peer.PID)
+			second := sanitize.Label(ExeLabel(c.peer.Exe), 40) + ", pid " + itoa(c.peer.PID)
 			for _, id := range revoke {
 				who := first[id]
 				if who == "" {
@@ -698,7 +697,7 @@ func (s *Server) auth(c *conn, req Request) {
 		time.Sleep(50 * time.Millisecond) // the answer first, as for too_large
 		c.close()
 		if revoke {
-			s.Unpair(p.Pairing, "three wrong pairing proofs in five minutes from "+sanitize.Label(filepath.Base(c.peer.Exe), 40)+": the pairing is revoked; pair again")
+			s.Unpair(p.Pairing, "three wrong pairing proofs in five minutes from "+sanitize.Label(ExeLabel(c.peer.Exe), 40)+": the pairing is revoked; pair again")
 		}
 		return
 	}

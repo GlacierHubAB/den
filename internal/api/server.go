@@ -87,7 +87,10 @@ type Server struct {
 	conns     map[*conn]bool
 	lastFleet []byte
 	seenExe   map[string]bool
-	refusals  map[string]*refusal // by exe and reason
+	// connectNotes are when programs Den cannot identify earned a connect
+	// note (firstConnect).
+	connectNotes []time.Time
+	refusals     map[string]*refusal // by exe and reason
 }
 
 // Listen binds den-api.sock and starts serving it.
@@ -254,17 +257,72 @@ type Refusal struct {
 	Last   time.Time
 }
 
+// maxRefusals bounds the programs Refusals keeps apart; past it, they are
+// counted together per reason. maxConnectNotes bounds the connect notes
+// for programs Den cannot identify, which a restart makes new, in
+// connectNoteWindow; seenMax bounds the programs Den remembers seeing.
+const (
+	maxRefusals       = 64
+	maxConnectNotes   = 3
+	connectNoteWindow = 10 * time.Minute
+	seenMax           = 256
+)
+
+// refusalKey is what refusals are counted under: the program and reason;
+// every program Den cannot identify counts as one, so restarting one
+// earns no new entry or note.
+func refusalKey(exe, reason string) string {
+	if Unidentified(exe) {
+		exe = unreadablePrefix
+	}
+	return exe + "\x00" + reason
+}
+
+// firstConnect reports whether a connection of exe earns the chat's
+// connect note: the first of each program Den read, and, for programs it
+// cannot identify (each restart a new one), at most maxConnectNotes in
+// connectNoteWindow. Called with s.mu held.
+func (s *Server) firstConnect(exe string, now time.Time) bool {
+	if Unidentified(exe) {
+		keep := s.connectNotes[:0]
+		for _, t := range s.connectNotes {
+			if now.Sub(t) < connectNoteWindow {
+				keep = append(keep, t)
+			}
+		}
+		s.connectNotes = keep
+		if len(keep) >= maxConnectNotes {
+			return false
+		}
+		s.connectNotes = append(s.connectNotes, now)
+		return true
+	}
+	if s.seenExe[exe] || len(s.seenExe) >= seenMax {
+		return false
+	}
+	s.seenExe[exe] = true
+	return true
+}
+
 // refuse counts a refused connection and returns the chat note it earns:
 // the first of its program and reason, with detail (what it matched), then
 // at most one a refusalEvery saying how many more; "" for none.
 func (s *Server) refuse(p Peer, reason, detail string, now time.Time) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	key := p.Exe + "\x00" + reason
+	key := refusalKey(p.Exe, reason)
 	r := s.refusals[key]
+	if r == nil && len(s.refusals) >= maxRefusals {
+		key = "\x00" + reason // any further program: one entry per reason
+		r = s.refusals[key]
+	}
 	exe := sanitize.Label(p.Label(), 40)
 	if r == nil {
-		s.refusals[key] = &refusal{Refusal: Refusal{Exe: p.Exe, Reason: reason, Count: 1, First: now, Last: now}, said: now}
+		shown := p.Exe
+		if strings.HasPrefix(key, "\x00") {
+			shown = "more programs"
+		}
+		s.refusals[key] = &refusal{Refusal: Refusal{Exe: shown, Reason: reason, Count: 1, First: now, Last: now}, said: now}
 		text := reason + " (" + exe + ", pid " + itoa(p.PID) + ") tried den-api.sock: refused"
 		if detail != "" {
 			text += "; " + detail
@@ -644,10 +702,7 @@ func (s *Server) serve(nc net.Conn) {
 		return
 	}
 	s.conns[c] = true
-	first := peer.Exe != "" && !s.seenExe[peer.Exe]
-	if first {
-		s.seenExe[peer.Exe] = true
-	}
+	first := s.firstConnect(peer.Exe, time.Now())
 	s.mu.Unlock()
 	defer func() {
 		c.close()
@@ -754,7 +809,9 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		c.hello, c.agent = true, isAgent
 		if p.Group != "" {
 			// The program is part of the scope: another program naming
-			// the same group shares nothing with it.
+			// the same group shares nothing with it. The group itself is
+			// the app's secret (random hex): an identity two programs could
+			// share is not what keeps groups apart.
 			c.scope = "group:" + c.peer.Exe + "\x00" + p.Group
 		}
 		c.mu.Unlock()
@@ -763,7 +820,7 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 				s.note(text)
 			}
 		} else if first {
-			s.note("an app connected to den-api.sock: " + sanitize.Label(c.peer.Exe, 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
+			s.note("an app connected to den-api.sock: " + sanitize.Label(ExeShownShort(c.peer.Exe), 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
 		}
 		c.reply(req.ID, Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()})
 	case "fleet.snapshot":

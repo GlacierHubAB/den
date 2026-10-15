@@ -252,7 +252,10 @@ Den: the app never approves, answers or starts anything.
   have had it.
 - Den and the app keep the key in memory only; when either restarts, pair
   again. A pairing is bound to the program Den read for the app (its
-  executable): no other program can use it.
+  executable): no other program can use it. When Den cannot read the
+  executable (the app made itself non-dumpable), the pairing is bound to
+  that one process instead, and the card says Den cannot check which
+  program it is.
 - `pair.claim`, like every verb, is refused for processes under Den's
   agents, its orchestrator or its lane; and it answers only while a code is
   live.
@@ -381,6 +384,14 @@ The read-only `ask` lane is a separate process: an app turn never holds an
 - A pairing is bound to the program Den read for the app. An app run by an
   interpreter (`python3`, `node`) is that interpreter to Den, so the card
   also shows its command line: read it before you pair.
+- A process can make itself non-dumpable (`PR_SET_DUMPABLE` 0), and then
+  the kernel keeps its executable from Den. Any program can do this, so it
+  is no evidence of which program it is. Den then knows the app as that one
+  process in this boot (pid and start time): its grants, groups, pairing
+  and limits are that process's alone, and a new process of the same app
+  asks again. Cards say "a program Den cannot identify (pid N, started
+  HH:MM:SS)" and show its command line as the process reports it, which it
+  can make up; match the pid and start time with what the app shows.
 - Claude Code's inbox sockets accept messages from any process of your user
   without proof of who sent them; Den's `send_message` relies on that to
   deliver as SendMessage does. It is a property of Claude Code running as

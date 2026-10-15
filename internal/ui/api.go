@@ -101,7 +101,7 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	if g := act.Grant; g != nil {
 		title := "App grant · " + g.Name + " v" + strconv.Itoa(g.Version)
 		body := []string{
-			"requested by " + sanitize.Label(filepath.Base(g.Exe), 40) + " (pid " + strconv.Itoa(g.PID) + ", " + sanitize.Label(g.Exe, 120) + ") through den-api.sock",
+			"requested by " + appName(g.Exe) + " (pid " + strconv.Itoa(g.PID) + ", program " + sanitize.Label(api.ExeShown(g.Exe), 120) + ") through den-api.sock",
 			"capabilities: " + strings.Join(g.Capabilities, ", "),
 			"──── the app's request, as it sent it ────",
 		}
@@ -425,7 +425,7 @@ func (m Model) apiReport() string {
 		b.WriteString("\nno apps connected")
 	}
 	for _, c := range clients {
-		line := "\n" + sanitize.Label(c.Label, 40) + " · pid " + strconv.Itoa(c.PID) + " · " + sanitize.Label(c.Exe, 120) + " · since " + c.Since.Format("15:04")
+		line := "\n" + sanitize.Label(c.Label, 40) + " · pid " + strconv.Itoa(c.PID) + " · " + sanitize.Label(api.ExeShownShort(c.Exe), 120) + " · since " + c.Since.Format("15:04")
 		if len(c.Streams) > 0 {
 			line += " · " + strings.Join(c.Streams, ", ")
 		}
@@ -438,7 +438,7 @@ func (m Model) apiReport() string {
 		b.WriteString(line)
 	}
 	for _, r := range m.api.srv.Refusals() {
-		b.WriteString(fmt.Sprintf("\nrefused: %s · %s · %d since %s, last %s", sanitize.Label(r.Exe, 120), r.Reason, r.Count, r.First.Format("15:04"), r.Last.Format("15:04:05")))
+		b.WriteString(fmt.Sprintf("\nrefused: %s · %s · %d since %s, last %s", sanitize.Label(api.ExeShownShort(r.Exe), 120), r.Reason, r.Count, r.First.Format("15:04"), r.Last.Format("15:04:05")))
 	}
 	for _, p := range m.api.srv.Pairings() {
 		state := "waiting for your ^Y"
@@ -452,7 +452,7 @@ func (m Model) apiReport() string {
 		if !p.LastUsed.IsZero() {
 			used = p.LastUsed.Format("15:04:05")
 		}
-		b.WriteString("\npaired: " + sanitize.Label(p.Exe, 120) + " · pid " + strconv.Itoa(p.PID) + " · since " + p.Since.Format("15:04") + " · last used " + used + " · " + state + " · /api unpair revokes")
+		b.WriteString("\npaired: " + sanitize.Label(api.ExeShownShort(p.Exe), 120) + " · pid " + strconv.Itoa(p.PID) + " · since " + p.Since.Format("15:04") + " · last used " + used + " · " + state + " · /api unpair revokes")
 	}
 	b.WriteString(m.standingReport())
 	if m.ctl.noControl != "" {
@@ -484,7 +484,7 @@ func (m Model) apiChip() string {
 	var paired []string
 	for _, p := range srv.Pairings() {
 		if p.Confirmed {
-			paired = append(paired, appName(p.Exe)+" "+sanitize.Label(p.Exe, 60))
+			paired = append(paired, appName(p.Exe)+" "+sanitize.Label(api.ExeShownShort(p.Exe), 60)+" pid "+strconv.Itoa(p.PID))
 		}
 	}
 	if len(paired) > 0 {

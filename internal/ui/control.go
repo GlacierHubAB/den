@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -72,7 +71,9 @@ func (m Model) controlWanted() bool {
 
 // appName is a program's name as Den shows it: the base of the executable
 // it read.
-func appName(exe string) string { return sanitize.Label(filepath.Base(exe), 40) }
+// appName is how the human sees the app: the executable's name Den read,
+// or that Den cannot identify it (api.ExeLabel); never a path's ".".
+func appName(exe string) string { return sanitize.Label(api.ExeLabel(exe), 40) }
 
 // sayPreface is the fixed text before an app's words: who sent them and
 // what follows from that. It names only the program Den read.
@@ -126,7 +127,7 @@ func (m *Model) applyControlAct(act api.Act) tea.Cmd {
 	if p := act.Pair; p != nil {
 		started := "start unknown"
 		if !p.Started.IsZero() {
-			started = "started " + p.Started.Local().Format("15:04")
+			started = "started " + p.Started.Local().Format("15:04:05")
 		}
 		parent := p.Parent
 		if parent == "" {
@@ -135,9 +136,9 @@ func (m *Model) applyControlAct(act api.Act) tea.Cmd {
 		title := "Pair " + appName(p.Exe) + " (pid " + strconv.Itoa(p.PID) + ", " + started + ") for dock control?"
 		body := []string{
 			"The program below sent the pairing code you showed. Pair it only if you just typed the code into the app's own pairing window.",
-			"program: " + sanitize.Label(p.Exe, 160),
+			"program: " + sanitize.Label(api.ExeShown(p.Exe), 160),
 			"pid " + strconv.Itoa(p.PID) + " · " + started + " · parent " + sanitize.Label(parent, 40),
-			"command line: " + sanitize.Label(p.Cmdline, 200),
+			"command line, as the program reports it (it can be spoofed): " + sanitize.Label(p.Cmdline, 200),
 			"Paired, it may send turns to your orchestrator; every tool those turns want waits for you here. /api unpair revokes it.",
 		}
 		it := m.store.AddPair(title, body)
