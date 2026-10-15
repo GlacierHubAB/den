@@ -576,7 +576,8 @@ While it is on, Den's header says so in red, and:
   chat for each;
 - pairings, app grants, turning the API on, installs, guidance, skills,
   budgets and usage, messages to hosts, an app's turn, merges and your
-  console stay yours, and only Den's own window answers them;
+  console stay yours, and only Den's own window answers them, as it alone
+  gives an "always" answer to any card;
 - every message to an agent that runs without asking goes through Den: a
   hook Den gives that agent lets a peer message in only if Den delivered
   it, and Den shows a red notice for any it blocked. If that agent's Den
@@ -584,7 +585,9 @@ While it is on, Den's header says so in red, and:
   and delivers nothing more to it.
 
 What stays open: an agent that runs without asking can do anything you
-can, including changing Den itself. Any program or agent that can run
+can, including changing Den itself. What it reads is not fenced: files,
+cloned repositories (their CLAUDE.md too), web pages and MCP output, which
+is how an injection most often reaches it. Any program or agent that can run
 commands as you without asking (including agents in auto, plan or God
 mode) can type into a God-mode agent's terminal, or write to its inbox
 socket, and is not stopped. Den lowers the chance that an injection
