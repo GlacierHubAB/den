@@ -211,7 +211,7 @@ func (m Model) sender() sendFunc {
 // say shows a short message on the top bar without leaving compose mode.
 func (m Model) say(text string, isErr bool) (tea.Model, tea.Cmd) {
 	m.flash, m.flashErr = text, isErr
-	return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+	return m, flashTick(4*time.Second, m.flash)
 }
 
 func deliver(send sendFunc, a fleet.Agent, text string, it *inbox.Item) tea.Cmd {

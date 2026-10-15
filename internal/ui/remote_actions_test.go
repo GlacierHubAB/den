@@ -695,3 +695,64 @@ func TestSendQuestionDeclinedGivenUpOrLinkLost(t *testing.T) {
 		t.Errorf("sent %q", feed.sent)
 	}
 }
+
+// TestCloseOfABusyRemoteAgentSaysWhy: /close on a working agent on a host
+// asks nothing and says, as for a local one, that --force is needed.
+func TestCloseOfABusyRemoteAgentSaysWhy(t *testing.T) {
+	m, _, _ := remoteModel(t)
+	for _, name := range []string{"Mossy Lemur@devbox", ""} {
+		got := *m
+		if name == "" {
+			// ^X on the agent selected in the Fleet.
+			for i, a := range got.agents {
+				if a.Host == "devbox" {
+					got.cursor = i
+				}
+			}
+		}
+		mm, _ := got.command(strings.TrimSpace("/close " + name))
+		got = mm.(Model)
+		if openClose(got) != nil {
+			t.Fatalf("%q: a close question for a working agent", name)
+		}
+		if !got.flashErr || !strings.Contains(got.flash, "working") || !strings.Contains(got.flash, "--force") {
+			t.Errorf("%q: flash %q, want it to say the agent is working and --force closes it", name, got.flash)
+		}
+	}
+}
+
+// TestLongFlashShowsInTheHeader: a flash as long as a refused close is
+// seen whole, or cut with "…", at any width, never pushed off the row.
+func TestLongFlashShowsInTheHeader(t *testing.T) {
+	m, _, _ := remoteModel(t)
+	m.hooksReady = false // the longest system line
+	m.flash, m.flashErr = "Nothing to close. Mossy Lemur: working · add --force to close it anyway", true
+	for _, w := range []int{60, 80, 100, 120, 160} {
+		rows := m.header(w)
+		joined := ansi.Strip(strings.Join(rows, "\n"))
+		if !strings.Contains(joined, "Nothing to close") {
+			t.Errorf("width %d: flash not in the header:\n%s", w, joined)
+		}
+		for _, r := range rows {
+			if ansi.StringWidth(r) > w {
+				t.Errorf("width %d: header row %d wide: %q", w, ansi.StringWidth(r), ansi.Strip(r))
+			}
+		}
+	}
+}
+
+// TestOldFlashTimerKeepsANewerFlash: the timer of an earlier flash does
+// not take away the flash shown since; its own timer does.
+func TestOldFlashTimerKeepsANewerFlash(t *testing.T) {
+	m, _, _ := remoteModel(t)
+	mm, _ := m.say("Delivered to Mossy Lemur", false)
+	mm, _ = mm.(Model).say("Nothing to close. Mossy Lemur: working · add --force to close it anyway", true)
+	mm, _ = mm.(Model).Update(flashClearMsg{text: "Delivered to Mossy Lemur"})
+	if got := mm.(Model).flash; !strings.HasPrefix(got, "Nothing to close") {
+		t.Fatalf("an older flash's timer cleared the newer one: %q", got)
+	}
+	mm, _ = mm.(Model).Update(flashClearMsg{text: "Nothing to close. Mossy Lemur: working · add --force to close it anyway"})
+	if got := mm.(Model).flash; got != "" {
+		t.Errorf("the flash's own timer left it: %q", got)
+	}
+}

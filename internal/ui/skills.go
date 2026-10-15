@@ -180,5 +180,5 @@ func (m *Model) finishSkills(msg skillsDoneMsg) tea.Cmd {
 	}
 	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], !installed
 	m.refresh()
-	return tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+	return flashTick(4*time.Second, m.flash)
 }

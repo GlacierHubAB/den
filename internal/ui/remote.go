@@ -226,7 +226,7 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 		if h, ok := m.hostStatus(u.Host); ok && m.flash == "Connecting to "+u.Host+"…" && h.State != remote.Connecting {
 			// /remote connect said it was trying; say how it went.
 			m.flash, m.flashErr = hostNow(u.Host, h.State), h.State != remote.Live
-			cmd = tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+			cmd = flashTick(4*time.Second, m.flash)
 		}
 		if u.Kind == remote.HostChanged {
 			cmd = tea.Batch(cmd, m.remoteReviewChanged(u.Host))

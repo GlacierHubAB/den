@@ -626,7 +626,7 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 	}
 	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], false
 	m.refresh()
-	return tea.Batch(snapshot, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} }))
+	return tea.Batch(snapshot, flashTick(4*time.Second, m.flash))
 }
 
 // closeNamed finds the agent a /close name means: on this machine, or on a
