@@ -329,15 +329,16 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
+	// Output goes through Den's own pipes, copied by os/exec, so that
+	// WaitDelay applies: something the orchestrator started that keeps its
+	// stdout or stderr open (a backgrounded tool, say) would otherwise hold
+	// the readers, and with them Wait and Close, until it exits.
+	stdout, outW := io.Pipe()
+	stderr, errW := io.Pipe()
+	cmd.Stdout, cmd.Stderr = outW, errW
+	cmd.WaitDelay = 3 * time.Second
 	if err := cmd.Start(); err != nil {
+		stdin.Close()
 		return nil, fmt.Errorf("start orchestrator: %w", err)
 	}
 	exe := denExecutable(o)
@@ -345,16 +346,19 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 		exe = r
 	}
 	orc := &Orchestrator{cmd: cmd, stdin: stdin, events: make(chan Event, 256), done: make(chan struct{}), PID: cmd.Process.Pid, sent: map[string]time.Time{}, settings: o.SettingsFile, start: procs.StartTicks(cmd.Process.Pid), exe: exe}
-	read := make(chan struct{})
+	read, readErr := make(chan struct{}), make(chan struct{})
 	go func() {
 		orc.readStdout(stdout)
+		stdout.Close() // a reader that stopped early never blocks the copy
 		close(read)
 	}()
+	var tail []string
+	first := ""
 	go func() {
+		defer close(readErr)
+		defer stderr.Close()
 		sc := bufio.NewScanner(stderr)
 		sc.Buffer(make([]byte, 1<<20), 1<<20)
-		var tail []string
-		first := ""
 		for sc.Scan() {
 			line := sanitize.Label(sc.Text(), maxStderrLine)
 			if first == "" {
@@ -365,12 +369,19 @@ func start(cmd *exec.Cmd, o Options) (*Orchestrator, error) {
 				tail = tail[1:]
 			}
 		}
-		// Wait closes the pipes, so it waits for the stdout reader to finish
-		// first; otherwise the reader could emit after events is closed. It
+	}()
+	go func() {
+		// Wait returns once the process has exited and its output has been
+		// copied, or WaitDelay after the exit when something else still
+		// holds the pipes. Closing Den's ends then gives the readers EOF
+		// after the last line, and Exited follows everything they emit. It
 		// is the only Wait on this process: a second concurrent Wait can
 		// block forever once the first has reaped the child.
-		<-read
 		err := cmd.Wait()
+		outW.Close()
+		errW.Close()
+		<-read
+		<-readErr
 		orc.dropSettings()
 		msg := "orchestrator exited"
 		if err != nil {
