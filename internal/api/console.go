@@ -747,6 +747,9 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	}
 	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
 	c.push(Event{Event: EventConsole, Data: ev}, true)
+	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
+		c.push(Event{Event: EventMode, Data: v.Mode}, true)
+	}
 	for _, card := range waiting {
 		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}

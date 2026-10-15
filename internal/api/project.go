@@ -8,6 +8,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -44,6 +45,20 @@ type Snapshot struct {
 	Settled []Settled
 	// Commands are Den's commands with their dock flags (cmd.go).
 	Commands []CommandInfo
+	// Mode is the global permission mode and whether agents differ.
+	Mode ModeInfo
+	// Modes are the permission modes local agents' own hooks last
+	// reported, by session id.
+	Modes map[string]string
+}
+
+// modeLabel is a mode as the wire carries it: one Claude Code names, else
+// "unknown"; "" stays "".
+func modeLabel(mode string) string {
+	if mode == "" || permmode.Valid(mode) || mode == permmode.Bypass {
+		return mode
+	}
+	return "unknown"
 }
 
 // View is what the server serves until the next one.
@@ -58,6 +73,7 @@ type View struct {
 	Cards      map[string]Card // by id
 	Settled    map[string]Settled
 	Commands   []CommandInfo
+	Mode       ModeInfo
 }
 
 // AgentProc is one agent's process: its pid, and its start time in clock
@@ -103,6 +119,11 @@ func Project(s Snapshot) *View {
 		Cards:      map[string]Card{},
 		Settled:    map[string]Settled{},
 		Commands:   projectCommands(s.Commands),
+		Mode:       ModeInfo{Global: modeLabel(s.Mode.Global), Mixed: s.Mode.Mixed},
+	}
+	if v.Mode.Global != "" {
+		mode := v.Mode
+		v.Fleet.Mode = &mode
 	}
 	for _, p := range s.AgentProcs {
 		if p.PID > 1 {
@@ -144,6 +165,7 @@ func Project(s Snapshot) *View {
 		}
 		if a.Host == "" {
 			ag.Color = hexColor(s.Colors[a.Session.SessionID])
+			ag.PermissionMode = modeLabel(s.Modes[a.Session.SessionID])
 		}
 		switch a.Status {
 		case fleet.Working:

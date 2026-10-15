@@ -221,4 +221,15 @@ func TestAgentsPermissionMode(t *testing.T) {
 	if c := Load(); c.Agents.PermissionMode != "plan" || c.Agents.ModeRefused != "" {
 		t.Errorf("after SetKey: %q refused %q", c.Agents.PermissionMode, c.Agents.ModeRefused)
 	}
+	if mode, refused, err := ModeSetting(); mode != "plan" || refused != "" || err != nil {
+		t.Errorf("ModeSetting = %q, %q, %v", mode, refused, err)
+	}
+	os.WriteFile(p, []byte("[agents]\npermission_mode = \"bypassPermissions\"\n"), 0o644)
+	if mode, refused, err := ModeSetting(); mode != "" || refused != "bypassPermissions" || err != nil {
+		t.Errorf("ModeSetting on bypass = %q, %q, %v", mode, refused, err)
+	}
+	os.Remove(p)
+	if mode, refused, err := ModeSetting(); mode != "default" || refused != "" || err != nil {
+		t.Errorf("ModeSetting with no file = %q, %q, %v", mode, refused, err)
+	}
 }

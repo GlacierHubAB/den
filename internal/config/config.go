@@ -360,6 +360,34 @@ func GuidanceSetting() (string, error) {
 	return kv["orchestrator.guidance"], nil
 }
 
+// ModeSetting reads agents.permission_mode from the file as it is now, for
+// Den's watch on it: the mode (Default when the key or the file is gone),
+// or the value as written when it is not a mode the global mode may take.
+// A file that is there but does not read is an error. No environment
+// variable sets it.
+func ModeSetting() (mode, refused string, err error) {
+	f, err := os.Open(Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return permmode.Default, "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+	kv, err := parseFrom(f)
+	if err != nil {
+		return "", "", err
+	}
+	v, ok := kv["agents.permission_mode"]
+	if !ok {
+		return permmode.Default, "", nil
+	}
+	if mode, ok := permmode.Parse(v); ok {
+		return mode, "", nil
+	}
+	return "", v, nil
+}
+
 // parse reads a flat TOML subset: [section] headers and key = value lines
 // with string, integer or boolean values. Keys come back as section.key.
 func parse(path string) map[string]string {
