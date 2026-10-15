@@ -22,8 +22,8 @@ import (
 
 // Answer is Den's reply to one call, as the proxy reads it.
 type Answer struct {
-	Allow   bool
-	Message string // why not, or a Den tool's result
+	Allow   bool   `json:"-"`
+	Message string `json:"-"` // why not, or a Den tool's result
 	// Args is the input to forward (Den's rewrite of the agent's).
 	Args json.RawMessage `json:"args,omitempty"`
 	// Token lets the proxy forward the rest of an allowed call (the next

@@ -149,6 +149,7 @@ type Model struct {
 	offers          map[string]skills.Approval // skills offers in the inbox, by item id
 	installs        map[string]remote.Plan     // remote install questions in the inbox, by item id
 	desktopInstalls map[string]desktop.Plan    // hypruse install questions in the inbox, by item id
+	desk            deskState                  // desktop missions
 	sends           map[string]askedSend       // den send questions in the inbox, by item id
 	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
@@ -636,6 +637,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishInstall(msg)
 	case desktopInstallDoneMsg:
 		return m, m.finishDesktopInstall(msg)
+	case deskSnapMsg:
+		return m, m.decideDesktopCall(msg)
+	case deskCardTimeoutMsg:
+		m.timeoutDesktopCard(msg)
+		return m, nil
+	case deskCropMsg:
+		m.finishDeskCrop(msg)
+		return m, nil
 	case askedSentMsg:
 		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
@@ -701,6 +710,12 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.DesktopInstallEvent {
 		return m.handleDesktopInstallRequest(r)
+	}
+	if r.Event == bridge.DesktopEvent {
+		return m.handleDesktop(r)
+	}
+	if r.Event == bridge.DesktopGateEvent {
+		return m.handleDesktopGate(r)
 	}
 	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
@@ -1430,6 +1445,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.DesktopInstall {
 		return m.decideDesktopInstall(it, verb)
+	}
+	if it.Kind == inbox.DesktopAct || it.Kind == inbox.YourTurn {
+		return m.decideDesktopCard(it, verb)
 	}
 	if it.Kind == inbox.APIOn {
 		return m.decideAPIOn(it, verb)

@@ -88,6 +88,9 @@ func main() {
 				os.Setenv("DEN_SOCKET", args[i+1])
 			}
 		}
+		if len(args) > 0 && args[0] == "desktop-gate" {
+			runDesktopGate(args[1:])
+		}
 		if len(args) > 0 && args[0] == "orchestrator-inbound" {
 			runInbound(args[1:])
 		}
@@ -107,6 +110,8 @@ func main() {
 		runEvents()
 	case "remote":
 		remoteCmd(os.Args[2:])
+	case "desktop-mcp":
+		runDesktopMCP(os.Args[2:])
 	case "install-hypruse":
 		installHypruseCmd(os.Args[2:])
 	case "pair":

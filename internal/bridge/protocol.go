@@ -28,6 +28,9 @@ type Decision struct {
 	Behavior string            `json:"behavior"`
 	Message  string            `json:"message,omitempty"`
 	Answers  map[string]string `json:"answers,omitempty"`
+	// Data is an answer's structured part, for the asker that expects it:
+	// a DesktopEvent's allow carries the input to forward and the scope.
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // CloseEvent is not a hook: `den mcp` sends it when the orchestrator asks
@@ -158,6 +161,32 @@ type DesktopInstallInput struct {
 	Clone   string `json:"clone"`            // the hypruse clone to copy from
 	Wheels  string `json:"wheels,omitempty"` // a folder of wheels for an offline install
 	AskedBy string `json:"asked_by"`
+}
+
+// DesktopEvent is not a hook event: Den's desktop proxy (`den
+// desktop-mcp`, the only MCP server a desktop agent has) sends it to start
+// and for every tool call, and forwards a call to hypruse only on Den's
+// allow. Den answers only the proxy of a live desktop mission, known by
+// its process: a child of that mission's agent, then the pid and start it
+// reported.
+const DesktopEvent = "DesktopRequest"
+
+// DesktopGateEvent is not a hook event either: `den hook desktop-gate`,
+// the desktop agent's PreToolUse hook, sends it for every tool call. Den
+// answers at once, allow (the hook then makes no decision) only for a
+// live desktop agent's allowed tools, else deny.
+const DesktopGateEvent = "DesktopGate"
+
+// DesktopInput is the payload of a DesktopEvent.
+type DesktopInput struct {
+	Kind    string          `json:"kind"` // "start", "child" or "call"
+	Mission string          `json:"mission"`
+	Tool    string          `json:"tool,omitempty"`
+	Args    json.RawMessage `json:"args,omitempty"`
+	Token   string          `json:"token,omitempty"` // the next piece of an allowed call
+	// child: hypruse's process, for the panic path to know it by.
+	ChildPID   int    `json:"child_pid,omitempty"`
+	ChildStart string `json:"child_start,omitempty"`
 }
 
 // OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.

@@ -114,6 +114,8 @@ var held = map[string]bool{
 	ConsolePairEvent:    true,
 	ConsoleUnpairEvent:  true,
 	DesktopInstallEvent: true,
+	DesktopEvent:        true,
+	DesktopGateEvent:    true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

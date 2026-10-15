@@ -809,6 +809,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "remove the worktree")+"  "+key("^N", "keep it"))
 	case it.Answerable() && (it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall):
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
+	case it.Answerable() && it.Kind == inbox.DesktopAct:
+		out = append(out, key("^Y", "allow once")+"  "+key("^N", "deny"))
+	case it.Answerable() && it.Kind == inbox.YourTurn:
+		out = append(out, key("^Y", "done, go on")+"  "+key("^N", "end the mission"))
 	case it.Answerable() && it.Kind == inbox.Message:
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
 	case it.Answerable() && it.Kind == inbox.Guidance:
@@ -1066,6 +1070,12 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall {
 			acts = key("^Y", "install it") + sp + sp + key("^N", "decline")
+		}
+		if it.Kind == inbox.DesktopAct {
+			acts = key("^Y", "allow once") + sp + sp + key("^N", "deny")
+		}
+		if it.Kind == inbox.YourTurn {
+			acts = key("^Y", "done, go on") + sp + sp + key("^N", "end the mission")
 		}
 		if it.Kind == inbox.Message {
 			acts = key("^Y", "send it") + sp + sp + key("^N", "do not send")

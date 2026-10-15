@@ -785,6 +785,24 @@ func (s *Store) AddDesktopInstall(title string, body []string, req *bridge.Reque
 	return s.add(&Item{SessionID: DesktopSession, Kind: DesktopInstall, Tool: "install_hypruse", Title: title, Body: body, req: req})
 }
 
+// AddDesktopAct adds a desktop agent's action that needs the human: allow
+// this one call? req is the proxy's request; SettleWith answers it.
+func (s *Store) AddDesktopAct(sessionID, tool, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: DesktopAct, Tool: tool, Title: title, Body: body, req: req})
+}
+
+// AddYourTurn adds a desktop mission's step only the human does: ^Y says it
+// is done, ^N ends the mission. req is the agent's your_turn call.
+func (s *Store) AddYourTurn(sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: YourTurn, Tool: "your_turn", Title: title, Body: body, req: req})
+}
+
+// AddDesktopMission adds Den's question: start this desktop mission, in
+// this scope? req is the dispatcher's request.
+func (s *Store) AddDesktopMission(title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: DesktopSession, Kind: DesktopMission, Tool: "desktop_mission", Title: title, Body: body, req: req})
+}
+
 // AddMessageOn adds Den's question: send this text to an agent on host?
 // req is the request of the den send that asked; it gets the outcome.
 func (s *Store) AddMessageOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
@@ -920,6 +938,15 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 		d.Behavior = "allow"
 	}
 	it.req.Reply(d)
+}
+
+// SettleWith resolves an item with the outcome and answers whoever asked
+// with d as it is (its Data included).
+func (s *Store) SettleWith(it *Item, d bridge.Decision, outcome string) {
+	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
+	if it.req != nil {
+		it.req.Reply(d)
+	}
 }
 
 // SessionClosed resolves everything open for an agent Den closed.
