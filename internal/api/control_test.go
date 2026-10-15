@@ -379,3 +379,29 @@ func TestCodeLeakRefused(t *testing.T) {
 		}
 	}
 }
+
+// hello says whether an app may pair: on, and off once the human turned
+// control off in Den.
+func TestHelloSaysControl(t *testing.T) {
+	h := newHarness(t, 2)
+	info := func() Info {
+		c := h.dial()
+		l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0"})
+		var in Info
+		if !l.OK || json.Unmarshal(l.Result, &in) != nil {
+			t.Fatalf("hello %+v", l.Error)
+		}
+		return in
+	}
+	if in := info(); in.Control != ControlOn {
+		t.Errorf("control %q, want on", in.Control)
+	}
+	h.s.SetControl(false)
+	if in := info(); in.Control != ControlOff {
+		t.Errorf("control %q after /api control off", in.Control)
+	}
+	h.s.SetControl(true)
+	if in := info(); in.Control != ControlOn {
+		t.Errorf("control %q after /api control on", in.Control)
+	}
+}

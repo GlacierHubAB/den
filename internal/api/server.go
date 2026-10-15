@@ -713,7 +713,7 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		} else if first {
 			s.note("an app connected to den-api.sock: " + sanitize.Label(c.peer.Exe, 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
 		}
-		c.reply(req.ID, Info{Version: s.opts.Version, Versions: []int{V}, Host: host})
+		c.reply(req.ID, Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()})
 	case "fleet.snapshot":
 		c.reply(req.ID, s.fleetFor(c))
 	case "fleet.events":

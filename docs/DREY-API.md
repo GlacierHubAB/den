@@ -70,7 +70,13 @@ Error codes: `unsupported` (an unknown op or version: hide the feature),
 ## Versioning
 
 `v` is 1. `hello {v, client, version, group?}` returns `{version,
-versions:[1], host}`; a `v` Den does not serve gets `unsupported`. `group`
+versions:[1], host, control?}`; a `v` Den does not serve gets
+`unsupported`. `control` is `"on"` when an app may pair for control (see
+Control), `"off"` when you turned control off in Den (`/api control off`:
+`/api pair` shows no new code, a pairing made then starts off, and
+`orch.say` is refused, until `/api control on`); a Den without
+control sends none. A Den with no den-api.sock at all (v0.4.2 and older)
+is told by the missing socket, never by this field. `group`
 is optional: 32 lowercase hex digits (128 random bits) the app draws once
 per process and sends on each of its connections, so that its asks on all
 of them count as one app's (see Asking); any other shape gets
@@ -84,7 +90,7 @@ child process or another program. Added fields never change
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host}` |
+| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |

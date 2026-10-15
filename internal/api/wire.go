@@ -81,7 +81,17 @@ type Info struct {
 	Version  string `json:"version"`
 	Versions []int  `json:"versions"`
 	Host     string `json:"host,omitempty"`
+	// Control is ControlOn when an app may pair for control (pair.claim,
+	// orch.say), ControlOff when the human turned control off in Den.
+	// A Den without control sends none.
+	Control string `json:"control,omitempty"`
 }
+
+// Info.Control's values.
+const (
+	ControlOn  = "on"
+	ControlOff = "off"
+)
 
 // Fleet is fleet.snapshot's result and a fleet event's data.
 type Fleet struct {

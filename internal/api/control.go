@@ -223,9 +223,21 @@ func (s *Server) RemoveRulesFor(sessionID string) int {
 func (s *Server) SetControl(on bool) {
 	s.ctl.mu.Lock()
 	defer s.ctl.mu.Unlock()
+	s.ctl.off = !on
 	for _, pr := range s.ctl.pairings {
 		pr.Off = !on
 	}
+}
+
+// ControlState is hello's control: ControlOff once the human turned
+// control off, else ControlOn.
+func (s *Server) ControlState() string {
+	s.ctl.mu.Lock()
+	defer s.ctl.mu.Unlock()
+	if s.ctl.off {
+		return ControlOff
+	}
+	return ControlOn
 }
 
 type pairCode struct {
@@ -248,6 +260,7 @@ type control struct {
 	spent    []*pairCode
 	pairings map[string]*pairing
 	turn     *Say // the app turn running, nil for none
+	off      bool // the human turned control off (SetControl)
 }
 
 // Claim refusals: pair.claim's error message is exactly one of these, so
@@ -523,7 +536,7 @@ func (s *Server) claim(c *conn, req Request) {
 	id := randHex()
 	key := make([]byte, 16)
 	rand.Read(key)
-	pr := &pairing{Pairing: Pairing{ID: id, Exe: c.peer.Exe, PID: c.peer.PID, Since: now}, key: key, confirm: make(chan bool, 1)}
+	pr := &pairing{Pairing: Pairing{ID: id, Exe: c.peer.Exe, PID: c.peer.PID, Since: now, Off: st.off}, key: key, confirm: make(chan bool, 1)}
 	code.spent, code.claimed = now, id
 	st.code, st.spent = nil, append(st.spent, code)
 	st.pairings[id] = pr

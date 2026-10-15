@@ -94,6 +94,9 @@ func (m Model) controlCommand(sub string) (tea.Model, tea.Cmd) {
 		m.restartForControl()
 		return m.say("Unpaired.", false)
 	}
+	if m.api.srv.ControlState() == api.ControlOff {
+		return m.say("Control is off: /api control on first.", true)
+	}
 	m.ctl.code = m.api.srv.StartPairing()
 	m.ctl.codeUntil = time.Now().Add(2 * time.Minute)
 	return m.say("Pairing code shown above for two minutes. Type it only into Drey's pairing window.", false)
