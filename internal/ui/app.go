@@ -196,6 +196,7 @@ type Model struct {
 
 	api apiState     // den-api.sock (api.go); zero while the API is off
 	ctl controlState // a paired app's control (control.go)
+	con consoleUI    // the console (console.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -689,6 +690,12 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleOrchSend(r)
 		}
 		return m.handleMissionUpdate(r)
+	}
+	if r.Event == bridge.ConsolePairEvent {
+		return m.handleConsolePair(r)
+	}
+	if r.Event == bridge.ConsoleUnpairEvent {
+		return m.handleConsoleUnpair(r)
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
@@ -1373,6 +1380,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Grant {
 		return m.decideGrant(it, verb)
+	}
+	if it.Kind == inbox.Console {
+		return m.decideConsole(it, verb)
 	}
 	if it.Kind == inbox.Pair {
 		return m.decidePair(it, verb)

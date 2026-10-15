@@ -132,6 +132,15 @@ const UsageEvent = "UsageQuery"
 // answers at once.
 const OrchSendEvent = "OrchSend"
 
+// ConsolePairEvent is not a hook event: `den pair` sends it to have Den
+// show a console code. Den refuses it from a process under Claude Code,
+// an agent, `den mcp` or `den hook`; the confirm is a card in Den.
+const ConsolePairEvent = "ConsolePair"
+
+// ConsoleUnpairEvent is not a hook event: `den unpair [all]` sends it.
+// Its payload is {"all": bool}. It only lowers, so anyone may ask.
+const ConsoleUnpairEvent = "ConsoleUnpair"
+
 // OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.
 type OrchSendInput struct {
 	To      string `json:"to"`

@@ -110,6 +110,8 @@ var held = map[string]bool{
 	MissionEvent:        true,
 	UsageEvent:          true,
 	OrchSendEvent:       true,
+	ConsolePairEvent:    true,
+	ConsoleUnpairEvent:  true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

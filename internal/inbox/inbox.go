@@ -48,6 +48,8 @@ const (
 	Grant                     // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
 	Pair                      // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
 	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
+	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
+	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
 )
 
 func (k Kind) String() string {
@@ -102,6 +104,10 @@ func (k Kind) String() string {
 		return "pairing"
 	case ControlAsk:
 		return "app's turn"
+	case Console:
+		return "console"
+	case ConsoleNote:
+		return "console note"
 	}
 	return "?"
 }
@@ -160,7 +166,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -794,6 +800,17 @@ func (s *Store) AddGrant(title string, body []string) *Item {
 // code control the orchestrator?
 func (s *Store) AddPair(title string, body []string) *Item {
 	return s.add(&Item{SessionID: APISession, Kind: Pair, Tool: "app_pairing", Title: title, Body: body})
+}
+
+// AddConsole adds Den's question: make the program that claimed the
+// console code the human's console? Only the human's ^Y answers it.
+func (s *Store) AddConsole(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Console, Tool: "console_pairing", Title: title, Body: body})
+}
+
+// AddConsoleNote adds Den's notice about the console.
+func (s *Store) AddConsoleNote(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: ConsoleNote, Title: title, Body: body})
 }
 
 // AddControlAsk adds a tool the orchestrator wants in a paired app's turn.

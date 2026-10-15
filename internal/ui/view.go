@@ -158,14 +158,14 @@ func (m Model) header(w int) []string {
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
 	// Each part has a rank: when the line is too long, the highest ranks
-	// go first. The pairing code, the bridge's error and the API chip's
-	// first part are never left out. The code comes first, so that when
-	// even those do not fit, the "…" falls on the others (shown whole in
-	// /api), never on the code, which Den shows nowhere else.
+	// go first. The codes, the bridge's error, the API chip's first part
+	// and the console are never left out. The codes come first, so that
+	// when even those do not fit, the "…" falls on the others (shown
+	// whole in /api), never on a code, which Den shows nowhere else.
 	var sys []headerPart
-	code := m.codeLine()
-	if code != "" {
-		sys = append(sys, headerPart{s.attn.Render(code), 0})
+	codes := m.liveCodes()
+	for _, c := range codes {
+		sys = append(sys, headerPart{s.attn.Render(c.line), 0})
 	}
 	if m.hooksReady {
 		sys = append(sys, headerPart{"hooks on", 2})
@@ -182,6 +182,9 @@ func (m Model) header(w int) []string {
 		}
 		sys = append(sys, headerPart{p, rank})
 	}
+	if chip := m.consoleChip(); chip != "" {
+		sys = append(sys, headerPart{chip, 0})
+	}
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
 	flash := ""
@@ -195,14 +198,19 @@ func (m Model) header(w int) []string {
 	if w < 72 {
 		brand := s.brand.Render("den") + "  "
 		right := clock
-		if code != "" {
-			// A live code takes the line, whole or as the note, ahead of
+		if len(codes) > 0 {
+			// A live code takes the line, whole or as its note, ahead of
 			// the fleet and the flash: the human always sees one is live.
-			text := code
-			if ansi.StringWidth(code) > headerRoom(brand, right, w) {
-				text = codeHidden
+			parts := make([]string, len(codes))
+			used := 0
+			for i, c := range codes {
+				parts[i] = c.line
+				if used+ansi.StringWidth(c.line) > headerRoom(brand, right, w) {
+					parts[i] = c.hidden
+				}
+				used += ansi.StringWidth(parts[i]) + 3
 			}
-			return []string{headerRow(brand, s.attn.Render(text), right, w), ansi.Truncate(m.tabs(w), w, "…")}
+			return []string{headerRow(brand, s.attn.Render(strings.Join(parts, " · ")), right, w), ansi.Truncate(m.tabs(w), w, "…")}
 		}
 		if flash != "" {
 			right = ansi.Truncate(flash, max(1, w-ansi.StringWidth(brand)-ansi.StringWidth(clock)-3), "…") + "  " + clock
@@ -226,10 +234,17 @@ func (m Model) header(w int) []string {
 			flash = ""
 		}
 	}
-	// A code that does not fit whole is never shown in part: a note says
-	// where it went instead.
-	if code != "" && ansi.StringWidth(code) > headerRoom(logo[2], flash+"  ", w) {
-		sys[0].text = s.attn.Render(codeHidden)
+	// A code that does not fit whole is never shown in part: its note
+	// says where it went instead. Codes are fitted in order, so a later
+	// one that no longer fits after an earlier one shows its note.
+	used := 0
+	for i, c := range codes {
+		shown := c.line
+		if used+ansi.StringWidth(c.line) > headerRoom(logo[2], flash+"  ", w) {
+			shown = c.hidden
+			sys[i].text = s.attn.Render(c.hidden)
+		}
+		used += ansi.StringWidth(shown) + 3
 	}
 	rows := []string{
 		"",
@@ -273,8 +288,27 @@ func (m Model) logoRows() []string {
 	return out
 }
 
-// codeHidden stands in for a pairing code too wide for Den's header.
-const codeHidden = "Pairing code live: widen Den to see it"
+// The notes that stand in for a code too wide for Den's header.
+const (
+	codeHidden        = "Pairing code live: widen Den to see it"
+	consoleCodeHidden = "Console code live: widen Den to see it"
+)
+
+// liveCode is a code Den shows in its header, and its note.
+type liveCode struct{ line, hidden string }
+
+// liveCodes are the codes live now: the app pairing code, then the
+// console code.
+func (m Model) liveCodes() []liveCode {
+	var out []liveCode
+	if l := m.codeLine(); l != "" {
+		out = append(out, liveCode{l, codeHidden})
+	}
+	if l := m.consoleCodeLine(); l != "" {
+		out = append(out, liveCode{l, consoleCodeHidden})
+	}
+	return out
+}
 
 // headerRow is a header line: the logo, then text, then right at the end
 // of the row. When they do not all fit, the text gives way (cut with "…"),
@@ -753,6 +787,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "grant it")+"  "+key("^N", "deny"))
 	case it.Answerable() && it.Kind == inbox.Pair:
 		out = append(out, key("^Y", "pair it")+"  "+key("^N", "refuse"))
+	case it.Answerable() && it.Kind == inbox.Console:
+		out = append(out, key("^Y", "make it your console")+"  "+key("^N", "refuse"))
 	case it.Answerable() && it.Kind == inbox.ControlAsk:
 		line := key("^Y", "allow it once") + "  " + key("^N", "deny")
 		if _, ok := m.ctl.always[it]; ok {
@@ -864,7 +900,7 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
-	case it.Kind == inbox.Usage && it.State != inbox.Resolved:
+	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote) && it.State != inbox.Resolved:
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {
@@ -1010,6 +1046,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Pair {
 			acts = key("^Y", "pair it") + sp + sp + key("^N", "refuse")
+		}
+		if it.Kind == inbox.Console {
+			acts = key("^Y", "make it your console") + sp + sp + key("^N", "refuse")
 		}
 		if it.Kind == inbox.ControlAsk {
 			acts = key("^Y", "allow it once") + sp + sp + key("^N", "deny")

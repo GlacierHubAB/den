@@ -65,6 +65,9 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 // applyAPIAct puts an app's grant card in the inbox, or settles the cards
 // of grants whose app is gone.
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if isConsoleAct(act) {
+		return m.applyConsoleAct(act)
+	}
 	if act.Pair != nil || act.CodeGone || act.PairDone != "" || act.Paired || act.Say != nil {
 		return m.applyControlAct(act)
 	}
@@ -213,9 +216,16 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	os.Chmod(lane, 0o700)
 	cfg := m.cfg
+	key, kerr := loadConsoleKey(state)
+	m.con.keyErr = ""
+	if kerr != nil {
+		key, m.con.keyErr = nil, sanitize.Label(kerr.Error(), 160)
+	}
 	srv, err := api.Listen(api.Options{
-		Version: Version,
-		ChatLog: filepath.Join(state, "api-chat.jsonl"),
+		Version:      Version,
+		ConsoleKey:   key,
+		ConsoleStore: filepath.Join(state, "consoles.json"),
+		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,
@@ -313,6 +323,8 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 		sub = strings.ToLower(args[0])
 	}
 	switch sub {
+	case "console":
+		return m.consoleCommand()
 	case "pair", "unpair":
 		return m.controlCommand(sub)
 	case "disallow", "control":

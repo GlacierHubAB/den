@@ -106,6 +106,10 @@ func main() {
 		runEvents()
 	case "remote":
 		remoteCmd(os.Args[2:])
+	case "pair":
+		pairCmd()
+	case "unpair":
+		unpairCmd(os.Args[2:])
 	case "lane-argv":
 		// For scripts/lane-spike.sh: the read-only lane's arguments as Den
 		// passes them, NUL-separated, for a fresh session with a budget.
@@ -118,7 +122,7 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den pair | den unpair [all]\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
