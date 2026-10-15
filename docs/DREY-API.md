@@ -295,8 +295,11 @@ afterwards, so no later message carries a MAC.
   `mac` counts. A pairing that is gone (revoked, refused, or Den restarted)
   answers `not_found`; one that belongs to another program `forbidden`; no
   challenge first `bad_request`.
-- `orch.say` on a connection that has not passed `pair.auth` answers
-  `forbidden`.
+- `orch.say` on a connection that has passed neither `pair.auth` nor
+  `console.auth` answers `forbidden`. A console's turn is an app's turn:
+  the same fence, preface and limits, every tool waiting for you in Den,
+  refused while control is off, and never a standing allowance (`/always`
+  is not offered on its cards).
 
 ### Speaking to the orchestrator
 
@@ -318,7 +321,7 @@ afterwards, so no later message carries a MAC.
   bytes, which names the program and says that every tool in the turn waits
   for you in Den; then the roster, as for your own messages.
 - One app turn at a time on the whole machine (else `unavailable`), six a
-  minute per pairing. `turn` is "t-" and 32 hex digits.
+  minute per pairing, and six for the console. `turn` is "t-" and 32 hex digits.
 - Chunks, each with its `turn`: `{"type":"text","delta":"…"}`,
   `{"type":"status","seq":n,"text":"…"}` (Den's fixed sentences),
   `{"type":"needs_approval","card":"…","item":"…"}` and `{"type":"done"}` or
@@ -366,8 +369,8 @@ screen:
   sessions on this machine only, so agents see what they always saw and
   report back the same way.
 - If Den's guard finds a tool that ran in an app's turn without Den
-  allowing it, Den stops the orchestrator, notes why and revokes every
-  pairing.
+  allowing it, Den stops the orchestrator, notes why, revokes every
+  pairing and unpairs the console.
 - `/api` lists each pairing (program, pid, paired since, last used, control
   on or waiting for your `Ctrl+Y`); `/api unpair` revokes every pairing at
   once and closes their connections. Den's header shows `paired: <program>
@@ -578,6 +581,10 @@ all` does in a terminal.
 
 ### Console limits
 
+- A console's chat (`orch.say`) is fenced exactly as an app's is: what it
+  sends is an app's words to the orchestrator, never yours, and every tool
+  in its turn waits for you in Den. Only its cards and commands carry your
+  authority.
 - A console answers for you: a card it may answer is as answered as by
   your `Ctrl+Y`, and a console can send `/usage set` and answer that card,
   so it can lower the usage figure your usage stop is measured against.

@@ -63,10 +63,18 @@ type heldTurn struct {
 // orchVersion is the Claude Code release a command runs; tests replace it.
 var orchVersion = orch.LaneVersion
 
+// unpairConsole unpairs the console, if one is paired; tests replace it.
+var unpairConsole = func(m *Model, why string) { m.api.srv.UnpairConsole(why) }
+
 // controlWanted reports whether the orchestrator should run in control
-// mode: a pairing is confirmed.
+// mode: a pairing is confirmed, or a console is paired (its orch.say is an
+// app's turn too).
 func (m Model) controlWanted() bool {
-	return m.api.srv != nil && m.api.srv.Paired()
+	if m.api.srv == nil {
+		return false
+	}
+	_, console := m.api.srv.CurrentConsole()
+	return m.api.srv.Paired() || console
 }
 
 // appName is a program's name as Den shows it: the base of the executable
@@ -418,7 +426,10 @@ func (m *Model) controlEvent(ev orch.Event) (tea.Cmd, bool) {
 			if y != nil {
 				m.endAppTurn("Den stopped the orchestrator: " + sanitize.Label(ev.Text, 120))
 			}
-			m.api.srv.Unpair("", "Den's guard stopped the orchestrator while it ran for a paired app ("+sanitize.Label(ev.Text, 120)+"); every pairing is revoked")
+			m.api.srv.Unpair("", "Den's guard stopped the orchestrator while it ran for a paired app or the console ("+sanitize.Label(ev.Text, 120)+"); every pairing is revoked, and the console unpaired")
+			// The console's turns are app turns too: it is unpaired with
+			// them, whoever's turn it was.
+			unpairConsole(m, "Den's guard stopped the orchestrator: the console is unpaired; pair again with den pair")
 		}
 	case orch.Exited:
 		if y != nil && m.ctl.sent {

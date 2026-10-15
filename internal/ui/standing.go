@@ -38,6 +38,11 @@ func (m Model) standingOffer(ev orch.Event) (api.Rule, string) {
 	if !orch.Allowable(ev.Tool) {
 		return api.Rule{}, "this tool always asks"
 	}
+	if m.ctl.turn != nil && m.ctl.turn.Pairing == "" {
+		// Standing allowances belong to an app pairing; a console's turns
+		// ask every time.
+		return api.Rule{}, "in the console's turns every tool asks"
+	}
 	r := api.Rule{Tool: ev.Tool, At: time.Now()}
 	if ev.Tool != orch.SendMessageTool {
 		return r, ""
