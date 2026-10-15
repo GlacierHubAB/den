@@ -1,9 +1,11 @@
 package remote
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // What remotes.toml changes for a host applies at once when it trusts the
@@ -102,5 +104,43 @@ func TestReloadLowersAtOnceAndRaisesOnConnect(t *testing.T) {
 	m.reload("b", seen)
 	if h, s := got(); h.Policy != Full || !h.Labels || h.Target != "user@other" || m.isHeld("b") || s.Policy != Full || s.Pending != "" {
 		t.Errorf("Connect did not apply the raise: %+v %q", h, s.Pending)
+	}
+}
+
+// TestUnreadRemotesShowsOnTheHosts: a remotes.toml that keeps failing to
+// read is marked on every host once it has for a while, keeps the settings
+// in use, and the mark goes when the file reads again.
+func TestUnreadRemotesShowsOnTheHosts(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{Hosts: []Host{{Label: "a", Target: "a", Policy: Approve, Enabled: true}, {Label: "b", Target: "b", Policy: Observe, Enabled: true}}}
+	var bad error
+	m := NewManager(cfg, Options{StateDir: dir, EventsPath: filepath.Join(dir, "events.jsonl"), Controller: "c",
+		Reload: func() (Config, error) { return cfg, bad }})
+	defer m.Close()
+	old := unreadAfter
+	t.Cleanup(func() { unreadAfter = old })
+	unreadAfter = time.Hour
+
+	bad = errors.New("toml: line 3: expected '='")
+	m.reload("", "")
+	for _, s := range m.Hosts() {
+		if !s.Unread.IsZero() {
+			t.Errorf("%s: marked at the first failed read", s.Label)
+		}
+	}
+	unreadAfter = 0 // the failures have lasted long enough
+	start := time.Now()
+	m.reload("", "")
+	for _, s := range m.Hosts() {
+		if s.Unread.IsZero() || s.Unread.After(start) || s.Policy != map[string]Policy{"a": Approve, "b": Observe}[s.Label] {
+			t.Errorf("%s: unread %v, policy %v, want marked since the first failure, settings kept", s.Label, s.Unread, s.Policy)
+		}
+	}
+	bad = nil
+	m.reload("", "")
+	for _, s := range m.Hosts() {
+		if !s.Unread.IsZero() {
+			t.Errorf("%s: still marked after a clean read", s.Label)
+		}
 	}
 }

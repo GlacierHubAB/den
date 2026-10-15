@@ -492,6 +492,9 @@ func hostDetail(h remote.HostStatus) []string {
 	if h.Pending != "" {
 		out = append(out, h.Pending)
 	}
+	if !h.Unread.IsZero() {
+		out = append(out, "remotes.toml has not read cleanly since "+h.Unread.Local().Format("15:04")+"; Den keeps the settings it had")
+	}
 	return out
 }
 

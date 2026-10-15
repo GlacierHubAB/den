@@ -898,3 +898,14 @@ func TestRosterFencesHostText(t *testing.T) {
 		t.Error("the system prompt still calls the roster trusted")
 	}
 }
+
+func TestHostDetailSaysRemotesDoesNotRead(t *testing.T) {
+	since := time.Date(2026, 10, 15, 9, 41, 0, 0, time.Local)
+	got := strings.Join(hostDetail(remote.HostStatus{Label: "devbox", State: remote.Live, Unread: since}), "\n")
+	if !strings.Contains(got, "remotes.toml has not read cleanly since 09:41") {
+		t.Errorf("host detail = %q", got)
+	}
+	if got := hostDetail(remote.HostStatus{Label: "devbox", State: remote.Live}); len(got) != 0 {
+		t.Errorf("a host whose file reads has detail %q", got)
+	}
+}
