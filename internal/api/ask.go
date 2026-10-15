@@ -311,6 +311,23 @@ type errAsk struct{ code, msg string }
 
 func (e errAsk) Error() string { return e.msg }
 
+// register makes an ask findable by its id (ask.cancel) before it is
+// queued; enqueue queues it, or forget drops it when enqueue refuses.
+func (l *lane) register(j *askJob) {
+	l.mu.Lock()
+	l.jobs[j.id] = j
+	l.mu.Unlock()
+}
+
+// forget drops an ask enqueue refused.
+func (l *lane) forget(j *askJob) {
+	l.mu.Lock()
+	if l.jobs[j.id] == j {
+		delete(l.jobs, j.id)
+	}
+	l.mu.Unlock()
+}
+
 // enqueue queues an ask. A newer ask in the same scope (connection or
 // hello group) supersedes its earlier one, which ends with "superseded";
 // another process of the same program never does. The budget and the
