@@ -159,8 +159,14 @@ func (m Model) header(w int) []string {
 
 	// Each part has a rank: when the line is too long, the highest ranks
 	// go first. The pairing code, the bridge's error and the API chip's
-	// first part are never left out.
+	// first part are never left out. The code comes first, so that when
+	// even those do not fit, the "…" falls on the others (shown whole in
+	// /api), never on the code, which Den shows nowhere else.
 	var sys []headerPart
+	code := m.codeLine()
+	if code != "" {
+		sys = append(sys, headerPart{s.attn.Render(code), 0})
+	}
 	if m.hooksReady {
 		sys = append(sys, headerPart{"hooks on", 2})
 	} else {
@@ -175,9 +181,6 @@ func (m Model) header(w int) []string {
 			rank = 0
 		}
 		sys = append(sys, headerPart{p, rank})
-	}
-	if code := m.codeLine(); code != "" {
-		sys = append(sys, headerPart{s.attn.Render(code), 0})
 	}
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
@@ -202,7 +205,22 @@ func (m Model) header(w int) []string {
 		logo[i] = "  " + r + "    "
 	}
 	if flash != "" {
-		flash = ansi.Truncate(flash, max(1, w-ansi.StringWidth(logo[2])-3), "…")
+		// The flash gives way to the parts never left out (the pairing
+		// code first): it is cut, or left out when no room is left.
+		room := w - ansi.StringWidth(logo[2]) - 3
+		if must := ansi.StringWidth(fitParts(sys, 0)); must > 0 {
+			room -= must + 1
+		}
+		if room > 0 {
+			flash = ansi.Truncate(flash, room, "…")
+		} else {
+			flash = ""
+		}
+	}
+	// A code that does not fit whole is never shown in part: a note says
+	// where it went instead.
+	if code != "" && ansi.StringWidth(code) > headerRoom(logo[2], flash+"  ", w) {
+		sys[0].text = s.attn.Render(codeHidden)
 	}
 	rows := []string{
 		"",
@@ -245,6 +263,9 @@ func (m Model) logoRows() []string {
 	}
 	return out
 }
+
+// codeHidden stands in for a pairing code too wide for Den's header.
+const codeHidden = "Pairing code live: widen Den to see it"
 
 // headerRow is a header line: the logo, then text, then right at the end
 // of the row. When they do not all fit, the text gives way (cut with "…"),

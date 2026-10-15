@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,42 @@ func TestHeaderPartsFitWhole(t *testing.T) {
 		}
 		if ansi.StringWidth(all) <= w && got != all {
 			t.Errorf("w=%d: left out parts that fit: %q", w, got)
+		}
+	}
+}
+
+// A live pairing code is never cut: at every width with the system line,
+// with a connected app's chip and the bridge's error beside it, the code's
+// words are on the line whole whenever its part fits the room at all.
+func TestHeaderPairingCodeNeverCut(t *testing.T) {
+	apiEnv(t)
+	m := testModel(160, 40)
+	apiOn(t, &m)
+	dialAPI(t, &m)
+	for end := time.Now().Add(2 * time.Second); len(m.api.srv.Clients()) == 0 && time.Now().Before(end); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	mm, _ := m.apiCommand([]string{"pair"})
+	m = mm.(Model)
+	if m.codeLine() == "" {
+		t.Fatalf("no pairing code: %q", m.flash)
+	}
+	m.srvErr = errors.New("a long error from the bridge, to crowd the line")
+	words := strings.Join(m.ctl.code, " ")
+	for w := 72; w <= 200; w++ {
+		line := ansi.Strip(m.header(w)[3])
+		if strings.Contains(line, words) {
+			continue
+		}
+		if room := headerRoom(m.logoRows()[2]+"      ", "  ", w); room >= ansi.StringWidth(m.codeLine()) {
+			t.Errorf("w=%d: the code is not whole in %q", w, line)
+		} else if !strings.Contains(line, codeHidden) {
+			t.Errorf("w=%d: neither the code nor the note in %q", w, line)
+		}
+		for _, word := range m.ctl.code {
+			if strings.Contains(line, word+"…") {
+				t.Errorf("w=%d: a word of the code is cut in %q", w, line)
+			}
 		}
 	}
 }
