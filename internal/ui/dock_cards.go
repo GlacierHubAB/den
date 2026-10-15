@@ -28,6 +28,17 @@ func (m Model) dockCards() []api.Card {
 	return out
 }
 
+// dockSettled is how the answered cards Den still keeps were settled.
+func (m Model) dockSettled() []api.Settled {
+	var out []api.Settled
+	for _, it := range m.store.Items() {
+		if it.State == inbox.Resolved && it.Answer != "" {
+			out = append(out, api.Settled{ID: it.ID, Verb: it.Answer, By: it.AnsweredBy})
+		}
+	}
+	return out
+}
+
 // dockCard is one card: its kind, who it is for, its title and the lines
 // Den shows, and the verbs it takes.
 func (m Model) dockCard(it *inbox.Item) api.Card {
@@ -98,9 +109,11 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 		// the two never race.
 		return reply(api.CardResult{Code: api.CodeUnavailable, Note: "Den has this card open: it waits for an answer there"})
 	}
+	it.AnsweredBy = "console"
 	mm, cmd := m.answerItem(it, a.Verb)
 	*m = mm.(Model)
 	if it.State != inbox.Resolved {
+		it.AnsweredBy = ""
 		// Refused, or a step of several (a plan, a question): Den shows the
 		// rest, and the console is not told it is done.
 		why := "answered in part; Den shows the rest"

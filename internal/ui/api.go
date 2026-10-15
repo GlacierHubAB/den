@@ -298,6 +298,7 @@ func (m *Model) publishAPI() {
 	}
 	snap.AgentProcs = m.agentProcs()
 	snap.Cards = m.dockCards()
+	snap.Settled = m.dockSettled()
 	snap.Commands = dockCommands()
 	for _, h := range m.remote.hosts {
 		if string(h.Applied) == "full" {

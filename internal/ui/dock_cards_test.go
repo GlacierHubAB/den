@@ -53,6 +53,9 @@ func TestAnswerFromDock(t *testing.T) {
 	if r.Code != "" || r.Result != "allowed" || it.State != inbox.Resolved {
 		t.Fatalf("answer %+v, state %v", r, it.State)
 	}
+	if s := m.dockSettled(); len(s) != 1 || s[0] != (api.Settled{ID: it.ID, Verb: "allow", By: "console"}) {
+		t.Errorf("settled %+v", s)
+	}
 	found := false
 	for _, e := range m.orch.chat {
 		found = found || strings.HasPrefix(e.text, "Allowed from drey-host: ")

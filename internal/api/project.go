@@ -40,6 +40,8 @@ type Snapshot struct {
 	// Cards are the cards Den would show, as a console may read them
 	// (card.go); Project sanitises them and computes their hashes.
 	Cards []Card
+	// Settled says how the answered cards Den still keeps were settled.
+	Settled []Settled
 	// Commands are Den's commands with their dock flags (cmd.go).
 	Commands []CommandInfo
 }
@@ -54,6 +56,7 @@ type View struct {
 	AgentProcs map[int]AgentProc
 	Guidance   string
 	Cards      map[string]Card // by id
+	Settled    map[string]Settled
 	Commands   []CommandInfo
 }
 
@@ -98,6 +101,7 @@ func Project(s Snapshot) *View {
 		AgentProcs: map[int]AgentProc{},
 		Guidance:   s.Guidance,
 		Cards:      map[string]Card{},
+		Settled:    map[string]Settled{},
 		Commands:   projectCommands(s.Commands),
 	}
 	for _, p := range s.AgentProcs {
@@ -209,6 +213,11 @@ func Project(s Snapshot) *View {
 	for _, c := range s.Cards {
 		c = projectCard(c)
 		v.Cards[c.ID] = c
+	}
+	for _, st := range s.Settled {
+		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console") {
+			v.Settled[st.ID] = st
+		}
 	}
 	for _, ms := range s.Missions {
 		m := projectMission(ms)

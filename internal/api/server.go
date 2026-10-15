@@ -485,7 +485,7 @@ func (s *Server) Publish(v *View) {
 	if old != nil {
 		oldCards = old.Cards
 	}
-	s.pushCards(oldCards, v.Cards)
+	s.pushCards(oldCards, v.Cards, v.Settled)
 	fleetRaw, _ := json.Marshal(v.Fleet)
 	s.mu.Lock()
 	fleetChanged := !bytes.Equal(fleetRaw, s.lastFleet)

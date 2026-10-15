@@ -65,7 +65,21 @@ type CardEvent struct {
 	Agent  string `json:"agent"`
 	Change string `json:"change"` // new, changed or settled
 	Hash   string `json:"text_sha256,omitempty"`
+	// On a settled card: allowed, denied, always or gone (it settled
+	// without an answer: the agent moved on, or it went to its terminal),
+	// and by den or console, "" for gone.
+	Result string `json:"result,omitempty"`
+	By     string `json:"by,omitempty"`
 }
+
+// Settled is how Den settled a card: the verb answered and who answered.
+type Settled struct {
+	ID   string
+	Verb string // allow, deny or always
+	By   string // den or console
+}
+
+var settledResult = map[string]string{"allow": "allowed", "deny": "denied", "always": "always"}
 
 // CardAnswer is a console's answer for Den to carry out, as the human's
 // would be; Den replies on Reply with what happened.
@@ -303,7 +317,7 @@ func hasVerb(verbs []string, v string) bool {
 
 // pushCards tells the console's subscribed connections what changed
 // between two views' cards.
-func (s *Server) pushCards(old, now map[string]Card) {
+func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled) {
 	var evs []CardEvent
 	for id, c := range now {
 		if o, ok := old[id]; !ok {
@@ -314,7 +328,11 @@ func (s *Server) pushCards(old, now map[string]Card) {
 	}
 	for id, o := range old {
 		if _, ok := now[id]; !ok {
-			evs = append(evs, CardEvent{ID: id, Kind: o.Kind, Agent: o.Agent, Change: "settled"})
+			e := CardEvent{ID: id, Kind: o.Kind, Agent: o.Agent, Change: "settled", Result: "gone"}
+			if st, ok := settled[id]; ok {
+				e.Result, e.By = settledResult[st.Verb], st.By
+			}
+			evs = append(evs, e)
 		}
 	}
 	if len(evs) == 0 {

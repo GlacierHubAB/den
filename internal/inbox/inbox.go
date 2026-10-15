@@ -135,10 +135,15 @@ type Item struct {
 	Body      []string // the thing being decided, in full: the command, the diff, the arguments
 	Options   []string // AskUserQuestion choices, numbered from 1 as Den shows them
 	Resolved  string   // how it was resolved, for the dim trailer
-	Role      string   // the agent's role when this happened
-	Task      string   // what the agent was working on when this happened
-	Seen      bool     // shown on the Inbox view at least once
-	Unread    bool     // kept unread by the human: counts as new until opened or dismissed
+	// Answer is the verb that settled it (allow, deny or always), "" when
+	// it settled otherwise; AnsweredBy is "den" for the human's answer in
+	// Den, "console" for the console's.
+	Answer     string
+	AnsweredBy string
+	Role       string // the agent's role when this happened
+	Task       string // what the agent was working on when this happened
+	Seen       bool   // shown on the Inbox view at least once
+	Unread     bool   // kept unread by the human: counts as new until opened or dismissed
 	// A question Den holds (hooks.answer_questions): all of the call's
 	// questions, the answers so far by question text, and the one asked now.
 	Questions []question.Question

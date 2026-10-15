@@ -1345,6 +1345,15 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 // whole text shown, nothing new come up), or a console's (card.answer:
 // the card read whole, unchanged, from the console).
 func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	// Who settled it, for the console's settled event.
+	defer func() {
+		if it.State == inbox.Resolved && it.Answer == "" {
+			it.Answer = verb
+			if it.AnsweredBy == "" {
+				it.AnsweredBy = "den"
+			}
+		}
+	}()
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
 			m.store.Release(it, "you chose the terminal")

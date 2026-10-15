@@ -81,8 +81,8 @@ func TestCardGetAndAnswer(t *testing.T) {
 	if l := c.call("card.answer", map[string]string{"id": g.ID, "text_sha256": g.Hash, "nonce": g.Nonce, "verb": "allow"}); code(l) != CodeNonceExpired {
 		t.Errorf("a nonce used twice: %+v", l)
 	}
-	h.s.Publish(Project(Snapshot{Taken: time.Now()}))
-	if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Change != "settled" {
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Settled: []Settled{{ID: "i-1", Verb: "allow", By: "console"}}}))
+	if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Change != "settled" || ev.Result != "allowed" || ev.By != "console" {
 		t.Errorf("settled event %+v", e)
 	}
 }
