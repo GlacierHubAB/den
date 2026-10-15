@@ -17,6 +17,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/peermsg"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
@@ -439,5 +440,59 @@ func TestOnlyTheOrchestratorsChildrenAsk(t *testing.T) {
 	}
 	if m.peers.inFlight != 0 || len(m.orch.origins) != 1 {
 		t.Error("a refused caller changed something")
+	}
+}
+
+// A hook request from the orchestrator's own hook process gets the
+// orchestrator's restriction even before its init has named its session
+// (a turn can go out first); one from further down (an agent it started)
+// does not, nor one that names no session Den knows.
+func TestOrchestratorsHookBeforeInit(t *testing.T) {
+	m, _ := inboundModel(t)
+	if m.orch.proc.SessionID() != "" {
+		t.Fatal("the fake orchestrator sent an init")
+	}
+	perm := func(pid int, sid string) *bridge.Request {
+		raw, _ := json.Marshal(map[string]any{"session_id": sid, "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": map[string]any{"command": "rm -rf /tmp/x"}})
+		r := bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: raw})
+		r.PeerPID = pid
+		return r
+	}
+	r := perm(orchChildPID, "s-early")
+	m.handleRequest(r)
+	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "may only list and message sessions") {
+		t.Errorf("the orchestrator's request before init: %+v %v", d, ok)
+	}
+	for _, it := range m.store.Items() {
+		if it.SessionID == "s-early" {
+			t.Error("the orchestrator's request reached the inbox")
+		}
+	}
+	r = perm(orchDeepPID, "sess-a")
+	m.handleRequest(r)
+	if d, ok := r.Decided(); ok && strings.Contains(d.Message, "may only list and message sessions") {
+		t.Errorf("an agent's request was taken for the orchestrator's: %+v", d)
+	}
+	// After init the session id is enough, from any process.
+	m.orch.proc.SetSessionID("s-orch")
+	r = perm(os.Getpid(), "s-orch")
+	m.handleRequest(r)
+	if d, ok := r.Decided(); !ok || !strings.Contains(d.Message, "may only list and message sessions") {
+		t.Errorf("the orchestrator's session after init: %+v %v", d, ok)
+	}
+}
+
+// The orchestrator's own den mcp passes Spawned, as its hook does: its
+// den.sock events are handled before the orchestrator's restriction, so
+// asking which mode a new agent starts in still gets the mode, not "may
+// only list and message sessions".
+func TestOrchestratorsDenMCPStillGetsItsMode(t *testing.T) {
+	m, _ := inboundModel(t)
+	m.mode.global = permmode.AcceptEdits
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.ModeEvent})
+	r.PeerPID = orchChildPID
+	m.handleRequest(r)
+	if d, ok := r.Decided(); !ok || d.Message != permmode.AcceptEdits {
+		t.Errorf("den mcp's mode question from the orchestrator's side: %+v %v", d, ok)
 	}
 }
