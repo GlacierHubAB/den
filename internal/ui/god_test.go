@@ -80,10 +80,10 @@ func TestGodModeFromOutside(t *testing.T) {
 		t.Fatal("the dock armed or turned on God mode")
 	}
 	// Even if a dock line reached command(), /god on is refused there.
-	m.dockFrom = "app-host"
+	m.fromDock = true // with an empty name, too
 	mm, _ := m.godCommand([]string{"on"})
 	m = mm.(Model)
-	m.dockFrom = ""
+	m.fromDock = false
 	if !m.god.armedAt.IsZero() {
 		t.Error("/god on from the dock armed God mode")
 	}
@@ -110,14 +110,19 @@ func TestGodModeFromOutside(t *testing.T) {
 func TestGodModeCards(t *testing.T) {
 	m := testModel(140, 40)
 	m.base = append(m.base, m.agents...)
-	cl := m.store.AddClose(m.agents[0].Session.SessionID, "Close Otter?", []string{"Otter"}, nil)
+	before := m.store.AddClose(m.agents[0].Session.SessionID, "Close Lemur?", []string{"Lemur"}, nil)
+	before.At = time.Now().Add(-time.Hour)
 	m.godSweep()
-	if cl.State == inbox.Resolved {
+	if before.State == inbox.Resolved {
 		t.Fatal("Den answered its own card with God mode off")
 	}
 	typeLine(&m, "/god on")
 	typeLine(&m, godPhrase)
+	cl := m.store.AddClose(m.agents[0].Session.SessionID, "Close Otter?", []string{"Otter"}, nil)
 	m.godSweep()
+	if before.State == inbox.Resolved {
+		t.Error("Den answered a card that was waiting before God mode went on")
+	}
 	if cl.State != inbox.Resolved || cl.AnsweredBy != "rule" {
 		t.Errorf("Den did not answer the close card by rule: state %v, by %q", cl.State, cl.AnsweredBy)
 	}

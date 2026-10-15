@@ -70,7 +70,7 @@ func (m Model) godCommand(args []string) (tea.Model, tea.Cmd) {
 	}
 	switch sub {
 	case "on":
-		if m.dockFrom != "" {
+		if m.fromDock {
 			return m.say("God mode is turned on only in Den's own window.", true)
 		}
 		if m.god.on {
@@ -133,15 +133,17 @@ func (m *Model) godOff(why string) {
 }
 
 // godSweep answers, yes, Den's own cards God mode answers itself, each
-// with a chat line, and settled by "rule" for the dock. Never a card about
-// a remote host: God mode is local only.
+// with a chat line, and settled by "rule" for the dock. Only cards that
+// came after God mode went on: the phrase agrees to what comes, not to
+// decisions already waiting for the human. Never a card about a remote
+// host: God mode is local only.
 func (m *Model) godSweep() tea.Cmd {
 	if !m.god.on {
 		return nil
 	}
 	var cmds []tea.Cmd
 	for _, it := range m.store.Items() {
-		if !it.Answerable() || !godAutoKinds[it.Kind] || hostOf(itemKey(it)) != "" || strings.HasPrefix(it.SessionID, inbox.HostPrefix) {
+		if !it.Answerable() || !godAutoKinds[it.Kind] || it.At.Before(m.god.since) || hostOf(itemKey(it)) != "" || strings.HasPrefix(it.SessionID, inbox.HostPrefix) {
 			continue
 		}
 		title := sanitize.Label(it.Title, 100)

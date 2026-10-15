@@ -284,10 +284,10 @@ func (m *Model) runFromDock(r *api.CommandRun) tea.Cmd {
 	}
 	line := strings.Join(words, " ")
 	m.flash, m.flashErr = "", false
-	m.dockFrom = sanitize.Label(r.Console, 40)
+	m.fromDock, m.dockFrom = true, sanitize.Label(r.Console, 40)
 	mm, cmd := m.command(line)
 	*m = mm.(Model)
-	m.dockFrom = ""
+	m.fromDock, m.dockFrom = false, ""
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "from " + sanitize.Label(r.Console, 40) + ": " + sanitize.Label(line, 200), at: time.Now()}))
 	note := sanitize.Label(m.flash, 200)
 	if m.flashErr {

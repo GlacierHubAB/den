@@ -119,7 +119,10 @@ type Model struct {
 	mode modeState
 	// god is God mode (god.go): in memory only, off at every start.
 	god godUI
-	// dockFrom names the console while its command runs, "" otherwise.
+	// fromDock is set while a console's command runs, and dockFrom names
+	// that console; what the dock may not do is decided on fromDock, never
+	// on the name, which may be empty.
+	fromDock bool
 	dockFrom string
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
