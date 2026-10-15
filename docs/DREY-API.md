@@ -480,7 +480,7 @@ Each connection proves once, at its start:
 | `console.challenge` | | `{nonce, conn, claim_salt}` |
 | `console.claim` | `{public_key, proof, pages_sha256?}` | `{pairing, den_public_key, bind, console}`, once you `Ctrl+Y` in Den |
 | `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god}` |
-| `console.events` | | `{ok}`, then a `console` event, a `card` event for each card waiting, then `console` and `card` events as they come |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console` and `card` events as they come |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
@@ -505,8 +505,9 @@ all` does in a terminal.
   `new`, `changed` or `settled`. A settled card has no `text_sha256`;
   `result` is `allowed`, `denied`, `always` or `gone` (it settled without
   an answer), and `by` is `den` or `console`, absent for `gone`.
-- After a re-dial, the `new` events that follow `console.events` are the
-  whole set of cards waiting.
+- After a re-dial, `cards` in the `console.events` reply is the whole set
+  of cards waiting: one you knew that is not in it is gone. The `new`
+  events that follow are those cards.
 
 ### Cards
 

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -669,14 +670,24 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	c.subs[EventConsole] = true
 	c.subs[EventCard] = true
 	c.mu.Unlock()
-	c.reply(req.ID, map[string]bool{"ok": true})
-	c.push(Event{Event: EventConsole, Data: ev}, true)
-	// The cards already waiting, as if new: after a re-dial or a reload the
-	// console sees what Den sees, not only what changes from now on.
+	// The cards already waiting: their ids in the reply, the whole set, so
+	// that a card not listed is gone; then each as new, after a re-dial or
+	// a reload, so the console sees what Den sees.
+	var waiting []Card
+	ids := []string{}
 	if v := s.view.Load(); v != nil {
 		for _, card := range v.Cards {
-			c.push(Event{Event: EventCard, Data: CardEvent{ID: card.ID, Kind: card.Kind, Agent: card.Agent, Change: "new", Hash: card.Hash}}, true)
+			waiting = append(waiting, card)
 		}
+	}
+	sort.Slice(waiting, func(i, j int) bool { return waiting[i].ID < waiting[j].ID })
+	for _, card := range waiting {
+		ids = append(ids, card.ID)
+	}
+	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
+	c.push(Event{Event: EventConsole, Data: ev}, true)
+	for _, card := range waiting {
+		c.push(Event{Event: EventCard, Data: CardEvent{ID: card.ID, Kind: card.Kind, Agent: card.Agent, Change: "new", Hash: card.Hash}}, true)
 	}
 }
 

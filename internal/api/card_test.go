@@ -96,7 +96,9 @@ func TestConsoleEventsReplayPendingCards(t *testing.T) {
 	c := h.dial()
 	c.hello()
 	d.auth(c, p)
-	c.call("console.events", nil)
+	if l := c.call("console.events", nil); !l.OK || string(l.Result) != `{"cards":["w-1"],"ok":true}` {
+		t.Errorf("console.events reply %+v %s", l.Error, l.Result)
+	}
 	c.next() // connected
 	var ev CardEvent
 	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.ID != "w-1" || ev.Change != "new" {
