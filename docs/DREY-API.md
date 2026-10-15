@@ -304,7 +304,7 @@ afterwards, so no later message carries a MAC.
   line of at most 200 runes, already sanitised by Den but written from what
   the orchestrator asked for: show it as text under your own fixed words
   ("Needs approval in Den"), with "Open in Den" as the only action. `item`
-  is the card's id in Den's own inbox ("i-" and a number), opaque to the
+  is the card's id in Den's own inbox ("i" and a number), opaque to the
   app: Den's cards are not served by `inbox.list` or `inbox.body`. `focus`
   with `item:<id>` still answers `unavailable` in this release; a later one
   brings Den forward on that card, under the same guard against your own
