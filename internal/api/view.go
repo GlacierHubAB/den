@@ -70,21 +70,10 @@ func (v *viewSwitch) end() {
 	v.mu.Unlock()
 }
 
-// viewLane is who may switch views: a confirmed pairing with control on.
-// It returns the pairing's id, "" for anyone else.
-func (s *Server) viewLane(c *conn) string {
-	c.mu.Lock()
-	paired := c.paired
-	c.mu.Unlock()
-	st := s.ctl
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	pr := st.pairings[paired]
-	if paired == "" || pr == nil || !pr.Confirmed || pr.Off {
-		return ""
-	}
-	return paired
-}
+// viewLane is who may switch views: the console, proved on this connection
+// (console.auth). A D1 app pairing is chat only and may not move windows.
+// It returns the console's id, "" for anyone else.
+func (s *Server) viewLane(c *conn) string { return s.consoleOf(c) }
 
 // viewVerb is view.show and view.hide. They take no params, are the same
 // when asked again, and move nothing but Den's own windows, which the UI
@@ -99,7 +88,7 @@ func (s *Server) viewVerb(c *conn, req Request, want string) {
 		c.fail(req.ID, CodeBadRequest, "no params")
 		return
 	}
-	if v := s.view.Load(); v == nil || v.Fleet.View == "" {
+	if s.currentView() == "" {
 		c.fail(req.ID, CodeUnavailable, "this Den cannot switch views")
 		return
 	}
@@ -134,8 +123,9 @@ func (s *Server) viewVerb(c *conn, req Request, want string) {
 	}()
 }
 
-// pushView tells the connections that follow the fleet how a switch ended.
-// A slow reader may miss it: hello and the fleet carry the view too.
+// pushView tells how a switch ended: to the console's connections that took
+// console.events, and to the connections that follow the fleet. A slow
+// reader may miss it: hello, console.auth and the fleet carry the view too.
 func (s *Server) pushView(ch ViewChange) {
 	s.mu.Lock()
 	conns := make([]*conn, 0, len(s.conns))
@@ -144,26 +134,25 @@ func (s *Server) pushView(ch ViewChange) {
 	}
 	s.mu.Unlock()
 	for _, c := range conns {
-		if c.subscribed(EventFleet) {
+		if c.subscribed(EventFleet) || (c.subscribed(EventConsole) && s.consoleOf(c) != "") {
 			c.push(Event{Event: EventView, Data: ch}, false)
 		}
 	}
 }
 
-// ConsoleUp reports whether a connection is open that may switch views: the
-// dock that can call view.show. With none, a card that waits behind a hidden
-// Den window has nobody to bring it back.
+// ConsoleUp reports whether the console has a connection open: the dock
+// that can call view.show. With none, a card that waits behind a hidden Den
+// window has nobody to bring it back.
 func (s *Server) ConsoleUp() bool {
-	s.mu.Lock()
-	conns := make([]*conn, 0, len(s.conns))
-	for c := range s.conns {
-		conns = append(conns, c)
+	cur, ok := s.CurrentConsole()
+	return ok && len(s.consoleConns(cur.ID)) > 0
+}
+
+// currentView is the view Den is in as the last snapshot said, "" when Den
+// cannot switch views.
+func (s *Server) currentView() string {
+	if v := s.view.Load(); v != nil {
+		return v.Fleet.View
 	}
-	s.mu.Unlock()
-	for _, c := range conns {
-		if s.viewLane(c) != "" {
-			return true
-		}
-	}
-	return false
+	return ""
 }

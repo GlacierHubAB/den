@@ -375,8 +375,9 @@ own.
   that lists workspaces skips exactly that name), and so does every `fleet`.
   A Den that cannot switch (no Hyprland to move windows with) carries
   neither, and answers both verbs `unavailable`.
-- `view.show` and `view.hide` take no params, and only a proved pairing may
-  send them: any other connection gets `forbidden` "prove first". They are
+- `view.show` and `view.hide` take no params, and only the console, proved on
+  the connection (`console.auth`), may send them: any other connection, an
+  app's D1 pairing (chat only) included, gets `forbidden` "prove first". They are
   the same when asked again: asking for the view Den is in moves whatever
   is out of place (an agent's window that came up since) and nothing else.
   A call is never an approval of anything.
@@ -387,9 +388,10 @@ own.
   is done. `reason` is one plain line of at most 40 characters, absent when
   there is nothing to say ("1 of 4 not hidden", "2 not Den's").
 - After a switch, connections that follow `fleet.events` get a `view` event
-  `{view, shown, total}`; a slow reader may miss it, and `hello` and the
-  fleet carry the view too.
-- One switch at a time, and at most three a minute for each pairing. A call
+  `{view, shown, total}`, and so do the console's connections that took
+  `console.events`; a slow reader may miss it, and `hello`, `console.auth`
+  and the fleet carry the view too.
+- One switch at a time, and at most three a minute for the console. A call
   while another switch, or the closing of an agent's window, is running
   answers `busy` and does not count; past three a minute it answers
   `unavailable` "too many view switches". A switch ends within about four
@@ -683,11 +685,11 @@ Each connection proves once, at its start:
   lines joined by `\n`: `den-console-v1`, `app-to-den`, `conn`, `pairing`,
   the app's public key, Den's public key, *nd*, *na*, and the app's
   identity.
-- It answers `{paired: true, sig, god: {on: false}, view: "agent"}`, `sig` Den's signature
+- It answers `{paired: true, sig, god: {on: false}, view?}`, `sig` Den's signature
   of the same lines with `den-to-app` and Den's identity as the last line.
-  Check it with the pinned `den_public_key`. `god` and `view` are fixed in
-  this release: God mode is off and every session shows in its own window
-  (`agent`); a later Den adds `user` and an event for each change.
+  Check it with the pinned `den_public_key`. `god` is fixed in this release:
+  God mode is off. `view` is the view Den is in (`agent` or `user`, see
+  "Switching views"), absent when this Den cannot switch views.
 - The identity is the process as Den reads it in this boot:
   `exe:<path as hex>:<boot_id>:<pid>:<start>`, or
   `unreadable:<boot_id>:<pid>:<start>` when the process is not dumpable;
@@ -707,8 +709,8 @@ Each connection proves once, at its start:
 | `console.claim` | `{public_key, proof, pages_sha256?}` | `{pairing, den_public_key, bind, console}`, once you `Ctrl+Y` in Den |
 | `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, once you `Ctrl+Y` in Den |
 | `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once or once you `Ctrl+Y` in Den |
-| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console` and `card` events as they come |
+| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console`, `card` and `view` events as they come |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
@@ -733,6 +735,8 @@ all` does in a terminal.
   connection that subscribes, after the replay), `powers` (`on` says
   whether the console has them now), `refused` (another program tried
   this console) or `unpaired`. Ignore a kind you do not know.
+- `view {view, shown, total}`: how a `view.show` or `view.hide` ended, as in
+  "Switching views".
 - `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
   `new`, `changed` or `settled`. A new or changed card the console may
   not answer (`dock_answers` false) carries `needs_den_screen: true`: only

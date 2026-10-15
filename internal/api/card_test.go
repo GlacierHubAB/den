@@ -13,6 +13,7 @@ import (
 func provedConsole(t *testing.T) (*harness, *client) {
 	t.Helper()
 	h, _ := consoleHarness(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), View: ViewAgent}))
 	d := newDock(t, h)
 	p := d.pair(h.s.StartConsoleCode())
 	c := h.dial()

@@ -757,9 +757,13 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 	}
 	den := ed25519.Sign(s.ckey.priv, consoleSigned(dirDenToApp, cid, rec.ID, appKey, s.ckey.pubHex, nd, p.Nonce, s.ckey.identity))
-	// No God mode and no views yet: God mode is off, and every session
-	// shows in its own window (the agent view).
-	c.reply(req.ID, map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "view": "agent", "powers": powers})
+	// No God mode yet: it is off. The view is the one Den is in, and absent
+	// when this Den cannot switch views.
+	rep := map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "powers": powers}
+	if v := s.currentView(); v != "" {
+		rep["view"] = v
+	}
+	c.reply(req.ID, rep)
 }
 
 // consoleEvents is console.events: this proved connection of the console

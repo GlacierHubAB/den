@@ -7,59 +7,74 @@ import (
 	"time"
 )
 
-// viewHarness is a paired console-side connection and a plain one that
-// follows the fleet, with Den able to switch views.
-func viewHarness(t *testing.T, view string) (h *harness, ctl *client, pairing string, key []byte) {
+// viewConsole is a server with a console paired and proved on one
+// connection, Den able to switch views as view says ("" for unable).
+func viewConsole(t *testing.T, view string) (h *harness, d *dock, p consolePaired, ctl *client) {
 	t.Helper()
-	h = newHarness(t, 2)
+	h, _ = consoleHarness(t)
 	snap := snapshot()
 	snap.View = view
 	h.s.Publish(Project(snap))
-	ctl, pairing, key = paired(t, h)
-	return h, ctl, pairing, key
+	d = newDock(t, h)
+	p = d.pair(h.s.StartConsoleCode())
+	ctl = h.dial()
+	ctl.hello()
+	if l, _, _, _ := d.auth(ctl, p); !l.OK {
+		t.Fatalf("console.auth: %+v", l.Error)
+	}
+	return h, d, p, ctl
 }
 
-// TestViewVerbsNeedAProvedPairing: an unproved connection, however well
-// behaved, moves no window; nothing reaches the UI.
-func TestViewVerbsNeedAProvedPairing(t *testing.T) {
-	h, ctl, _, _ := viewHarness(t, ViewAgent)
-	c := h.dial()
-	c.hello()
-	for _, op := range []string{"view.show", "view.hide"} {
-		l := c.call(op, nil)
-		if code(l) != CodeForbidden || l.Error.Message != "prove first" {
-			t.Errorf("%s unproved: %+v", op, l.Error)
-		}
-	}
-	// Control off in Den is off for the proved connection too.
-	h.s.SetControl(false)
-	if l := ctl.call("view.hide", nil); code(l) != CodeForbidden {
-		t.Errorf("view.hide with control off: %+v", l.Error)
-	}
+func nextActView(t *testing.T, s *Server) Act {
+	t.Helper()
+	return ctlAct(t, s, func(a Act) bool { return a.View != nil })
+}
+
+func noViewAct(t *testing.T, s *Server, why string) {
+	t.Helper()
 	select {
-	case a := <-h.s.Acts():
+	case a := <-s.Acts():
 		if a.View != nil {
-			t.Fatalf("an unproved view call reached the UI: %+v", a)
+			t.Fatalf("%s reached the UI: %+v", why, a)
 		}
 	default:
+	}
+}
+
+// TestViewVerbsNeedTheConsoleProof: only the console, proved on the
+// connection, moves windows. An unproved connection and a D1 app pairing,
+// which is chat only, are both refused; nothing reaches the UI.
+func TestViewVerbsNeedTheConsoleProof(t *testing.T) {
+	h, _, _, ctl := viewConsole(t, ViewAgent)
+	plain := h.dial()
+	plain.hello()
+	app, _, _ := paired(t, h)
+	for name, c := range map[string]*client{"an unproved connection": plain, "a D1 app pairing": app} {
+		for _, op := range []string{"view.show", "view.hide"} {
+			l := c.call(op, nil)
+			if code(l) != CodeForbidden || l.Error.Message != "prove first" {
+				t.Errorf("%s, %s: %+v", name, op, l.Error)
+			}
+		}
+	}
+	noViewAct(t, h.s, "a refused call")
+	id := ctl.send("view.hide", nil)
+	a := nextActView(t, h.s)
+	a.View.Reply <- ViewReply{Result: ViewResult{View: ViewUser}}
+	if l := ctl.replyTo(id); !l.OK {
+		t.Errorf("the console: %+v", l.Error)
 	}
 }
 
 // TestViewVerbsTakeNoParams.
 func TestViewVerbsTakeNoParams(t *testing.T) {
-	h, ctl, _, _ := viewHarness(t, ViewAgent)
+	h, _, _, ctl := viewConsole(t, ViewAgent)
 	for _, p := range []any{map[string]string{"view": "user"}, []int{1}, "hide"} {
 		if l := ctl.call("view.hide", p); code(l) != CodeBadRequest {
 			t.Errorf("params %v: %+v", p, l.Error)
 		}
 	}
-	select {
-	case a := <-h.s.Acts():
-		if a.View != nil {
-			t.Fatalf("a refused call reached the UI: %+v", a)
-		}
-	default:
-	}
+	noViewAct(t, h.s, "a refused call")
 	id := ctl.send("view.hide", map[string]string{})
 	a := nextActView(t, h.s)
 	a.View.Reply <- ViewReply{Result: ViewResult{View: ViewUser, Total: 0}}
@@ -68,16 +83,11 @@ func TestViewVerbsTakeNoParams(t *testing.T) {
 	}
 }
 
-func nextActView(t *testing.T, s *Server) Act {
-	t.Helper()
-	return ctlAct(t, s, func(a Act) bool { return a.View != nil })
-}
-
-// TestHelloAndFleetCarryTheView: hello and the fleet say which view Den is
-// in, and name the workspace; a Den that cannot switch says neither and
-// refuses the verbs.
-func TestHelloAndFleetCarryTheView(t *testing.T) {
-	h, ctl, _, _ := viewHarness(t, ViewUser)
+// TestHelloAuthAndFleetCarryTheView: hello, the console's proof and the
+// fleet say which view Den is in, and name the workspace; a Den that cannot
+// switch says none of it and refuses the verbs.
+func TestHelloAuthAndFleetCarryTheView(t *testing.T) {
+	h, d, p, ctl := viewConsole(t, ViewUser)
 	c := h.dial()
 	l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0"})
 	var in Info
@@ -88,16 +98,31 @@ func TestHelloAndFleetCarryTheView(t *testing.T) {
 	if l := c.call("fleet.snapshot", nil); json.Unmarshal(l.Result, &f) != nil || f.View != ViewUser {
 		t.Errorf("fleet: %s", l.Result)
 	}
+	proved := func() map[string]any {
+		cc := h.dial()
+		cc.hello()
+		l, _, _, _ := d.auth(cc, p)
+		var r map[string]any
+		if !l.OK || json.Unmarshal(l.Result, &r) != nil {
+			t.Fatalf("console.auth: %+v", l.Error)
+		}
+		return r
+	}
+	if r := proved(); r["view"] != "user" {
+		t.Errorf("console.auth says view %v, Den is in user", r["view"])
+	}
 
 	// No view: no field at all.
-	snap := snapshot()
-	h.s.Publish(Project(snap))
+	h.s.Publish(Project(snapshot()))
 	l = h.dial().call("hello", map[string]any{"v": 1, "client": "test", "version": "0"})
 	if strings.Contains(string(l.Result), `"view`) {
 		t.Errorf("hello without a view: %s", l.Result)
 	}
 	if l := c.call("fleet.snapshot", nil); strings.Contains(string(l.Result), `"view"`) {
 		t.Errorf("fleet without a view: %s", l.Result)
+	}
+	if r := proved(); r["view"] != nil {
+		t.Errorf("console.auth without a view: %v", r["view"])
 	}
 	for _, op := range []string{"view.show", "view.hide"} {
 		if l := ctl.call(op, nil); code(l) != CodeUnavailable {
@@ -107,10 +132,11 @@ func TestHelloAndFleetCarryTheView(t *testing.T) {
 }
 
 // TestViewSwitchAnswersAndAnnounces: the UI's result is the reply, field
-// for field, and the connections that follow the fleet get a view event
-// with the counts, never the reason.
+// for field, and the console's events and the connections that follow the
+// fleet get a view event with the counts, never the reason.
 func TestViewSwitchAnswersAndAnnounces(t *testing.T) {
-	h, ctl, _, _ := viewHarness(t, ViewAgent)
+	h, _, _, ctl := viewConsole(t, ViewAgent)
+	ctl.call("console.events", nil)
 	f := h.dial()
 	f.hello()
 	f.call("fleet.events", nil)
@@ -126,16 +152,24 @@ func TestViewSwitchAnswersAndAnnounces(t *testing.T) {
 	if !l.OK || json.Unmarshal(l.Result, &got) != nil || len(got) != 4 || got["view"] != "user" || got["shown"] != 1.0 || got["total"] != 4.0 || got["reason"] != "1 of 4 not hidden" {
 		t.Fatalf("reply %s", l.Result)
 	}
-	var ev line
-	for {
-		ev = f.next()
-		if ev.Event == EventView {
-			break
+	viewEvent := func(c *client) map[string]any {
+		t.Helper()
+		for {
+			ev := c.next()
+			if ev.Event != EventView {
+				continue
+			}
+			var ch map[string]any
+			if json.Unmarshal(ev.Data, &ch) != nil {
+				t.Fatalf("event %s", ev.Data)
+			}
+			return ch
 		}
 	}
-	var ch map[string]any
-	if json.Unmarshal(ev.Data, &ch) != nil || len(ch) != 3 || ch["view"] != "user" || ch["shown"] != 1.0 || ch["total"] != 4.0 {
-		t.Errorf("event %s", ev.Data)
+	for name, c := range map[string]*client{"the console": ctl, "a fleet follower": f} {
+		if ch := viewEvent(c); len(ch) != 3 || ch["view"] != "user" || ch["shown"] != 1.0 || ch["total"] != 4.0 {
+			t.Errorf("%s: event %v", name, ch)
+		}
 	}
 
 	// show is the other verb, and a result without a reason has none.
@@ -153,7 +187,7 @@ func TestViewSwitchAnswersAndAnnounces(t *testing.T) {
 // TestViewSwitchErrorsFromTheUI: what the UI could not do comes back with
 // its code.
 func TestViewSwitchErrorsFromTheUI(t *testing.T) {
-	h, ctl, _, _ := viewHarness(t, ViewAgent)
+	h, _, _, ctl := viewConsole(t, ViewAgent)
 	id := ctl.send("view.hide", nil)
 	a := nextActView(t, h.s)
 	a.View.Reply <- ViewReply{Code: CodeBusy, Msg: "a close is running"}
@@ -164,25 +198,22 @@ func TestViewSwitchErrorsFromTheUI(t *testing.T) {
 }
 
 // TestViewSwitchOneAtATimeAndThreeAMinute: a second call while one runs
-// answers busy and is not counted; past three a minute it is refused.
+// answers busy and is not counted; past three a minute it is refused. The
+// limit is the console's, across its connections.
 func TestViewSwitchOneAtATimeAndThreeAMinute(t *testing.T) {
-	h, ctl, pairing, key := viewHarness(t, ViewAgent)
+	h, d, p, ctl := viewConsole(t, ViewAgent)
 	other := h.dial()
 	other.hello()
-	authOK(t, other, pairing, key)
+	if l, _, _, _ := d.auth(other, p); !l.OK {
+		t.Fatalf("console.auth: %+v", l.Error)
+	}
 
 	id := ctl.send("view.hide", nil)
 	first := nextActView(t, h.s)
 	if l := other.call("view.show", nil); code(l) != CodeBusy {
 		t.Fatalf("second call while one runs: %+v", l.Error)
 	}
-	select {
-	case a := <-h.s.Acts():
-		if a.View != nil {
-			t.Fatalf("a busy call reached the UI: %+v", a)
-		}
-	default:
-	}
+	noViewAct(t, h.s, "a busy call")
 	first.View.Reply <- ViewReply{Result: ViewResult{View: ViewUser}}
 	if l := ctl.replyTo(id); !l.OK {
 		t.Fatalf("first: %+v", l.Error)
@@ -201,13 +232,7 @@ func TestViewSwitchOneAtATimeAndThreeAMinute(t *testing.T) {
 	if code(l) != CodeUnavailable || l.Error.Message != "too many view switches" {
 		t.Errorf("fourth in a minute: %+v", l.Error)
 	}
-	select {
-	case a := <-h.s.Acts():
-		if a.View != nil {
-			t.Fatalf("a refused call reached the UI: %+v", a)
-		}
-	default:
-	}
+	noViewAct(t, h.s, "a refused call")
 }
 
 // TestViewSwitchEndsWhenTheUIDoesNotAnswer: the call is answered in time
@@ -216,7 +241,7 @@ func TestViewSwitchEndsWhenTheUIDoesNotAnswer(t *testing.T) {
 	was := viewWait
 	viewWait = 150 * time.Millisecond
 	t.Cleanup(func() { viewWait = was })
-	h, ctl, _, _ := viewHarness(t, ViewAgent)
+	h, _, _, ctl := viewConsole(t, ViewAgent)
 	start := time.Now()
 	l := ctl.call("view.hide", nil)
 	if code(l) != CodeUnavailable || time.Since(start) > 3*time.Second {
@@ -279,25 +304,39 @@ func TestFleetAgentsCarryTheirHooksState(t *testing.T) {
 	}
 }
 
-// TestConsoleUpFollowsTheProvedConnection: a dock that can call view.show is
-// connected only while a proved connection is open.
-func TestConsoleUpFollowsTheProvedConnection(t *testing.T) {
-	h := newHarness(t, 2)
-	plain := h.dial()
-	plain.hello()
-	if h.s.ConsoleUp() {
-		t.Fatal("a connection that proved nothing is a dock")
-	}
-	ctl, _, _ := paired(t, h)
+// TestConsoleUpFollowsTheConsoleConnection: the dock that can call
+// view.show is up only while the console has a proved connection open; a D1
+// app pairing is not it.
+func TestConsoleUpFollowsTheConsoleConnection(t *testing.T) {
+	h, d, p, ctl := viewConsole(t, ViewAgent)
 	if !h.s.ConsoleUp() {
-		t.Fatal("the proved connection is not a dock")
+		t.Fatal("the proved console connection is not a dock")
 	}
 	ctl.nc.Close()
-	deadline := time.Now().Add(3 * time.Second)
-	for h.s.ConsoleUp() {
-		if time.Now().After(deadline) {
-			t.Fatal("a closed connection still counts")
+	waitDown := func(why string) {
+		t.Helper()
+		deadline := time.Now().Add(3 * time.Second)
+		for h.s.ConsoleUp() {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s still counts", why)
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	waitDown("a closed connection")
+	// A D1 app pairing is not a dock.
+	app, _, _ := paired(t, h)
+	_ = app
+	if h.s.ConsoleUp() {
+		t.Error("a D1 app pairing is a dock")
+	}
+	// The console connects again.
+	again := h.dial()
+	again.hello()
+	if l, _, _, _ := d.auth(again, p); !l.OK || !h.s.ConsoleUp() {
+		t.Errorf("a new connection: %+v", l.Error)
+	}
+	// Unpaired: no console, so no dock.
+	h.s.UnpairConsole("test")
+	waitDown("an unpaired console")
 }
