@@ -107,6 +107,7 @@ type Server struct {
 	lastConn map[string]time.Time // exe -> when its last connection closed
 
 	focusLimit focusLimit
+	viewSwitch viewSwitch
 	rebound    bool // Rebind ran since the last /api resume
 
 	mu        sync.Mutex
@@ -924,9 +925,14 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 			// matches it with Den's card (console.request).
 			info.ConsolePublicKey = s.ckey.pubHex
 		}
-		if v := s.view.Load(); v != nil && v.Mode.Global != "" {
-			mode := v.Mode
-			info.Mode = &mode
+		if v := s.view.Load(); v != nil {
+			if v.Mode.Global != "" {
+				mode := v.Mode
+				info.Mode = &mode
+			}
+			if v.Fleet.View != "" {
+				info.View, info.ViewWorkspaces = v.Fleet.View, []string{ViewWorkspace}
+			}
 		}
 		c.reply(req.ID, info)
 	case "fleet.snapshot":
@@ -1041,6 +1047,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.modeSet(c, req)
 	case "focus":
 		s.focus(c, req)
+	case "view.show":
+		s.viewVerb(c, req, ViewAgent)
+	case "view.hide":
+		s.viewVerb(c, req, ViewUser)
 	case "ask.cancel":
 		var p struct {
 			Ask string `json:"ask"`

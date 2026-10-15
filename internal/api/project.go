@@ -50,6 +50,9 @@ type Snapshot struct {
 	// Modes are the permission modes local agents' own hooks last
 	// reported, by session id.
 	Modes map[string]string
+	// View is the view Den is in (ViewAgent or ViewUser), "" when it cannot
+	// switch views.
+	View string
 }
 
 // modeLabel is a mode as the wire carries it: one Claude Code names, else
@@ -125,6 +128,7 @@ func Project(s Snapshot) *View {
 		mode := v.Mode
 		v.Fleet.Mode = &mode
 	}
+	v.Fleet.View = s.View
 	for _, p := range s.AgentProcs {
 		if p.PID > 1 {
 			v.AgentProcs[p.PID] = p
