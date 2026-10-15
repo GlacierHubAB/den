@@ -112,6 +112,10 @@ type Request struct {
 	// Keep, when not empty, keeps Den's own window up, and says why
 	// ("a card waits"). It matters only to a hide.
 	Keep string
+	// Hold lists sessions whose window a hide leaves visible, because the
+	// agent waits on a prompt in its own terminal that nothing else can
+	// answer. They count as total and shown.
+	Hold []string
 }
 
 // Result is what a switch left. View is the view asked for. Shown counts
@@ -502,6 +506,21 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 			notDens[m] = true
 		}
 	}
+	hold := map[string]bool{}
+	for _, id := range rq.Hold {
+		hold[id] = true
+	}
+	held := map[string]bool{} // the windows of those, by address
+	for _, s := range rq.Sessions {
+		if !hold[s.ID] {
+			continue
+		}
+		if m := sw.Marker(s.ID); m != "" {
+			if c, ok := hypr.HeldWindow(all, m, sw.Ancestors(s.PID)); ok {
+				held[c.Address] = true
+			}
+		}
+	}
 	own, ownKnown := sw.Own(all)
 	if ownKnown {
 		add(item{addr: own.Address, own: true, tied: true})
@@ -532,12 +551,17 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 	}
 	var moves []move
 	keptOwn := false
+	heldN := 0
 	for _, it := range items {
 		c, _ := byAddress(all, it.addr)
 		switch {
 		case rq.Want == User && it.tied && !onSpecial(c):
 			if it.own && rq.Keep != "" {
 				keptOwn = true
+				continue
+			}
+			if held[it.addr] {
+				heldN++
 				continue
 			}
 			r := Moved{Marker: it.marker, From: origin(c), At: sw.now()}
@@ -629,12 +653,12 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 	if err := saveState(sw.path(), *st); err != nil {
 		return Result{}, ErrState
 	}
-	res.Reason = reason(rq, res, len(notDens), timedOut, keptOwn, ownKnown)
+	res.Reason = reason(rq, res, len(notDens), heldN, timedOut, keptOwn, ownKnown)
 	return res, nil
 }
 
 // reason says in one short line what did not go as asked.
-func reason(rq Request, res Result, notDens int, timedOut, keptOwn, ownKnown bool) string {
+func reason(rq Request, res Result, notDens, heldN int, timedOut, keptOwn, ownKnown bool) string {
 	var parts []string
 	if timedOut {
 		parts = append(parts, "ran out of time")
@@ -647,6 +671,12 @@ func reason(rq Request, res Result, notDens int, timedOut, keptOwn, ownKnown boo
 	}
 	if notDens > 0 {
 		parts = append(parts, fmt.Sprintf("%d not Den's", notDens))
+	}
+	switch {
+	case heldN == 1:
+		parts = append(parts, "1 waits on a prompt")
+	case heldN > 1:
+		parts = append(parts, fmt.Sprintf("%d wait on a prompt", heldN))
 	}
 	if keptOwn {
 		parts = append(parts, "Den's window stays: "+rq.Keep)

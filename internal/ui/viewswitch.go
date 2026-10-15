@@ -24,8 +24,10 @@ type viewDoneMsg struct{ view string }
 
 // applyView carries out an app's view.show or view.hide. The live agents on
 // this machine are handed over here, on the UI's goroutine; the windows
-// move off it, and the answer goes back to the API when they have. Den's
-// own window stays up while anything waits on the human here.
+// move off it, and the answer goes back to the API when they have. What
+// waits on the human stays where they can see it: Den's own window while any
+// card waits, and the window of an agent whose prompt only its terminal can
+// answer.
 func (m *Model) applyView(r *api.ViewReq) tea.Cmd {
 	rq := view.Request{Want: r.Want}
 	for _, a := range m.agents {
@@ -33,6 +35,9 @@ func (m *Model) applyView(r *api.ViewReq) tea.Cmd {
 			continue
 		}
 		rq.Sessions = append(rq.Sessions, view.Session{ID: a.Session.SessionID, PID: a.Session.PID})
+		if m.store.WaitingInTerminal(a.Session.SessionID) {
+			rq.Hold = append(rq.Hold, a.Session.SessionID)
+		}
 	}
 	if m.store.Waiting() > 0 {
 		rq.Keep = "a card waits"

@@ -399,12 +399,29 @@ own.
   left alone and counted in `reason` as "not Den's". Den's own window is
   hidden only when it is the one window of a process above Den's; when Den
   cannot tell, it stays and `reason` says so.
-- Never hidden: Den's own window while anything waits on you in Den, such as
-  a card. (An agent that waits on its own terminal, or a trust dialog, is
-  hidden like any other in User view: send the person back to Agent view for
-  it.) A new agent spawned in User view comes up hidden once Den has tied
-  its window to it; asking `view.hide` again hides any that came up
-  otherwise.
+- **What `view.hide` leaves visible.** It never takes anything out of sight
+  that waits on you at the moment it runs:
+  - Den's own window stays up while any card waits on you in Den, whatever
+    its kind: a tool permission, a plan or a question held in Den, and every
+    `Ctrl+Y` question (a close, a merge, a cleanup, a grant, a pairing, a
+    control ask, turning the API on, and the rest). No card, approval or
+    confirmation surface of Den's is ever hidden by it. When Den cannot tell
+    which window is its own, it hides none of its own, and `reason` says "Den's
+    own window not found".
+  - The window of an agent whose permission prompt, plan or question only its
+    own terminal can answer stays up too; it counts in `shown`, and `reason`
+    says "1 waits on a prompt". Ask `view.hide` again once it is answered.
+  - God mode's warning is never hidden: God mode (stage 2) is not in this
+    release, and when it lands it joins this same check, with its own tests.
+  - What a hide cannot do is bring something back: a card or a prompt that
+    appears after the hide stays out of sight until `view.show`. The fleet's
+    `waiting` tells the dock that an agent needs a person, and a dock can
+    offer `view.show` for it. A trust dialog is an
+    agent that has not registered yet: Den has not hidden its window (a new
+    agent comes up hidden only once Den has tied its window to it, which
+    happens after the dialog).
+  - A new agent spawned in User view comes up hidden once Den has tied its
+    window to it; asking `view.hide` again hides any that came up otherwise.
 - Nothing is closed, signalled or typed into. Closing an agent works on a
   hidden window as on any other, and a switch and a close never run at the
   same time. Where each window came from is kept in `view.json` in Den's
@@ -413,6 +430,14 @@ own.
   same class as an agent's makes Den leave both alone), `/view rescue` in
   Den's own terminal brings back every window there; no verb reaches it,
   and Hyprland's own binding for the special workspace works too.
+- Hyprland: a window is moved with the Lua dispatcher
+  `hl.dsp.window.move({ workspace = …, window = "address:…", follow = false })`,
+  which keeps the focus and the special workspace where they are (checked on
+  Hyprland 0.56.2 in a throwaway nested session; `silent = true` is ignored
+  there). The classic `movetoworkspacesilent` stays as the fallback for older
+  Hyprland; on 0.56 it is parsed as Lua and fails, and on older releases it
+  is untested here. A Hyprland that ignored `follow = false` would show
+  `special:den` after a hide: a visible fault, not a silent one.
 
 ### What an app's turn may do
 

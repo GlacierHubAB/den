@@ -760,3 +760,46 @@ func TestRescueBringsBackEverythingOnSpecialDen(t *testing.T) {
 		t.Errorf("rescue during a close: %v", err)
 	}
 }
+
+// TestAPromptingAgentsWindowStaysUp: an agent that waits on a prompt in its
+// own terminal keeps its window on a hide, counted as shown, with a reason;
+// the others are hidden, and once the prompt is answered the same verb
+// hides it too.
+func TestAPromptingAgentsWindowStaysUp(t *testing.T) {
+	r := newRig(t, 2)
+	rq := r.req(User)
+	rq.Hold = []string{"sess-1"}
+	res, err := r.sw.Switch(context.Background(), rq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Shown != 1 || res.Total != 3 || res.Reason != "1 of 3 not hidden; 1 waits on a prompt" {
+		t.Fatalf("hide: %+v", res)
+	}
+	if r.wm.where("0xa1") == Workspace {
+		t.Error("the window of an agent at a prompt was hidden")
+	}
+	if r.wm.where("0xa2") != Workspace || r.wm.where("0xden") != Workspace {
+		t.Error("the other windows were not hidden")
+	}
+	for _, m := range r.wm.moves() {
+		if strings.Contains(m, "0xa1") {
+			t.Errorf("moved the window at a prompt: %s", m)
+		}
+	}
+	// Answered: nothing is held, and the same verb hides it.
+	if res := r.must(User); res != (Result{View: User, Shown: 0, Total: 3}) || r.wm.where("0xa1") != Workspace {
+		t.Errorf("after the prompt: %+v, on %q", res, r.wm.where("0xa1"))
+	}
+	// Two at prompts.
+	r2 := newRig(t, 3)
+	rq = r2.req(User)
+	rq.Hold = []string{"sess-1", "sess-2"}
+	res, _ = r2.sw.Switch(context.Background(), rq)
+	if res.Shown != 2 || res.Reason != "2 of 4 not hidden; 2 wait on a prompt" {
+		t.Errorf("two at prompts: %+v", res)
+	}
+	if len(res.Reason) > ReasonMax {
+		t.Errorf("reason is %d characters", len(res.Reason))
+	}
+}

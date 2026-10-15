@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -9,9 +10,11 @@ import (
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/view"
 	"github.com/GlacierHubAB/den/internal/winmark"
@@ -258,5 +261,105 @@ func TestViewRescueIsForTheHumanAtDen(t *testing.T) {
 	// A bad argument changes nothing.
 	if mm, _ := m.viewCommand([]string{"hide"}); !mm.(Model).flashErr {
 		t.Error("/view hide was taken for a command")
+	}
+}
+
+// TestHideNeverHidesWhatWaitsOnYou: whatever kind of card waits in Den, a
+// hide leaves Den's own window up, so no card, no approval and no ^Y
+// question goes out of sight, while the agents' windows are hidden as
+// usual (the card is in Den, not in them).
+func TestHideNeverHidesWhatWaitsOnYou(t *testing.T) {
+	body := []string{"x"}
+	heldRequest := func(m *Model) {
+		r := bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: "s-a",
+			Payload: []byte(`{"session_id":"s-a","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"}}`)})
+		if it := m.store.Apply(r); it == nil || it.State != inbox.Waiting {
+			t.Fatalf("not held: %+v", it)
+		}
+	}
+	for name, add := range map[string]func(m *Model){
+		"a tool permission held in Den": heldRequest,
+		"close":                         func(m *Model) { m.store.AddClose("s-a", "Close?", body, nil) },
+		"skills":                        func(m *Model) { m.store.AddSkills("s-a", "Install?", body, nil) },
+		"budget":                        func(m *Model) { m.store.AddBudget("s-a", "Budget?", body) },
+		"restore":                       func(m *Model) { m.store.AddRestore("s-a", "Reopen?", body) },
+		"merge":                         func(m *Model) { m.store.AddMerge("s-a", "Merge?", body) },
+		"cleanup":                       func(m *Model) { m.store.AddCleanup("s-a", "Remove?", body) },
+		"install":                       func(m *Model) { m.store.AddInstall("devbox", "Copy?", body, nil) },
+		"message":                       func(m *Model) { m.store.AddMessageOn("devbox", "s-r", "Send?", body, nil) },
+		"guidance":                      func(m *Model) { m.store.AddGuidance("Load?", body) },
+		"mission update":                func(m *Model) { m.store.AddMissionUpdate("s-a", "Apply?", body) },
+		"usage resume":                  func(m *Model) { m.store.AddUsageResume("Resume?", body) },
+		"mission move":                  func(m *Model) { m.store.AddMissionMove("s-a", "Move?", body) },
+		"api on":                        func(m *Model) { m.store.AddAPIOn("Turn on?", body) },
+		"app grant":                     func(m *Model) { m.store.AddGrant("Grant?", body) },
+		"pairing":                       func(m *Model) { m.store.AddPair("Pair?", body) },
+		"control ask":                   func(m *Model) { m.store.AddControlAsk("Allow?", body) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, wm := viewRig(t)
+			add(m)
+			if m.store.Waiting() == 0 {
+				t.Fatal("the card does not wait on the human: the test is wrong")
+			}
+			rep, _ := switchView(t, m, api.ViewUser)
+			if rep.Code != "" || rep.Result.Shown != 1 || rep.Result.Total != 3 {
+				t.Fatalf("hide with a card: %+v", rep)
+			}
+			if wm.where("0xden") == api.ViewWorkspace {
+				t.Error("Den's own window was hidden while a card waits")
+			}
+			if wm.where("0xa") != api.ViewWorkspace || wm.where("0xb") != api.ViewWorkspace {
+				t.Error("the agents' windows were not hidden")
+			}
+		})
+	}
+}
+
+func terminalPrompt(m *Model, session string) {
+	p, _ := json.Marshal(map[string]any{"session_id": session, "hook_event_name": "Notification", "notification_type": "permission_prompt"})
+	r := &bridge.Request{Envelope: bridge.Envelope{Event: "Notification", SessionID: session, Payload: p}}
+	json.Unmarshal(p, &r.Input)
+	m.store.Apply(r)
+}
+
+// TestHideKeepsTheWindowOfAnAgentAtAPrompt: an agent whose permission
+// prompt only its own terminal can answer keeps its window, and says so;
+// Den's own window stays too, since the prompt waits on the human.
+func TestHideKeepsTheWindowOfAnAgentAtAPrompt(t *testing.T) {
+	m, wm := viewRig(t)
+	terminalPrompt(m, "s-a")
+	if !m.store.WaitingInTerminal("s-a") {
+		t.Fatal("the prompt is not waiting in the terminal")
+	}
+	rep, _ := switchView(t, m, api.ViewUser)
+	if rep.Result.Shown != 2 || rep.Result.Total != 3 || !strings.Contains(rep.Result.Reason, "1 waits on a prompt") {
+		t.Fatalf("hide: %+v", rep)
+	}
+	if wm.where("0xa") == api.ViewWorkspace || wm.where("0xden") == api.ViewWorkspace {
+		t.Error("a window with a prompt waiting was hidden")
+	}
+	if wm.where("0xb") != api.ViewWorkspace {
+		t.Error("the other agent's window was not hidden")
+	}
+}
+
+// TestHideSaysWhenItCannotTellDensWindow: with a card waiting and no window
+// Den can tell is its own, nothing of Den's own moves, and the reason says
+// why.
+func TestHideSaysWhenItCannotTellDensWindow(t *testing.T) {
+	m, wm := viewRig(t)
+	wm.mu.Lock()
+	for i, c := range wm.cs {
+		if c.Address == "0xden" {
+			wm.cs = append(wm.cs[:i], wm.cs[i+1:]...)
+			break
+		}
+	}
+	wm.mu.Unlock()
+	m.store.AddClose("s-a", "Close?", []string{"x"}, nil)
+	rep, _ := switchView(t, m, api.ViewUser)
+	if rep.Result.Shown != 0 || rep.Result.Total != 2 || rep.Result.Reason != "Den's own window not found" {
+		t.Fatalf("hide: %+v", rep)
 	}
 }

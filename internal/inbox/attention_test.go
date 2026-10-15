@@ -126,3 +126,29 @@ func TestKeepUnread(t *testing.T) {
 		t.Error("toggling and marking read clear it")
 	}
 }
+
+// WaitingInTerminal is true only while a permission prompt, plan or
+// question can be answered in the session's own terminal and nowhere else.
+func TestWaitingInTerminal(t *testing.T) {
+	store := New()
+	if store.WaitingInTerminal("s1") {
+		t.Error("an empty store has nothing waiting")
+	}
+	store.Apply(hook("s1", "Notification", map[string]any{"notification_type": "permission_prompt"}))
+	if !store.WaitingInTerminal("s1") || store.WaitingInTerminal("s2") {
+		t.Error("the prompt in s1's terminal is not s1's alone")
+	}
+	store.Apply(hook("s1", "UserPromptSubmit", map[string]any{}))
+	if store.WaitingInTerminal("s1") {
+		t.Error("an answered prompt still counts")
+	}
+	// A request held for Den is answered in Den, not in the terminal.
+	r := bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: "s3",
+		Payload: []byte(`{"session_id":"s3","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"}}`)})
+	if it := store.Apply(r); it == nil || it.State != Waiting {
+		t.Fatalf("held = %+v", it)
+	}
+	if store.WaitingInTerminal("s3") || !store.SessionNeedsYou("s3") {
+		t.Error("a request Den holds waits in Den")
+	}
+}

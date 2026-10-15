@@ -254,6 +254,18 @@ func (s *Store) Waiting() int {
 // waiting.
 func (s *Store) SessionNeedsYou(sessionID string) bool { return s.NeedsYouOn("", sessionID) }
 
+// WaitingInTerminal reports whether a session on this machine has a
+// permission prompt, plan or question that only its own terminal can
+// answer: the window it runs in is where the human has to look.
+func (s *Store) WaitingInTerminal(sessionID string) bool {
+	for _, it := range s.items {
+		if it.is("", sessionID) && it.State == InTerminal && it.Kind <= Question {
+			return true
+		}
+	}
+	return false
+}
+
 // NeedsYouOn reports whether a session on host ("" for this machine) has
 // anything waiting.
 func (s *Store) NeedsYouOn(host, sessionID string) bool {
