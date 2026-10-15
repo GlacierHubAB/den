@@ -97,10 +97,7 @@ func inboxPath(path string, pid int) bool {
 // sendTarget is the live local session a send_message names by its peer
 // name: never the orchestrator itself or the app lane.
 func (m Model) sendTarget(to string) (fleet.Agent, string) {
-	p := strings.TrimPrefix(strings.TrimSpace(to), "@")
-	if i := strings.Index(p, " ["); i > 0 {
-		p = p[:i]
-	}
+	p := orch.PeerName(to) // the name standing allowances match too
 	var hits []fleet.Agent
 	for _, a := range m.base {
 		if a.Host == "" && a.Session.Alive && a.Status != fleet.Gone && a.Session.Name == p {

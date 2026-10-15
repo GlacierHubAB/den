@@ -84,11 +84,20 @@ func AllowRule(tool, peer string) string {
 // Allowable reports whether a tool may have a standing allowance: Den's
 // own tools, never anything else.
 func Allowable(tool string) bool {
-	switch tool {
-	case SendMessageTool, MissionTool, SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool:
-		return true
+	// Never one to start an agent (its brief is a whole prompt), open a
+	// terminal, close agents or install skills: those always ask.
+	return tool == SendMessageTool || tool == MissionTool
+}
+
+// PeerName is a send_message "to" as Den matches it: no leading "@", no
+// " [...]" suffix, trimmed. Den's delivery (ui's sendTarget) and the
+// standing allowances use the same name.
+func PeerName(to string) string {
+	p := strings.TrimPrefix(strings.TrimSpace(to), "@")
+	if i := strings.Index(p, " ["); i > 0 {
+		p = p[:i]
 	}
-	return false
+	return p
 }
 
 // RuleOf is the AllowRule a request would need: send_message's by its
@@ -99,7 +108,7 @@ func RuleOf(tool string, input json.RawMessage) string {
 			To string `json:"to"`
 		}
 		json.Unmarshal(input, &in)
-		return AllowRule(tool, strings.TrimPrefix(strings.TrimSpace(in.To), "@"))
+		return AllowRule(tool, PeerName(in.To))
 	}
 	return AllowRule(tool, "")
 }

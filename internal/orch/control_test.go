@@ -265,10 +265,10 @@ func TestControlBackstop(t *testing.T) {
 // have one still asks.
 func TestControlStandingAllowance(t *testing.T) {
 	o, in := controlOrch(true)
-	o.SendApp("t-1", "hello", AllowRule(MissionTool, ""), AllowRule(SendMessageTool, "worker-otter"), "Bash")
+	o.SendApp("t-1", "hello", AllowRule(MissionTool, ""), AllowRule(SendMessageTool, "worker-otter"), "Bash", AllowRule(SpawnAgentTool, ""))
 	feed(o,
 		canUse("r1", MissionTool, "u1"),
-		`{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"`+SendMessageTool+`","tool_use_id":"u2","input":{"to":"worker-otter","message":"x"}}}`,
+		`{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"`+SendMessageTool+`","tool_use_id":"u2","input":{"to":"@worker-otter [Busy Otter]","message":"x"}}}`,
 		`{"type":"control_request","request_id":"r3","request":{"subtype":"can_use_tool","tool_name":"`+SendMessageTool+`","tool_use_id":"u3","input":{"to":"worker-fox","message":"x"}}}`,
 		canUse("r4", "Bash", "u4"),
 		canUse("r5", SpawnAgentTool, "u5"))
