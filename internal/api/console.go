@@ -143,7 +143,8 @@ const (
 	// with console.unpair {all: true}, from a connection that is not the
 	// console's own. Never the human's act.
 	CauseOther = "other"
-	// CauseReplaced: another console was paired in its place.
+	// CauseReplaced: another pairing took its place: another console, or
+	// this one after a console.reconnect with a fresh key.
 	CauseReplaced = "replaced"
 	// CauseRecord: Den found its console record changed outside Den.
 	CauseRecord = "record"

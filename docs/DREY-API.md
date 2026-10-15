@@ -745,11 +745,11 @@ all` does in a terminal.
   |---|---|
   | `burst` | it answered cards faster than anyone could read them |
   | `proofs` | three proofs for it were wrong in ten minutes |
-  | `intruders` | three other programs tried it in ten minutes |
+  | `intruders` | three other programs tried it in ten minutes (a `console.auth` or a `console.reconnect` from another program, or one that failed Den's checks, counts as a try) |
   | `self` | the console asked, with `console.unpair` (or `{all: true}` on its own proved connection) |
   | `den` | unpaired in Den (`/api unpair`) or with `den unpair` in a terminal. Den's own unpair, which a program the human or a script runs on this machine can issue too, so word it as "unpaired in Den", never "you unpaired it" |
   | `other` | another program on this machine unpaired every pairing with `console.unpair {all: true}` from a connection that is not the console's own. Not the human's act: never say they did it |
-  | `replaced` | another console was paired in its place |
+  | `replaced` | another pairing took its place: another console was paired, or this console reconnected after a restart with a fresh key (`console.reconnect`), which ends the old pairing as `replaced` and starts a new one |
   | `record` | Den found its record of the console changed outside Den, so the pairing cannot be trusted. Tell the human that, and do not tell them they unpaired |
   | `guard` | Den's own guard stopped the orchestrator and unpaired. Not the human's act |
 

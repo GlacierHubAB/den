@@ -180,7 +180,7 @@ func TestConsoleAnswerRacesTheWait(t *testing.T) {
 			case 1:
 				go h.s.ConsoleAnswered(id, false)
 			default:
-				go h.s.UnpairConsole("a test")
+				go h.s.UnpairConsole(CauseDen, "a test")
 			}
 		}
 		// A claim by code.
