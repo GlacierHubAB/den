@@ -206,8 +206,8 @@ func TestAgentsPermissionMode(t *testing.T) {
 		`"auto"`:              {"auto", ""},
 		`"accept-edits"`:      {"acceptEdits", ""},
 		`"dontAsk"`:           {"dontAsk", ""},
-		`"bypassPermissions"`: {"default", "bypassPermissions"},
-		`"yolo"`:              {"default", "yolo"},
+		`"bypassPermissions"`: {"auto", "bypassPermissions"},
+		`"yolo"`:              {"auto", "yolo"},
 	} {
 		os.WriteFile(p, []byte("[agents]\npermission_mode = "+in+"\n"), 0o644)
 		c := Load()
@@ -229,7 +229,7 @@ func TestAgentsPermissionMode(t *testing.T) {
 		t.Errorf("ModeSetting on bypass = %q, %q, %v", mode, refused, err)
 	}
 	os.Remove(p)
-	if mode, refused, err := ModeSetting(); mode != "default" || refused != "" || err != nil {
+	if mode, refused, err := ModeSetting(); mode != "auto" || refused != "" || err != nil {
 		t.Errorf("ModeSetting with no file = %q, %q, %v", mode, refused, err)
 	}
 }

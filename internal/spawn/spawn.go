@@ -62,8 +62,9 @@ type Request struct {
 	// conversation a new session id (--fork-session).
 	Resume string
 	Fork   bool
-	// PermissionMode is the claude --permission-mode the agent starts in,
-	// "" for Claude Code's own default. Den gives its global mode.
+	// PermissionMode is the claude --permission-mode the agent starts in;
+	// "" is default, never Claude Code's own default (auto). Den gives its
+	// global mode.
 	PermissionMode string
 }
 
@@ -400,11 +401,14 @@ func Command(req Request, name string) []string {
 	if req.Model != "" {
 		command = append(command, "--model", req.Model)
 	}
-	if req.PermissionMode != "" {
-		// On a resume too: a reopened agent starts in the mode in force
-		// now, not the one it last ran in.
-		command = append(command, "--permission-mode", req.PermissionMode)
+	// Always a mode, on a resume too: with none Claude Code starts in auto,
+	// and a reopened agent starts in the mode in force now, not the one it
+	// last ran in.
+	mode := req.PermissionMode
+	if mode == "" {
+		mode = permmode.Default
 	}
+	command = append(command, "--permission-mode", mode)
 	if req.Spawner != "" {
 		// Den's server beside the user's own: the agent keeps its usual
 		// tools and gains spawn_agent, pre-approved so a lead can staff its

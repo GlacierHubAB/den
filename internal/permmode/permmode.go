@@ -1,21 +1,30 @@
 // Package permmode ranks the permission modes Den starts agents in, by
 // what an agent may do without asking the human. Claude Code's selector
-// offers default, acceptEdits, plan, auto and dontAsk; Den ranks them on
-// one line:
+// offers default, acceptEdits, plan, auto and dontAsk. Den ranks them as
+// Claude Code 2.1.289 and 2.1.296 behave:
 //
-//	dontAsk < plan < default < acceptEdits < auto
+//		dontAsk < default < plan, acceptEdits < auto
 //
-// dontAsk denies whatever was not allowed in advance, so it sits at the
-// bottom, not the top. bypassPermissions is not on the line: only God mode
-// starts an agent in it, and no setting of the global mode may name it.
+//	  - dontAsk denies whatever was not allowed in advance, so it sits at the
+//	    bottom, not the top.
+//	  - default asks before edits, commands and MCP tools.
+//	  - plan asks before edits and MCP tools, but runs any Bash command
+//	    Claude Code's safety classifier allows (it is not read-only), where
+//	    default would ask: so plan is above default, not below it.
+//	  - acceptEdits makes edits in the working folder without asking.
+//	  - plan and acceptEdits are not ranked against each other: each runs
+//	    without asking something the other asks for.
+//	  - auto asks for nothing; the classifier decides the rest.
 //
-// A change down the line is a lowering, which Den applies at once. Every
-// other change, up the line or to or from anything off it, is a raise,
-// which waits for the human's ^Y.
+// bypassPermissions is not ranked: only God mode starts an agent in it,
+// and no setting of the global mode may name it.
 //
-// auto's place at the top is provisional until the offline mode spike on
-// Claude Code 2.1.289 and 2.1.296 confirms it.
+// A change to a mode below is a lowering, which Den applies at once. Every
+// other change, up, between plan and acceptEdits, or to or from anything
+// unranked, is a raise, which waits for the human's ^Y.
 package permmode
+
+import "slices"
 
 // The modes, as claude --permission-mode names them.
 const (
@@ -28,39 +37,42 @@ const (
 	Bypass = "bypassPermissions"
 )
 
-// line is the ranked line, most restrictive first.
-var line = []string{DontAsk, Plan, Default, AcceptEdits, Auto}
+// Shipped is the global mode Den starts with when config.toml names none:
+// auto, which is what Claude Code runs with no flag, so agents started
+// before the global mode existed ran in it too. It is also the most
+// config.toml may grant at Den's start: the file only ever asks.
+const Shipped = Auto
+
+// ranked are the modes the global mode may take, most restrictive first.
+var ranked = []string{DontAsk, Default, Plan, AcceptEdits, Auto}
+
+// below lists, for each ranked mode, every mode strictly below it.
+var below = map[string][]string{
+	DontAsk:     nil,
+	Default:     {DontAsk},
+	Plan:        {DontAsk, Default},
+	AcceptEdits: {DontAsk, Default},
+	Auto:        {DontAsk, Default, Plan, AcceptEdits},
+}
 
 // Modes are the modes the global mode may take, most restrictive first.
 func Modes() []string {
-	return append([]string(nil), line...)
+	return append([]string(nil), ranked...)
 }
 
-// Rank is the mode's place on the line, 0 for the most restrictive, and
-// false for a mode not on it.
-func Rank(mode string) (int, bool) {
-	for i, m := range line {
-		if m == mode {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
-// Valid reports whether mode may be the global mode: one on the line,
+// Valid reports whether mode may be the global mode: a ranked one,
 // spelled exactly as Claude Code spells it.
 func Valid(mode string) bool {
-	_, ok := Rank(mode)
+	_, ok := below[mode]
 	return ok
 }
 
 // Lowers reports whether going from one mode to another is a lowering:
-// both on the line, and to strictly below from. No change is not a
-// lowering, and neither is any change that involves a mode off the line.
+// both ranked, and to strictly below from. No change is not a lowering,
+// nor is a change between plan and acceptEdits, nor any change that
+// involves an unranked mode.
 func Lowers(from, to string) bool {
-	f, okf := Rank(from)
-	t, okt := Rank(to)
-	return okf && okt && t < f
+	return slices.Contains(below[from], to)
 }
 
 // Raises reports whether the change needs the human's ^Y: any change that
@@ -69,8 +81,10 @@ func Raises(from, to string) bool {
 	return from != to && !Lowers(from, to)
 }
 
-// Lower is the more restrictive of two modes on the line; a mode off it
-// counts as Default, so the result is always on the line.
+// Lower is the most permissive mode at or below both: the lower of the two
+// when they are ranked against each other, else default (for plan and
+// acceptEdits). An unranked mode counts as default, so the result is
+// always ranked.
 func Lower(a, b string) string {
 	if !Valid(a) {
 		a = Default
@@ -78,10 +92,13 @@ func Lower(a, b string) string {
 	if !Valid(b) {
 		b = Default
 	}
-	if Lowers(a, b) {
+	switch {
+	case a == b, Lowers(b, a):
+		return a
+	case Lowers(a, b):
 		return b
 	}
-	return a
+	return Default
 }
 
 // Parse reads a mode as the human may type it: case aside, and with the
@@ -121,13 +138,13 @@ func Allows(mode string) string {
 	case DontAsk:
 		return "runs only the tools allowed in advance and denies the rest without asking"
 	case Plan:
-		return "reads and plans; it edits and runs nothing until you approve its plan"
+		return "reads and plans; asks before edits and MCP tools, but runs any command Claude Code's classifier allows"
 	case Default:
 		return "reads without asking; asks before it edits a file or runs a command"
 	case AcceptEdits:
-		return "edits files without asking; asks before it runs other commands"
+		return "edits files in its working folder without asking; asks before commands, MCP tools and edits elsewhere"
 	case Auto:
-		return "acts without asking wherever Claude Code's classifier judges it safe; asks only for what it flags"
+		return "never asks: Claude Code's classifier allows or denies everything it does not run outright"
 	case Bypass:
 		return "acts without asking, for everything"
 	}

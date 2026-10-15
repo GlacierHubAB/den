@@ -86,11 +86,11 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gotCmd) != 5 || gotCmd[0] != "claude" || gotCmd[1] != "--name" || gotCmd[2] != "helper" || gotCmd[3] != "--" {
+	if len(gotCmd) != 7 || strings.Join(gotCmd[:6], " ") != "claude --name helper --permission-mode default --" {
 		t.Errorf("command = %v", gotCmd)
 	}
-	if !strings.Contains(gotCmd[4], `peer "orc"`) || !strings.HasSuffix(gotCmd[4], "Fix the tests.") || strings.Contains(gotCmd[4], "spawn_agent") {
-		t.Errorf("prompt = %q", gotCmd[4])
+	if !strings.Contains(gotCmd[6], `peer "orc"`) || !strings.HasSuffix(gotCmd[6], "Fix the tests.") || strings.Contains(gotCmd[6], "spawn_agent") {
+		t.Errorf("prompt = %q", gotCmd[6])
 	}
 	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=helper" {
 		t.Errorf("env = %v", gotEnv)
@@ -113,7 +113,7 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "--name", "designer", "--model", "opus", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal", "--"}
+	want := []string{"claude", "--name", "designer", "--model", "opus", "--permission-mode", "default", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal", "--"}
 	if len(gotCmd) != len(want)+1 || strings.Join(gotCmd[:len(want)], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v", gotCmd)
 	}
@@ -165,12 +165,12 @@ func TestCommandGivesApprovedSkillsFolder(t *testing.T) {
 
 func TestCommandResumes(t *testing.T) {
 	got := Command(Request{Resume: "s1", Model: "claude-opus-5-5", AddDirs: []string{"/s/agents/ui-1"}, Spawner: "/bin/den"}, "ui")
-	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
+	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--permission-mode", "default", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("command = %q, want %q", got, want)
 	}
 	got = Command(Request{Resume: "s1", Fork: true}, "ui-2")
-	if strings.Join(got, " ") != "claude --resume s1 --fork-session --name ui-2" {
+	if strings.Join(got, " ") != "claude --resume s1 --fork-session --name ui-2 --permission-mode default" {
 		t.Errorf("fork command = %q", got)
 	}
 }
@@ -184,8 +184,16 @@ func TestCommandPermissionMode(t *testing.T) {
 	if strings.Join(got, " ") != "claude --resume s1 --name ui --permission-mode acceptEdits" {
 		t.Errorf("resume command = %q", got)
 	}
-	if got := Command(Request{Brief: "go"}, "ui"); strings.Contains(strings.Join(got, " "), "--permission-mode") {
-		t.Errorf("no mode given, but %q", got)
+	// Never no flag, which would be auto: every agent's argv names a mode,
+	// default when none was given.
+	for _, req := range []Request{
+		{Brief: "go"}, {Resume: "s1"}, {Resume: "s1", Fork: true}, {Brief: "go", Spawner: "/bin/den"},
+		{Brief: "go", Worktree: "w"}, {Brief: "go", AddDirs: []string{"/s"}, Model: "opus"},
+	} {
+		got := strings.Join(Command(req, "ui"), " ")
+		if strings.Count(got, "--permission-mode") != 1 || (req.PermissionMode == "" && !strings.Contains(got, "--permission-mode default")) {
+			t.Errorf("%+v: %q", req, got)
+		}
 	}
 }
 
@@ -224,7 +232,7 @@ func TestRunResumesWithoutBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(gotCmd, " ") != "claude --resume s1 --name demo-app-1a2b --model claude-sonnet-5-5" {
+	if strings.Join(gotCmd, " ") != "claude --resume s1 --name demo-app-1a2b --model claude-sonnet-5-5 --permission-mode default" {
 		t.Errorf("command = %q", gotCmd)
 	}
 	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=demo-app-1a2b" || res.Name != "demo-app-1a2b" {
@@ -291,7 +299,7 @@ func TestRunStartsAnAgentInItsOwnWorktree(t *testing.T) {
 	if res.Worktree != "helper" || res.WorktreeBranch != "worktree-helper" || res.WorktreePath != filepath.Join(repo, ".claude", "worktrees", "helper") {
 		t.Errorf("result = %+v", res)
 	}
-	if strings.Join(gotCmd[:5], " ") != "claude --name helper --worktree helper" || gotCmd[5] != "--" {
+	if strings.Join(gotCmd[:7], " ") != "claude --name helper --worktree helper --permission-mode default" || gotCmd[7] != "--" {
 		t.Errorf("command = %v", gotCmd)
 	}
 	prompt := gotCmd[len(gotCmd)-1]

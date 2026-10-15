@@ -30,8 +30,9 @@ type Config struct {
 	Agents struct {
 		// PermissionMode is the global mode new agents start in
 		// (claude --permission-mode): one of permmode.Modes(), never
-		// bypassPermissions. A value Den refuses keeps the default, and
-		// ModeRefused holds it, for Den's note.
+		// bypassPermissions; permmode.Shipped (auto) when unset. A value
+		// Den refuses keeps that, and ModeRefused holds it, for Den's
+		// note. Den takes it only up to permmode.Shipped: the file asks.
 		PermissionMode string
 		ModeRefused    string
 	}
@@ -119,7 +120,7 @@ func Defaults() Config {
 	c.Orchestrator.Model = "sonnet"
 	c.Orchestrator.Name = "den-orchestrator"
 	c.Orchestrator.Spawn = true
-	c.Agents.PermissionMode = permmode.Default
+	c.Agents.PermissionMode = permmode.Shipped
 	c.Inbox.History = 100
 	c.Detail.Recent = 20
 	c.Hooks.PermissionWait = 580
@@ -368,7 +369,7 @@ func GuidanceSetting() (string, error) {
 func ModeSetting() (mode, refused string, err error) {
 	f, err := os.Open(Path())
 	if errors.Is(err, fs.ErrNotExist) {
-		return permmode.Default, "", nil
+		return permmode.Shipped, "", nil
 	}
 	if err != nil {
 		return "", "", err
@@ -380,7 +381,7 @@ func ModeSetting() (mode, refused string, err error) {
 	}
 	v, ok := kv["agents.permission_mode"]
 	if !ok {
-		return permmode.Default, "", nil
+		return permmode.Shipped, "", nil
 	}
 	if mode, ok := permmode.Parse(v); ok {
 		return mode, "", nil
@@ -442,7 +443,7 @@ guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text t
                             # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
 
 [agents]
-permission_mode = "default" # the mode agents Den starts run in: dontAsk, plan, default, acceptEdits or auto;
+permission_mode = "auto"    # the mode agents Den starts run in: auto, acceptEdits, plan, default or dontAsk;
                             # /mode in Den changes it, and a change to a mode that asks less waits for your ^Y
 
 [inbox]

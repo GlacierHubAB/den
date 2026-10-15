@@ -6,11 +6,13 @@ import "testing"
 // line, a raise for every other change.
 func TestLowersEveryPair(t *testing.T) {
 	all := []string{DontAsk, Plan, Default, AcceptEdits, Auto, Bypass, "", "unknown", "Default", "dontask"}
+	// dontAsk < default < plan, acceptEdits < auto; plan and acceptEdits
+	// unranked against each other, so either way between them is a raise.
 	lowers := map[[2]string]bool{
-		{Plan, DontAsk}: true,
-		{Default, DontAsk}: true, {Default, Plan}: true,
-		{AcceptEdits, DontAsk}: true, {AcceptEdits, Plan}: true, {AcceptEdits, Default}: true,
-		{Auto, DontAsk}: true, {Auto, Plan}: true, {Auto, Default}: true, {Auto, AcceptEdits}: true,
+		{Default, DontAsk}: true,
+		{Plan, DontAsk}:    true, {Plan, Default}: true,
+		{AcceptEdits, DontAsk}: true, {AcceptEdits, Default}: true,
+		{Auto, DontAsk}: true, {Auto, Default}: true, {Auto, Plan}: true, {Auto, AcceptEdits}: true,
 	}
 	for _, from := range all {
 		for _, to := range all {
@@ -59,8 +61,12 @@ func TestLower(t *testing.T) {
 		{Default, Auto, Default},
 		{Plan, DontAsk, DontAsk},
 		{Bypass, Auto, Default},
-		{"", Plan, Plan},
+		{"", Plan, Default},
+		{"", DontAsk, DontAsk},
 		{"", "", Default},
+		{Plan, AcceptEdits, Default},
+		{AcceptEdits, Plan, Default},
+		{Auto, Plan, Plan},
 		{AcceptEdits, AcceptEdits, AcceptEdits},
 	} {
 		if got := Lower(c.a, c.b); got != c.want {
@@ -73,6 +79,31 @@ func TestAllowsEveryMode(t *testing.T) {
 	for _, m := range append(Modes(), Bypass) {
 		if Allows(m) == "unknown" {
 			t.Errorf("Allows(%q) has no line", m)
+		}
+	}
+}
+
+// plan and acceptEdits are not ranked against each other: each runs
+// without asking something the other asks for (plan, classifier-allowed
+// commands; acceptEdits, edits in its folder). Either way is a raise, and
+// so is default to plan.
+func TestPlanAndAcceptEditsAreUnranked(t *testing.T) {
+	for _, c := range [][2]string{{Plan, AcceptEdits}, {AcceptEdits, Plan}, {Default, Plan}} {
+		if Lowers(c[0], c[1]) || !Raises(c[0], c[1]) {
+			t.Errorf("%s to %s is not a raise", c[0], c[1])
+		}
+	}
+}
+
+// The shipped mode is auto, the top: config.toml at most that grants
+// nothing more than no config at all.
+func TestShippedIsTheTop(t *testing.T) {
+	if Shipped != Auto {
+		t.Fatalf("Shipped = %q", Shipped)
+	}
+	for _, m := range Modes() {
+		if Lower(m, Shipped) != m {
+			t.Errorf("Lower(%q, Shipped) = %q", m, Lower(m, Shipped))
 		}
 	}
 }
