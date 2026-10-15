@@ -598,6 +598,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmd := m.applyAPIAct(msg.act)
 		return m, tea.Batch(cmd, waitAPIAct(msg.from))
+	case viewDoneMsg:
+		m.api.view = msg.view
+		m.publishAPI()
+		return m, nil
 	case apiNoteMsg:
 		if msg.from != m.api.srv {
 			return m, nil

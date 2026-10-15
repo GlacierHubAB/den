@@ -94,7 +94,7 @@ child process or another program. Added fields never change
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?}` |
+| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?, view?, view_workspaces?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -144,7 +144,7 @@ exits.
 Metadata only: names, states, ids, times, counts and digests. No prompt text,
 no transcript, and no request body outside `inbox.body`.
 
-- **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?}`. An agent is
+- **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?, view?}`. An agent is
   `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
   remote?, costUsd, turns, lastSeen, color?, permission_mode?}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
@@ -314,6 +314,8 @@ afterwards, so no later message carries a MAC.
 | `pair.challenge` | | `{nonce, conn}` |
 | `pair.auth` | `{pairing, mac}` | `{paired, control, mac}` |
 | `orch.say` | `{text}` | `{turn}`, then `orch` events until a `done` or `error` chunk |
+| `view.show` | | `{view, shown, total, reason?}` |
+| `view.hide` | | `{view, shown, total, reason?}` |
 
 - Text: at most 16 KiB. Den applies Unicode NFKC, breaks lines at `\n`,
   `\r\n`, `\r`, U+0085, U+2028 and U+2029, removes every C0 and C1 control
@@ -352,6 +354,62 @@ afterwards, so no later message carries a MAC.
   Claude Code release Den has checked control on (2.1.289, 2.1.296); on any
   other release `orch.say` ends with an error that says so, and Den's own
   chat works as before.
+
+### Switching views
+
+Den shows each session, every agent and Den's own, in a terminal window of
+its own that the window manager tiles: **Agent view**, how Den always was.
+In **User view** those windows are hidden, and you work from the dock.
+Hiding moves a window to the Hyprland special workspace `special:den`; the
+window stays alive, and showing moves it back to the workspace it came from.
+There is never one terminal with panes: each session keeps a window of its
+own.
+
+- `hello` carries `view` (`agent` or `user`) and `view_workspaces`
+  (`["special:den"]`, the one workspace Den hides windows on: a launcher
+  that lists workspaces skips exactly that name), and so does every `fleet`.
+  A Den that cannot switch (no Hyprland to move windows with) carries
+  neither, and answers both verbs `unavailable`.
+- `view.show` and `view.hide` take no params, and only a proved pairing may
+  send them: any other connection gets `forbidden` "prove first". They are
+  the same when asked again: asking for the view Den is in moves whatever
+  is out of place (an agent's window that came up since) and nothing else.
+  A call is never an approval of anything.
+- The result is `{view, shown, total, reason?}`. `view` is the view asked
+  for. `shown` counts Den's own windows still visible once the switch ended,
+  whichever verb it was: a show succeeded when `shown == total`, a hide when
+  `shown == 0`, and `total == 0` means Den has no windows of its own, which
+  is done. `reason` is one plain line of at most 40 characters, absent when
+  there is nothing to say ("1 of 4 not hidden", "2 not Den's").
+- After a switch, connections that follow `fleet.events` get a `view` event
+  `{view, shown, total}`; a slow reader may miss it, and `hello` and the
+  fleet carry the view too.
+- One switch at a time, and at most three a minute for each pairing. A call
+  while another switch, or the closing of an agent's window, is running
+  answers `busy` and does not count; past three a minute it answers
+  `unavailable` "too many view switches". A switch ends within about four
+  seconds: if Hyprland is slow, the reply says "ran out of time" and the
+  next call finishes the job.
+- Which windows: an agent's window is the one carrying the class Den chose
+  when it spawned the agent (`io.glacierhub.den.<name>`, kept in Den's state
+  with the agent's session), when that agent's own process runs in it.
+  Never one found by title, directory or any other guess. An agent Den did
+  not spawn has no such record: its window is not counted and never touched.
+  Two windows with one class, or a marked window run by someone else, are
+  left alone and counted in `reason` as "not Den's". Den's own window is
+  hidden only when it is the one window of a process above Den's; when Den
+  cannot tell, it stays and `reason` says so.
+- Never hidden: Den's own window while anything waits on you in Den, such as
+  a card. (An agent that waits on its own terminal, or a trust dialog, is
+  hidden like any other in User view: send the person back to Agent view for
+  it.) A new agent spawned in User view comes up hidden once Den has tied
+  its window to it; asking `view.hide` again hides any that came up
+  otherwise.
+- Nothing is closed, signalled or typed into. Closing an agent works on a
+  hidden window as on any other, and a switch and a close never run at the
+  same time. Where each window came from is kept in `view.json` in Den's
+  state before it moves, so a restarted Den knows the view and can bring
+  every window back.
 
 ### What an app's turn may do
 
