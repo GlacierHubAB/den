@@ -103,8 +103,8 @@ func TestReconnectSilent(t *testing.T) {
 		t.Errorf("event %+v", e)
 	}
 	// No powers: card answers and commands wait for the ^Y.
-	for _, op := range []string{"card.answer", "cmd.run"} {
-		if l := nc.call(op, map[string]string{"id": "x", "text_sha256": strings.Repeat("0", 64), "nonce": strings.Repeat("0", 64), "verb": "allow", "text": "/fleet"}); code(l) != CodePowersLocked {
+	for _, op := range []string{"card.answer", "cmd.run", "mode.set"} {
+		if l := nc.call(op, map[string]string{"id": "x", "text_sha256": strings.Repeat("0", 64), "nonce": strings.Repeat("0", 64), "verb": "allow", "text": "/fleet", "mode": "plan"}); code(l) != CodePowersLocked {
 			t.Errorf("%s without powers: %+v", op, l.Error)
 		}
 	}
