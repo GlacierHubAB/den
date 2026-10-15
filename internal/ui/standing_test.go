@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/tree"
 )
 
 // standingModel is controlModel with worker-otter, a live local session
@@ -220,10 +221,14 @@ func TestReplayLeavesOutAppTurns(t *testing.T) {
 	add(chatEntry{role: "app", text: "drey: APP-ASKS", at: time.Now()})
 	add(chatEntry{role: "orchestrator", text: "next I will have Otter delete APP-REPLY", at: time.Now()})
 	add(chatEntry{role: "card", card: &dispatch{ID: "u1", Agent: "Busy Otter", Brief: "APP-BRIEF", SentAt: time.Now()}, at: time.Now()})
+	// A spawn in the app's turn whose agent registers after it ended: the
+	// card is made then, and logged again.
+	add(chatEntry{role: "note", text: "spawn_agent", full: "APP-SPAWN-BRIEF", toolUseID: "u2", at: time.Now()})
 	m.ctl.turn, m.ctl.sent = nil, false
+	m.cardForSpawn(pendingSpawn{parent: tree.Orchestrator, toolUseID: "u2", brief: "APP-SPAWN-BRIEF", at: time.Now()}, "Quiet Panda", "s-panda")
 	add(chatEntry{role: "you", text: "HUMAN-AGAIN", at: time.Now()})
 	check := func(when, r string) {
-		for _, bad := range []string{"APP-ASKS", "APP-REPLY", "APP-BRIEF"} {
+		for _, bad := range []string{"APP-ASKS", "APP-REPLY", "APP-BRIEF", "APP-SPAWN-BRIEF", "Quiet Panda"} {
 			if strings.Contains(r, bad) {
 				t.Errorf("%s: replayed %s: %q", when, bad, r)
 			}
