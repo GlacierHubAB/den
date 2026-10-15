@@ -30,7 +30,7 @@ func fakeUnit(t *testing.T, v sysd.Verifier, err error) *[]sysd.ProcID {
 }
 
 func testVerifier() sysd.Verifier {
-	return sysd.Verifier{Unit: ConsoleUnit, Boot: "b", UID: 1000, Exe: sysd.FileID{Path: "/home/u/.local/bin/drey-host", SHA256: strings.Repeat("ab", 32)}, Props: strings.Repeat("cd", 32), Pins: map[string]string{"GTK_MODULES": ""}}
+	return sysd.Verifier{Unit: ConsoleUnit, Boot: "b", UID: 1000, Exe: sysd.FileID{Path: "/home/u/.local/bin/console-host", SHA256: strings.Repeat("ab", 32)}, Props: strings.Repeat("cd", 32), Pins: map[string]string{"GTK_MODULES": ""}}
 }
 
 // request sends console.request from a new connection and returns its id

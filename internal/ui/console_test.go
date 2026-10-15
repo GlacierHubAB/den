@@ -114,7 +114,7 @@ func TestConsoleCodeAndCard(t *testing.T) {
 func TestConsoleCodelessCard(t *testing.T) {
 	m := consoleModel(t)
 	ask := &api.ConsoleAsk{ID: "c-2", Exe: "unreadable:0f2f:4242:99", PID: 4242, Started: time.Date(2026, 10, 15, 13, 5, 7, 0, time.Local), Parent: "systemd",
-		Codeless: true, Unit: "drey-host.service", Program: "/home/u/.local/bin/drey-host", ProgramSHA: strings.Repeat("ab", 32),
+		Codeless: true, Unit: api.ConsoleUnit, Program: "/home/u/.local/bin/console-host", ProgramSHA: strings.Repeat("ab", 32),
 		AppFP: "1a2b 3c4d 5e6f 7a8b", DenFP: "9c0d 1e2f 3a4b 5c6d"}
 	m.applyConsoleAct(api.Act{Console: ask})
 	var card *inbox.Item
@@ -127,7 +127,7 @@ func TestConsoleCodelessCard(t *testing.T) {
 		t.Fatal("no card")
 	}
 	text := card.Title + "\n" + strings.Join(card.Body, "\n")
-	for _, want := range []string{"Pair drey-host.service (pid 4242, ", "with no code", "its key:   1a2b 3c4d 5e6f 7a8b", "Den's key: 9c0d 1e2f 3a4b 5c6d", "/home/u/.local/bin/drey-host (sha256 abababababababab…)", "a check, not proof"} {
+	for _, want := range []string{"Pair " + api.ConsoleUnit + " (pid 4242, ", "with no code", "its key:   1a2b 3c4d 5e6f 7a8b", "Den's key: 9c0d 1e2f 3a4b 5c6d", "/home/u/.local/bin/console-host (sha256 abababababababab…)", "a check, not proof"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("card lacks %q:\n%s", want, text)
 		}
@@ -141,7 +141,7 @@ func TestConsoleCodelessCard(t *testing.T) {
 // time, and its ^Y reaches the API; neither is the dock's to answer.
 func TestConsoleReconnectAndPowersCards(t *testing.T) {
 	m := consoleModel(t)
-	m.applyConsoleAct(api.Act{Console: &api.ConsoleAsk{ID: "c-3", PID: 4242, Codeless: true, Reconnect: true, Unit: "drey-host.service",
+	m.applyConsoleAct(api.Act{Console: &api.ConsoleAsk{ID: "c-3", PID: 4242, Codeless: true, Reconnect: true, Unit: api.ConsoleUnit,
 		Changes: []string{"the program changed (/x)", "Den has restarted since you paired it"}, AppFP: "1a2b 3c4d 5e6f 7a8b", DenFP: "9c0d 1e2f 3a4b 5c6d"}})
 	var card *inbox.Item
 	for _, it := range m.store.Items() {
@@ -150,7 +150,7 @@ func TestConsoleReconnectAndPowersCards(t *testing.T) {
 		}
 	}
 	text := card.Title + "\n" + strings.Join(card.Body, "\n")
-	for _, want := range []string{"Re-pair drey-host.service", "restarted and asks", "  - the program changed (/x)", "  - Den has restarted", "Ctrl+Y re-pairs it and lets it answer cards and run commands"} {
+	for _, want := range []string{"Re-pair " + api.ConsoleUnit, "restarted and asks", "  - the program changed (/x)", "  - Den has restarted", "Ctrl+Y re-pairs it and lets it answer cards and run commands"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("card lacks %q:\n%s", want, text)
 		}

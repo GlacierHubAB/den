@@ -109,7 +109,7 @@ func (f *fakeManager) answer(m *message) *message {
 	switch m.str(fieldMember) {
 	case "GetUnit":
 		if len(m.body) == 1 && m.body[0] == f.unit {
-			return ret("o", ObjectPath("/org/freedesktop/systemd1/unit/drey_2dhost_2eservice"))
+			return ret("o", ObjectPath("/org/freedesktop/systemd1/unit/console"))
 		}
 		return fail("org.freedesktop.systemd1.NoSuchUnit")
 	case "Get":

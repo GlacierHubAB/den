@@ -41,7 +41,7 @@ func roundTrip(t *testing.T, m *message) *message {
 // What Den writes, it reads back the same.
 func TestRoundTrip(t *testing.T) {
 	body := []any{
-		"drey-host.service",
+		ConsoleUnit,
 		[]any{[]any{"/bin/x", []any{"/bin/x", "-v"}, false, uint64(1), uint64(2), uint64(3), uint64(4), uint32(5), int32(-6), int32(7)}},
 		Variant{Sig: "as", Value: []any{"A=1", "B="}},
 		[]DictEntry{{Key: "k", Value: Variant{Sig: "b", Value: true}}},

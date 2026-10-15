@@ -23,7 +23,7 @@ import (
 // the user's own, and any program of the user can serve one.
 
 // ConsoleUnit is the console's user service.
-const ConsoleUnit = "drey-host.service"
+const ConsoleUnit = sysd.ConsoleUnit
 
 // readUnit reads the console's service for the process peer; tests
 // replace it.

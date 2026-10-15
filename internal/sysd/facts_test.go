@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const testUnit = "drey-host.service"
+const testUnit = ConsoleUnit
 
 // fixture is a fake manager serving a unit that passes every check, a
 // binary and a scanner of the test's own, and the system read through
@@ -30,8 +30,8 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{m: newFakeManager(t, testUnit)}
 	dir := t.TempDir()
-	f.bin = filepath.Join(dir, "drey-host")
-	os.WriteFile(f.bin, []byte("drey-host build 1"), 0o755)
+	f.bin = filepath.Join(dir, "console-host")
+	os.WriteFile(f.bin, []byte("console build 1"), 0o755)
 	scanner := filepath.Join(dir, "gst-plugin-scanner")
 	os.WriteFile(scanner, []byte("scanner"), 0o755)
 	unitFile := filepath.Join(dir, testUnit)
@@ -99,7 +99,7 @@ func newFixture(t *testing.T) *fixture {
 	m.set("Environment", "as", []string{
 		"GST_PLUGIN_PATH=", "GTK_MODULES=", "VK_LOADER_LAYERS_DISABLE=~implicit~", "GST_REGISTRY_UPDATE=yes",
 		"GST_PLUGIN_SYSTEM_PATH=" + dir, "GST_PLUGIN_SCANNER=" + scanner,
-		"GST_REGISTRY=" + filepath.Join(run, "drey-host", "gst-registry.bin"), "HOME_SOMETHING=fine",
+		"GST_REGISTRY=" + RegistryPath(run), "HOME_SOMETHING=fine",
 	})
 	m.set("EnvironmentFiles", "a(sb)", none)
 	for _, n := range []string{"UnsetEnvironment", "PassEnvironment", "ReadWritePaths", "ExtensionDirectories"} {

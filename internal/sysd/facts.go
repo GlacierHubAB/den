@@ -29,6 +29,17 @@ import (
 // serve one that answers as systemd. The checks here are friction, not a
 // boundary, and Den says so.
 
+// ConsoleUnit is the console's user service: a contract with Drey, as
+// DREY-API.md states it ("Pairing with no code"), never a setting.
+const ConsoleUnit = "drey-host.service"
+
+// RegistryPath is where the console's service pins GStreamer's registry
+// (GST_REGISTRY), under the user's runtime directory run: a folder named
+// for the service, as DREY-API.md states it.
+func RegistryPath(run string) string {
+	return filepath.Join(run, strings.TrimSuffix(ConsoleUnit, ".service"), "gst-registry.bin")
+}
+
 // ProcID is a process: its pid and its start, in clock ticks since boot.
 type ProcID struct {
 	PID   int    `json:"pid"`
@@ -58,7 +69,7 @@ type Verifier struct {
 	Fragment string            `json:"fragment"`
 }
 
-// The pins drey-host.service sets in its own Environment=, as DREY-API.md
+// The pins ConsoleUnit sets in its own Environment=, as DREY-API.md
 // states them. GST_PLUGIN_SYSTEM_PATH and GST_PLUGIN_SCANNER are checked
 // by form (pinChecked); GST_REGISTRY is under $XDG_RUNTIME_DIR.
 var pinExact = map[string]string{
@@ -474,7 +485,7 @@ func checkEnv(env []string, v *Verifier) Problems {
 	v.Pins[pinScanner] = scanner
 	reg, ok := set[pinRegistry]
 	run := os.Getenv("XDG_RUNTIME_DIR")
-	if !ok || run == "" || reg != filepath.Join(run, "drey-host", "gst-registry.bin") {
+	if !ok || run == "" || reg != RegistryPath(run) {
 		fail("%s is not pinned under the user's runtime directory", pinRegistry)
 	}
 	v.Pins[pinRegistry] = reg
