@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -407,6 +408,144 @@ func TestCheckBinary(t *testing.T) {
 	os.Symlink(filepath.Join(dir, "b2"), filepath.Join(dir, "l"))
 	if _, err := checkBinary([]string{filepath.Join(dir, "l")}, 0); err == nil {
 		t.Error("a symlink passed")
+	}
+}
+
+// A program installed just before a restart passes: its change is
+// before the start. One changed at the start, as the ticks tell it, may
+// be after, and fails, as does one changed after.
+func TestCheckBinaryChangedJustBeforeItsStart(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "b")
+	os.WriteFile(bin, []byte("x"), 0o755)
+	fi, err := os.Lstat(bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	ctime := time.Unix(st.Ctim.Sec, st.Ctim.Nsec)
+	savedBoot, savedTck := bootTime, clkTck
+	t.Cleanup(func() { bootTime, clkTck = savedBoot, savedTck })
+	clkTck = 100
+	const ticks = 100000 // a thousand seconds after boot
+	for _, c := range []struct {
+		name  string
+		start time.Duration // the start, from the program's change
+		ok    bool
+	}{
+		{"changed 100 ms before", 100 * time.Millisecond, true},
+		{"changed a tick before", 10 * time.Millisecond, true},
+		{"changed at the start", 0, false},
+		{"changed a tick after", -10 * time.Millisecond, false},
+		{"changed a second after", -time.Second, false},
+	} {
+		boot := ctime.Add(c.start - 1000*time.Second)
+		bootTime = func() (time.Time, error) { return boot, nil }
+		_, err := checkBinary([]string{bin}, ticks)
+		if got := err == nil; got != c.ok {
+			t.Errorf("%s: %v", c.name, err)
+		}
+		if err != nil && err.Error() != "its program changed after the process started" {
+			t.Errorf("%s: %v", c.name, err)
+		}
+	}
+}
+
+// The boot time is btime to within the second, not cut to it: btime
+// can be up to a second early, a start reckoned from it too.
+func TestReadBootTime(t *testing.T) {
+	b, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var btime int64
+	for _, l := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(l, "btime "); ok {
+			btime, _ = strconv.ParseInt(v, 10, 64)
+		}
+	}
+	got, err := readBootTime()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A few milliseconds either way for the clocks read apart.
+	if d := got.Sub(time.Unix(btime, 0)); d < -5*time.Millisecond || d > time.Second+5*time.Millisecond {
+		t.Errorf("boot %v, btime %d: %v apart", got, btime, d)
+	}
+	// And to the hundredth by /proc/uptime, the time since boot on the
+	// same clock: btime, cut, is mostly further off.
+	up, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	secs, err := strconv.ParseFloat(strings.Fields(string(up))[0], 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byUptime := now.Add(-time.Duration(secs * float64(time.Second)))
+	if d := got.Sub(byUptime); d < -50*time.Millisecond || d > 50*time.Millisecond {
+		t.Errorf("boot %v, by uptime %v: %v apart", got, byUptime, d)
+	}
+}
+
+// A manager that does not answer, or drops the connection, is read
+// again on a new connection, and the read passes once it answers.
+func TestReadTriesAgain(t *testing.T) {
+	f := newFixture(t)
+	savedTimeout := CallTimeout
+	t.Cleanup(func() { CallTimeout = savedTimeout })
+	CallTimeout = 200 * time.Millisecond
+	f.m.fail(1, 1)
+	v, err := Read(testUnit, f.peer)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if v.Main != f.peer {
+		t.Errorf("verifier %+v", v)
+	}
+	if f.m.taken() != 3 {
+		t.Errorf("%d connections, want 3", f.m.taken())
+	}
+}
+
+// A manager that never answers is given up on by ReadWithin, as a read
+// that failed, not a problem with the service.
+func TestReadGivesUp(t *testing.T) {
+	f := newFixture(t)
+	savedTimeout, savedWithin := CallTimeout, ReadWithin
+	t.Cleanup(func() { CallTimeout, ReadWithin = savedTimeout, savedWithin })
+	CallTimeout, ReadWithin = 100*time.Millisecond, time.Second
+	f.m.fail(1000, 0)
+	began := time.Now()
+	_, err := Read(testUnit, f.peer)
+	took := time.Since(began)
+	var probs Problems
+	if err == nil || errors.As(err, &probs) || !transient(err) {
+		t.Fatalf("err %v", err)
+	}
+	if took > ReadWithin+CallTimeout {
+		t.Errorf("gave up after %v", took)
+	}
+	if n := f.m.taken(); n < 3 {
+		t.Errorf("%d connections in %v", n, took)
+	}
+}
+
+// What the manager answers is final: a unit that fails a check, or one
+// the manager does not know, is read once.
+func TestReadTakesAnAnswer(t *testing.T) {
+	f := newFixture(t)
+	f.m.set("Type", "s", "forking")
+	_, err := Read(testUnit, f.peer)
+	var probs Problems
+	if !errors.As(err, &probs) || f.m.taken() != 1 {
+		t.Errorf("a failing unit: %v, %d connections", err, f.m.taken())
+	}
+	f = newFixture(t)
+	_, err = Read("another.service", f.peer)
+	var ce *CallError
+	if !errors.As(err, &ce) || f.m.taken() != 1 {
+		t.Errorf("an unknown unit: %v, %d connections", err, f.m.taken())
 	}
 }
 

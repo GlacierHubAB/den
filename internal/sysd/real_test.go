@@ -55,6 +55,11 @@ func TestRealUserManager(t *testing.T) {
 			if strings.Contains(string(p), "manager") {
 				t.Errorf("a manager problem: %s", p)
 			}
+			// No machine lacks these: the start and the program's change
+			// are read off its own clocks.
+			if strings.Contains(string(p), "started") {
+				t.Errorf("a timing problem: %s", p)
+			}
 		}
 		t.Logf("%s's own problems (its pins may not be set here): %v", ConsoleUnit, err)
 	default:

@@ -2,6 +2,7 @@ package sysd
 
 import (
 	"bufio"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -23,6 +24,9 @@ type fakeManager struct {
 	env   []string           // the manager's own environment
 	raw   []byte             // when set, sent in place of any reply
 	auth  string             // the authentication answer; "" for OK
+	stall int                // the next connections that get no answer at all
+	drop  int                // then the next ones closed at once
+	conns int                // the connections taken
 }
 
 func newFakeManager(t *testing.T, unit string) *fakeManager {
@@ -42,6 +46,21 @@ func newFakeManager(t *testing.T, unit string) *fakeManager {
 
 func (f *fakeManager) socket() string { return f.ln.Addr().String() }
 
+// fail makes the next stall connections get no answer, then the next
+// drop ones closed at once.
+func (f *fakeManager) fail(stall, drop int) {
+	f.mu.Lock()
+	f.stall, f.drop = stall, drop
+	f.mu.Unlock()
+}
+
+// taken is how many connections the manager has taken.
+func (f *fakeManager) taken() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.conns
+}
+
 func (f *fakeManager) set(name string, sig Signature, v any) {
 	f.mu.Lock()
 	f.props[name] = Variant{Sig: sig, Value: v}
@@ -60,6 +79,22 @@ func (f *fakeManager) serve() {
 
 func (f *fakeManager) handle(nc net.Conn) {
 	defer nc.Close()
+	f.mu.Lock()
+	f.conns++
+	stall, drop := f.stall > 0, f.stall == 0 && f.drop > 0
+	if stall {
+		f.stall--
+	} else if drop {
+		f.drop--
+	}
+	f.mu.Unlock()
+	if stall {
+		io.Copy(io.Discard, nc) // until Den gives up and closes it
+		return
+	}
+	if drop {
+		return
+	}
 	r := bufio.NewReader(nc)
 	line, err := r.ReadString('\n')
 	if err != nil || !strings.HasPrefix(line, "\x00AUTH EXTERNAL ") {
