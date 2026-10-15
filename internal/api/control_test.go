@@ -347,6 +347,36 @@ func TestSayText(t *testing.T) {
 
 // A text holding the live code, or most of its words, is refused, and the
 // code is cancelled; a few of its words are fine.
+// A code's words may repeat: each counts as often as the code has it,
+// in the live code and in a spent one.
+func TestCodeLeakCountsRepeatedWords(t *testing.T) {
+	code := []string{"roof", "river", "roof", "grass", "fern", "toast", "fern", "hook"}
+	for _, c := range []struct {
+		text string
+		n    int
+	}{
+		{"roof river roof grass fern", 5},
+		{"roof roof roof roof roof", 2},
+		{"roof, River and FERN fern", 4},
+		{"nothing here", 0},
+	} {
+		if got := codeWordsIn(code, codeWords(c.text)); got != c.n {
+			t.Errorf("%q: %d of the code, want %d", c.text, got, c.n)
+		}
+	}
+	h := newHarness(t, 2)
+	h.s.StartPairing()
+	h.s.ctl.mu.Lock()
+	h.s.ctl.code.words = append([]string(nil), code...)
+	h.s.ctl.mu.Unlock()
+	if !h.s.leaked("my code is roof river roof grass fern") {
+		t.Error("five of the code's words, one repeated, not taken for the code")
+	}
+	if _, live := h.s.CodeLive(); live {
+		t.Error("a leaked code stays live")
+	}
+}
+
 func TestCodeLeakRefused(t *testing.T) {
 	h := newHarness(t, 2)
 	words := h.s.StartPairing()

@@ -409,19 +409,7 @@ func codeWords(text string) []string {
 // notes it; the text itself is never kept.
 func (s *Server) leaked(text string) bool {
 	words := codeWords(text)
-	holds := func(c *pairCode) bool {
-		want := map[string]bool{}
-		for _, w := range c.words {
-			want[w] = true
-		}
-		hit := map[string]bool{}
-		for _, w := range words {
-			if want[w] {
-				hit[w] = true
-			}
-		}
-		return len(hit) >= pairLeakWords
-	}
+	holds := func(c *pairCode) bool { return codeWordsIn(c.words, words) >= pairLeakWords }
 	now := time.Now()
 	s.ctl.mu.Lock()
 	live := s.ctl.code != nil && now.Before(s.ctl.code.until) && holds(s.ctl.code)
@@ -455,6 +443,25 @@ func (s *Server) leaked(text string) bool {
 		s.Unpair(id, "")
 	}
 	return true
+}
+
+// codeWordsIn counts how many of a code's words a text's words hold, a
+// word as often as the code has it: a code's words are drawn with
+// repetition, so "roof river roof" typed is three of "roof river roof
+// grass", not two.
+func codeWordsIn(code, text []string) int {
+	want := map[string]int{}
+	for _, w := range code {
+		want[w]++
+	}
+	n := 0
+	for _, w := range text {
+		if want[w] > 0 {
+			want[w]--
+			n++
+		}
+	}
+	return n
 }
 
 // claim is pair.claim: the code, once, from the program that shows it to
