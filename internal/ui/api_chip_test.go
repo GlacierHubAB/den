@@ -100,10 +100,10 @@ func TestHeaderPairingCodeNeverCut(t *testing.T) {
 		} else if !strings.Contains(line, codeHidden) {
 			t.Errorf("w=%d: neither the code nor the note in %q", w, line)
 		}
-		for _, word := range m.ctl.code {
-			if strings.Contains(line, word+"…") {
-				t.Errorf("w=%d: a word of the code is cut in %q", w, line)
-			}
+		// Not whole means not at all: no part of the code's own line (the
+		// code's words are random, so they are not looked for one by one).
+		if strings.Contains(line, "Pairing code (") {
+			t.Errorf("w=%d: part of the code is drawn in %q", w, line)
 		}
 	}
 }
