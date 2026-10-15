@@ -118,6 +118,7 @@ var held = map[string]bool{
 	DesktopGateEvent:    true,
 	DesktopMissionEvent: true,
 	DesktopStopEvent:    true,
+	GodOffEvent:         true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

@@ -114,6 +114,8 @@ type Info struct {
 	// sends neither.
 	View           string   `json:"view,omitempty"`
 	ViewWorkspaces []string `json:"view_workspaces,omitempty"`
+	// God is God mode's state (god.go).
+	God *God `json:"god,omitempty"`
 }
 
 // The two views. In Agent view every session, each agent and Den's own,

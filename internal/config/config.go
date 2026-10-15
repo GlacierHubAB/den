@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -158,6 +159,20 @@ func Load() Config {
 	c.apply(parse(Path()))
 	c.env()
 	return c
+}
+
+// GodKeys are the config keys that look like God mode settings: a [god]
+// section, or a key with "god" in its name. Den reads none of them (God
+// mode is turned on only in Den's own window); it names them loudly.
+func GodKeys() []string {
+	var out []string
+	for k := range parse(Path()) {
+		if strings.HasPrefix(k, "god.") || strings.Contains(strings.ToLower(k), "god") {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Prices is the [prices] section: a model-id prefix to "input, output,

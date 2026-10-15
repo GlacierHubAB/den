@@ -343,6 +343,7 @@ var pairCaller = func(m Model, pid int) string { return m.pairCallerRefusal(pid)
 // handleConsoleUnpair is den unpair [all] over den.sock: it only lowers,
 // so it is never refused for who asks.
 func (m *Model) handleConsoleUnpair(r *bridge.Request) tea.Cmd {
+	m.godOff("den unpair") // a lowering too, with the API on or off
 	if m.api.srv == nil {
 		r.Reply(bridge.Decision{Behavior: "allow", Message: "Nothing was paired: the API is off."})
 		return nil

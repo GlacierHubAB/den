@@ -214,6 +214,10 @@ type DesktopInput struct {
 	ChildStart string `json:"child_start,omitempty"`
 }
 
+// GodOffEvent is not a hook event: `den god off` sends it. It only
+// lowers, so anyone may ask; nothing on den.sock turns God mode on.
+const GodOffEvent = "GodOff"
+
 // OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.
 type OrchSendInput struct {
 	To      string `json:"to"`

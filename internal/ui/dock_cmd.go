@@ -147,6 +147,13 @@ var dockVerbs = []dockVerb{
 	{"/pause", nil, "/pause", "pause the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/resume", nil, "/resume", "resume the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/stop", nil, "/stop", "stop the open mission", always(api.DockDenScreen, whyScreen)},
+	{"/god", nil, "/god off", "end God mode", func(a []string) (string, string) {
+		if len(a) > 0 && a[0] == "off" {
+			return api.DockOK, ""
+		}
+		// On is typed in Den's own window, with its phrase, and nowhere else.
+		return api.DockRefused, "God mode is turned on only in Den's own window"
+	}},
 	{"/usage", nil, "/usage [set <pct>|clear|stop|resume]", "the weekly limit", func(a []string) (string, string) {
 		switch {
 		case len(a) == 0, a[0] == "stop":
@@ -182,7 +189,7 @@ var dockVerbs = []dockVerb{
 // dockJudged is how many leading words each verb's verdict judges: they
 // run in the form judged (lowercased), so what runs is what was checked;
 // the words after (names, notes, paths) run as typed.
-var dockJudged = map[string]int{"/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1}
+var dockJudged = map[string]int{"/god": 1, "/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1}
 
 // dockVerbOf is the verb a command word names, by its name or an alias.
 func dockVerbOf(word string) (dockVerb, bool) {

@@ -388,7 +388,8 @@ func (s *Server) UnpairConsole(cause, why string) int {
 	if why != "" {
 		s.note(why)
 	}
-	s.act(Act{ConsoleChanged: true})
+	// An unpair also ends God mode: both are lowerings.
+	s.act(Act{ConsoleChanged: true, GodOff: "the console was unpaired"})
 	return 1
 }
 
@@ -791,9 +792,9 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 	}
 	den := ed25519.Sign(s.ckey.priv, consoleSigned(dirDenToApp, cid, rec.ID, appKey, s.ckey.pubHex, nd, p.Nonce, s.ckey.identity))
-	// No God mode yet: it is off. The view is the one Den is in, and absent
-	// when this Den cannot switch views.
-	rep := map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "powers": powers}
+	// God mode's state as it is now. The view is the one Den is in, and
+	// absent when this Den cannot switch views.
+	rep := map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": s.god.get(), "powers": powers}
 	if v := s.currentView(); v != "" {
 		rep["view"] = v
 	}

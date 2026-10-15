@@ -49,6 +49,9 @@ type Card struct {
 	CutAt       int      `json:"cut_at,omitempty"`
 	Verbs       []string `json:"verbs"`
 	DockAnswers bool     `json:"dock_answers"`
+	// TTYOnly: while God mode is on, only the human answers it, in Den's
+	// own window; card.answer says tty_only rather than refused_from_dock.
+	TTYOnly bool `json:"-"`
 }
 
 // CardHash is a card's text_sha256: over kind, agent, tool, title, note
@@ -70,7 +73,7 @@ type CardEvent struct {
 	NeedsDenScreen bool `json:"needs_den_screen,omitempty"`
 	// On a settled card: allowed, denied, always or gone (it settled
 	// without an answer: the agent moved on, or it went to its terminal),
-	// and by den or console, "" for gone.
+	// and by den, console or rule (God mode answered it), "" for gone.
 	Result string `json:"result,omitempty"`
 	By     string `json:"by,omitempty"`
 }
@@ -274,6 +277,9 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		return
 	case card.Hash != p.Hash:
 		c.fail(req.ID, CodeCardChanged, "the card changed: fetch it again")
+		return
+	case card.TTYOnly:
+		c.fail(req.ID, CodeTTYOnly, "while God mode is on, only Den's own window answers this card")
 		return
 	case !card.DockAnswers || !hasVerb(card.Verbs, p.Verb):
 		c.fail(req.ID, CodeRefusedFromDock, "the console may not answer this card that way")

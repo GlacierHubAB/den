@@ -117,6 +117,8 @@ type Model struct {
 	use usageGuard
 	// mode is the global permission mode agents start in (mode.go).
 	mode modeState
+	// god is God mode (god.go): in memory only, off at every start.
+	god godUI
 	// dockFrom names the console while its command runs, "" otherwise.
 	dockFrom string
 	// ments are the agents names in rendered text are coloured for
@@ -252,6 +254,9 @@ func New(cfg config.Config) Model {
 		} else {
 			m.api.err = "another Den is running"
 		}
+	}
+	if keys := config.GodKeys(); len(keys) > 0 {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config: " + strings.Join(keys, ", ") + " ignored: God mode has no setting; it is turned on only in Den's own window, with /god on and its phrase, and is off at every start.", at: time.Now()}))
 	}
 	return m
 }
@@ -531,7 +536,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
+		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -758,6 +763,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.ModeEvent {
 		m.modeQuery(r)
 		return nil
+	}
+	if r.Event == bridge.GodOffEvent {
+		return m.handleGodOff(r)
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
@@ -1682,6 +1690,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
 			return m.say(note, isErr)
 		}
+	case "/god":
+		return m.godCommand(fields[1:])
 	case "/usage":
 		return m.usageCommand(fields[1:])
 	case "/mode":

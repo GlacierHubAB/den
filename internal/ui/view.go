@@ -176,6 +176,11 @@ func (m Model) header(w int) []string {
 	for _, c := range codes {
 		sys = append(sys, headerPart{s.attn.Render(c.line), 0})
 	}
+	// God mode is never left out, right after the codes.
+	if m.god.on {
+		sys = append(sys, headerPart{s.err.Render(godChip(m.god.since)), 0})
+		fleetLine = s.err.Render("GOD MODE") + s.dim.Render(" · ") + fleetLine
+	}
 	if m.hooksReady {
 		sys = append(sys, headerPart{"hooks on", 2})
 	} else {
