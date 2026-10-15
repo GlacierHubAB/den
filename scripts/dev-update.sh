@@ -41,8 +41,18 @@ version_of() { [ -x "$1" ] && "$1" version 2>/dev/null || echo "none"; }
 
 # Den's TUI (or den events, den remote serve) runs the binary it started
 # with. den hook and den mcp, which Claude Code starts, are fine: they pick
-# up the new binary on their next start.
-running="$(pgrep -u "$(id -u)" -a -x "$NAME" 2>/dev/null | awk '$3 != "mcp" && $3 != "hook"' || true)"
+# up the new binary on their next start. Only processes running $BIN count,
+# also once an earlier update replaced it ("(deleted)"): a den built
+# elsewhere, such as a test's, is not the one this replaces.
+bin_real="$(readlink -f -- "$BIN" 2>/dev/null || printf '%s' "$BIN")"
+running=""
+while read -r pid args; do
+  exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+  case "$exe" in
+    "$bin_real" | "$bin_real (deleted)") running+="$pid $args"$'\n' ;;
+  esac
+done < <(pgrep -u "$(id -u)" -a -x "$NAME" 2>/dev/null | awk '$3 != "mcp" && $3 != "hook"' || true)
+running="${running%$'\n'}"
 if [ -n "$running" ] && [ "$force" -eq 0 ]; then
   echo "dev-update: refusing: Den is running:" >&2
   echo "$running" >&2
