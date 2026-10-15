@@ -155,38 +155,30 @@ There is no CHANGELOG file; the releases page is the changelog.
 7. **Fast-forward `dev` to `main`.** The release merge commits land only on
    `main`, so after a release `dev` is an ancestor of `main` and GitHub shows it
    "N commits behind" although the two trees are the same. Moving `dev` up to
-   `main` is a plain fast-forward (no force, nothing rewritten), but the `dev`
-   ruleset refuses any push and any merge commit, so a maintainer switches
-   that one ruleset off for the single push. The chain turns it back on even
-   when the push fails:
+   `main` is a plain fast-forward (no force, nothing rewritten). Try it as a
+   normal push:
 
    ```
    R=GlacierHubAB/den
-   DEV_RULESET=$(gh api "repos/$R/rulesets" --jq '.[] | select(.name == "dev") | .id')
    MAIN=$(gh api "repos/$R/git/ref/heads/main" --jq .object.sha)
    DEV=$(gh api "repos/$R/git/ref/heads/dev" --jq .object.sha)
    gh pr list --repo "$R" --base dev --state open      # none, or wait
    git fetch origin
    git merge-base --is-ancestor "$DEV" "$MAIN" && echo fast-forward   # stop if not
-   gh api "repos/$R/rulesets/$DEV_RULESET" > ruleset-before.json
-
-   gh api -X PUT "repos/$R/rulesets/$DEV_RULESET" -f enforcement=disabled --jq .enforcement
-   git push origin "$MAIN:refs/heads/dev"; push=$?
-   until [ "$(gh api -X PUT "repos/$R/rulesets/$DEV_RULESET" -f enforcement=active --jq .enforcement)" = active ]; do sleep 3; done
-   echo "push exit $push"
+   git push origin "$MAIN:refs/heads/dev"
    ```
 
-   Then check that nothing else changed and that the branches agree:
+   The `dev` ruleset requires a pull request and linear history, so it may
+   refuse the push. **If it does, stop and ask the human** with the exact
+   refusal. Never switch a ruleset off or work around it, even for one push,
+   and never pass `--force`. Then check that the branches agree:
 
    ```
-   gh api "repos/$R/rulesets/$DEV_RULESET" > ruleset-after.json
-   diff <(jq -S 'del(.updated_at)' ruleset-before.json) <(jq -S 'del(.updated_at)' ruleset-after.json) && echo unchanged
    gh api "repos/$R/compare/main...dev" --jq '{status, ahead_by, behind_by}'   # "identical", 0, 0
    ```
 
-   If the ruleset does not read `active` again, do nothing else until it does.
-   Never pass `--force`: if the push is refused as a non-fast-forward, `dev` has
-   commits `main` lacks; leave it, and the next release brings them together.
+   If the push is refused as a non-fast-forward, `dev` has commits `main`
+   lacks; leave it, and the next release brings them together.
 
    Between releases `dev` is normally ahead of `main` by the pull requests
    merged since the last release, and after a release and before this step it
