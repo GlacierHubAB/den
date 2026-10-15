@@ -504,8 +504,11 @@ all` does in a terminal.
   is `connected`, `restored` (the first `console.events` after Den
   restarted with this console: check `pid` and `start_ticks` are yours),
   `refused` (another program tried this console) or `unpaired`.
-- `card {id, kind, agent, change, text_sha256?, result?, by?}`: `change` is
-  `new`, `changed` or `settled`. A settled card has no `text_sha256`;
+- `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
+  `new`, `changed` or `settled`. A new or changed card the console may
+  not answer (`dock_answers` false) carries `needs_den_screen: true`: only
+  your answer on Den's own screen settles it. A settled card has no
+  `text_sha256`;
   `result` is `allowed`, `denied`, `always` or `gone` (it settled without
   an answer), and `by` is `den` or `console`, absent for `gone`. `rule`
   is reserved for a later Den that answers by a rule of its own. Take any

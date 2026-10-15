@@ -65,6 +65,9 @@ type CardEvent struct {
 	Agent  string `json:"agent"`
 	Change string `json:"change"` // new, changed or settled
 	Hash   string `json:"text_sha256,omitempty"`
+	// NeedsDenScreen is set on a new or changed card the console may not
+	// answer: only the human answers it, on Den's own screen.
+	NeedsDenScreen bool `json:"needs_den_screen,omitempty"`
 	// On a settled card: allowed, denied, always or gone (it settled
 	// without an answer: the agent moved on, or it went to its terminal),
 	// and by den or console, "" for gone.
@@ -354,15 +357,20 @@ func hasVerb(verbs []string, v string) bool {
 	return false
 }
 
+// cardEvent is a new or changed card's event.
+func cardEvent(c Card, change string) CardEvent {
+	return CardEvent{ID: c.ID, Kind: c.Kind, Agent: c.Agent, Change: change, Hash: c.Hash, NeedsDenScreen: !c.DockAnswers}
+}
+
 // pushCards tells the console's subscribed connections what changed
 // between two views' cards.
 func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled) {
 	var evs []CardEvent
 	for id, c := range now {
 		if o, ok := old[id]; !ok {
-			evs = append(evs, CardEvent{ID: id, Kind: c.Kind, Agent: c.Agent, Change: "new", Hash: c.Hash})
+			evs = append(evs, cardEvent(c, "new"))
 		} else if o.Hash != c.Hash {
-			evs = append(evs, CardEvent{ID: id, Kind: c.Kind, Agent: c.Agent, Change: "changed", Hash: c.Hash})
+			evs = append(evs, cardEvent(c, "changed"))
 		}
 	}
 	for id, o := range old {

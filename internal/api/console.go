@@ -702,7 +702,7 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
 	c.push(Event{Event: EventConsole, Data: ev}, true)
 	for _, card := range waiting {
-		c.push(Event{Event: EventCard, Data: CardEvent{ID: card.ID, Kind: card.Kind, Agent: card.Agent, Change: "new", Hash: card.Hash}}, true)
+		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}
 }
 

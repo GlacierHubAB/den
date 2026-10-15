@@ -155,9 +155,31 @@ func TestConsoleEventsReplayPendingCards(t *testing.T) {
 	}
 	c.next() // connected
 	var ev CardEvent
-	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.ID != "w-1" || ev.Change != "new" {
+	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.ID != "w-1" || ev.Change != "new" || ev.NeedsDenScreen {
 		t.Errorf("no replay of the waiting card: %+v", e)
 	}
+}
+
+// A card the console may not answer says it needs Den's own screen.
+func TestCardEventNeedsDenScreen(t *testing.T) {
+	h, c := provedConsole(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{card("i-1", 1, false)}}))
+	var ev CardEvent
+	if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.ID != "i-1" || !ev.NeedsDenScreen {
+		t.Errorf("%+v", e)
+	}
+	if !strings.Contains(string(mustJSON(t, CardEvent{ID: "x", NeedsDenScreen: true})), `"needs_den_screen":true`) {
+		t.Error("the field's name")
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 // What a console may not do with a card.
