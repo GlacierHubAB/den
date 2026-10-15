@@ -50,7 +50,7 @@ func (s *stdinBuf) answers() map[string]string {
 func controlOrch(spawn bool) (*Orchestrator, *stdinBuf) {
 	in := &stdinBuf{}
 	o := &Orchestrator{stdin: in, events: make(chan Event, 64), done: make(chan struct{}), sent: map[string]time.Time{},
-		ctl: &control{human: humanTools(Options{Spawn: spawn}), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}}}
+		ctl: newControl(Options{Spawn: spawn})}
 	return o, in
 }
 

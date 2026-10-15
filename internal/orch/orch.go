@@ -396,7 +396,7 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 	}
 	var ctl *control
 	if o.Control {
-		ctl = &control{human: humanTools(o), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}, sends: map[string]bool{}}
+		ctl = newControl(o)
 	}
 	return startCmd(ctx, cmd, o.SettingsFile, exe, ctl)
 }

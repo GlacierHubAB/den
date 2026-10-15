@@ -29,6 +29,7 @@ type chatRecord struct {
 	Session string      `json:"session,omitempty"` // kind "session": the orchestrator's session id
 	Mission string      `json:"mission,omitempty"` // the thread: the mission it was about
 	Card    *cardRecord `json:"card,omitempty"`
+	App     bool        `json:"app,omitempty"` // written in a paired app's turn
 }
 
 type cardRecord struct {
@@ -49,6 +50,7 @@ type cardRecord struct {
 	MissionID string    `json:"mission,omitempty"`
 	Thread    string    `json:"thread,omitempty"`
 	Stopped   time.Time `json:"stopped,omitempty"`
+	App       bool      `json:"app,omitempty"` // made in a paired app's turn
 }
 
 // maxChatLog is how many records come back on launch.
@@ -181,7 +183,7 @@ func (m *Model) logEntry(e chatEntry) {
 		m.logCard(e.card)
 		return
 	}
-	appendChatRecord(m.chatLog, chatRecord{Kind: e.role, At: e.at, Text: e.text, To: e.to, Status: e.status, Mission: e.mission})
+	appendChatRecord(m.chatLog, chatRecord{Kind: e.role, At: e.at, Text: e.text, To: e.to, Status: e.status, Mission: e.mission, App: e.app})
 }
 
 // logCard persists the card's current state.
@@ -192,7 +194,7 @@ func (m *Model) logCard(d *dispatch) {
 	appendChatRecord(m.chatLog, chatRecord{Kind: "card", At: d.SentAt, Card: &cardRecord{
 		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: firstNonEmptyS(d.rawBrief, d.Brief), Summary: d.Summary,
 		SentAt: d.SentAt, StartedAt: d.StartedAt, EndedAt: d.EndedAt,
-		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped,
+		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped, App: d.App,
 	}})
 }
 
@@ -258,17 +260,17 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			// The log is Den's own, but a file can be edited: what comes
 			// back is sanitised like any outside text. The brief keeps its
 			// raw form for the log, so records written again are unchanged.
-			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: sanitize.Line(c.Agent), Brief: sanitize.Text(c.Brief), rawBrief: c.Brief, Summary: sanitize.Line(c.Summary), SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: sanitize.Line(c.Reason), Calls: c.Calls, Ticker: sanitize.Line(c.Ticker), Result: sanitize.Text(c.Result), Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
+			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: sanitize.Line(c.Agent), Brief: sanitize.Text(c.Brief), rawBrief: c.Brief, Summary: sanitize.Line(c.Summary), SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: sanitize.Line(c.Reason), Calls: c.Calls, Ticker: sanitize.Line(c.Ticker), Result: sanitize.Text(c.Result), Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped, App: c.App}
 			if d, ok := cards[c.ID]; ok {
 				*d = nd
 				continue
 			}
 			d := &nd
 			cards[c.ID] = d
-			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread})
+			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread, app: c.App})
 			continue
 		}
-		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission, memo: &mdMemo{}})
+		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission, app: r.App || r.Kind == "app", memo: &mdMemo{}})
 	}
 	// Streamed text is logged when its final block lands, which can be after
 	// the card for a dispatch made in the same turn; the screen order is by

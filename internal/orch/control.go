@@ -97,6 +97,12 @@ type control struct {
 	standingUsed int
 }
 
+// newControl is the control state of an orchestrator started with o, every
+// map made: the tests build it the same way.
+func newControl(o Options) *control {
+	return &control{human: humanTools(o), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}, sends: map[string]bool{}}
+}
+
 // StandingMax is how many requests standing allowances answer in one app
 // turn; after that every request asks.
 const StandingMax = 5
