@@ -364,11 +364,13 @@ func (l *lane) current() *askJob {
 
 // finish ends an ask's stream and forgets it.
 func (l *lane) finish(j *askJob, errMsg string) {
-	j.end(errMsg)
+	// The lane's own record first, then the stream's end: a client that
+	// reads done and asks at once sees the ask over.
 	l.mu.Lock()
 	delete(l.statuses, j.id)
 	delete(l.jobs, j.id)
 	l.mu.Unlock()
+	j.end(errMsg)
 	l.changed()
 }
 
@@ -500,16 +502,16 @@ func (l *lane) run() {
 		for i, q := range rest {
 			l.setStatus(q, statusQueued(i+1))
 		}
-		if j.isCancelled() {
-			l.finish(j, j.why())
-		} else {
-			var errMsg string
+		errMsg := j.why()
+		if !j.isCancelled() {
 			p, errMsg = l.serve(p, j)
-			l.finish(j, errMsg)
 		}
+		// Not running any more before its stream ends (finish), so a client
+		// that reads done sees the lane free.
 		l.mu.Lock()
 		l.cur = nil
 		l.mu.Unlock()
+		l.finish(j, errMsg)
 		if !idle.Stop() {
 			select {
 			case <-idle.C:
