@@ -291,8 +291,7 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "answers faster than anyone could read: the console is unpaired")
 		return
 	}
-	cur, _ := s.CurrentConsole()
-	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Verb: p.Verb, Console: ExeLabel(cur.Exe), Reply: make(chan CardResult, 1)}
+	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Verb: p.Verb, Console: ConsoleLabel, Reply: make(chan CardResult, 1)}
 	// The card's settled event, if Den pushes one while it answers, waits
 	// for the reply: the reply first, then the event, on this connection.
 	c.mu.Lock()

@@ -57,6 +57,10 @@ type Client struct {
 	Streams []string
 	Asking  bool
 	Agent   bool // its ancestry runs through a Den agent: refused
+	// Console is set for a connection proved as the paired console
+	// (console.auth): Den knows it from the pairing, never from anything
+	// the program says.
+	Console bool
 }
 
 // Server serves den-api.sock.
@@ -459,12 +463,14 @@ func (s *Server) Paused() bool { return s.paused.Load() }
 
 // Clients lists the connected apps.
 func (s *Server) Clients() []Client {
+	cur, paired := s.CurrentConsole()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Client
 	for c := range s.conns {
 		c.mu.Lock()
 		cl := Client{PID: c.peer.PID, Exe: c.peer.Exe, Label: c.peer.Label(), Since: c.since, Asking: c.asks > 0, Agent: c.agent}
+		cl.Console = paired && c.console != "" && c.console == cur.ID
 		for k := range c.subs {
 			cl.Streams = append(cl.Streams, k)
 		}
