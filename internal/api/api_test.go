@@ -115,6 +115,23 @@ type client struct {
 	id int64
 }
 
+// setIdentify makes the server see each client as f says; nil undoes it.
+func (s *Server) setIdentify(f func(Peer) Peer) {
+	if f == nil {
+		s.idHook.Store(nil)
+		return
+	}
+	s.idHook.Store(&f)
+}
+
+// setPairHook runs f between a claim's bookkeeping and its card.
+func (s *Server) setPairHook(f func(string)) { s.pairHook.Store(&f) }
+
+// setPeerCred makes the server read peer credentials with f.
+func (s *Server) setPeerCred(f func(net.Conn) (int, int, error)) {
+	s.credHook.Store((*func(net.Conn) (uid, pid int, err error))(&f))
+}
+
 func (h *harness) dial() *client {
 	h.t.Helper()
 	nc, err := net.Dial("unix", h.s.Path())
@@ -223,9 +240,7 @@ func TestOversizedLineClosesTheConnection(t *testing.T) {
 
 func TestOtherUserIsRefused(t *testing.T) {
 	h := newHarness(t, 2)
-	old := peerCred
-	peerCred = func(c net.Conn) (int, int, error) { return os.Getuid() + 1, os.Getpid(), nil }
-	defer func() { peerCred = old }()
+	h.s.setPeerCred(func(c net.Conn) (int, int, error) { return os.Getuid() + 1, os.Getpid(), nil })
 	c := h.dial()
 	if l := c.next(); code(l) != CodeForbidden || *l.ID != 0 {
 		t.Errorf("other user: %+v", l)
@@ -257,11 +272,9 @@ func TestAgentRefusalsCoalesce(t *testing.T) {
 	h := newHarness(t, 2)
 	pids := []int{9001, 9002, 9003}
 	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: 9001}, {PID: 9002}, {PID: 9003}}}))
-	old := identifyHook
-	defer func() { identifyHook = old }()
 	for i := 0; i < 50; i++ {
 		pid := pids[i%3]
-		identifyHook = func(p Peer) Peer { p.PID, p.Exe = pid, "/usr/bin/app-probe"; return p }
+		h.s.setIdentify(func(p Peer) Peer { p.PID, p.Exe = pid, "/usr/bin/app-probe"; return p })
 		c := h.dial()
 		c.hello()
 		c.nc.Close()
@@ -330,9 +343,7 @@ func TestAppHostChainIsNotAnAgent(t *testing.T) {
 		70200: {8_000_000, 7100},  // app-host
 		7100:  {2_000, 1},         // systemd --user
 	})
-	old := identifyHook
-	defer func() { identifyHook = old }()
-	identifyHook = func(p Peer) Peer { p.PID, p.Exe = 70300, "/opt/example/bin/app"; return p }
+	asApp := func(p Peer) Peer { p.PID, p.Exe = 70300, "/opt/example/bin/app"; return p }
 	for name, agents := range map[string][]AgentProc{
 		"no agents":          nil,
 		"reused session pid": {{PID: 70200, Start: 3_000_000, Name: "agent Old Otter"}},
@@ -340,6 +351,7 @@ func TestAppHostChainIsNotAnAgent(t *testing.T) {
 		"agents elsewhere":   {{PID: 4242, Start: 1, Name: "agent Busy"}},
 	} {
 		h := newHarness(t, 2)
+		h.s.setIdentify(asApp)
 		h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: agents}))
 		c := h.dial()
 		c.hello()
@@ -348,6 +360,7 @@ func TestAppHostChainIsNotAnAgent(t *testing.T) {
 		}
 	}
 	h := newHarness(t, 2)
+	h.s.setIdentify(asApp)
 	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: 70200, Start: 8_000_000, Name: "agent Real Otter"}}}))
 	c := h.dial()
 	c.hello()
@@ -869,11 +882,10 @@ func TestQueuedAskNamesItsPosition(t *testing.T) {
 	a.call("ask", map[string]string{"text": "slow"})
 	waitChunk(t, a, "text")
 	os.Remove(filepath.Join(h.lane, "slow"))
-	old := identifyHook
-	identifyHook = func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p }
+	h.s.setIdentify(func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p })
 	b := h.dial()
 	b.hello()
-	identifyHook = old
+	h.s.setIdentify(nil)
 	b.call("ask", map[string]string{"text": "after"})
 	if ch := waitChunk(t, b, "status"); ch.Text != "Waiting for 1 earlier question…" {
 		t.Errorf("queued status %q", ch.Text)
@@ -918,11 +930,10 @@ func TestAskCancel(t *testing.T) {
 	waitChunk(t, c, "text") // the turn is running
 	os.Remove(filepath.Join(h.lane, "slow"))
 
-	old := identifyHook
-	identifyHook = func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p }
+	h.s.setIdentify(func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p })
 	other := h.dial()
 	other.hello()
-	identifyHook = old
+	h.s.setIdentify(nil)
 	if l := other.call("ask.cancel", map[string]string{"ask": r.Ask}); code(l) != CodeNotFound {
 		t.Errorf("another app cancelled: %+v", l)
 	}

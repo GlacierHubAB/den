@@ -131,6 +131,9 @@ const (
 )
 
 func startOrchestrator(cfg config.Config, resume, guidance string, control bool) tea.Cmd {
+	// Read now, on the UI's goroutine, not in the command's: tests replace
+	// them, and put them back while a command may still be running.
+	launch, version := launchOrchestrator, orchVersion
 	return func() tea.Msg {
 		name := cfg.Orchestrator.Name
 		if name == "" {
@@ -138,9 +141,9 @@ func startOrchestrator(cfg config.Config, resume, guidance string, control bool)
 		}
 		why := ""
 		if control {
-			control, why = controlStart(nil)
+			control, why = controlStart(nil, version)
 		}
-		o, err := launchOrchestrator(orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance, Control: control})
+		o, err := launch(orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance, Control: control})
 		return orchStartedMsg{o: o, err: err, control: control, noControl: why}
 	}
 }

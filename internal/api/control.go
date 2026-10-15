@@ -544,7 +544,9 @@ func (s *Server) claim(c *conn, req Request) {
 	st.mu.Unlock()
 	ask := PairAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
 	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
-	beforePairAct(id)
+	if f := s.pairHook.Load(); f != nil {
+		(*f)(id)
+	}
 	if !s.act(Act{Pair: &ask}) {
 		// Den could not take the card (its queue to the screen is full):
 		// the claim did not happen. The code stays live, unspent, and the
@@ -607,10 +609,6 @@ func (s *Server) claim(c *conn, req Request) {
 		c.reply(req.ID, map[string]any{"pairing": id, "key": hex.EncodeToString(key), "control": true})
 	}()
 }
-
-// beforePairAct runs between a claim's bookkeeping and its card; tests use
-// it to let a second claim in there.
-var beforePairAct = func(string) {}
 
 // procInfo is when pid started, its parent's name and its command line,
 // for the pairing card; zero and "" when /proc cannot tell.

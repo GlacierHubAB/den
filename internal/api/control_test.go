@@ -273,9 +273,7 @@ func TestPairAuthFailures(t *testing.T) {
 func TestPairBoundToItsProgram(t *testing.T) {
 	h := newHarness(t, 2)
 	_, id, key := paired(t, h)
-	old := identifyHook
-	defer func() { identifyHook = old }()
-	identifyHook = func(p Peer) Peer { p.Exe = "/usr/bin/other"; return p }
+	h.s.setIdentify(func(p Peer) Peer { p.Exe = "/usr/bin/other"; return p })
 	c := h.dial()
 	c.hello()
 	nonce, conn := challengeOf(t, c)

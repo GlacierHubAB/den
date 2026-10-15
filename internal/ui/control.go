@@ -539,13 +539,13 @@ func (m *Model) controlTick(now time.Time) tea.Cmd {
 
 // controlStart checks, before an orchestrator starts in control mode,
 // that its Claude Code release is one send_message was checked on.
-func controlStart(cmd []string) (bool, string) {
+func controlStart(cmd []string, version func(context.Context, []string) (string, error)) (bool, string) {
 	if len(cmd) == 0 {
 		cmd = []string{"claude"}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	v, err := orchVersion(ctx, cmd)
+	v, err := version(ctx, cmd)
 	if err != nil {
 		return false, "Den could not read the Claude Code release, so control stays off"
 	}

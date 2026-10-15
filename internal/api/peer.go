@@ -30,8 +30,8 @@ func (p Peer) Label() string {
 	return filepath.Base(p.Exe)
 }
 
-// peerCred reads SO_PEERCRED. Tests replace it.
-var peerCred = func(c net.Conn) (uid, pid int, err error) {
+// peerCred reads SO_PEERCRED.
+func peerCred(c net.Conn) (uid, pid int, err error) {
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
 		return 0, 0, errors.New("not a unix socket")
@@ -56,8 +56,12 @@ var peerCred = func(c net.Conn) (uid, pid int, err error) {
 // identify reads the peer's uid and pid from the kernel, then its exe and
 // start time from /proc. A process that is gone, or whose start time
 // changed between the two reads (a reused pid), is not identified.
-func identify(c net.Conn) (Peer, error) {
-	uid, pid, err := peerCred(c)
+func (s *Server) identify(c net.Conn) (Peer, error) {
+	cred := peerCred
+	if f := s.credHook.Load(); f != nil {
+		cred = *f
+	}
+	uid, pid, err := cred(c)
 	if err != nil {
 		return Peer{}, err
 	}
@@ -75,11 +79,11 @@ func identify(c net.Conn) (Peer, error) {
 		return p, fmt.Errorf("peer %d changed while it was read", pid)
 	}
 	p.Start = start
-	return identifyHook(p), nil
+	if f := s.idHook.Load(); f != nil {
+		p = (*f)(p)
+	}
+	return p, nil
 }
-
-// identifyHook lets tests make one process look like two apps.
-var identifyHook = func(p Peer) Peer { return p }
 
 // procStat reads a process's start time and parent from /proc/<pid>/stat.
 var procStat = func(pid int) (start uint64, ppid int, err error) {

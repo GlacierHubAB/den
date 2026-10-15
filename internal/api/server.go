@@ -65,6 +65,15 @@ type Server struct {
 	// draining counts refused connections still reading out what their
 	// client sent (turnAway); past maxDraining they are closed at once.
 	draining atomic.Int32
+	// credHook and idHook stand in for the kernel's peer credentials and
+	// for what identify found, in tests only (setPeerCred, setIdentify):
+	// per server, and atomic, so a test may change them while the server
+	// serves. Production never sets them.
+	credHook atomic.Pointer[func(net.Conn) (uid, pid int, err error)]
+	idHook   atomic.Pointer[func(Peer) Peer]
+	// pairHook runs between a claim's bookkeeping and its card, in tests
+	// only, to let a second claim in there.
+	pairHook atomic.Pointer[func(string)]
 
 	grants   *grants
 	acts     chan Act
@@ -612,7 +621,7 @@ func (s *Server) turnAway(nc net.Conn, code, msg string) {
 
 func (s *Server) serve(nc net.Conn) {
 	// Who is it, before reading a byte.
-	peer, err := identify(nc)
+	peer, err := s.identify(nc)
 	if err != nil || peer.UID != os.Getuid() {
 		writeNow(nc, CodeForbidden, "")
 		return

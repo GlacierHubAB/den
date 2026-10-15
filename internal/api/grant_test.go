@@ -123,12 +123,11 @@ func TestGrantAnswersGoOnlyToTheAsker(t *testing.T) {
 	a.nc.Close() // a re-dials later
 
 	// b is another app: a different exe, as the kernel says.
-	old := identifyHook
-	identifyHook = func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p }
+	h.s.setIdentify(func(p Peer) Peer { p.Exe = "/usr/bin/other-app"; return p })
 	b := h.dial()
 	b.hello()
 	b.call("grant.events", nil)
-	identifyHook = old
+	h.s.setIdentify(nil)
 
 	h.s.GrantAnswered(r.ID, "granted")
 	b.nc.SetReadDeadline(time.Now().Add(300 * time.Millisecond))
