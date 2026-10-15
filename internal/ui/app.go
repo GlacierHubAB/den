@@ -21,6 +21,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/critter"
+	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/hooks"
@@ -143,27 +144,29 @@ type Model struct {
 	watch     <-chan struct{}
 	lastScan  time.Time
 
-	srv        *bridge.Server
-	closing    map[string]closer.Plan     // close questions in the inbox, by item id
-	offers     map[string]skills.Approval // skills offers in the inbox, by item id
-	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
-	sends      map[string]askedSend       // den send questions in the inbox, by item id
-	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
-	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
-	guard      *closer.Guard              // agents a close must leave alone or only propose when named
-	guardPath  string
-	srvErr     error
-	store      *inbox.Store
-	inboxCur   int
-	inboxSel   string          // id of the selected inbox item: the selection follows the item, never its place in the list
-	inboxLost  bool            // the selected item left the list: nothing is selected until the human picks one
-	inboxAt    time.Time       // when the human last chose an item: requests after it are new to them
-	shown      shownTarget     // what ^Y and ^N act on now, and since when
-	bodyOff    int             // rows the selected inbox item is scrolled, when it is taller than the pane
-	bodyRead   map[string]bool // items whose whole body was scrolled through (inbox_body.go)
-	hooksReady bool
-	cfg        config.Config
-	chatLog    string // the orchestrator log on disk
+	srv             *bridge.Server
+	closing         map[string]closer.Plan     // close questions in the inbox, by item id
+	offers          map[string]skills.Approval // skills offers in the inbox, by item id
+	installs        map[string]remote.Plan     // remote install questions in the inbox, by item id
+	desktopInstalls map[string]desktop.Plan    // hypruse install questions in the inbox, by item id
+	desk            deskState                  // desktop missions
+	sends           map[string]askedSend       // den send questions in the inbox, by item id
+	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
+	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
+	guard           *closer.Guard              // agents a close must leave alone or only propose when named
+	guardPath       string
+	srvErr          error
+	store           *inbox.Store
+	inboxCur        int
+	inboxSel        string          // id of the selected inbox item: the selection follows the item, never its place in the list
+	inboxLost       bool            // the selected item left the list: nothing is selected until the human picks one
+	inboxAt         time.Time       // when the human last chose an item: requests after it are new to them
+	shown           shownTarget     // what ^Y and ^N act on now, and since when
+	bodyOff         int             // rows the selected inbox item is scrolled, when it is taller than the pane
+	bodyRead        map[string]bool // items whose whole body was scrolled through (inbox_body.go)
+	hooksReady      bool
+	cfg             config.Config
+	chatLog         string // the orchestrator log on disk
 	// Images attached to the command line, and whether the terminal can
 	// draw them inline (kitty graphics, confirmed by a probe reply).
 	attachments []attachment
@@ -267,7 +270,7 @@ func (m Model) Close() {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
+	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe(), clearNoFocus}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
 	}
@@ -632,6 +635,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installDoneMsg:
 		return m, m.finishInstall(msg)
+	case desktopInstallDoneMsg:
+		return m, m.finishDesktopInstall(msg)
+	case deskSnapMsg:
+		return m, m.decideDesktopCall(msg)
+	case deskCardTimeoutMsg:
+		m.timeoutDesktopCard(msg)
+		return m, nil
+	case deskCropMsg:
+		m.finishDeskCrop(msg)
+		return m, nil
+	case deskTickMsg:
+		return m, m.deskOnTick()
+	case deskPrepared:
+		return m, m.finishPrepare(msg)
+	case deskSpawned:
+		return m, m.finishSpawn(msg)
 	case askedSentMsg:
 		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
@@ -695,6 +714,25 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
 	}
+	if r.Event == bridge.DesktopInstallEvent {
+		return m.handleDesktopInstallRequest(r)
+	}
+	if r.Event == bridge.DesktopEvent {
+		return m.handleDesktop(r)
+	}
+	if r.Event == bridge.DesktopGateEvent {
+		return m.handleDesktopGate(r)
+	}
+	if r.Event == bridge.DesktopMissionEvent {
+		return m.handleDesktopMissionRequest(r)
+	}
+	if r.Event == bridge.DesktopStopEvent {
+		return m.handleDesktopStop(r)
+	}
+	var deskCmd tea.Cmd
+	if r.Event == "Stop" {
+		deskCmd = m.deskAgentStopped(r)
+	}
 	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
@@ -753,7 +791,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			_ = inbox.AppendHistory(inbox.HistoryPath(), it) // best effort
 		}
 	}
-	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it)}
+	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it), deskCmd}
 	switch r.Event {
 	case "SessionStart", "SessionEnd":
 		cmds = append(cmds, snapshot)
@@ -1421,6 +1459,15 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.DesktopInstall {
+		return m.decideDesktopInstall(it, verb)
+	}
+	if it.Kind == inbox.DesktopAct || it.Kind == inbox.YourTurn {
+		return m.decideDesktopCard(it, verb)
+	}
+	if it.Kind == inbox.DesktopMission {
+		return m.decideDesktopMission(it, verb)
+	}
 	if it.Kind == inbox.APIOn {
 		return m.decideAPIOn(it, verb)
 	}
@@ -1639,6 +1686,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.usageCommand(fields[1:])
 	case "/mode":
 		return m.modeCommand(fields[1:])
+	case "/desktop":
+		return m.desktopCommand(fields[1:])
 	case "/budget":
 		note, isErr := m.budgetCommand(fields[1:])
 		return m.say(note, isErr)
@@ -1664,8 +1713,14 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession || sessionID == inbox.DesktopSession {
 		return "Den"
+	}
+	for _, dm := range m.desk.missions {
+		// A desktop agent's cards come before its session registers.
+		if dm.SessionID == sessionID && dm.AgentName != "" {
+			return dm.AgentName
+		}
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
 		if ms := m.missions.Get(id); ms != nil {

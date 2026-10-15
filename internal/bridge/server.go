@@ -113,6 +113,11 @@ var held = map[string]bool{
 	OrchSendEvent:       true,
 	ConsolePairEvent:    true,
 	ConsoleUnpairEvent:  true,
+	DesktopInstallEvent: true,
+	DesktopEvent:        true,
+	DesktopGateEvent:    true,
+	DesktopMissionEvent: true,
+	DesktopStopEvent:    true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

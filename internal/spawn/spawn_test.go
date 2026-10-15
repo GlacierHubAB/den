@@ -116,7 +116,7 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "--name", "designer", "--model", "opus", "--permission-mode", "default", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal", "--"}
+	want := []string{"claude", "--name", "designer", "--model", "opus", "--permission-mode", "default", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal,mcp__den__desktop_mission", "--"}
 	if len(gotCmd) != len(want)+1 || strings.Join(gotCmd[:len(want)], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v", gotCmd)
 	}
@@ -168,7 +168,7 @@ func TestCommandGivesApprovedSkillsFolder(t *testing.T) {
 
 func TestCommandResumes(t *testing.T) {
 	got := Command(Request{Resume: "s1", Model: "claude-opus-5-5", AddDirs: []string{"/s/agents/ui-1"}, Spawner: "/bin/den"}, "ui")
-	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--permission-mode", "default", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
+	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--permission-mode", "default", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal,mcp__den__desktop_mission"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("command = %q, want %q", got, want)
 	}

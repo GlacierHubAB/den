@@ -26,7 +26,7 @@ Hyprland.
 - [Notifications](#notifications) · [Events for scripts](#events-for-scripts)
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
-- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Skills for roles](#skills-for-roles)
+- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Desktop control](#desktop-control) · [Skills for roles](#skills-for-roles)
 - [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
 - [Review](#review) · [Worktrees in Review](#worktrees-in-review) · [The agent badge](#the-agent-badge)
@@ -403,6 +403,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent (also one on a remote host, `/close Name@devbox`); `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
+| `/desktop`, `/desktop stop`, `/desktop keep` | how a desktop mission stands; stop it at once; keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
@@ -841,6 +842,100 @@ id, which Den records so the copy takes the original's place in the tree.
 
 `restore.ask = false` in the config, or `DEN_RESTORE=off`, turns the restart
 question off; the roster is still kept for `/reopen`.
+
+## Desktop control
+
+A desktop agent moves the mouse and types on your Hyprland desktop, in apps
+you allowed, on a workspace Den frees for it, and every step passes Den's
+gate. It is built on [hypruse](https://github.com/IlyasKhallouki/hypruse)
+(MIT), pinned at commit 0035d86 and installed unmodified into Den's own
+venv.
+
+**Install.** `den install-hypruse --from <clone of hypruse at 0035d86>`
+asks Den on a card. Den checks every file of the clone against hashes it was
+built with, and installs only on `Ctrl+Y`: the package files are copied (none
+of them runs) and its dependencies (`mcp` and 28 more) come from PyPI, each
+pinned by hash, wheels only. `--wheels <dir>` installs them from a folder
+instead, offline. Den records a hash of every installed file and checks them
+before every desktop agent starts. The venv is
+`~/.local/share/den/hypruse/venv`; nothing runs `uvx` or the network later.
+
+**Allow apps.** A desktop agent uses only the apps you list in Den's config:
+
+```toml
+[desktop.apps.editor]
+command = ["foot", "--app-id", "den-editor", "nvim"]
+class = "den-editor"
+outward = "no"            # "ask" (the default): every click and keystroke asks; "words": only Send-like clicks and Enter ask
+
+[desktop.apps.browser]
+command = ["zen-browser", "--new-instance"]
+class = "zen"
+profile = ["--profile", "{dir}"]   # a profile of its own, in the mission's folder
+if_running = "refuse"              # or "warn": joining an instance already running uses its sign-ins
+```
+
+**Start a mission.** The orchestrator (or a lead) calls `desktop_mission`
+with a plan, app names and the steps only you do ("sign in to Gmail"). A card
+shows the plan, each app, and what the agent will and will not have. On
+`Ctrl+Y` Den picks an empty workspace (9 down to 5), opens the apps there
+itself, and starts the agent in a terminal on your workspace. The agent has
+only the desktop tools: no shell, files, web, messages, app launching,
+keybinds or clipboard. Its terminal shows what it says and does; `Ctrl+C`
+there stops it.
+
+**While it runs.** Den reads each call before hypruse gets it. Reading its
+own windows, and clicking and typing in them, goes ahead, unless a
+notification or other overlay covers the point, or the keys are one of your
+Hyprland shortcuts (both are refused); anything outside the mission is
+refused; in an app marked outward, every click and keystroke
+asks you on a card, as do Send-like controls anywhere and the agent's own
+`request_approval`. A card shows the reason, the window, the input and a
+screenshot of the window, and is answered only in Den's own window, once.
+For a step only you do, the agent calls `your_turn`: every desktop tool is
+paused until you say it is done (`Ctrl+Y`) or end the mission (`Ctrl+N`). The
+header shows `DESKTOP · on` (or `acting`) while a mission runs.
+
+**Stop it.** `/desktop stop` in Den, `/desktop stop` from the dock, or
+`den desktop stop` from anywhere: it stops hypruse, the agent and its server
+at once and closes the windows Den opened. It works with Den's window hidden,
+and with Den not running (from Den's records; the windows then stay). A
+Hyprland bind makes it one key; Den never edits your config, so add it
+yourself, for example in Lua:
+
+```lua
+hl.bind("SUPER + SHIFT + Escape", hl.dsp.exec_cmd("den desktop stop"))
+```
+
+**Files.** Each mission has a private folder in
+`~/.local/state/den/desktop/<mission>/`: its settings, hypruse's journal
+(typed text as length and digest only), screenshot crops for cards, and a log.
+The journal, crops and log are deleted ten minutes after the mission ends;
+`/desktop keep` keeps them.
+
+**Limits.** Read these before you let it near anything that matters.
+
+- Den's proxy, the agent's only route to hypruse, is the gate: it forwards
+  nothing Den did not allow. The agent's hook is a second layer only (a hook
+  that fails lets a tool run).
+- In an app not marked outward, a click by coordinates is not asked about;
+  only Send-like names and the outward rules ask.
+- hypruse focuses the window and then types, about 50 ms apart, with no check
+  in between.
+- A zoom can show a notification drawn over the window.
+- The apps you allowed can take the keyboard for a moment when they open;
+  Den gives the focus back to your window. (The agent's own terminal opens
+  without taking it.)
+- Strict mode (refusing when you move the mouse) has not been tried against a
+  real takeover; treat stopping as the way to take control back.
+- A desktop agent is never restored or reopened by Den. If you resume one by
+  hand with `claude --resume` outside Den, it gets an ordinary agent's tools
+  on a conversation that read your screen, and Den cannot stop that.
+- Everything runs as your user: Den detects changes to its venv and the
+  agent's settings, but anything running as you could change them.
+- The agent never types credentials: signing in is your turn. Text on the
+  screen (a web page, an email) can still try to steer it, which is why
+  outward steps ask you.
 
 ## Skills for roles
 

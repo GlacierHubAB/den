@@ -173,6 +173,29 @@ func Prices() map[string]string {
 	return out
 }
 
+// DesktopApps is the [desktop.apps.<name>] sections: the apps the human
+// allows desktop missions to use, as raw values by app name and key
+// (command = ["zen-browser", "--new-instance"], class = "zen", ...).
+// internal/desktop reads them; nothing here interprets them.
+func DesktopApps() map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for k, v := range parse(Path()) {
+		rest, ok := strings.CutPrefix(k, "desktop.apps.")
+		if !ok {
+			continue
+		}
+		name, key, ok := strings.Cut(rest, ".")
+		if !ok || name == "" || key == "" {
+			continue
+		}
+		if out[name] == nil {
+			out[name] = map[string]string{}
+		}
+		out[name][key] = v
+	}
+	return out
+}
+
 func (c *Config) apply(kv map[string]string) {
 	str := func(dst *string, key string) {
 		if v, ok := kv[key]; ok && v != "" {

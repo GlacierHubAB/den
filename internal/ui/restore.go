@@ -129,7 +129,7 @@ func (m Model) alive(id string) bool {
 func (m Model) restorable() []roster.Agent {
 	var out []roster.Agent
 	for _, a := range m.restore.r.Gone(m.alive) {
-		if transcript.Path(a.SessionID) != "" {
+		if transcript.Path(a.SessionID) != "" && !m.isDesktopSession(a.SessionID) {
 			out = append(out, a)
 		}
 	}
@@ -165,6 +165,9 @@ func (m *Model) observeRoster() {
 	for _, a := range m.agents {
 		if a.Status == fleet.Gone || !a.Session.Alive || a.Host != "" || m.isOrchestrator(a) || a.Session.Name == m.cfg.Orchestrator.Name {
 			continue
+		}
+		if m.knownDesktopSession(a.Session.SessionID) {
+			continue // never restored: see isDesktopSession
 		}
 		// Only terminal sessions can be reopened in a terminal.
 		if a.Session.Kind != "" && a.Session.Kind != "interactive" {
@@ -569,6 +572,9 @@ func (m Model) reopenCommand(args []string) (tea.Model, tea.Cmd) {
 	a, ok := m.restore.r.Find(name)
 	if !ok {
 		return m.say("Den has not seen an agent called "+name+" in the last two weeks.", true)
+	}
+	if m.isDesktopSession(a.SessionID) {
+		return m.say(a.Name()+" was a desktop agent: it is never reopened. Start a new desktop mission instead.", true)
 	}
 	if m.alive(a.SessionID) && !fork {
 		return m.say(a.Name()+" is running. /reopen --fork "+a.Name()+" opens a copy of its conversation.", true)

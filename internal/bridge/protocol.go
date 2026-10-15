@@ -28,6 +28,9 @@ type Decision struct {
 	Behavior string            `json:"behavior"`
 	Message  string            `json:"message,omitempty"`
 	Answers  map[string]string `json:"answers,omitempty"`
+	// Data is an answer's structured part, for the asker that expects it:
+	// a DesktopEvent's allow carries the input to forward and the scope.
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 // CloseEvent is not a hook: `den mcp` sends it when the orchestrator asks
@@ -145,6 +148,71 @@ const ConsolePairEvent = "ConsolePair"
 // ConsoleUnpairEvent is not a hook event: `den unpair [all]` sends it.
 // Its payload is {"all": bool}. It only lowers, so anyone may ask.
 const ConsoleUnpairEvent = "ConsoleUnpair"
+
+// DesktopInstallEvent is not a hook event: `den install-hypruse` sends it
+// to ask the human, in Den, to install hypruse into Den's own venv, and
+// waits for the outcome. Den makes the plan itself, checks the clone, and
+// installs only on ^Y. Refused from a process under Claude Code, an agent,
+// `den mcp` or `den hook`.
+const DesktopInstallEvent = "DesktopInstallRequest"
+
+// DesktopInstallInput is the payload of a DesktopInstallEvent.
+type DesktopInstallInput struct {
+	Clone   string `json:"clone"`            // the hypruse clone to copy from
+	Wheels  string `json:"wheels,omitempty"` // a folder of wheels for an offline install
+	AskedBy string `json:"asked_by"`
+}
+
+// DesktopEvent is not a hook event: Den's desktop proxy (`den
+// desktop-mcp`, the only MCP server a desktop agent has) sends it to start
+// and for every tool call, and forwards a call to hypruse only on Den's
+// allow. Den answers only the proxy of a live desktop mission, known by
+// its process: a child of that mission's agent, then the pid and start it
+// reported.
+const DesktopEvent = "DesktopRequest"
+
+// DesktopGateEvent is not a hook event either: `den hook desktop-gate`,
+// the desktop agent's PreToolUse hook, sends it for every tool call. Den
+// answers at once, allow (the hook then makes no decision) only for a
+// live desktop agent's allowed tools, else deny.
+const DesktopGateEvent = "DesktopGate"
+
+// DesktopStopEvent is not a hook event: `den desktop stop` sends it (a
+// Hyprland bind the human adds runs it). Den stops every desktop mission
+// at once and answers what it did. It only lowers, so it is never refused
+// for who asks.
+const DesktopStopEvent = "DesktopStop"
+
+// DesktopMissionEvent is not a hook event: `den mcp` sends it for the
+// desktop_mission tool, asking the human, on a card, to start an agent
+// that drives the desktop in a scope Den derives (a free workspace, the
+// apps the human configured). It waits for the outcome: the agent's name,
+// or why not.
+const DesktopMissionEvent = "DesktopMissionRequest"
+
+// DesktopMissionInput is the payload of a DesktopMissionEvent. It names
+// apps from the human's config and nothing more: no command, class,
+// workspace or scope comes from the asker.
+type DesktopMissionInput struct {
+	Plan       string   `json:"plan"`
+	Apps       []string `json:"apps"`
+	HumanSteps []string `json:"human_steps,omitempty"`
+	Dir        string   `json:"dir"`
+	Model      string   `json:"model,omitempty"`
+	AskedBy    string   `json:"asked_by"` // the asker's peer name, for the card and the report
+}
+
+// DesktopInput is the payload of a DesktopEvent.
+type DesktopInput struct {
+	Kind    string          `json:"kind"` // "start", "child" or "call"
+	Mission string          `json:"mission"`
+	Tool    string          `json:"tool,omitempty"`
+	Args    json.RawMessage `json:"args,omitempty"`
+	Token   string          `json:"token,omitempty"` // the next piece of an allowed call
+	// child: hypruse's process, for the panic path to know it by.
+	ChildPID   int    `json:"child_pid,omitempty"`
+	ChildStart string `json:"child_start,omitempty"`
+}
 
 // OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.
 type OrchSendInput struct {

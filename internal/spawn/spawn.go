@@ -67,6 +67,13 @@ type Request struct {
 	// "" is default, never Claude Code's own default (auto). Den gives its
 	// global mode.
 	PermissionMode string
+	// Custom, when set, is the whole command for the agent named name, in
+	// place of Command's: a desktop agent is launched like the
+	// orchestrator, with its own tools, settings and prompt.
+	Custom func(name string) []string
+	// NoSessionWait returns once the window is up, without waiting for a
+	// session to register: a print-mode agent may never write one.
+	NoSessionWait bool
 }
 
 // Worktree is spawn_agent's worktree input: true (a worktree named after
@@ -199,6 +206,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 			res.Worktree, res.WorktreePath, res.WorktreeBranch = name, path, WorktreeBranch(name)
 		}
 		command = Command(req, res.Name)
+		if req.Custom != nil {
+			command = req.Custom(res.Name)
+		}
 	}
 	// The agent's own spawns name it as their lead through this variable;
 	// the orchestrator's marker must not leak into agents it starts.
@@ -263,6 +273,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	if !req.Agent {
+		return res, nil
+	}
+	if req.NoSessionWait {
 		return res, nil
 	}
 	if res.Untrusted = !Trusted(dir); res.Untrusted {
@@ -449,7 +462,7 @@ func Command(req Request, name string) []string {
 // The MCP server Den offers and the tools on it, as Claude Code names them.
 const MCPServer = "den"
 
-var SpawnTools = []string{"mcp__den__spawn_agent", "mcp__den__open_terminal"}
+var SpawnTools = []string{"mcp__den__spawn_agent", "mcp__den__open_terminal", "mcp__den__desktop_mission"}
 
 // MCPConfig is the --mcp-config JSON that registers `<exe> mcp` as the
 // server named MCPServer.
