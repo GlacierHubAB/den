@@ -2,6 +2,7 @@ package sysd
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,7 +53,9 @@ func newFixture(t *testing.T) *fixture {
 		4242: "/user.slice/user-" + uid + ".slice/user@" + uid + ".service/app.slice/" + testUnit,
 	}
 	starts := map[int]uint64{self: 777, 4242: startTicks}
-	saved := []any{procStat, procCgroup, procTracer, procExe, ptraceScope, bootID, bootTime, rootUID, systemPathFn, clkTck, gtkSystemDirs}
+	saved := []any{procStat, procCgroup, procTracer, procExe, ptraceScope, bootID, bootTime, rootUID, systemPathFn, clkTck, gtkSystemDirs, procCapEff, procInitUserNS}
+	procInitUserNS = func(int) (bool, error) { return true, nil }
+	procCapEff = func(int) (uint64, error) { return 0, nil }
 	gtkSystemDirs = []string{filepath.Join(dir, "sysgtk")}
 	clkTck = 100
 	procStat = func(pid int) (int, uint64, error) {
@@ -85,6 +88,8 @@ func newFixture(t *testing.T) *fixture {
 		systemPathFn = saved[8].(func(string, bool) bool)
 		clkTck = saved[9].(float64)
 		gtkSystemDirs = saved[10].([]string)
+		procCapEff = saved[11].(func(int) (uint64, error))
+		procInitUserNS = saved[12].(func(int) (bool, error))
 	})
 
 	cmd := func(path string) []any {
@@ -249,6 +254,79 @@ func TestReadGtkModules(t *testing.T) {
 	}
 }
 
+// The manager's program link: when it reads, the image is checked; when
+// the kernel refuses it (a manager with a capability the user lacks), the
+// manager must hold CAP_WAKE_ALARM and Den must not; any other failure
+// fails. Process facts are checked either way.
+func TestCheckManagerImageOrCapability(t *testing.T) {
+	denied := func(int) (os.FileInfo, error) {
+		return nil, &fs.PathError{Op: "stat", Path: "/proc/1079/exe", Err: fs.ErrPermission}
+	}
+	for _, c := range []struct {
+		name           string
+		exe            func(int) (os.FileInfo, error)
+		mgrCap, ownCap uint64 // CapEff of the manager, then of Den
+		err            error  // procCapEff's error
+		want           string
+	}{
+		{"the image reads", nil, 0, 0, nil, ""},
+		{"refused, the manager holds the capability", denied, capWakeAlarm, 0, nil, ""},
+		{"refused, the manager restarts as its capabilities are read", denied, capWakeAlarm, 0, nil, "cannot tell"},
+		{"refused, other capabilities only", denied, 1 << 3, 0, nil, "cannot tell"},
+		{"refused, more capabilities than that one", denied, capWakeAlarm | 1<<21, 0, nil, "0x800200000"},
+		{"refused, in a user namespace of its own", denied, capWakeAlarm, 0, nil, "user namespace of its own"},
+		{"refused, Den holds the capability too", denied, capWakeAlarm, capWakeAlarm, nil, "cannot tell"},
+		{"refused, capabilities do not read", denied, 0, 0, errors.New("no status"), "cannot tell"},
+		{"another error", func(int) (os.FileInfo, error) { return nil, fs.ErrNotExist }, 0, 0, nil, "does not read"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			if c.exe != nil {
+				procExe = c.exe
+			}
+			// The fake manager and Den are one process here: checkManager
+			// reads the manager's first, then its own.
+			reads := 0
+			procCapEff = func(int) (uint64, error) {
+				reads++
+				if c.err != nil {
+					return 0, c.err
+				}
+				if reads == 1 {
+					return c.mgrCap, nil
+				}
+				return c.ownCap, nil
+			}
+			if c.name == "refused, in a user namespace of its own" {
+				procInitUserNS = func(int) (bool, error) { return false, nil }
+			}
+			if c.name == "refused, the manager restarts as its capabilities are read" {
+				// Another process takes the pid once the capabilities
+				// were read: its start ticks differ.
+				starts := 0
+				inner := procStat
+				procStat = func(pid int) (int, uint64, error) {
+					pp, st, err := inner(pid)
+					if pid == os.Getpid() {
+						starts++
+						if starts > 1 {
+							st++
+						}
+					}
+					return pp, st, err
+				}
+			}
+			_, err := f.read(t)
+			switch {
+			case c.want == "" && err != nil:
+				t.Errorf("err %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Errorf("err %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
 // A property of another type than Den reads is refused, not taken.
 func TestReadRefusesAnotherType(t *testing.T) {
 	f := newFixture(t)
@@ -329,6 +407,19 @@ func TestCheckBinary(t *testing.T) {
 	os.Symlink(filepath.Join(dir, "b2"), filepath.Join(dir, "l"))
 	if _, err := checkBinary([]string{filepath.Join(dir, "l")}, 0); err == nil {
 		t.Error("a symlink passed")
+	}
+}
+
+// The machine's own user namespace maps every uid to itself; this test's
+// process is in it, unless the run is itself in a namespace.
+func TestReadInitUserNS(t *testing.T) {
+	in, err := readProcInitUserNS(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile("/proc/self/uid_map")
+	if want := strings.Join(strings.Fields(string(raw)), " ") == "0 0 4294967295"; in != want {
+		t.Errorf("in the machine's own namespace: %v, uid_map %q", in, raw)
 	}
 }
 

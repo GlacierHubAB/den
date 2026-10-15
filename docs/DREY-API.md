@@ -480,8 +480,11 @@ runs it; you still match what the dock shows with Den's card.
 - `console.request {public_key, pages_sha256?}`, on any connection, at most
   one a second on each. Den reads the unit from the manager's own socket
   (`$XDG_RUNTIME_DIR/systemd/private`) and checks that:
-  - the manager is yours, a child of init, running a root-owned systemd
-    from its own scope;
+  - the manager is yours, a child of init, in its own scope, and running
+    a root-owned systemd; where the kernel keeps the manager's program
+    from you (a manager started with `CAP_WAKE_ALARM`, as systemd's own
+    `user@.service` does), it must hold exactly that capability, in the
+    machine's own user namespace, and Den must not hold it;
   - the asking process is the unit's main process, the manager's child,
     in the unit's cgroup, started when the manager says, and not traced
     (and `kernel.yama.ptrace_scope` is at least 1);
@@ -753,7 +756,10 @@ other. `bypassPermissions` is never the global mode.
   changed program, unit, pin or manager makes a card, never a silent
   re-pair, but Den cannot stop the change; and a restart of the service,
   unchanged, re-pairs silently, as the genuine service. That is why a
-  silent re-pair comes without powers.
+  silent re-pair comes without powers. Where your manager's program
+  cannot be read, Den knows it by `CAP_WAKE_ALARM`, which no program of
+  yours can give itself: a forged manager then takes root, or a file
+  root installed with that capability.
 - The dock's pin of Den's key holds against another program on Den's
   socket, not against one running as you: such a program can read Den's
   key file (`local.key`), rewrite the dock's pinned copy of Den's key, or

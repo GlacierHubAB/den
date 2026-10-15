@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -102,13 +103,15 @@ func denied(name string) bool {
 
 // The checks' hooks: what the running system says, replaced in tests.
 var (
-	procStat    = readProcStat
-	procCgroup  = readProcCgroup
-	procTracer  = readProcTracer
-	procExe     = func(pid int) (os.FileInfo, error) { return os.Stat("/proc/" + strconv.Itoa(pid) + "/exe") }
-	ptraceScope = func() (string, error) { return readTrim("/proc/sys/kernel/yama/ptrace_scope") }
-	bootID      = func() (string, error) { return readTrim("/proc/sys/kernel/random/boot_id") }
-	bootTime    = readBootTime
+	procStat       = readProcStat
+	procCgroup     = readProcCgroup
+	procTracer     = readProcTracer
+	procExe        = func(pid int) (os.FileInfo, error) { return os.Stat("/proc/" + strconv.Itoa(pid) + "/exe") }
+	procCapEff     = readProcCapEff
+	procInitUserNS = readProcInitUserNS
+	ptraceScope    = func() (string, error) { return readTrim("/proc/sys/kernel/yama/ptrace_scope") }
+	bootID         = func() (string, error) { return readTrim("/proc/sys/kernel/random/boot_id") }
+	bootTime       = readBootTime
 	// rootUID is whom system files must belong to; a test may make its
 	// own files count as the system's.
 	rootUID = 0
@@ -351,12 +354,40 @@ func checkManager(p Peer) (ProcID, error) {
 		return id, errors.New("the manager was not started by init")
 	}
 	// The image it runs, as the kernel holds it: not whatever a path
-	// names now.
+	// names now. systemd's own user@.service starts the user's manager
+	// with CAP_WAKE_ALARM, a capability its user does not hold, and the
+	// kernel then keeps that link from the user. So when the link is
+	// refused, and only then, the manager is known by that capability: no
+	// program of the user's can give itself one (only root can grant it),
+	// unless the user holds it too, which Den checks it does not.
 	fi, err := procExe(p.PID)
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		// Exactly that capability, in the machine's own user namespace: a
+		// process of the user's in a namespace of its own shows every
+		// capability there.
+		const unsure = "Den cannot tell this is your systemd user manager"
+		mgr, err1 := procCapEff(p.PID)
+		self, err2 := procCapEff(os.Getpid())
+		initNS, err3 := procInitUserNS(p.PID)
+		switch {
+		case err1 != nil || err2 != nil || err3 != nil:
+			return id, errors.New(unsure + ": its capabilities or user namespace do not read")
+		case !initNS:
+			return id, errors.New(unsure + ": it runs in a user namespace of its own")
+		case mgr != capWakeAlarm:
+			return id, fmt.Errorf("%s: its capabilities are %#x, not CAP_WAKE_ALARM (%#x) alone; if this is your systemd, update Den, or tell its authors the manager's capabilities", unsure, mgr, uint64(capWakeAlarm))
+		case self&capWakeAlarm != 0:
+			return id, errors.New(unsure + ": Den holds CAP_WAKE_ALARM itself")
+		}
+		// Still the process Den read at first: a pid reused meanwhile
+		// lends it no capability.
+		if _, again, err := procStat(p.PID); err != nil || again != start {
+			return id, errors.New(unsure + ": it is no longer the process Den read")
+		}
+	case err != nil:
 		return id, fmt.Errorf("the manager's program does not read: %v", err)
-	}
-	if !fi.Mode().IsRegular() || !ownedBy(fi, rootUID) || fi.Mode().Perm()&0o022 != 0 {
+	case !fi.Mode().IsRegular() || !ownedBy(fi, rootUID) || fi.Mode().Perm()&0o022 != 0:
 		return id, errors.New("the manager's program is not a root-owned file")
 	}
 	uid := strconv.Itoa(os.Getuid())
@@ -749,6 +780,34 @@ func readProcCgroup(pid int) (string, error) {
 		}
 	}
 	return "", errors.New("no cgroup v2")
+}
+
+// capWakeAlarm is CAP_WAKE_ALARM (35) in a capability set.
+const capWakeAlarm = 1 << 35
+
+// readProcCapEff is a process's effective capabilities (CapEff in its
+// status, which the kernel shows any process of the same user).
+func readProcCapEff(pid int) (uint64, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil {
+		return 0, err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(l, "CapEff:"); ok {
+			return strconv.ParseUint(strings.TrimSpace(v), 16, 64)
+		}
+	}
+	return 0, errors.New("no CapEff")
+}
+
+// readProcInitUserNS reports whether a process is in the machine's own
+// user namespace: its uid_map maps every uid to itself.
+func readProcInitUserNS(pid int) (bool, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/uid_map")
+	if err != nil {
+		return false, err
+	}
+	return strings.Join(strings.Fields(string(b)), " ") == "0 0 4294967295", nil
 }
 
 // readProcTracer is a process's TracerPid.
