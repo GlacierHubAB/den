@@ -17,7 +17,8 @@ import (
 type fakeHypruse struct {
 	mu     sync.Mutex
 	calls  []map[string]any
-	refuse string // an action it refuses, as hypruse's guards would
+	refuse string        // an action it refuses, as hypruse's guards would
+	slow   time.Duration // how long each move takes, as hyprctl's exec does
 }
 
 func (f *fakeHypruse) serve(in io.Reader, out io.Writer) {
@@ -56,7 +57,11 @@ func (f *fakeHypruse) serve(in io.Reader, out io.Writer) {
 			text := "ok " + c.Name
 			f.mu.Lock()
 			refused := f.refuse != "" && c.Arguments["action"] == f.refuse
+			slow := f.slow
 			f.mu.Unlock()
+			if slow > 0 && c.Arguments["action"] == "move" {
+				time.Sleep(slow)
+			}
 			if refused {
 				w(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": "refused"}}, "isError": true}})
 				continue
@@ -317,8 +322,19 @@ func TestProxyFailsClosed(t *testing.T) {
 	if !isErr || len(f.got()) != 0 {
 		t.Fatal("an allow with no input was forwarded")
 	}
-	m := send("resources/list", map[string]any{})
-	if len(m.Error) == 0 {
+	// Listing prompts and resources gets empty lists (no client error,
+	// still nothing); anything else unoffered is an error.
+	for method, key := range map[string]string{"prompts/list": "prompts", "resources/list": "resources", "resources/templates/list": "resourceTemplates"} {
+		m := send(method, map[string]any{})
+		var r map[string][]any
+		if len(m.Error) != 0 || json.Unmarshal(m.Result, &r) != nil || r[key] == nil || len(r[key]) != 0 {
+			t.Fatalf("%s: %s %s", method, m.Result, m.Error)
+		}
+	}
+	if m := send("resources/read", map[string]any{"uri": "file:///etc/passwd"}); len(m.Error) == 0 {
 		t.Fatal("an unoffered method was answered")
+	}
+	if m := send("prompts/get", map[string]any{"name": "x"}); len(m.Error) == 0 {
+		t.Fatal("prompts/get was answered")
 	}
 }

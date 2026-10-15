@@ -180,6 +180,13 @@ func (p *Proxy) request(ctx context.Context, msg message) {
 	case "initialize":
 		res, err := p.roundTrip(ctx, "initialize", msg.Params)
 		p.reply(msg.ID, res, err)
+	case "prompts/list":
+		// Offered as empty, so the client logs no error: still nothing.
+		p.reply(msg.ID, json.RawMessage(`{"prompts":[]}`), nil)
+	case "resources/list":
+		p.reply(msg.ID, json.RawMessage(`{"resources":[]}`), nil)
+	case "resources/templates/list":
+		p.reply(msg.ID, json.RawMessage(`{"resourceTemplates":[]}`), nil)
 	case "ping":
 		p.reply(msg.ID, json.RawMessage(`{}`), nil)
 	case "tools/list":
@@ -507,10 +514,17 @@ func (p *Proxy) glide(ctx context.Context, args map[string]any, bounds Rect) err
 	}
 	samples := Glide([2]float64{cx, cy}, [2]float64{x, y}, bounds, p.rng, 60)
 	began := time.Now()
-	// The last sample is the point itself: the call moves there.
-	for _, s := range samples[:len(samples)-1] {
+	// The last sample is the point itself: the approved call moves there,
+	// exactly, before it clicks. A step whose time has already passed (a
+	// hypruse move costs about 30 ms, more than a 60 Hz step) is skipped,
+	// so the glide keeps its planned duration.
+	steps := samples[:len(samples)-1]
+	for i, s := range steps {
 		if err := ctx.Err(); err != nil {
 			return errors.New("cancelled")
+		}
+		if i+1 < len(steps) && time.Since(began) > time.Duration(steps[i+1].T*float64(time.Second)) {
+			continue
 		}
 		res, err := p.callChild(ctx, "pointer", map[string]any{"action": "move", "x": s.X, "y": s.Y, "then": "none"})
 		if err != nil {
