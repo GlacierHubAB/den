@@ -411,6 +411,10 @@ own.
   - The window of an agent whose permission prompt, plan or question only its
     own terminal can answer stays up too; it counts in `shown`, and `reason`
     says "1 waits on a prompt". Ask `view.hide` again once it is answered.
+  - The guarantee covers what Den knows about: its own cards, and the
+    prompts its hooks have seen. A prompt in a Den-spawned agent whose hooks
+    are off (Den's header says so) is not known to Den, so that agent's window
+    is hidden like any other; a session started by hand is never touched.
   - God mode's warning is never hidden: God mode (stage 2) is not in this
     release, and when it lands it joins this same check, with its own tests.
   - What a hide cannot do is bring something back: a card or a prompt that
