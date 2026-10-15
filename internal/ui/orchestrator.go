@@ -63,6 +63,10 @@ type orchEventMsg struct {
 type orchStartedMsg struct {
 	o   *orch.Orchestrator
 	err error
+	// control says the process runs in control mode; noControl why not,
+	// when it was wanted.
+	control   bool
+	noControl string
 }
 
 // orchState is everything the Orchestrator tab needs.
@@ -112,6 +116,8 @@ type orchState struct {
 	mixed bool
 	// version is the Claude Code release the process reported at init.
 	version string
+	// control says the process runs in control mode (a paired app).
+	control bool
 }
 
 // Silence thresholds: the status line says so after stallWarn, and Den
@@ -121,14 +127,18 @@ const (
 	stallRestart = 5 * time.Minute
 )
 
-func startOrchestrator(cfg config.Config, resume, guidance string) tea.Cmd {
+func startOrchestrator(cfg config.Config, resume, guidance string, control bool) tea.Cmd {
 	return func() tea.Msg {
 		name := cfg.Orchestrator.Name
 		if name == "" {
 			name = OrchestratorName
 		}
-		o, err := launchOrchestrator(orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance})
-		return orchStartedMsg{o: o, err: err}
+		why := ""
+		if control {
+			control, why = controlStart(nil)
+		}
+		o, err := launchOrchestrator(orch.Options{Name: name, Model: cfg.Orchestrator.Model, Spawn: cfg.Orchestrator.Spawn, Resume: resume, Guidance: guidance, Control: control})
+		return orchStartedMsg{o: o, err: err, control: control, noControl: why}
 	}
 }
 
@@ -286,7 +296,7 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 		if m.orch.resume != "" {
 			m.orch.status = "resuming…"
 		}
-		return startOrchestrator(m.cfg, m.resumable(), m.guide.active)
+		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.controlWanted())
 	}
 	return m.sendToOrchestrator(prompt, origin)
 }
@@ -336,6 +346,9 @@ func (o orchState) streaming() int {
 }
 
 func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
+	if m.holdTurn(text, origin) {
+		return nil // after the app's turn
+	}
 	m.orch.origins = append(m.orch.origins, origin)
 	m.orch.thinking = true
 	m.orch.status = "thinking…"
@@ -364,6 +377,7 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 		return nil
 	}
 	m.orch.proc = msg.o
+	m.orch.control, m.ctl.noControl = msg.control, msg.noControl
 	m.orch.started = false
 	m.orch.said = false
 	m.orch.status = "ready"
@@ -380,9 +394,30 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// handleOrchEvent handles one event from the orchestrator, control's part
+// (control.go) first and after.
 func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
+	m.orch.lastEvent = time.Now()
+	ctlCmd, only := m.controlEvent(ev)
+	if only {
+		return tea.Batch(ctlCmd, waitOrch(m.orch.proc))
+	}
+	cmd := m.orchEvent(ev)
+	switch ev.Kind {
+	case orch.Started:
+		ctlCmd = tea.Batch(ctlCmd, m.tryAppTurn())
+	case orch.Result:
+		if y := m.ctl.turn; y != nil && ev.Turn != "" && ev.Turn == y.Turn {
+			ctlCmd = tea.Batch(ctlCmd, m.appTurnOver())
+		} else if y != nil && !m.ctl.sent {
+			ctlCmd = tea.Batch(ctlCmd, m.tryAppTurn())
+		}
+	}
+	return tea.Batch(ctlCmd, cmd)
+}
+
+func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 	now := time.Now()
-	m.orch.lastEvent = now
 	switch ev.Kind {
 	case orch.Started:
 		m.orch.started = true
@@ -525,7 +560,7 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 			m.addChat(chatEntry{role: "note", text: "the previous orchestrator session could not be resumed · starting a fresh one with the conversation so far", at: now})
 			m.orch.starting = true
 			m.orch.status = "starting…"
-			return startOrchestrator(m.cfg, "", m.guide.active)
+			return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
 		}
 		m.orch.status = "stopped"
 		m.addChat(chatEntry{role: "note", text: ev.Text + " · it restarts with your next message", at: now})
@@ -833,5 +868,5 @@ func (m *Model) restartOrchestrator() tea.Cmd {
 	m.orch.starting = true
 	m.orch.status = "restarting…"
 	m.guide.restart = false // the new process starts with the guidance in use
-	return startOrchestrator(m.cfg, m.resumable(), m.guide.active)
+	return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.controlWanted())
 }

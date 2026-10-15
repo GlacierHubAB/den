@@ -169,6 +169,9 @@ func (m Model) header(w int) []string {
 	if chip := m.apiChip(); chip != "" {
 		sys = append(sys, chip)
 	}
+	if code := m.codeLine(); code != "" {
+		sys = append(sys, s.attn.Render(code))
+	}
 	sysLine := s.muted.Render(strings.Join(sys, " · "))
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
@@ -655,6 +658,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.Grant:
 		out = append(out, key("^Y", "grant it")+"  "+key("^N", "deny"))
+	case it.Answerable() && it.Kind == inbox.Pair:
+		out = append(out, key("^Y", "pair it")+"  "+key("^N", "refuse"))
+	case it.Answerable() && it.Kind == inbox.ControlAsk:
+		out = append(out, key("^Y", "allow it once")+"  "+key("^N", "deny"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -903,6 +910,12 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Grant {
 			acts = key("^Y", "grant it") + sp + sp + key("^N", "deny")
+		}
+		if it.Kind == inbox.Pair {
+			acts = key("^Y", "pair it") + sp + sp + key("^N", "refuse")
+		}
+		if it.Kind == inbox.ControlAsk {
+			acts = key("^Y", "allow it once") + sp + sp + key("^N", "deny")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")

@@ -64,6 +64,9 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 // applyAPIAct puts an app's grant card in the inbox, or settles the cards
 // of grants whose app is gone.
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if act.Pair != nil || act.CodeGone || act.PairDone != "" || act.Paired || act.Say != nil {
+		return m.applyControlAct(act)
+	}
 	if m.api.grants == nil {
 		m.api.grants = map[*inbox.Item]string{}
 	}
@@ -270,13 +273,16 @@ func (m Model) laneRoster() []orch.RosterAgent {
 	return out
 }
 
-// apiCommand is /api, /api on, /api off, /api disconnect, /api resume.
+// apiCommand is /api, /api on, /api off, /api disconnect, /api resume,
+// /api pair and /api unpair.
 func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 	sub := ""
 	if len(args) > 0 {
 		sub = strings.ToLower(args[0])
 	}
 	switch sub {
+	case "pair", "unpair":
+		return m.controlCommand(sub)
 	case "", "status", "list":
 		m.logEntry(m.addChat(chatEntry{role: "note", text: m.apiReport(), at: time.Now()}))
 		return m.say("den-api.sock: see the note in the orchestrator chat (^O).", false)
@@ -325,7 +331,7 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 		m.api.warned = false
 		return m.say("Apps may connect again; the read-only lane may try to start again.", false)
 	}
-	return m.say("/api [on|off|disconnect|resume]", true)
+	return m.say("/api [on|off|disconnect|resume|pair|unpair]", true)
 }
 
 // decideAPIOn is the human's ^Y or ^N on /api on, after the whole question
@@ -404,6 +410,20 @@ func (m Model) apiReport() string {
 	for _, r := range m.api.srv.Refusals() {
 		b.WriteString(fmt.Sprintf("\nrefused: %s · %s · %d since %s, last %s", sanitize.Label(r.Exe, 120), r.Reason, r.Count, r.First.Format("15:04"), r.Last.Format("15:04:05")))
 	}
+	for _, p := range m.api.srv.Pairings() {
+		state := "waiting for your ^Y"
+		if p.Confirmed {
+			state = "control on"
+		}
+		used := "never"
+		if !p.LastUsed.IsZero() {
+			used = p.LastUsed.Format("15:04:05")
+		}
+		b.WriteString("\npaired: " + sanitize.Label(p.Exe, 120) + " · pid " + strconv.Itoa(p.PID) + " · since " + p.Since.Format("15:04") + " · last used " + used + " · " + state + " · /api unpair revokes")
+	}
+	if m.ctl.noControl != "" {
+		b.WriteString("\ncontrol: " + m.ctl.noControl)
+	}
 	ls := m.api.srv.LaneState()
 	b.WriteString("\nread-only lane: " + laneWords(ls))
 	b.WriteString(fmt.Sprintf(" · spent today %.2f of %.2f dollars", ls.SpentUSD, m.cfg.API.AskBudgetUSD))
@@ -426,6 +446,15 @@ func (m Model) apiChip() string {
 	}
 	if !srv.Healthy() {
 		return m.st.err.Render("⇄ socket replaced")
+	}
+	var paired []string
+	for _, p := range srv.Pairings() {
+		if p.Confirmed {
+			paired = append(paired, appName(p.Exe)+" "+sanitize.Label(p.Exe, 60))
+		}
+	}
+	if len(paired) > 0 {
+		return m.st.attn.Render("paired: " + strings.Join(paired, ", "))
 	}
 	clients := srv.Clients()
 	names := map[string]bool{}

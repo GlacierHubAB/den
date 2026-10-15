@@ -185,7 +185,8 @@ type Model struct {
 
 	guide guidanceState // orchestrator guidance and its approval (guidance.go)
 
-	api apiState // den-api.sock (api.go); zero while the API is off
+	api apiState     // den-api.sock (api.go); zero while the API is off
+	ctl controlState // a paired app's control (control.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -512,7 +513,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.controlTick(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -548,6 +549,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case orchStartedMsg:
 		return m, m.handleOrchStarted(msg)
+	case appCancelMsg:
+		if y := m.ctl.turn; y != nil && y.Turn == msg.turn {
+			if !m.ctl.sent {
+				m.ctl.turn = nil
+			} else if !m.ctl.ended {
+				m.ctl.ended = true // the app was told "cancelled"
+				if m.orch.proc != nil {
+					m.orch.proc.Interrupt()
+				}
+			}
+		}
+		return m, nil
 	case orchEventMsg:
 		if msg.from != nil && msg.from != m.orch.proc {
 			return m, nil // a process that was restarted away; its tail is noise
@@ -1348,6 +1361,12 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Grant {
 		return m.decideGrant(it, verb)
+	}
+	if it.Kind == inbox.Pair {
+		return m.decidePair(it, verb)
+	}
+	if it.Kind == inbox.ControlAsk {
+		return m.decideControlTool(it, verb)
 	}
 	if it.Kind == inbox.Guidance {
 		return m.decideGuidance(it, verb)

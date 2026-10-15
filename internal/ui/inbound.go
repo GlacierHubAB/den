@@ -235,7 +235,7 @@ func (m *Model) onBackstop(why string) tea.Cmd {
 	m.logEntry(m.addChat(chatEntry{role: "note", text: "Den stopped the orchestrator: " + sanitize.Label(why, 120) + ". A message from another session may have reached it, so that conversation is closed for good; a fresh one starts now. Nothing it was asking was resent.", at: time.Now()}))
 	m.orch.starting = true
 	m.orch.status = "starting a fresh session…"
-	return startOrchestrator(m.cfg, "", m.guide.active)
+	return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
 }
 
 // authTrouble reports whether a failed first turn looks like the
