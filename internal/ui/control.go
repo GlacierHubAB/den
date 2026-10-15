@@ -64,9 +64,14 @@ type heldTurn struct {
 var orchVersion = orch.LaneVersion
 
 // controlWanted reports whether the orchestrator should run in control
-// mode: a pairing is confirmed.
+// mode: a pairing is confirmed, or a console is paired (its orch.say is an
+// app's turn too).
 func (m Model) controlWanted() bool {
-	return m.api.srv != nil && m.api.srv.Paired()
+	if m.api.srv == nil {
+		return false
+	}
+	_, console := m.api.srv.CurrentConsole()
+	return m.api.srv.Paired() || console
 }
 
 // appName is a program's name as Den shows it: the base of the executable
