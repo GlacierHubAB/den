@@ -376,7 +376,7 @@ func checkManager(p Peer) (ProcID, error) {
 		case !initNS:
 			return id, errors.New(unsure + ": it runs in a user namespace of its own")
 		case mgr != capWakeAlarm:
-			return id, fmt.Errorf("%s: its capabilities are %#x, not CAP_WAKE_ALARM (%#x) alone", unsure, mgr, uint64(capWakeAlarm))
+			return id, fmt.Errorf("%s: its capabilities are %#x, not CAP_WAKE_ALARM (%#x) alone; if this is your systemd, update Den, or tell its authors the manager's capabilities", unsure, mgr, uint64(capWakeAlarm))
 		case self&capWakeAlarm != 0:
 			return id, errors.New(unsure + ": Den holds CAP_WAKE_ALARM itself")
 		}
