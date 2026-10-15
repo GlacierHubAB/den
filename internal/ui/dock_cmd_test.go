@@ -15,7 +15,7 @@ func TestDockLine(t *testing.T) {
 		run  string // the line run, "" for refused
 	}{
 		{"/api off", "/api off"},
-		{"  /API   Off ", "/api off"},
+		{"  /API   Off ", "/api Off"},
 		{"/api control off", "/api control off"},
 		{"/api on", ""},
 		{"/API ON", ""},
@@ -37,6 +37,12 @@ func TestDockLine(t *testing.T) {
 		{"/fleet project", "/fleet project"},
 		{"/fleet", ""},
 		{"/usage resume", "/usage resume"},
+		{"/usage stop", "/usage stop"},
+		{"/usage set 10", ""},
+		{"/usage clear", ""},
+		{"/mission ship the site", ""},
+		{"/template review ~/code/x", ""},
+		{"/template save mine", "/template save mine"},
 		{"/mission move other", "/mission move other"},
 		{"/fleet flat; /quit", ""},
 		{"/fleet flat && rm -rf ~", ""},
@@ -63,6 +69,36 @@ func TestDockLine(t *testing.T) {
 	for name, want := range map[string]string{"/quit": api.DockRefused, "/allow": api.DockRefused, "/open": api.DockDenScreen, "/close": api.DockCard, "/fleet": api.DockOK, "/api": api.DockOK} {
 		if flags[name] != want {
 			t.Errorf("%s listed as %q, want %q", name, flags[name], want)
+		}
+	}
+}
+
+// No command the dock may run starts a turn of the orchestrator's with the
+// human's authority: the console's words never reach it that way.
+func TestDockCommandsStartNoHumanTurn(t *testing.T) {
+	samples := map[string]string{
+		"/api": "/api", "/remote": "/remote", "/protect": "/protect Otter", "/flag": "/flag Otter: look at this",
+		"/unflag": "/unflag Otter", "/fleet": "/fleet project", "/project": "/project add /tmp/x", "/template": "/template save mine",
+		"/usage": "/usage stop", "/orchestrator": "/orch new", "/close": "/close Otter", "/reopen": "/reopen Otter",
+		"/merge": "/merge Otter", "/cleanup": "/cleanup Otter", "/mission": "/mission move other",
+	}
+	for _, v := range dockVerbs {
+		flag, _ := v.verdict([]string{"x"})
+		f0, _ := v.verdict(nil)
+		if flag != api.DockOK && flag != api.DockCard && f0 != api.DockOK && f0 != api.DockCard {
+			continue
+		}
+		line, ok := samples[v.name]
+		if !ok {
+			t.Errorf("%s runs from the dock but has no sample here", v.name)
+			continue
+		}
+		m := testModel(140, 40)
+		r := &api.CommandRun{Text: line, Console: "drey-host", Reply: make(chan api.CommandResult, 1)}
+		m.runFromDock(r)
+		<-r.Reply
+		if len(m.orch.origins) != 0 || len(m.orch.pending) != 0 || m.orch.thinking {
+			t.Errorf("%q started an orchestrator turn: origins %v, pending %d", line, m.orch.origins, len(m.orch.pending))
 		}
 	}
 }

@@ -36,9 +36,10 @@ func always(flag, why string) func([]string) (string, string) {
 }
 
 const (
-	whyScreen = "it acts on Den's own screen: do it in Den"
-	whyCard   = "answer the card with card.answer"
-	whyNever  = "the console may not do this; do it in Den"
+	whyScreen  = "it acts on Den's own screen: do it in Den"
+	whyCard    = "answer the card with card.answer"
+	whyNever   = "the console may not do this; do it in Den"
+	whyPropose = "not from the dock yet: propose missions in Den, or ask through chat"
 )
 
 // dockVerbs are every command Den has, in the order /help lists them.
@@ -115,24 +116,36 @@ var dockVerbs = []dockVerb{
 		}
 		return api.DockOK, ""
 	}},
-	{"/mission", nil, "/mission <goal> | move <project>", "propose a mission, or move one on a card", func(a []string) (string, string) {
-		if len(a) == 0 {
-			return api.DockRefused, "say the goal"
-		}
-		if a[0] == "move" {
+	{"/mission", nil, "/mission move <project>", "move a mission, on a card", func(a []string) (string, string) {
+		if len(a) > 0 && a[0] == "move" {
 			return api.DockCard, ""
 		}
-		return api.DockOK, ""
+		// A proposal is a turn of the orchestrator's with the human's
+		// authority: the console's words would reach it unfenced.
+		return api.DockRefused, whyPropose
 	}},
-	{"/template", []string{"/templates"}, "/template [<name> <target> | save <name>]", "mission templates", always(api.DockOK, "")},
+	{"/template", []string{"/templates"}, "/template save <name>", "save the open mission as a template", func(a []string) (string, string) {
+		if len(a) > 0 && a[0] == "save" {
+			return api.DockOK, ""
+		}
+		if len(a) == 0 {
+			return api.DockDenScreen, whyScreen
+		}
+		return api.DockRefused, whyPropose
+	}},
 	{"/pause", nil, "/pause", "pause the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/resume", nil, "/resume", "resume the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/stop", nil, "/stop", "stop the open mission", always(api.DockDenScreen, whyScreen)},
-	{"/usage", nil, "/usage [set <pct>|clear|stop|resume]", "the weekly limit", func(a []string) (string, string) {
-		if len(a) > 0 && a[0] == "resume" {
+	{"/usage", nil, "/usage [stop|resume]", "the weekly limit", func(a []string) (string, string) {
+		switch {
+		case len(a) == 0, a[0] == "stop":
+			return api.DockOK, ""
+		case a[0] == "resume":
 			return api.DockCard, ""
 		}
-		return api.DockOK, ""
+		// set and clear change the figure the stop is measured against: a
+		// lower one could hold off a stop the human set.
+		return api.DockRefused, "the usage figure is for Den only"
 	}},
 	{"/budget", nil, "/budget", "the open mission's budget", always(api.DockDenScreen, whyScreen)},
 	{"/orchestrator", []string{"/orch"}, "/orchestrator [new|restart]", "the orchestrator", func(a []string) (string, string) {
@@ -211,12 +224,11 @@ func dockLine(text string) ([]string, dockVerb, string) {
 		}
 	}
 	args := fields[1:]
+	lower := make([]string, len(args))
 	for i, a := range args {
-		if i == 0 || (fields[0] == "/api" && i == 1) {
-			args[i] = strings.ToLower(a)
-		}
+		lower[i] = strings.ToLower(a)
 	}
-	flag, why := v.verdict(args)
+	flag, why := v.verdict(lower)
 	if flag != api.DockOK && flag != api.DockCard {
 		return nil, v, why
 	}
