@@ -369,8 +369,8 @@ screen:
   sessions on this machine only, so agents see what they always saw and
   report back the same way.
 - If Den's guard finds a tool that ran in an app's turn without Den
-  allowing it, Den stops the orchestrator, notes why and revokes every
-  pairing.
+  allowing it, Den stops the orchestrator, notes why, revokes every
+  pairing and unpairs the console.
 - `/api` lists each pairing (program, pid, paired since, last used, control
   on or waiting for your `Ctrl+Y`); `/api unpair` revokes every pairing at
   once and closes their connections. Den's header shows `paired: <program>
@@ -581,6 +581,10 @@ all` does in a terminal.
 
 ### Console limits
 
+- A console's chat (`orch.say`) is fenced exactly as an app's is: what it
+  sends is an app's words to the orchestrator, never yours, and every tool
+  in its turn waits for you in Den. Only its cards and commands carry your
+  authority.
 - A console answers for you: a card it may answer is as answered as by
   your `Ctrl+Y`, and a console can send `/usage set` and answer that card,
   so it can lower the usage figure your usage stop is measured against.

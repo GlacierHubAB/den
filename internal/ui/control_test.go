@@ -387,10 +387,14 @@ func TestPairRefusedInDen(t *testing.T) {
 	}
 }
 
-// The guard stopping the orchestrator in an app's turn ends the turn and
-// revokes every pairing.
+// The guard stopping the orchestrator in an app's turn ends the turn,
+// revokes every pairing and unpairs the console, whose turns are app
+// turns too.
 func TestBackstopUnpairs(t *testing.T) {
 	l, _, _ := controlModel(t)
+	var consoleWhy []string
+	defer func(f func(*Model, string)) { unpairConsole = f }(unpairConsole)
+	unpairConsole = func(_ *Model, why string) { consoleWhy = append(consoleWhy, why) }
 	c := pairApp(t, l)
 	c.call("orch.say", map[string]string{"text": "hold on SLOW-PLEASE"})
 	stream := chunks(c)
@@ -410,6 +414,9 @@ func TestBackstopUnpairs(t *testing.T) {
 	}
 	if l.m.api.srv.Paired() || len(l.m.api.srv.Pairings()) != 0 {
 		t.Errorf("pairings after the backstop: %+v", l.m.api.srv.Pairings())
+	}
+	if len(consoleWhy) != 1 || !strings.Contains(consoleWhy[0], "the console is unpaired") {
+		t.Errorf("the console after the backstop: %q", consoleWhy)
 	}
 }
 
