@@ -267,6 +267,13 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	m.api.srv, m.api.err = srv, ""
 	m.api.view = viewSwitcher().Current()
+	// God mode as it is now, and how the server asks later: from its own
+	// record (SetGod), under its own lock, never from the model.
+	if m.god.on {
+		srv.SetGod(true, m.god.since)
+		lockConsolePowers(m, "God mode is on")
+	}
+	srv.SetGodMode(func() bool { return srv.GodNow().On })
 	m.publishAPI()
 	return tea.Batch(waitAPINote(srv), waitAPIAct(srv))
 }

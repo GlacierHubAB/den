@@ -115,11 +115,19 @@ func (m *Model) godPhraseTyped(text string) bool {
 	m.god.on, m.god.since = true, time.Now()
 	if m.api.srv != nil {
 		m.api.srv.SetGod(true, m.god.since)
+		// A console that answers cards and runs commands loses that until
+		// you give it back on Den's powers card; God mode going off does
+		// not give it back.
+		lockConsolePowers(m, "God mode turned on")
 	}
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "God mode is on. /god off, the dock or den god off ends it; it is off again at Den's next start.", at: time.Now()}))
 	m.flash, m.flashErr = "GOD MODE is on.", true
 	return true
 }
+
+// lockConsolePowers takes the console's powers (api LockConsolePowers);
+// tests replace it.
+var lockConsolePowers = func(m *Model, why string) { m.api.srv.LockConsolePowers(why) }
 
 // godOff turns God mode off, and says why. It only lowers, so any path
 // may: /god off, the dock's god.off, den god off, an unpair.

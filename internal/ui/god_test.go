@@ -284,3 +284,42 @@ func TestGodModeNeverAnswersAConsoleTurnsTools(t *testing.T) {
 		t.Errorf("the dock may answer it: dock_answers %v, tty only %v", card.DockAnswers, card.TTYOnly)
 	}
 }
+
+// God mode going on takes the console's powers until you give them back on
+// Den's powers card, and that card, as every console card, is yours alone
+// in Den's window: Den never answers it, nor may the dock.
+func TestGodModeLocksTheConsolesPowers(t *testing.T) {
+	m := consoleModel(t)
+	var why []string
+	defer func(f func(*Model, string)) { lockConsolePowers = f }(lockConsolePowers)
+	lockConsolePowers = func(_ *Model, w string) { why = append(why, w) }
+	typeLine(&m, "/god on")
+	typeLine(&m, godPhrase)
+	if !m.godOn() || len(why) != 1 || why[0] != "God mode turned on" {
+		t.Fatalf("God mode on %v; the console's powers locked with %q", m.godOn(), why)
+	}
+	if !m.api.srv.GodNow().On {
+		t.Error("the API does not know God mode is on")
+	}
+	typeLine(&m, "/god off")
+	if len(why) != 1 {
+		t.Errorf("God mode going off locked again: %q", why)
+	}
+	typeLine(&m, "/god on")
+	typeLine(&m, godPhrase)
+	m.applyConsoleAct(api.Act{ConsolePowers: &api.ConsolePowersAsk{ID: "p-1", PID: 4242, Why: "God mode turned on"}})
+	var card *inbox.Item
+	for it := range m.con.powers {
+		card = it
+	}
+	if card == nil || card.Kind != inbox.Console {
+		t.Fatalf("no powers card: %v", m.con.powers)
+	}
+	m.godSweep()
+	if card.State == inbox.Resolved {
+		t.Error("God mode answered the powers card")
+	}
+	if c := m.dockCard(card); c.DockAnswers || !c.TTYOnly {
+		t.Errorf("the dock may answer the powers card: %+v", c)
+	}
+}
