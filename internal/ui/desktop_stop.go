@@ -59,6 +59,7 @@ func (dm *deskMission) targets() desktop.Targets {
 // mission's processes and the windows Den launched.
 type deskStateFile struct {
 	Mission string          `json:"mission"`
+	Session string          `json:"session"` // the agent's session id: never restored or reopened
 	Targets desktop.Targets `json:"targets"`
 	Windows []string        `json:"windows"`
 	Ended   bool            `json:"ended"`
@@ -69,7 +70,7 @@ func (dm *deskMission) save() {
 	if dm.Dir == "" {
 		return
 	}
-	st := deskStateFile{Mission: dm.ID, Targets: dm.targets(), Ended: dm.Ended != ""}
+	st := deskStateFile{Mission: dm.ID, Session: dm.SessionID, Targets: dm.targets(), Ended: dm.Ended != ""}
 	for a := range dm.Windows {
 		st.Windows = append(st.Windows, a)
 	}
@@ -198,4 +199,60 @@ func (m *Model) startDeskWatch(dm *deskMission) tea.Cmd {
 	deskNotify(notify.Note{Summary: "Desktop control on", Body: "A Den agent may drive workspace " + strconv.Itoa(dm.Workspace) + ". /desktop stop or den desktop stop ends it."})
 	m.desk.chip = "DESKTOP · on · /desktop stop"
 	return deskTick()
+}
+
+// isDesktopSession reports whether a session is (or was) a desktop
+// mission's agent: a live mission's, or one recorded in a mission file. A
+// desktop agent is never restored or reopened: Den's ordinary resume would
+// give its conversation, which read the screen, an ordinary agent's tools.
+func (m Model) isDesktopSession(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, dm := range m.desk.missions {
+		if dm.SessionID == id {
+			return true
+		}
+	}
+	recorded, unsure := deskRecorded()
+	// A mission file Den cannot read could be any session's: none is
+	// restored while one is there (fail closed).
+	return unsure || recorded[id]
+}
+
+// knownDesktopSession is isDesktopSession without the fail-closed part:
+// only sessions Den knows were desktop agents. The roster uses it, so an
+// unreadable mission file blocks restoring without forgetting the fleet.
+func (m Model) knownDesktopSession(id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, dm := range m.desk.missions {
+		if dm.SessionID == id {
+			return true
+		}
+	}
+	recorded, _ := deskRecorded()
+	return recorded[id]
+}
+
+// deskRecorded is every session id in Den's desktop mission files, and
+// whether any mission folder's file could not be read.
+var deskRecorded = func() (map[string]bool, bool) {
+	out := map[string]bool{}
+	unsure := false
+	dirs, _ := filepath.Glob(filepath.Join(deskStateDir(), "*"))
+	for _, d := range dirs {
+		if st, err := os.Stat(d); err != nil || !st.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(d, "mission.json"))
+		var st deskStateFile
+		if err != nil || json.Unmarshal(raw, &st) != nil || st.Session == "" {
+			unsure = true
+			continue
+		}
+		out[st.Session] = true
+	}
+	return out, unsure
 }

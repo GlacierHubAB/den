@@ -127,7 +127,7 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 // own tools that act or reach outside, and hypruse's closed tools.
 func DeniedTools() []string {
 	out := []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
-		"Task", "Agent", "SendMessage", "ListAgents", "Skill", "SlashCommand", "KillShell", "BashOutput"}
+		"Task", "Agent", "SendMessage", "ListAgents", "Skill", "SlashCommand", "KillShell", "BashOutput", "ToolSearch"}
 	return append(out, ClosedToolNames()...)
 }
 

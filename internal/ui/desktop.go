@@ -180,7 +180,7 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 		dm.ProxyPID, dm.ProxyStart, dm.ProxyExe = r.PeerPID, deskStart(r.PeerPID), deskExe()
 		dm.ChildPID, dm.ChildStart, dm.ChildExe = 0, "", ""
 		paths := desktop.DefaultPaths()
-		data, _ := json.Marshal(desktop.StartInfo{Argv: paths.ServerArgv(), Env: desktop.HypruseEnv(dm.Workspace, filepath.Join(dm.Dir, "journal.ndjson"))})
+		data, _ := json.Marshal(desktop.StartInfo{Argv: paths.ServerArgv(), Env: desktop.HypruseEnv(dm.Workspace, filepath.Join(dm.Dir, "journal.ndjson")), Log: filepath.Join(dm.Dir, "desktop.log")})
 		r.Reply(bridge.Decision{Behavior: "allow", Data: data})
 		return nil
 	case "child":

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -68,10 +69,30 @@ func runDesktopMCP(args []string) {
 		fmt.Fprintln(os.Stderr, "den desktop-mcp: Den's start answer is unreadable")
 		os.Exit(1)
 	}
+	// Pdeathsig fires when the thread that started the child ends, not the
+	// process; Go may end idle threads. Pinned, this goroutine's thread
+	// lives exactly as long as the proxy.
+	runtime.LockOSThread()
 	child := exec.Command(info.Argv[0], info.Argv[1:]...)
 	child.Env = desktop.ChildEnv(os.Environ(), info.Env)
 	child.Dir = "/"
 	child.Stderr = os.Stderr
+	if info.Log != "" && filepath.IsAbs(info.Log) {
+		if f, err := os.OpenFile(info.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
+			defer f.Close()
+			child.Stderr = f
+			logTo = f
+			// A crash anywhere in the proxy writes its trace to fd 2:
+			// into the log too, where it can be read.
+			syscall.Dup2(int(f.Fd()), 2)
+			defer func() {
+				if r := recover(); r != nil {
+					fmt.Fprintf(f, "%s den desktop-mcp: panic: %v\n", time.Now().Format(time.RFC3339), r)
+					panic(r)
+				}
+			}()
+		}
+	}
 	// hypruse ends with this proxy, however it ends.
 	child.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGTERM}
 	toChild, err := child.StdinPipe()
@@ -86,15 +107,21 @@ func runDesktopMCP(args []string) {
 		fail("den desktop-mcp: start hypruse: %v", err)
 	}
 	pid := child.Process.Pid
+	proxyLog("started hypruse, pid %d", pid)
 	if d, err := ask(bridge.DesktopInput{Kind: "child", ChildPID: pid, ChildStart: procs.StartTicks(pid)}, 10*time.Second); err != nil || d.Behavior != "allow" {
 		child.Process.Signal(syscall.SIGTERM)
 		child.Wait()
 		fmt.Fprintln(os.Stderr, "den desktop-mcp: Den did not take hypruse's process; stopped it")
 		os.Exit(1)
 	}
+	proxyLog("Den took hypruse's process; relaying")
 	p := &desktop.Proxy{Gate: denGate{socket: socket, mission: mission}, Client: os.Stdin, ToClient: os.Stdout, Child: fromChild, ToChild: toChild,
 		Cursor: cursorPos, Pointer: desktop.PointerPath()}
-	p.Run(context.Background())
+	if err := p.Run(context.Background()); err != nil {
+		proxyLog("relay ended: %v", err)
+	} else {
+		proxyLog("relay ended: the client closed")
+	}
 	os.Remove(desktop.PointerPath())
 	toChild.Close()
 	done := make(chan struct{})
@@ -198,4 +225,14 @@ func cursorPos() (float64, float64, bool) {
 		return 0, 0, false
 	}
 	return c.X, c.Y, true
+}
+
+// logTo is the mission's proxy log, once Den named it.
+var logTo *os.File
+
+// proxyLog writes one line to the proxy log, when there is one.
+func proxyLog(format string, a ...any) {
+	if logTo != nil {
+		fmt.Fprintf(logTo, "%s den desktop-mcp: %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, a...))
+	}
 }

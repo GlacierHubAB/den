@@ -324,6 +324,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		}
 	}
 	m.addDeskMission(dm)
+	dm.save() // its session id is on disk before the agent starts
 	prompt := desktop.Brief(p.offer.in.Plan, p.offer.apps, p.workspace, p.offer.in.HumanSteps)
 	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: guard.Settings, Model: p.offer.in.Model, Prompt: prompt}
 	if _, err := desktop.AgentArgv(launch); err != nil {

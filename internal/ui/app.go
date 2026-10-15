@@ -1713,8 +1713,14 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession || sessionID == inbox.DesktopSession {
 		return "Den"
+	}
+	for _, dm := range m.desk.missions {
+		// A desktop agent's cards come before its session registers.
+		if dm.SessionID == sessionID && dm.AgentName != "" {
+			return dm.AgentName
+		}
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
 		if ms := m.missions.Get(id); ms != nil {
