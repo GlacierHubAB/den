@@ -60,8 +60,16 @@ jobs:
       contents: read
     uses: ./.github/workflows/ci.yml
 
+  # The slow suite and the race detector three times on two CPUs: the part of
+  # the release gate that is too long for every pull request.
+  heavy:
+    needs: verify
+    permissions:
+      contents: read
+    uses: ./.github/workflows/heavy.yml
+
   build:
-    needs: [verify, ci]
+    needs: [verify, ci, heavy]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
