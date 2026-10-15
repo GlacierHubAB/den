@@ -469,61 +469,102 @@ func (m Model) apiReport() string {
 	return b.String()
 }
 
-// apiChip is the header's API indicator, "" when the API is off. The names
-// are the base names of the exes Den read, never what an app says it is.
-func (m Model) apiChip() string {
+// apiChip is the header's API indicator, "" when the API is off: its
+// parts (apiChipParts) joined.
+func (m Model) apiChip() string { return strings.Join(m.apiChipParts(), " · ") }
+
+// apiChipParts is the header's API indicator in parts, the first the one
+// that matters; nil when the API is off. The names are the base names of
+// the exes Den read, never what an app says it is; one Den cannot identify
+// is only counted here, in a short form, and named in full in /api and on
+// its cards.
+func (m Model) apiChipParts() []string {
 	srv := m.api.srv
 	if srv == nil {
 		if m.cfg.API.Enabled && m.api.err != "" {
-			return m.st.err.Render("API: " + m.api.err)
+			return []string{m.st.err.Render("API: " + m.api.err)}
 		}
-		return ""
+		return nil
 	}
 	if srv.Paused() {
-		return ""
+		return nil
 	}
 	if !srv.Healthy() {
-		return m.st.err.Render("⇄ socket replaced")
+		return []string{m.st.err.Render("⇄ socket replaced")}
 	}
 	var paired []string
 	for _, p := range srv.Pairings() {
-		if p.Confirmed {
-			paired = append(paired, appName(p.Exe)+" "+sanitize.Label(api.ExeShownShort(p.Exe), 60)+" pid "+strconv.Itoa(p.PID))
+		if !p.Confirmed {
+			continue
+		}
+		if api.Unidentified(p.Exe) {
+			paired = append(paired, "an unidentified app, pid "+strconv.Itoa(p.PID))
+		} else {
+			paired = append(paired, appName(p.Exe)+" pid "+strconv.Itoa(p.PID))
 		}
 	}
 	if len(paired) > 0 {
-		return m.st.attn.Render("paired: " + strings.Join(paired, ", "))
+		return []string{m.st.attn.Render("paired: " + strings.Join(paired, ", "))}
 	}
-	clients := srv.Clients()
 	names := map[string]bool{}
+	unidentified := map[int]bool{}
 	asking := false
-	for _, c := range clients {
+	for _, c := range srv.Clients() {
 		if c.Agent {
 			continue
 		}
-		names[sanitize.Label(c.Label, 20)] = true
+		if api.Unidentified(c.Exe) {
+			unidentified[c.PID] = true
+		} else {
+			names[sanitize.Label(c.Label, 20)] = true
+		}
 		asking = asking || c.Asking
 	}
 	lane := laneChip(srv.LaneState())
-	if len(names) == 0 {
+	if len(names) == 0 && len(unidentified) == 0 {
 		if lane != "" {
-			return "API on · " + lane
+			return []string{"API on", lane}
 		}
-		return "API on"
+		return []string{"API on"}
 	}
-	var list []string
-	for n := range names {
-		list = append(list, n)
-	}
-	sort.Strings(list)
-	chip := "⇄ " + strings.Join(list, ", ") + " connected"
+	parts := []string{m.st.attn.Render(connectedChip(sortedKeys(names), len(unidentified)))}
 	if asking {
-		chip += " · asking"
+		parts = append(parts, m.st.attn.Render("asking"))
 	}
 	if lane != "" {
-		chip += " · " + lane
+		parts = append(parts, lane)
 	}
-	return m.st.attn.Render(chip)
+	return parts
+}
+
+// connectedChip is the header's words for the apps connected: the names
+// Den read, and how many it cannot identify, in a short form.
+func connectedChip(names []string, unidentified int) string {
+	switch {
+	case len(names) == 0:
+		return "⇄ " + appCount(unidentified) + " connected · unidentified"
+	case unidentified == 0:
+		return "⇄ " + strings.Join(names, ", ") + " connected"
+	}
+	return "⇄ " + strings.Join(names, ", ") + ", " + strconv.Itoa(unidentified) + " unidentified connected"
+}
+
+// appCount is "1 app" or "N apps".
+func appCount(n int) string {
+	if n == 1 {
+		return "1 app"
+	}
+	return strconv.Itoa(n) + " apps"
+}
+
+// sortedKeys is a set's members in order.
+func sortedKeys(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // laneWords is the lane's state for /api: off, starting, ready or failed

@@ -17,7 +17,9 @@ anything.
 - `/api` lists the connected apps: process id, the executable Den read from
   `/proc`, what they subscribe to, and whether one is asking.
 - While the API is on, Den's header shows `API on`, or `⇄ <app> connected`
-  (the executable's name as Den read it, never the name an app gives itself).
+  (the executable's name as Den read it, never the name an app gives itself),
+  or, for an app whose executable Den cannot read, `⇄ 1 app connected ·
+  unidentified`. The full description is in `/api` and on its cards.
   The first connection of each app also leaves a note in the orchestrator
   chat.
 

@@ -157,22 +157,28 @@ func (m Model) header(w int) []string {
 	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
-	var sys []string
+	// Each part has a rank: when the line is too long, the highest ranks
+	// go first. The pairing code, the bridge's error and the API chip's
+	// first part are never left out.
+	var sys []headerPart
 	if m.hooksReady {
-		sys = append(sys, "hooks on")
+		sys = append(sys, headerPart{"hooks on", 2})
 	} else {
-		sys = append(sys, s.attn.Render("hooks off · den install-hooks"))
+		sys = append(sys, headerPart{s.attn.Render("hooks off · den install-hooks"), 1})
 	}
 	if m.srvErr != nil {
-		sys = append(sys, s.err.Render("bridge: "+m.srvErr.Error()))
+		sys = append(sys, headerPart{s.err.Render("bridge: " + m.srvErr.Error()), 0})
 	}
-	if chip := m.apiChip(); chip != "" {
-		sys = append(sys, chip)
+	for i, p := range m.apiChipParts() {
+		rank := 3
+		if i == 0 {
+			rank = 0
+		}
+		sys = append(sys, headerPart{p, rank})
 	}
 	if code := m.codeLine(); code != "" {
-		sys = append(sys, s.attn.Render(code))
+		sys = append(sys, headerPart{s.attn.Render(code), 0})
 	}
-	sysLine := s.muted.Render(strings.Join(sys, " · "))
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
 	flash := ""
@@ -202,7 +208,9 @@ func (m Model) header(w int) []string {
 		"",
 		headerRow(logo[0], fleetLine, clock+"  ", w),
 		headerRow(logo[1], linksLine, "", w),
-		headerRow(logo[2], sysLine, flash+"  ", w),
+		// Whole parts that fit the room headerRow leaves beside the flash;
+		// headerRow cuts only when the parts never left out do not fit.
+		headerRow(logo[2], s.muted.Render(fitParts(sys, headerRoom(logo[2], flash+"  ", w))), flash+"  ", w),
 		"",
 		m.tabs(w),
 	}
@@ -238,18 +246,59 @@ func (m Model) logoRows() []string {
 	return out
 }
 
-// justify spaces left and right apart to fill w.
 // headerRow is a header line: the logo, then text, then right at the end
 // of the row. When they do not all fit, the text gives way (cut with "…"),
 // so a flash or the clock is never pushed past the edge.
 func headerRow(logo, text, right string, w int) string {
-	room := w - ansi.StringWidth(logo) - ansi.StringWidth(right) - 1
+	room := headerRoom(logo, right, w)
 	if ansi.StringWidth(text) > room {
 		text = ansi.Truncate(text, max(0, room), "…")
 	}
 	return justify(logo+text, right, w)
 }
 
+// headerRoom is the width headerRow leaves for the text between logo and
+// right.
+func headerRoom(logo, right string, w int) int {
+	return w - ansi.StringWidth(logo) - ansi.StringWidth(right) - 1
+}
+
+// headerPart is one part of a header line and its rank: the higher, the
+// sooner it is left out when the line is too long; 0 never is.
+type headerPart struct {
+	text string
+	rank int
+}
+
+// fitParts joins parts with " · " in at most w columns, leaving out whole
+// parts, the highest rank first and then the last of a rank, until they
+// fit; nothing is cut inside a word. Parts of rank 0 always stay, even if
+// the line is then too long for w.
+func fitParts(parts []headerPart, w int) string {
+	keep := append([]headerPart(nil), parts...)
+	join := func() string {
+		out := make([]string, len(keep))
+		for i, p := range keep {
+			out[i] = p.text
+		}
+		return strings.Join(out, " · ")
+	}
+	for ansi.StringWidth(join()) > w {
+		drop := -1
+		for i, p := range keep {
+			if p.rank > 0 && (drop < 0 || p.rank >= keep[drop].rank) {
+				drop = i
+			}
+		}
+		if drop < 0 {
+			break
+		}
+		keep = append(keep[:drop], keep[drop+1:]...)
+	}
+	return join()
+}
+
+// justify spaces left and right apart to fill w.
 func justify(left, right string, w int) string {
 	gap := w - ansi.StringWidth(left) - ansi.StringWidth(right)
 	if gap < 1 {
