@@ -25,7 +25,7 @@ func TestLogFilterWithholdsTypedText(t *testing.T) {
 func TestLogFilterCleansAndCaps(t *testing.T) {
 	var out bytes.Buffer
 	f := &LogFilter{W: &out}
-	f.Write([]byte("a\x1b[31mred‮\x07\n"))
+	f.Write([]byte("a\x1b[31mred\u202e\x07\n"))
 	if got := out.String(); got != "a[31mred\n" {
 		t.Fatalf("%q", got)
 	}
