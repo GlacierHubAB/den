@@ -1337,6 +1337,14 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if m.unsettled(it) {
 		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
+	return m.answerItem(it, verb)
+}
+
+// answerItem carries out an answer to it, once the gates of whoever
+// answers have passed: the human's in Den (answer: the selection, the
+// whole text shown, nothing new come up), or a console's (card.answer:
+// the card read whole, unchanged, from the console).
+func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
 			m.store.Release(it, "you chose the terminal")

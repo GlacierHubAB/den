@@ -79,6 +79,8 @@ type Act struct {
 	ConsoleChanged  bool
 	ConsoleCodeGone bool
 	ConsoleIntruder *ConsoleIntruder
+	// CardAnswer is a console's answer to a card, for Den to carry out.
+	CardAnswer *CardAnswer
 }
 
 type grants struct {

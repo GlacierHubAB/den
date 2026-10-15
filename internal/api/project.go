@@ -37,6 +37,9 @@ type Snapshot struct {
 	Guidance string
 	// Colors are the colours Den draws agents in, by session id.
 	Colors map[string]string
+	// Cards are the cards Den would show, as a console may read them
+	// (card.go); Project sanitises them and computes their hashes.
+	Cards []Card
 }
 
 // View is what the server serves until the next one.
@@ -48,6 +51,7 @@ type View struct {
 	Roster     []orch.RosterAgent
 	AgentProcs map[int]AgentProc
 	Guidance   string
+	Cards      map[string]Card // by id
 }
 
 // AgentProc is one agent's process: its pid, and its start time in clock
@@ -90,6 +94,7 @@ func Project(s Snapshot) *View {
 		Roster:     append([]orch.RosterAgent(nil), s.Roster...),
 		AgentProcs: map[int]AgentProc{},
 		Guidance:   s.Guidance,
+		Cards:      map[string]Card{},
 	}
 	for _, p := range s.AgentProcs {
 		if p.PID > 1 {
@@ -197,6 +202,10 @@ func Project(s Snapshot) *View {
 		}
 		v.Items = append(v.Items, item)
 	}
+	for _, c := range s.Cards {
+		c = projectCard(c)
+		v.Cards[c.ID] = c
+	}
 	for _, ms := range s.Missions {
 		m := projectMission(ms)
 		v.Missions = append(v.Missions, m)
@@ -207,6 +216,38 @@ func Project(s Snapshot) *View {
 		v.Fleet.Missions = append(v.Fleet.Missions, ref)
 	}
 	return v
+}
+
+// ProjectCard is projectCard, for Den to check an answer against the card
+// it would hand over now.
+func ProjectCard(c Card) Card { return projectCard(c) }
+
+// projectCard sanitises a card as Den hands it over: the id, kind, agent
+// and title to one line each, every body line on its own, and the verbs
+// to the closed set; then its hash over exactly that.
+func projectCard(c Card) Card {
+	out := Card{
+		ID:          sanitize.Label(c.ID, labelMax),
+		Kind:        sanitize.Label(c.Kind, labelMax),
+		Agent:       sanitize.Label(c.Agent, labelMax),
+		Title:       sanitize.Line(c.Title),
+		Truncated:   c.Truncated,
+		CutAt:       c.CutAt,
+		DockAnswers: c.DockAnswers,
+		Verbs:       []string{},
+	}
+	lines := strings.Split(c.Body, "\n")
+	for i, l := range lines {
+		lines[i] = sanitize.Line(l)
+	}
+	out.Body = strings.Join(lines, "\n")
+	for _, v := range c.Verbs {
+		if v == "allow" || v == "deny" || v == "always" {
+			out.Verbs = append(out.Verbs, v)
+		}
+	}
+	out.Hash = CardHash(out.Kind, out.Agent, out.Title, out.Body)
+	return out
 }
 
 func kindName(k inbox.Kind) string {

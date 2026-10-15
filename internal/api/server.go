@@ -69,12 +69,14 @@ type Server struct {
 	// stopWatch ends the console record's watch; closeOnce makes Close's
 	// clean-exit mark once.
 	stopWatch chan struct{}
-	closeOnce sync.Once
-	bp        atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
-	view      atomic.Pointer[View]
-	chat      *chatStore
-	lane      *lane
-	notes     chan string
+	// cardAnswers counts the console's card answers for their limits.
+	cardAnswers answers
+	closeOnce   sync.Once
+	bp          atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
+	view        atomic.Pointer[View]
+	chat        *chatStore
+	lane        *lane
+	notes       chan string
 
 	paused atomic.Bool // /api off or /api disconnect: answer unavailable
 	// draining counts refused connections still reading out what their
@@ -477,6 +479,11 @@ func (s *Server) Clients() []Client {
 // client.
 func (s *Server) Publish(v *View) {
 	old := s.view.Swap(v)
+	var oldCards map[string]Card
+	if old != nil {
+		oldCards = old.Cards
+	}
+	s.pushCards(oldCards, v.Cards)
 	fleetRaw, _ := json.Marshal(v.Fleet)
 	s.mu.Lock()
 	fleetChanged := !bytes.Equal(fleetRaw, s.lastFleet)
@@ -587,6 +594,8 @@ type conn struct {
 	paired     string
 	// cnonce and claimSalt are its live console challenge, cchallenged
 	// when it was given; console the console it proved, "" for none.
+	// reads are the cards it read, for card.answer (card.go).
+	reads       cardReads
 	cnonce      string
 	claimSalt   string
 	cchallenged time.Time
@@ -963,6 +972,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.consoleEvents(c, req)
 	case "console.unpair":
 		s.consoleUnpair(c, req)
+	case "card.get":
+		s.cardGet(c, req)
+	case "card.answer":
+		s.cardAnswer(c, req)
 	case "focus":
 		s.focus(c, req)
 	case "ask.cancel":

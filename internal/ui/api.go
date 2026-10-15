@@ -65,6 +65,9 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 // applyAPIAct puts an app's grant card in the inbox, or settles the cards
 // of grants whose app is gone.
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if act.CardAnswer != nil {
+		return m.answerFromDock(act.CardAnswer)
+	}
 	if isConsoleAct(act) {
 		return m.applyConsoleAct(act)
 	}
@@ -291,6 +294,7 @@ func (m *Model) publishAPI() {
 		}
 	}
 	snap.AgentProcs = m.agentProcs()
+	snap.Cards = m.dockCards()
 	for _, h := range m.remote.hosts {
 		if string(h.Applied) == "full" {
 			snap.FullHosts[h.Label] = true

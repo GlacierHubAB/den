@@ -1,0 +1,151 @@
+package api
+
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+)
+
+// provedConsole pairs this process as the console and proves a fresh
+// connection, subscribed to its events.
+func provedConsole(t *testing.T) (*harness, *client) {
+	t.Helper()
+	h, _ := consoleHarness(t)
+	d := newDock(t, h)
+	p := d.pair(h.s.StartConsoleCode())
+	c := h.dial()
+	c.hello()
+	if l, _, _, _ := d.auth(c, p); !l.OK {
+		t.Fatal(l.Error)
+	}
+	c.call("console.events", nil)
+	c.next() // connected
+	return h, c
+}
+
+func card(id string, lines int, dock bool) Card {
+	body := make([]string, lines)
+	for i := range body {
+		body[i] = "line " + strconv.Itoa(i)
+	}
+	return Card{ID: id, Kind: "permission", Agent: "Otter", Title: "Bash", Body: strings.Join(body, "\n"), Verbs: []string{"allow", "deny", "rm"}, DockAnswers: dock}
+}
+
+type got struct {
+	Card
+	Nonce string `json:"nonce"`
+}
+
+func getCard(t *testing.T, c *client, id string) got {
+	t.Helper()
+	l := c.call("card.get", map[string]string{"id": id})
+	var g got
+	if !l.OK || json.Unmarshal(l.Result, &g) != nil {
+		t.Fatalf("card.get %s: %+v", id, l.Error)
+	}
+	return g
+}
+
+func answerCard(c *client, g got, verb string) int64 {
+	return c.send("card.answer", map[string]string{"id": g.ID, "text_sha256": g.Hash, "nonce": g.Nonce, "verb": verb})
+}
+
+// Read whole, answered once: the hash covers what the console shows, the
+// answer reaches Den, and Den's outcome comes back.
+func TestCardGetAndAnswer(t *testing.T) {
+	h, c := provedConsole(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{card("i-1", 2, true)}}))
+	var ev CardEvent
+	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.ID != "i-1" || ev.Change != "new" {
+		t.Fatalf("card event %+v", e)
+	}
+	g := getCard(t, c, "i-1")
+	if g.Hash != CardHash("permission", "Otter", "Bash", "line 0\nline 1") || ev.Hash != g.Hash || !isHex(g.Nonce, 64) {
+		t.Errorf("hash %s, event %s, nonce %q", g.Hash, ev.Hash, g.Nonce)
+	}
+	if len(g.Verbs) != 2 {
+		t.Errorf("verbs outside the closed set reached the console: %v", g.Verbs)
+	}
+	id := answerCard(c, g, "allow")
+	a := ctlAct(t, h.s, func(a Act) bool { return a.CardAnswer != nil }).CardAnswer
+	if a.ID != "i-1" || a.Verb != "allow" || a.Hash != g.Hash {
+		t.Fatalf("answer %+v", a)
+	}
+	a.Reply <- CardResult{Result: "allowed", Note: "Allowed from test: Otter · Bash"}
+	if l := c.replyTo(id); !l.OK || !strings.Contains(string(l.Result), `"result":"allowed"`) {
+		t.Errorf("answer reply %+v %s", l.Error, l.Result)
+	}
+	// The nonce is spent.
+	if l := c.call("card.answer", map[string]string{"id": g.ID, "text_sha256": g.Hash, "nonce": g.Nonce, "verb": "allow"}); code(l) != CodeNonceExpired {
+		t.Errorf("a nonce used twice: %+v", l)
+	}
+	h.s.Publish(Project(Snapshot{Taken: time.Now()}))
+	if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Change != "settled" {
+		t.Errorf("settled event %+v", e)
+	}
+}
+
+// What a console may not do with a card.
+func TestCardAnswerRefusals(t *testing.T) {
+	h, c := provedConsole(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{card("i-1", 2, true), card("i-2", 2, false), card("i-3", 12, true)}}))
+	g := getCard(t, c, "i-1")
+	// Changed since it was read.
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{func() Card { x := card("i-1", 3, true); return x }(), card("i-2", 2, false), card("i-3", 12, true)}}))
+	if l := c.replyTo(answerCard(c, g, "allow")); code(l) != CodeCardChanged {
+		t.Errorf("a changed card: %+v", l)
+	}
+	if l := c.replyTo(answerCard(c, getCard(t, c, "i-2"), "allow")); code(l) != CodeRefusedFromDock {
+		t.Errorf("a card the console may not answer: %+v", l)
+	}
+	if l := c.replyTo(answerCard(c, getCard(t, c, "i-1"), "rm")); code(l) != CodeRefusedFromDock {
+		t.Errorf("a verb outside the card's: %+v", l)
+	}
+	long := getCard(t, c, "i-3")
+	if l := c.replyTo(answerCard(c, long, "allow")); code(l) != CodeReadItFirst {
+		t.Errorf("a long card answered at once: %+v", l)
+	}
+	time.Sleep(cardReadAtLeast)
+	// The timer counts from the first read, not the re-fetch.
+	again := answerCard(c, getCard(t, c, "i-3"), "deny")
+	a := ctlAct(t, h.s, func(a Act) bool { return a.CardAnswer != nil }).CardAnswer
+	a.Reply <- CardResult{Result: "denied"}
+	if l := c.replyTo(again); !l.OK {
+		t.Errorf("after reading it: %+v", l.Error)
+	}
+	// Without a proof, nothing.
+	other := h.dial()
+	other.hello()
+	if l := other.call("card.get", map[string]string{"id": "i-1"}); code(l) != CodeForbidden {
+		t.Errorf("card.get without a proof: %+v", l)
+	}
+}
+
+// Answers faster than anyone could read unpair the console.
+func TestCardBurstUnpairs(t *testing.T) {
+	h, c := provedConsole(t)
+	var cards []Card
+	for i := 0; i < cardBurst; i++ {
+		cards = append(cards, card("b-"+strconv.Itoa(i), 1, true))
+	}
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: cards}))
+	for range cards {
+		c.next() // new
+	}
+	for i := 0; i < cardBurst; i++ {
+		id := answerCard(c, getCard(t, c, "b-"+strconv.Itoa(i)), "allow")
+		if i < cardBurst-1 {
+			ctlAct(t, h.s, func(a Act) bool { return a.CardAnswer != nil }).CardAnswer.Reply <- CardResult{Result: "allowed"}
+			c.replyTo(id)
+			continue
+		}
+		if l := c.replyTo(id); code(l) != CodeForbidden {
+			t.Errorf("the burst's last answer: %+v", l)
+		}
+	}
+	if _, ok := h.s.CurrentConsole(); ok {
+		t.Error("still paired after a burst")
+	}
+}
