@@ -72,7 +72,7 @@ func TestModeSet(t *testing.T) {
 	}
 	id := c.send("mode.set", map[string]string{"mode": "plan"})
 	r := ctlAct(t, h.s, func(a Act) bool { return a.ModeSet != nil }).ModeSet
-	if r.Mode != "plan" || r.Console == "" {
+	if r.Mode != "plan" || r.Console != ConsoleLabel {
 		t.Fatalf("mode.set reached Den as %+v", r)
 	}
 	r.Reply <- ModeSetResult{Applied: true, Note: "agents start in plan"}

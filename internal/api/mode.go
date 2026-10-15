@@ -37,6 +37,10 @@ func (s *Server) modeSet(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
+	if !s.consolePowers(c) {
+		c.fail(req.ID, CodePowersLocked, PowersLocked)
+		return
+	}
 	var p struct {
 		Mode string `json:"mode"`
 	}
@@ -48,8 +52,7 @@ func (s *Server) modeSet(c *conn, req Request) {
 		c.fail(req.ID, CodeUnavailable, "too many commands")
 		return
 	}
-	cur, _ := s.CurrentConsole()
-	r := &ModeSet{Mode: p.Mode, Console: ExeLabel(cur.Exe), Reply: make(chan ModeSetResult, 1)}
+	r := &ModeSet{Mode: p.Mode, Console: ConsoleLabel, Reply: make(chan ModeSetResult, 1)}
 	if !s.act(Act{ModeSet: r}) {
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return

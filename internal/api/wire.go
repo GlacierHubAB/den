@@ -100,6 +100,9 @@ type Info struct {
 	Features []string `json:"features,omitempty"`
 	// Mode is the global permission mode, once Den has published one.
 	Mode *ModeInfo `json:"mode,omitempty"`
+	// ConsolePublicKey is Den's console key (64 hex), when it offers
+	// console pairing: public, for the dock to show its fingerprint.
+	ConsolePublicKey string `json:"console_public_key,omitempty"`
 }
 
 // FeatureConsole is Info.Features' entry for console pairing.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // Den keeps its side of the console across its own restarts: the console's
@@ -49,6 +50,10 @@ type storedConsole struct {
 	Started  time.Time `json:"started,omitzero"`
 	Since    time.Time `json:"since"`
 	Pages    string    `json:"pages_sha256,omitempty"`
+	// Verifier is what Den read of the console's service when the human
+	// paired it with no code; read back after a Den start, it only names
+	// what changed on a card, never re-pairs silently.
+	Verifier *sysd.Verifier `json:"verifier,omitempty"`
 }
 
 type storedConsoles struct {
@@ -105,7 +110,7 @@ func (s *Server) saveConsoleLocked() {
 	}
 	var rec storedConsoles
 	if c := s.con.cur; c != nil {
-		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA}}
+		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier}}
 	}
 	b, _ := json.Marshal(rec)
 	if err := writeAtomic(s.consolePath(), b); err != nil {
@@ -172,14 +177,18 @@ func (s *Server) loadConsole() string {
 		return drop("the console's process is gone or was started again: pair again with den pair")
 	}
 	s.con.mu.Lock()
-	s.con.cur = &consoleRec{
+	restored := &consoleRec{
 		Console:  Console{ID: c.ID, Exe: c.Exe, PID: c.PID, Started: c.Started, Since: c.Since, PagesSHA: c.Pages},
 		identity: c.Identity, start: c.Start, pub: ed25519.PublicKey(pub), pubHex: c.Key, restored: true,
+		verifier: c.Verifier, // never trusted: read back from disk
 	}
+	s.con.cur = restored
 	s.con.recordHash = sha256Hex(raw)
 	s.con.mu.Unlock()
 	s.note("console restored from before Den's restart: " + sanitize.Label(ExeLabel(c.Exe), 40) + " pid " + itoa(c.PID) + ", started " + hhmmss(c.Started) + ". If that is not your console, unpair it: den unpair all")
 	s.act(Act{ConsoleChanged: true})
+	// A Den start is never trusted with the console's powers: one ^Y.
+	s.askPowers(restored, "Den restarted")
 	return ""
 }
 

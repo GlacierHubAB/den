@@ -271,6 +271,12 @@ func TestConsoleRefusesOtherPrograms(t *testing.T) {
 			if e := mine.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "refused" || ev.Program != "other" {
 				t.Errorf("refused event %+v", e)
 			}
+			if i == 0 {
+				// The first refused try takes the console's powers.
+				if e := mine.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "powers" || ev.On == nil || *ev.On {
+					t.Errorf("powers event %+v", e)
+				}
+			}
 		}
 	}
 	if _, ok := h.s.CurrentConsole(); ok {

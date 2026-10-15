@@ -108,6 +108,101 @@ func TestConsoleCodeAndCard(t *testing.T) {
 	}
 }
 
+// A code-less request is a card in Den's own window with the pid, start
+// and both fingerprints to match, the program as the manager runs it, and
+// what the check is worth; the dock never answers it.
+func TestConsoleCodelessCard(t *testing.T) {
+	m := consoleModel(t)
+	ask := &api.ConsoleAsk{ID: "c-2", Exe: "unreadable:0f2f:4242:99", PID: 4242, Started: time.Date(2026, 10, 15, 13, 5, 7, 0, time.Local), Parent: "systemd",
+		Codeless: true, Unit: api.ConsoleUnit, Program: "/home/u/.local/bin/console-host", ProgramSHA: strings.Repeat("ab", 32),
+		AppFP: "1a2b 3c4d 5e6f 7a8b", DenFP: "9c0d 1e2f 3a4b 5c6d"}
+	m.applyConsoleAct(api.Act{Console: ask})
+	var card *inbox.Item
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.Console {
+			card = it
+		}
+	}
+	if card == nil {
+		t.Fatal("no card")
+	}
+	text := card.Title + "\n" + strings.Join(card.Body, "\n")
+	for _, want := range []string{"Pair " + api.ConsoleUnit + " (pid 4242, ", "with no code", "its key:   1a2b 3c4d 5e6f 7a8b", "Den's key: 9c0d 1e2f 3a4b 5c6d", "/home/u/.local/bin/console-host (sha256 abababababababab…)", "a check, not proof"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("card lacks %q:\n%s", want, text)
+		}
+	}
+	if dockMayAnswer(card) {
+		t.Error("the dock may answer a pairing card")
+	}
+}
+
+// A reconnect that asks names why; the powers card is Den's own, one at a
+// time, and its ^Y reaches the API; neither is the dock's to answer.
+func TestConsoleReconnectAndPowersCards(t *testing.T) {
+	m := consoleModel(t)
+	m.applyConsoleAct(api.Act{Console: &api.ConsoleAsk{ID: "c-3", PID: 4242, Codeless: true, Reconnect: true, Unit: api.ConsoleUnit,
+		Changes: []string{"the program changed (/x)", "Den has restarted since you paired it"}, AppFP: "1a2b 3c4d 5e6f 7a8b", DenFP: "9c0d 1e2f 3a4b 5c6d"}})
+	var card *inbox.Item
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.Console {
+			card = it
+		}
+	}
+	text := card.Title + "\n" + strings.Join(card.Body, "\n")
+	for _, want := range []string{"Re-pair " + api.ConsoleUnit, "restarted and asks", "  - the program changed (/x)", "  - Den has restarted", "Ctrl+Y re-pairs it and lets it answer cards and run commands"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("card lacks %q:\n%s", want, text)
+		}
+	}
+	m.applyConsoleAct(api.Act{ConsolePowers: &api.ConsolePowersAsk{ID: "p-1", PID: 4242, Why: "it reconnected after a restart"}})
+	m.applyConsoleAct(api.Act{ConsolePowers: &api.ConsolePowersAsk{ID: "p-2", PID: 4242, Why: "Den restarted"}})
+	var open []*inbox.Item
+	for it := range m.con.powers {
+		open = append(open, it)
+	}
+	if len(open) != 1 || m.con.powers[open[0]] != "p-2" || !strings.Contains(strings.Join(open[0].Body, "\n"), "Den restarted") {
+		t.Fatalf("powers cards %v", m.con.powers)
+	}
+	if dockMayAnswer(open[0]) || dockMayAnswer(card) {
+		t.Error("the dock may answer a pairing or powers card")
+	}
+	mm, _ := m.decideConsole(open[0], "allow")
+	m = mm.(Model)
+	if open[0].State != inbox.Resolved || len(m.con.powers) != 0 {
+		t.Errorf("after ^Y: %v, %d open", open[0].State, len(m.con.powers))
+	}
+}
+
+// Den's console key never changes in silence: a new one is said in the
+// chat, and one that does not read turns console pairing off, said too,
+// with no new key made in its place.
+func TestConsoleKeyChangesAreSaid(t *testing.T) {
+	said := func(m Model, want string) bool {
+		for _, e := range m.orch.chat {
+			if strings.Contains(e.text, want) {
+				return true
+			}
+		}
+		return false
+	}
+	m := consoleModel(t)
+	if !said(m, "Den made a new console key") {
+		t.Error("a new key was not said")
+	}
+	state := stateDir()
+	m.api.srv.Close()
+	os.WriteFile(filepath.Join(state, consoleKeyFile), []byte("short"), 0o600)
+	m2 := testModel(140, 40)
+	apiOn(t, &m2)
+	if !said(m2, "Console pairing is off") || m2.con.keyErr == "" {
+		t.Error("a key that does not read was not said")
+	}
+	if b, _ := os.ReadFile(filepath.Join(state, consoleKeyFile)); string(b) != "short" {
+		t.Error("a new key replaced one that did not read")
+	}
+}
+
 // den pair is refused for a caller under Claude Code or an agent, and
 // otherwise shows a console code; den unpair all ends every pairing.
 func TestDenPairAndUnpair(t *testing.T) {

@@ -85,6 +85,8 @@ type Act struct {
 	Command *CommandRun
 	// ModeSet is a console's mode.set, for Den to decide.
 	ModeSet *ModeSet
+	// ConsolePowers asks the human to give the console its powers again.
+	ConsolePowers *ConsolePowersAsk
 }
 
 type grants struct {

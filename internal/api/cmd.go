@@ -167,6 +167,10 @@ func (s *Server) cmdRun(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
+	if !s.consolePowers(c) {
+		c.fail(req.ID, CodePowersLocked, PowersLocked)
+		return
+	}
 	var p struct {
 		Text string `json:"text"`
 	}
