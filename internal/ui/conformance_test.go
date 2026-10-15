@@ -36,13 +36,13 @@ while IFS= read -r line; do
     *'"control_request"'*)
       id=$(printf '%s\n' "$line" | sed 's/.*"request_id":"\([^"]*\)".*/\1/')
       case "$line" in
-        *'"initialize"'*) echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"commands":[],"current_permission_mode":"dontAsk"}}}' ;;
-        *'"mcp_status"'*) echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"mcpServers":[]}}}' ;;
+        *'"initialize"'*) printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"commands":[],"current_permission_mode":"dontAsk"}}}' ;;
+        *'"mcp_status"'*) printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"mcpServers":[]}}}' ;;
       esac
       continue ;;
   esac
   if [ -z "$inited" ]; then
-    echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"2.1.289","tools":[],"mcp_servers":[]}'
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"2.1.289","tools":[],"mcp_servers":[]}'
     inited=1
   fi
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"About 12 dollars."}}}'

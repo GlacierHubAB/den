@@ -49,16 +49,16 @@ while IFS= read -r line; do
       case "$line" in
         *'"initialize"'*)
           if [ ! -e "$d/no-answer" ]; then
-            echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"commands":[],"current_permission_mode":"dontAsk"}}}'
+            printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"commands":[],"current_permission_mode":"dontAsk"}}}'
           fi ;;
         *'"mcp_status"'*)
-          echo '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"mcpServers":'"$mcp"'}}}' ;;
+          printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"'"$id"'","response":{"mcpServers":'"$mcp"'}}}' ;;
       esac
       continue ;;
   esac
   printf '%s\n' "$line" >> "$d/turns.txt"
   if [ -z "$inited" ]; then
-    echo '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"'"$version"'","tools":'"$tools"',"mcp_servers":[]}'
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"'"$version"'","tools":'"$tools"',"mcp_servers":[]}'
     inited=1
   fi
   if [ -e "$d/slow" ]; then

@@ -66,6 +66,42 @@ type control struct {
 	// allowed the ones Den allowed.
 	uses    map[string]string
 	allowed map[string]bool
+	// standing are the human's standing allowances for the app whose turn
+	// is open (AllowRule keys), set with SendApp.
+	standing map[string]bool
+}
+
+// AllowRule is the key of a standing allowance for a paired app: a tool
+// Den allows in its turns without asking, or for send_message one peer it
+// may message. Only Den's own tools can be allowed this way.
+func AllowRule(tool, peer string) string {
+	if tool == SendMessageTool {
+		return tool + " " + peer
+	}
+	return tool
+}
+
+// Allowable reports whether a tool may have a standing allowance: Den's
+// own tools, never anything else.
+func Allowable(tool string) bool {
+	switch tool {
+	case SendMessageTool, MissionTool, SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool:
+		return true
+	}
+	return false
+}
+
+// RuleOf is the AllowRule a request would need: send_message's by its
+// "to".
+func RuleOf(tool string, input json.RawMessage) string {
+	if tool == SendMessageTool {
+		var in struct {
+			To string `json:"to"`
+		}
+		json.Unmarshal(input, &in)
+		return AllowRule(tool, strings.TrimPrefix(strings.TrimSpace(in.To), "@"))
+	}
+	return AllowRule(tool, "")
 }
 
 // appTurn is the turn an app sent, from SendApp until its own result.
@@ -113,8 +149,9 @@ var ErrAppTurn = errors.New("an app's turn is already running")
 
 // SendApp writes an app's turn, as Send does, and opens its window: every
 // permission request from now until this turn's own result asks Den's
-// human. id names the turn in events.
-func (o *Orchestrator) SendApp(id, content string) error {
+// human, unless it matches one of standing (AllowRule keys), the human's
+// standing allowances for that app. id names the turn in events.
+func (o *Orchestrator) SendApp(id, content string, standing ...string) error {
 	content = peermsg.Defuse(content)
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -129,7 +166,10 @@ func (o *Orchestrator) SendApp(id, content string) error {
 	}
 	h := peermsg.Hash(content)
 	o.ctl.app = appTurn{open: true, id: id, hash: h}
-	o.ctl.uses, o.ctl.allowed = map[string]string{}, map[string]bool{}
+	o.ctl.uses, o.ctl.allowed, o.ctl.standing = map[string]string{}, map[string]bool{}, map[string]bool{}
+	for _, r := range standing {
+		o.ctl.standing[r] = true
+	}
 	o.sent[h] = time.Now()
 	return o.writeUser(content)
 }
@@ -216,6 +256,15 @@ func (o *Orchestrator) canUseTool(id, tool, toolUseID string, input json.RawMess
 		return
 	}
 	turn := c.app.id
+	if Allowable(tool) && c.standing[RuleOf(tool, input)] {
+		if toolUseID != "" {
+			c.allowed[toolUseID] = true
+		}
+		o.writePermission(id, true, input, "")
+		o.mu.Unlock()
+		o.emit(Event{Kind: PermissionStanding, RequestID: id, Tool: tool, ToolUseID: toolUseID, Input: input, Turn: turn})
+		return
+	}
 	p := &permission{tool: tool, toolUseID: toolUseID, input: append(json.RawMessage(nil), input...)}
 	c.perms[id] = p
 	p.timer = time.AfterFunc(PermissionDeadline, func() {

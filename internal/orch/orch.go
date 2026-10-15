@@ -101,6 +101,9 @@ const (
 	// after PermissionDeadline: PermissionExpired.
 	PermissionAsk
 	PermissionExpired
+	// PermissionStanding: allowed at once in an app's turn by a standing
+	// allowance the human gave that app (SendApp).
+	PermissionStanding
 )
 
 // SystemPrompt is appended to Claude Code's default prompt.

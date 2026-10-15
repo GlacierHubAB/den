@@ -259,3 +259,34 @@ func TestControlBackstop(t *testing.T) {
 		t.Error("ListAgents or a denied call tripped the backstop")
 	}
 }
+
+// A standing allowance the human gave the app is answered at once in its
+// turn; send_message's only for the peer it names, and a tool that cannot
+// have one still asks.
+func TestControlStandingAllowance(t *testing.T) {
+	o, in := controlOrch(true)
+	o.SendApp("t-1", "hello", AllowRule(MissionTool, ""), AllowRule(SendMessageTool, "worker-otter"), "Bash")
+	feed(o,
+		canUse("r1", MissionTool, "u1"),
+		`{"type":"control_request","request_id":"r2","request":{"subtype":"can_use_tool","tool_name":"`+SendMessageTool+`","tool_use_id":"u2","input":{"to":"worker-otter","message":"x"}}}`,
+		`{"type":"control_request","request_id":"r3","request":{"subtype":"can_use_tool","tool_name":"`+SendMessageTool+`","tool_use_id":"u3","input":{"to":"worker-fox","message":"x"}}}`,
+		canUse("r4", "Bash", "u4"),
+		canUse("r5", SpawnAgentTool, "u5"))
+	a := in.answers()
+	if a["r1"] != "allow" || a["r2"] != "allow" || a["r3"] != "" || a["r4"] != "" || a["r5"] != "" {
+		t.Errorf("answers %v", a)
+	}
+	k := map[Kind]int{}
+	for _, e := range drain(o) {
+		k[e.Kind]++
+	}
+	if k[PermissionStanding] != 2 || k[PermissionAsk] != 3 {
+		t.Errorf("events %v", k)
+	}
+	o2, in2 := controlOrch(true)
+	o2.SendApp("t-2", "again")
+	feed(o2, canUse("r1", MissionTool, "u1"))
+	if in2.answers()["r1"] != "" {
+		t.Error("an allowance outlived the turn it was given for")
+	}
+}
