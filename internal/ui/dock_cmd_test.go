@@ -24,7 +24,7 @@ func TestDockLine(t *testing.T) {
 		{"/api control off", "/api control off"},
 		{"/api on", ""},
 		{"/API ON", ""},
-		{"／api on", ""}, // fullwidth: the same after NFKC
+		{"\uff0fapi on", ""}, // fullwidth: the same after NFKC
 		{"/api resume", ""},
 		{"/api pair", ""},
 		{"/api console", ""},
@@ -59,7 +59,7 @@ func TestDockLine(t *testing.T) {
 		{"/fleet flat && rm -rf ~", ""},
 		{"/fleet flat\n/quit", ""},
 		{"/fleet flat /quit", ""},
-		{"/fleet‮flat", ""},
+		{"/fleet\u202eflat", ""},
 		{"fleet flat", ""},
 		{"/nosuch", ""},
 		{"/project add /home/x/code", "/project add /home/x/code"},
@@ -95,7 +95,7 @@ func TestDockLine(t *testing.T) {
 func TestDockRefusesCardSettlingCommands(t *testing.T) {
 	forms := []string{"/allow", "/y", "/yes", "/deny", "/n", "/no", "/always", "/a", "/answer"}
 	for _, f := range forms {
-		for _, line := range []string{f, strings.ToUpper(f), " " + f + " ", "／" + f[1:], f + " Otter", f + " 1", "/answer yes"} {
+		for _, line := range []string{f, strings.ToUpper(f), " " + f + " ", "\uff0f" + f[1:], f + " Otter", f + " 1", "/answer yes"} {
 			if words, _, why := dockLine(line); why == "" {
 				t.Errorf("%q ran as %q", line, words)
 			}

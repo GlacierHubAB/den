@@ -32,7 +32,7 @@ func TestConsoleCommands(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("completions %+v", got)
 	}
-	json.Unmarshal(c.call("cmd.complete", map[string]string{"prefix": "／ＦＬ"}).Result, &got)
+	json.Unmarshal(c.call("cmd.complete", map[string]string{"prefix": "\uff0f\uff26\uff2c"}).Result, &got)
 	if len(got) != 1 || got[0].Name != "/fleet" {
 		t.Errorf("a fullwidth prefix: %+v", got)
 	}

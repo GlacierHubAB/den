@@ -213,7 +213,7 @@ func dockCommands() []api.CommandInfo {
 func dockLine(text string) ([]string, dockVerb, string) {
 	t := strings.TrimSpace(norm.NFKC.String(text))
 	for _, r := range t {
-		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' {
+		if unicode.Is(unicode.Cc, r) || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' {
 			return nil, dockVerb{}, "one line of plain text"
 		}
 	}
