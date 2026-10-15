@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/hypr"
 )
 
 // winOps is fakeOps with windows: each window is run by a terminal process
@@ -360,5 +362,37 @@ func TestOwnWindow(t *testing.T) {
 	ws = append(ws, Window{"0xsibling", "com.mitchellh.ghostty", 40})
 	if got := OwnWindow(ws, []int{40, 1}); got != "" {
 		t.Errorf("a shared terminal process gave %q", got)
+	}
+}
+
+// TestCloseOfALeftOpenWindowWaitsForTheWindowsLock: the window part of a
+// close shares a lock with a view switch, so the two never overlap. The
+// close waits for it and then still closes the window.
+func TestCloseOfALeftOpenWindowWaitsForTheWindowsLock(t *testing.T) {
+	ops := &winOps{fakeOps: &fakeOps{alive: map[int]bool{1: true}}, ws: []winRec{{w: Window{"0xa", mkA, terminal(1)}, agent: 1, holdOn: true}}}
+	fastWaits(t, ops.fakeOps)
+	p := Plan{Targets: targetsAB()[:1]}
+	ws, _ := ops.Windows()
+	Locate(&p, ws, ancestorsOf)
+
+	unlock := hypr.LockWindows() // a view switch is moving windows
+	done := make(chan []Result, 1)
+	go func() { done <- Run(context.Background(), p, Self{}, ops) }()
+	select {
+	case <-done:
+		t.Fatal("the close ran its window part while a switch held the lock")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if len(ops.closes()) != 0 {
+		t.Fatalf("closed %v during the switch", ops.closes())
+	}
+	unlock()
+	select {
+	case res := <-done:
+		if !res[0].WindowClosed || strings.Join(ops.closes(), ",") != "close 0xa" {
+			t.Errorf("result %+v, closes %v", res[0], ops.closes())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the close never finished")
 	}
 }
