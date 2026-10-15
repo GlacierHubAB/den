@@ -114,6 +114,8 @@ type Model struct {
 	missionUpdates map[string]mission.Update
 	// use is the usage guard (usage.go).
 	use usageGuard
+	// dockFrom names the console while its command runs, "" otherwise.
+	dockFrom string
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
 	ments *mentionSet
@@ -196,6 +198,7 @@ type Model struct {
 
 	api apiState     // den-api.sock (api.go); zero while the API is off
 	ctl controlState // a paired app's control (control.go)
+	con consoleUI    // the console (console.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -689,6 +692,12 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleOrchSend(r)
 		}
 		return m.handleMissionUpdate(r)
+	}
+	if r.Event == bridge.ConsolePairEvent {
+		return m.handleConsolePair(r)
+	}
+	if r.Event == bridge.ConsoleUnpairEvent {
+		return m.handleConsoleUnpair(r)
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
@@ -1330,6 +1339,28 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if m.unsettled(it) {
 		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
+	return m.answerItem(it, verb)
+}
+
+// answerItem carries out an answer to it, once the gates of whoever
+// answers have passed: the human's in Den (answer: the selection, the
+// whole text shown, nothing new come up), or a console's (card.answer:
+// the card read whole, unchanged, from the console).
+func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	// Who settles it, for the console's settled event: set before the
+	// answer, since the view is published while it is carried out, and
+	// taken back if the item did not settle.
+	if it.Answer == "" {
+		it.Answer = verb
+		if it.AnsweredBy == "" {
+			it.AnsweredBy = "den"
+		}
+		defer func() {
+			if it.State != inbox.Resolved {
+				it.Answer, it.AnsweredBy = "", ""
+			}
+		}()
+	}
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
 			m.store.Release(it, "you chose the terminal")
@@ -1374,6 +1405,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Grant {
 		return m.decideGrant(it, verb)
 	}
+	if it.Kind == inbox.Console {
+		return m.decideConsole(it, verb)
+	}
 	if it.Kind == inbox.Pair {
 		return m.decidePair(it, verb)
 	}
@@ -1388,6 +1422,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.UsageResume {
 		return m.decideUsageResume(it, verb)
+	}
+	if it.Kind == inbox.UsageSet {
+		return m.decideUsageSet(it, verb)
 	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {

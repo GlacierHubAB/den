@@ -65,6 +65,15 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 // applyAPIAct puts an app's grant card in the inbox, or settles the cards
 // of grants whose app is gone.
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if act.CardAnswer != nil {
+		return m.answerFromDock(act.CardAnswer)
+	}
+	if act.Command != nil {
+		return m.runFromDock(act.Command)
+	}
+	if isConsoleAct(act) {
+		return m.applyConsoleAct(act)
+	}
 	if act.Pair != nil || act.CodeGone || act.PairDone != "" || act.Paired || act.Say != nil {
 		return m.applyControlAct(act)
 	}
@@ -213,9 +222,16 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	os.Chmod(lane, 0o700)
 	cfg := m.cfg
+	key, kerr := loadConsoleKey(state)
+	m.con.keyErr = ""
+	if kerr != nil {
+		key, m.con.keyErr = nil, sanitize.Label(kerr.Error(), 160)
+	}
 	srv, err := api.Listen(api.Options{
-		Version: Version,
-		ChatLog: filepath.Join(state, "api-chat.jsonl"),
+		Version:      Version,
+		ConsoleKey:   key,
+		ConsoleStore: filepath.Join(state, "consoles.json"),
+		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,
@@ -260,8 +276,11 @@ func (m Model) lanePID() int {
 
 // publishAPI hands the API the fleet as it is now. It runs on the UI's own
 // goroutine and never blocks.
+// publishedHook, set by tests only, sees each snapshot as it is published.
+var publishedHook func(api.Snapshot)
+
 func (m *Model) publishAPI() {
-	if m.api.srv == nil {
+	if m.api.srv == nil && publishedHook == nil {
 		return
 	}
 	snap := api.Snapshot{
@@ -281,6 +300,9 @@ func (m *Model) publishAPI() {
 		}
 	}
 	snap.AgentProcs = m.agentProcs()
+	snap.Cards = m.dockCards()
+	snap.Settled = m.dockSettled()
+	snap.Commands = dockCommands()
 	for _, h := range m.remote.hosts {
 		if string(h.Applied) == "full" {
 			snap.FullHosts[h.Label] = true
@@ -289,7 +311,12 @@ func (m *Model) publishAPI() {
 	if m.missions != nil {
 		snap.Missions = m.missions.All()
 	}
-	m.api.srv.Publish(api.Project(snap))
+	if publishedHook != nil {
+		publishedHook(snap)
+	}
+	if m.api.srv != nil {
+		m.api.srv.Publish(api.Project(snap))
+	}
 }
 
 // laneRoster is the roster the lane reads: the orchestrator's, without
@@ -313,6 +340,8 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 		sub = strings.ToLower(args[0])
 	}
 	switch sub {
+	case "console":
+		return m.consoleCommand()
 	case "pair", "unpair":
 		return m.controlCommand(sub)
 	case "disallow", "control":

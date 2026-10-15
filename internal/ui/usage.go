@@ -29,6 +29,10 @@ type usageGuard struct {
 	st      usage.State   // what is kept between runs
 	reading usage.Reading // the reading Den goes by
 	ok      bool          // false: usage unknown
+	// asked is the figure a console sent, on the card asking for it: its
+	// item id, and the share (nil to clear the figure).
+	askedID string
+	asked   *float64
 }
 
 // save writes the state when it has a file.
@@ -174,15 +178,15 @@ func (m Model) usageCommand(args []string) (tea.Model, tea.Cmd) {
 		if err != nil || p < 0 || p > 100 {
 			return m.say("A share of the weekly limit, 0 to 100.", true)
 		}
-		m.use.st.Set(p, now)
-		m.use.save()
-		cmd := m.checkUsage(now)
-		mm, say := m.say(fmt.Sprintf("Usage set to %.0f%% (an estimate) until %s.", p, m.use.st.SetUntil.Local().Format("Mon 15:04")), false)
-		return mm, tea.Batch(cmd, say)
+		if m.dockFrom != "" {
+			return m.askUsageFigure(&p)
+		}
+		return m.setUsageFigure(&p)
 	case "clear":
-		m.use.st.SetPercent = nil
-		m.use.save()
-		return m.say("Your usage figure is cleared.", false)
+		if m.dockFrom != "" {
+			return m.askUsageFigure(nil)
+		}
+		return m.setUsageFigure(nil)
 	case "stop":
 		if m.use.st.Stopped {
 			return m.say(m.usageStopped(), true)
@@ -206,6 +210,76 @@ func (m Model) usageCommand(args []string) (tea.Model, tea.Cmd) {
 		return m.say("Answer it in the inbox: ^Y lets the fleet go on.", false)
 	}
 	return m.say("/usage, /usage set <percent>, /usage clear, /usage stop, /usage resume", true)
+}
+
+// setUsageFigure takes the human's figure, or clears it (p nil).
+func (m Model) setUsageFigure(p *float64) (tea.Model, tea.Cmd) {
+	now := time.Now()
+	if p == nil {
+		m.use.st.SetPercent = nil
+		m.use.save()
+		return m.say("Your usage figure is cleared.", false)
+	}
+	m.use.st.Set(*p, now)
+	m.use.save()
+	cmd := m.checkUsage(now)
+	mm, say := m.say(fmt.Sprintf("Usage set to %.0f%% (an estimate) until %s.", *p, m.use.st.SetUntil.Local().Format("Mon 15:04")), false)
+	return mm, tea.Batch(cmd, say)
+}
+
+// usageFigureLabel is a figure as the card shows it.
+func usageFigureLabel(p *float64) string {
+	if p == nil {
+		return "none: Den goes by what the sessions report"
+	}
+	return fmt.Sprintf("%.0f%% (an estimate)", *p)
+}
+
+// askUsageFigure puts a console's /usage set or clear on a card: the
+// figure is what the usage stop is measured against, so it is the
+// human's to take.
+func (m Model) askUsageFigure(p *float64) (tea.Model, tea.Cmd) {
+	now := time.Now()
+	var cur *float64
+	if m.use.st.SetPercent != nil && now.Before(m.use.st.SetUntil) {
+		cur = m.use.st.SetPercent
+	}
+	title := "Take the usage figure " + m.dockFrom + " sent?"
+	it := m.store.AddUsageSet(title, []string{
+		"your figure now: " + usageFigureLabel(cur),
+		"the figure sent: " + usageFigureLabel(p),
+		usage.Label(m.use.reading, m.use.ok, m.use.st, now),
+		"A lower figure can hold off your usage stop.",
+	})
+	if it == nil {
+		return m.say("A usage figure is already waiting on a card in the inbox.", true)
+	}
+	if p != nil {
+		v := *p
+		p = &v
+	}
+	m.use.askedID, m.use.asked = it.ID, p
+	m.refresh()
+	return m.say("The usage figure waits on a card in the inbox.", false)
+}
+
+// decideUsageSet is ^Y or ^N on the console's figure.
+func (m Model) decideUsageSet(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	p, ok := m.use.asked, m.use.askedID == it.ID
+	m.use.askedID, m.use.asked = "", nil
+	switch {
+	case !ok:
+		m.store.Settle(it, false, "the figure is gone")
+		m.refresh()
+		return m.say("That usage figure is gone.", true)
+	case verb != "allow":
+		m.store.Settle(it, false, "kept your figure")
+		m.refresh()
+		return m.say("Your usage figure stays as it is.", false)
+	}
+	m.store.Settle(it, true, "took the figure")
+	m.refresh()
+	return m.setUsageFigure(p)
 }
 
 // decideUsageResume is ^Y or ^N on the question.

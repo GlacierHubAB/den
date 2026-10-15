@@ -82,7 +82,22 @@ type harness struct {
 
 func newHarness(t *testing.T, budget float64) *harness {
 	t.Helper()
-	run := filepath.Join(t.TempDir(), "run")
+	return newHarnessWith(t, budget, nil)
+}
+
+// newHarnessWith is newHarness, with change applied to the options before
+// Listen.
+func newHarnessWith(t *testing.T, budget float64, change func(*Options)) *harness {
+	t.Helper()
+	// The socket's folder is short whatever the test is called: a unix
+	// socket's path may not pass 108 bytes, and t.TempDir has the test's
+	// name in it.
+	short, err := os.MkdirTemp("", "dn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(short) })
+	run := filepath.Join(short, "run")
 	if err := os.Mkdir(run, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +106,7 @@ func newHarness(t *testing.T, budget float64) *harness {
 	if err := os.WriteFile(script, []byte(fakeLane), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s, err := Listen(Options{
+	o := Options{
 		Path:    filepath.Join(run, "den-api.sock"),
 		Version: "test",
 		ChatLog: filepath.Join(t.TempDir(), "api-chat.jsonl"),
@@ -100,7 +115,11 @@ func newHarness(t *testing.T, budget float64) *harness {
 			Dir:      laneDir,
 			BudgetUS: func() float64 { return budget },
 		},
-	})
+	}
+	if change != nil {
+		change(&o)
+	}
+	s, err := Listen(o)
 	if err != nil {
 		t.Fatal(err)
 	}

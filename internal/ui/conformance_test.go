@@ -3,6 +3,8 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -50,12 +52,17 @@ while IFS= read -r line; do
 done
 `
 
+// errNotYet asks onModel to try again: what it waits for has not reached
+// the model yet.
+var errNotYet = errors.New("not yet")
+
 // TestDreyInterface runs the pinned conformance suite against a real Den
 // model with the API on: an isolated HOME, state, config and runtime
 // folder, a fake claude for the lane, focus stubbed, and every grant
 // answered the way the human answers it, by keys through Update (the
 // card selected, read to its end, then ^Y). Nothing in Den's own code
-// answers a grant.
+// answers a grant. The console's hooks act on the model in its own loop,
+// the console card answered by keys as the human answers it.
 func TestDreyInterface(t *testing.T) {
 	apiEnv(t)
 	t.Setenv("HOME", t.TempDir())
@@ -91,6 +98,103 @@ func TestDreyInterface(t *testing.T) {
 	m.api.lastKey = time.Time{}
 
 	path, srv := m.api.srv.Path(), m.api.srv
+	press := func(k tea.KeyPressMsg) {
+		mm, _ := m.Update(k)
+		m = mm.(Model)
+	}
+	// onModel runs f in the loop below, which owns the model, again every
+	// 10 ms while it answers errNotYet.
+	type modelCall struct {
+		f    func() error
+		done chan error
+	}
+	calls := make(chan modelCall)
+	onModel := func(ctx context.Context, f func() error) error {
+		for {
+			c := modelCall{f, make(chan error, 1)}
+			select {
+			case calls <- c:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			if err := <-c.done; !errors.Is(err, errNotYet) {
+				return err
+			}
+			select {
+			case <-time.After(10 * time.Millisecond):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+	// answerConsole answers the open console card by keys, as the human
+	// does: selected, read to its end, ^Y or ^N.
+	answerConsole := func(ctx context.Context, key rune) error {
+		return onModel(ctx, func() error {
+			var card *inbox.Item
+			for it := range m.con.cards {
+				if it.Answerable() {
+					card = it
+				}
+			}
+			if card == nil {
+				return errNotYet
+			}
+			m.tab = tabInbox
+			m.refresh()
+			m.selectItem(card)
+			for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
+				press(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+			press(tea.KeyPressMsg{Code: key, Mod: tea.ModCtrl})
+			m.tab = tabFleet
+			m.refresh()
+			if card.State != inbox.Resolved {
+				return fmt.Errorf("the console card stayed open: %q", m.flash)
+			}
+			return nil
+		})
+	}
+	// permissionCard raises an agent's request with a body of lines lines.
+	cards := 0
+	permissionCard := func(ctx context.Context, lines int) (string, error) {
+		var id string
+		err := onModel(ctx, func() error {
+			cards++
+			cmd := make([]string, lines)
+			for i := range cmd {
+				cmd[i] = fmt.Sprintf("echo card %d line %d", cards, i)
+			}
+			p, _ := json.Marshal(map[string]any{"session_id": sid, "hook_event_name": "PermissionRequest", "tool_name": "Bash", "tool_input": map[string]any{"command": strings.Join(cmd, "\n")}})
+			it := m.store.Apply(bridge.TestRequest(bridge.Envelope{Event: "PermissionRequest", SessionID: sid, Payload: p}))
+			if it == nil {
+				return errors.New("no card for the request")
+			}
+			m.refresh()
+			id = it.ID
+			return nil
+		})
+		return id, err
+	}
+	console := &denconformance.ConsoleOptions{
+		Offer: func(ctx context.Context) (string, error) {
+			var code string
+			err := onModel(ctx, func() error {
+				if why := m.startConsoleCode(); why != "" {
+					return errors.New(why)
+				}
+				code = strings.Join(m.con.code, " ")
+				return nil
+			})
+			return code, err
+		},
+		Confirm:    func(ctx context.Context) error { return answerConsole(ctx, 'y') },
+		Decline:    func(ctx context.Context) error { return answerConsole(ctx, 'n') },
+		Card:       func(ctx context.Context) (string, error) { return permissionCard(ctx, 1) },
+		LongCard:   func(ctx context.Context) (string, error) { return permissionCard(ctx, 12) },
+		ThiefTest:  "TestConsoleThief",
+		SocketPath: path,
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -108,16 +212,15 @@ func TestDreyInterface(t *testing.T) {
 			},
 			Focusable: sid,
 			Skip:      denconformance.D1Skip,
+			Console:   console,
 		})
 	}()
-	press := func(k tea.KeyPressMsg) {
-		mm, _ := m.Update(k)
-		m = mm.(Model)
-	}
 	for {
 		select {
 		case <-done:
 			return
+		case c := <-calls:
+			c.done <- c.f()
 		case act := <-m.api.srv.Acts():
 			if act.Focus != nil {
 				m.api.lastKey = time.Time{} // the human has not typed in Den
@@ -150,10 +253,17 @@ func TestDreyInterface(t *testing.T) {
 			if card.State != inbox.Resolved {
 				t.Errorf("^Y did not answer the grant card: %q", m.flash)
 			}
-		case <-time.After(30 * time.Second):
+		case <-time.After(60 * time.Second):
 			t.Fatal("the conformance run did not finish")
 		}
 	}
+}
+
+// TestConsoleThief is run by the conformance suite's "console thief", in
+// another process, to prove with the console's key; run on its own it
+// skips.
+func TestConsoleThief(t *testing.T) {
+	denconformance.ConsoleThiefHelper(t)
 }
 
 var _ = api.HashOf

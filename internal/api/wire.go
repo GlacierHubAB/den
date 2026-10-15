@@ -74,6 +74,7 @@ const (
 	EventInbox = "inbox"
 	EventChat  = "chat"
 	EventGrant = "grant"
+	EventCard  = "card"
 )
 
 // Info is hello's result.
@@ -85,7 +86,13 @@ type Info struct {
 	// orch.say), ControlOff when the human turned control off in Den.
 	// A Den without control sends none.
 	Control string `json:"control,omitempty"`
+	// Features lists what this Den offers beyond D1: FeatureConsole when
+	// console pairing (console.*) is on. A Den without it sends none.
+	Features []string `json:"features,omitempty"`
 }
+
+// FeatureConsole is Info.Features' entry for console pairing.
+const FeatureConsole = "console"
 
 // Info.Control's values.
 const (

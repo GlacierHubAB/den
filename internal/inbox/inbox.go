@@ -48,6 +48,9 @@ const (
 	Grant                     // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
 	Pair                      // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
 	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
+	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
+	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
+	UsageSet                  // Den asks: take this usage figure, as the console sent it? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -102,6 +105,12 @@ func (k Kind) String() string {
 		return "pairing"
 	case ControlAsk:
 		return "app's turn"
+	case Console:
+		return "console"
+	case UsageSet:
+		return "usage figure"
+	case ConsoleNote:
+		return "console note"
 	}
 	return "?"
 }
@@ -129,10 +138,15 @@ type Item struct {
 	Body      []string // the thing being decided, in full: the command, the diff, the arguments
 	Options   []string // AskUserQuestion choices, numbered from 1 as Den shows them
 	Resolved  string   // how it was resolved, for the dim trailer
-	Role      string   // the agent's role when this happened
-	Task      string   // what the agent was working on when this happened
-	Seen      bool     // shown on the Inbox view at least once
-	Unread    bool     // kept unread by the human: counts as new until opened or dismissed
+	// Answer is the verb that settled it (allow, deny or always), "" when
+	// it settled otherwise; AnsweredBy is "den" for the human's answer in
+	// Den, "console" for the console's.
+	Answer     string
+	AnsweredBy string
+	Role       string // the agent's role when this happened
+	Task       string // what the agent was working on when this happened
+	Seen       bool   // shown on the Inbox view at least once
+	Unread     bool   // kept unread by the human: counts as new until opened or dismissed
 	// A question Den holds (hooks.answer_questions): all of the call's
 	// questions, the answers so far by question text, and the one asked now.
 	Questions []question.Question
@@ -160,7 +174,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -766,6 +780,15 @@ func (s *Store) AddUsageResume(title string, body []string) *Item {
 	return s.add(&Item{SessionID: UsageSession, Kind: UsageResume, Tool: "usage_resume", Title: title, Body: body})
 }
 
+// AddUsageSet adds Den's question: take the usage figure the console
+// sent? One at a time; nil while one is open.
+func (s *Store) AddUsageSet(title string, body []string) *Item {
+	if s.hasOpen("", UsageSession, UsageSet) {
+		return nil
+	}
+	return s.add(&Item{SessionID: UsageSession, Kind: UsageSet, Tool: "usage_set", Title: title, Body: body})
+}
+
 // AddMissionMove adds Den's question: move this mission to another
 // project? sessionID is "mission:<id>". Only the human's /mission move
 // raises it, and only the human's ^Y answers it.
@@ -794,6 +817,17 @@ func (s *Store) AddGrant(title string, body []string) *Item {
 // code control the orchestrator?
 func (s *Store) AddPair(title string, body []string) *Item {
 	return s.add(&Item{SessionID: APISession, Kind: Pair, Tool: "app_pairing", Title: title, Body: body})
+}
+
+// AddConsole adds Den's question: make the program that claimed the
+// console code the human's console? Only the human's ^Y answers it.
+func (s *Store) AddConsole(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Console, Tool: "console_pairing", Title: title, Body: body})
+}
+
+// AddConsoleNote adds Den's notice about the console.
+func (s *Store) AddConsoleNote(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: ConsoleNote, Title: title, Body: body})
 }
 
 // AddControlAsk adds a tool the orchestrator wants in a paired app's turn.

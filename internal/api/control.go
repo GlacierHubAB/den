@@ -405,23 +405,12 @@ func codeWords(text string) []string {
 
 // leaked reports whether text holds the pairing code: at least
 // pairLeakWords of its words, while it is live and for pairLeakAfter after
-// it was spent. Den then cancels the code (it is no longer secret) and
-// notes it; the text itself is never kept.
+// it was spent; or the console code (leakedConsole). Den then cancels the
+// code (it is no longer secret) and notes it; the text itself is never
+// kept.
 func (s *Server) leaked(text string) bool {
 	words := codeWords(text)
-	holds := func(c *pairCode) bool {
-		want := map[string]bool{}
-		for _, w := range c.words {
-			want[w] = true
-		}
-		hit := map[string]bool{}
-		for _, w := range words {
-			if want[w] {
-				hit[w] = true
-			}
-		}
-		return len(hit) >= pairLeakWords
-	}
+	holds := func(c *pairCode) bool { return codeWordsIn(c.words, words) >= pairLeakWords }
 	now := time.Now()
 	s.ctl.mu.Lock()
 	live := s.ctl.code != nil && now.Before(s.ctl.code.until) && holds(s.ctl.code)
@@ -442,8 +431,10 @@ func (s *Server) leaked(text string) bool {
 	}
 	s.ctl.spent = kept
 	s.ctl.mu.Unlock()
+	// The console code is checked the same way, every text an app sends.
+	console := s.leakedConsole(words)
 	if !live && len(revoke) == 0 {
-		return false
+		return console
 	}
 	if live {
 		s.act(Act{CodeGone: true})
@@ -455,6 +446,25 @@ func (s *Server) leaked(text string) bool {
 		s.Unpair(id, "")
 	}
 	return true
+}
+
+// codeWordsIn counts how many of a code's words a text's words hold, a
+// word as often as the code has it: a code's words are drawn with
+// repetition, so "roof river roof" typed is three of "roof river roof
+// grass", not two.
+func codeWordsIn(code, text []string) int {
+	want := map[string]int{}
+	for _, w := range code {
+		want[w]++
+	}
+	n := 0
+	for _, w := range text {
+		if want[w] > 0 {
+			want[w]--
+			n++
+		}
+	}
+	return n
 }
 
 // claim is pair.claim: the code, once, from the program that shows it to

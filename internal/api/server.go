@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +40,12 @@ type Options struct {
 	Version string // Den's release, for hello
 	ChatLog string // api-chat.jsonl
 	Lane    LaneConfig
+	// ConsoleKey is Den's Ed25519 key for console proofs (console.go);
+	// nil leaves console pairing off.
+	ConsoleKey ed25519.PrivateKey
+	// ConsoleStore is where Den keeps its side of the console across
+	// restarts (console_store.go); "" keeps it in memory only.
+	ConsoleStore string
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -54,12 +61,24 @@ type Client struct {
 
 // Server serves den-api.sock.
 type Server struct {
-	opts  Options
-	bp    atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
-	view  atomic.Pointer[View]
-	chat  *chatStore
-	lane  *lane
-	notes chan string
+	opts Options
+	// con is the console (console.go); ckey Den's half of its proofs, nil
+	// when console pairing is off.
+	con  consoleState
+	ckey *consoleKey
+	// stopWatch ends the console record's watch; closeOnce makes Close's
+	// clean-exit mark once.
+	stopWatch chan struct{}
+	// cardAnswers counts the console's card answers for their limits.
+	cardAnswers answers
+	// cmdLimits counts the console's commands.
+	cmdLimits cmdLimits
+	closeOnce sync.Once
+	bp        atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
+	view      atomic.Pointer[View]
+	chat      *chatStore
+	lane      *lane
+	notes     chan string
 
 	paused atomic.Bool // /api off or /api disconnect: answer unavailable
 	// draining counts refused connections still reading out what their
@@ -106,7 +125,24 @@ func Listen(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opts: o, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refusals: map[string]*refusal{}}
+	if o.ConsoleKey != nil {
+		s.ckey = newConsoleKey(o.ConsoleKey)
+	}
 	s.grants, s.acts, s.lastConn, s.ctl = newGrants(), make(chan Act, 64), map[string]time.Time{}, newControl()
+	s.stopWatch = make(chan struct{})
+	if s.ckey != nil {
+		if why := s.loadConsole(); why != "" {
+			s.note(why)
+		}
+		s.con.mu.Lock()
+		if s.con.recordHash == "" {
+			// No record yet: write Den's (empty) one, so any file that
+			// appears later is a change Den did not make.
+			s.saveConsoleLocked()
+		}
+		s.con.mu.Unlock()
+		go s.watchConsoleRecord(s.stopWatch)
+	}
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	s.lane.changed = s.asksChanged
@@ -359,6 +395,10 @@ func (s *Server) Healthy() bool { return s.bp.Load().ours() }
 // Close stops the server: connections, the lane, and the path if it is
 // still Den's.
 func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		close(s.stopWatch)
+		s.writeCleanMark()
+	})
 	s.lane.close()
 	s.bp.Load().close()
 	s.mu.Lock()
@@ -441,6 +481,11 @@ func (s *Server) Clients() []Client {
 // client.
 func (s *Server) Publish(v *View) {
 	old := s.view.Swap(v)
+	var oldCards map[string]Card
+	if old != nil {
+		oldCards = old.Cards
+	}
+	s.pushCards(oldCards, v.Cards, v.Settled)
 	fleetRaw, _ := json.Marshal(v.Fleet)
 	s.mu.Lock()
 	fleetChanged := !bytes.Equal(fleetRaw, s.lastFleet)
@@ -549,6 +594,19 @@ type conn struct {
 	nonce      string
 	challenged time.Time
 	paired     string
+	// cnonce and claimSalt are its live console challenge, cchallenged
+	// when it was given; console the console it proved, "" for none.
+	// reads are the cards it read, for card.answer (card.go).
+	reads cardReads
+	// answering holds, per card it is answering, the settled events
+	// pushed meanwhile: they go out after the answer's reply (card.go).
+	answering map[string][]Event
+	// completes are its cmd.complete calls in the last second.
+	completes   []time.Time
+	cnonce      string
+	claimSalt   string
+	cchallenged time.Time
+	console     string
 }
 
 func (c *conn) close() {
@@ -689,6 +747,12 @@ func (s *Server) serve(nc net.Conn) {
 		return
 	}
 	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}, scope: "conn:" + randHex(), cid: randHex()}
+	// The console's process may hold one more, so that a connection past
+	// its proved ones hears console_in_use at console.auth.
+	perPIDMax := maxConnsPerPID
+	if s.isConsoleProcess(peer) {
+		perPIDMax = consoleConnsMax + 1
+	}
 	s.mu.Lock()
 	perPID := 0
 	for o := range s.conns {
@@ -696,7 +760,7 @@ func (s *Server) serve(nc net.Conn) {
 			perPID++
 		}
 	}
-	if len(s.conns) >= maxConns || perPID >= maxConnsPerPID {
+	if len(s.conns) >= maxConns || perPID >= perPIDMax {
 		s.mu.Unlock()
 		s.turnAway(nc, CodeUnavailable, "too many connections")
 		return
@@ -822,7 +886,11 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		} else if first {
 			s.note("an app connected to den-api.sock: " + sanitize.Label(ExeShownShort(c.peer.Exe), 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
 		}
-		c.reply(req.ID, Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()})
+		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()}
+		if s.ckey != nil {
+			info.Features = []string{FeatureConsole}
+		}
+		c.reply(req.ID, info)
 	case "fleet.snapshot":
 		c.reply(req.ID, s.fleetFor(c))
 	case "fleet.events":
@@ -907,6 +975,26 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.auth(c, req)
 	case "orch.say":
 		s.say(c, req)
+	case "console.challenge":
+		s.consoleChallenge(c, req)
+	case "console.claim":
+		s.consoleClaim(c, req)
+	case "console.auth":
+		s.consoleAuth(c, req)
+	case "console.events":
+		s.consoleEvents(c, req)
+	case "console.unpair":
+		s.consoleUnpair(c, req)
+	case "card.get":
+		s.cardGet(c, req)
+	case "card.answer":
+		s.cardAnswer(c, req)
+	case "cmd.list":
+		s.cmdList(c, req)
+	case "cmd.complete":
+		s.cmdComplete(c, req)
+	case "cmd.run":
+		s.cmdRun(c, req)
 	case "focus":
 		s.focus(c, req)
 	case "ask.cancel":

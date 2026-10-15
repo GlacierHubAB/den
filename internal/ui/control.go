@@ -87,7 +87,8 @@ func (m Model) controlCommand(sub string) (tea.Model, tea.Cmd) {
 		return m.say("The API is off: /api on turns it on first.", true)
 	}
 	if sub == "unpair" {
-		if len(m.api.srv.Pairings()) == 0 {
+		console := m.api.srv.UnpairConsole("")
+		if len(m.api.srv.Pairings()) == 0 && console == 0 {
 			return m.say("No app is paired.", false)
 		}
 		m.api.srv.Unpair("", "")

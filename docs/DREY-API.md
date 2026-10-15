@@ -3,7 +3,7 @@
 Den can serve a small local API so that apps on your machine can show your
 fleet and ask about it. Drey is the first such app. The API is **off** until
 you turn it on, and it lets no app approve, answer, start, close or message
-anything.
+anything, except the one console you pair yourself (see Console).
 
 ## Turning it on and off
 
@@ -72,7 +72,8 @@ Error codes: `unsupported` (an unknown op or version: hide the feature),
 ## Versioning
 
 `v` is 1. `hello {v, client, version, group?}` returns `{version,
-versions:[1], host, control?}`; a `v` Den does not serve gets
+versions:[1], host, control?, features?}`; `features` lists `"console"`
+when Den serves a console (see Console); a `v` Den does not serve gets
 `unsupported`. `control` is `"on"` when an app may pair for control (see
 Control), `"off"` when you turned control off in Den (`/api control off`:
 `/api pair` shows no new code, a pairing made then starts off, and
@@ -92,7 +93,7 @@ child process or another program. Added fields never change
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?}` |
+| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -108,9 +109,10 @@ child process or another program. Added fields never change
 | `grant.events` | | `{subscribed:true}`, then `grant` events `{id, answer: granted\|denied\|expired, version, hash}` |
 
 Every other op answers `unsupported`, including every verb that would approve,
-allow, deny, answer, start, close or message: there are none. Control's
-verbs (`pair.claim`, `pair.challenge`, `pair.auth`, `orch.say`) are under
-Control below. This release
+allow, deny, answer, start, close or message: there are none but the
+console's. Control's verbs (`pair.claim`, `pair.challenge`, `pair.auth`,
+`orch.say`) are under Control below, the console's (`console.*`, `card.*`,
+`cmd.*`) under Console. This release
 also answers `unsupported` for `theme.get`, `mission.start`,
 `mission.drop` and `view.data`.
 
@@ -403,3 +405,185 @@ The read-only `ask` lane is a separate process: an app turn never holds an
   without proof of who sent them; Den's `send_message` relies on that to
   deliver as SendMessage does. It is a property of Claude Code running as
   you, not one Den adds.
+
+## Console
+
+A console is the one program you pair, in Den's own window, as yours:
+Drey's dock. It may read Den's cards and answer the ones Den lets it, and
+send Den's commands, as you would in Den. It is not Control's app pairing:
+the code never crosses the socket, both sides sign every proof with
+Ed25519, and the console is bound to one process. Den's `hello` lists
+`"console"` in `features` when it serves one.
+
+### Pairing a console
+
+- `den pair` in a terminal, or `/api console` in Den, shows a code of eight
+  words for two minutes, in Den's header only. `den pair` is refused under
+  Claude Code, under one of Den's agents, and from `den mcp` or `den hook`.
+- Type the code only into the app's own pairing window. The app uses it as
+  its eight words in lower case, joined by single spaces.
+- On one connection: `console.challenge {}` answers `{nonce, conn,
+  claim_salt}`, each 64 lowercase hex digits but `conn` (32), at most one a
+  second on each connection. Then `console.claim {public_key, proof, pages_sha256?}`:
+  - `public_key` is the app's Ed25519 public key, 64 hex digits, drawn for
+    this pairing and kept in memory only;
+  - `proof` is the hex HMAC-SHA256, under HKDF-SHA256(code, salt =
+    `claim_salt`, info = `den-console-bind-app-v1`, 32 bytes), of
+    `"den-console-bind-app-v1\n" + public_key`;
+  - `pages_sha256`, optional, is the hash of the app's pages, shown on the
+    card.
+- A code takes one claim, right or wrong. A right proof does not pair yet:
+  Den puts a card in its inbox naming the program (path, pid, start time,
+  parent, command line), and only your `Ctrl+Y` on it pairs. The claim then
+  answers `{pairing, den_public_key, bind, console: true}`, where `bind` is
+  the hex HMAC-SHA256 under HKDF-SHA256(code, salt = `pairing`, info =
+  `den-console-bind-v1`) of `"den-console-bind-v1\n" + public_key + "\n" +
+  den_public_key + "\n" + pairing`. Check it: it proves this Den saw the
+  code, and pins Den's key.
+- A refused claim answers `forbidden`: `no code waiting`, `wrong code`,
+  `code spent` (the code was claimed already, right or wrong, and its two
+  minutes are not over), `denied in Den`, `not confirmed in time` or `revoked: the code was used
+  by another program too`. `unavailable` comes with `Den is busy` or, for
+  30 seconds after a `Ctrl+N`, `wait: a pairing was just declined`.
+- One console at a time: a new one replaces the old, which hears
+  `unpaired`. Den keeps its side (the console's identity and public key)
+  across its own clean restarts, and says so (see Events). A console
+  whose process ended, a new boot, or a record Den did not write unpairs.
+
+### Proving a connection
+
+Each connection proves once, at its start:
+
+- `console.challenge {}` gives `nonce` (Den's, *nd*) and `conn`.
+- `console.auth {pairing, nonce, sig}`: `nonce` is the app's own 64 hex
+  digits (*na*), `sig` the hex Ed25519 signature (128 digits) of these
+  lines joined by `\n`: `den-console-v1`, `app-to-den`, `conn`, `pairing`,
+  the app's public key, Den's public key, *nd*, *na*, and the app's
+  identity.
+- It answers `{paired: true, sig, god: {on: false}, view: "agent"}`, `sig` Den's signature
+  of the same lines with `den-to-app` and Den's identity as the last line.
+  Check it with the pinned `den_public_key`. `god` and `view` are fixed in
+  this release: God mode is off and every session shows in its own window
+  (`agent`); a later Den adds `user` and an event for each change.
+- The identity is the process as Den reads it in this boot:
+  `exe:<path as hex>:<boot_id>:<pid>:<start>`, or
+  `unreadable:<boot_id>:<pid>:<start>` when the process is not dumpable;
+  `boot_id` from `/proc/sys/kernel/random/boot_id`, `start` field 22 of
+  `/proc/<pid>/stat`. Den's own is `den:<boot_id>:<pid>:<start>`.
+- A proof from another process answers `forbidden` (`another program holds
+  this console`) and tells the console's connections (a `refused` event);
+  a wrong signature answers `forbidden` and closes. Three of either in ten
+  minutes unpair the console. A seventh connection gets
+  `console_in_use`; a pairing that is gone, `not_found`.
+
+### Console verbs
+
+| Op | Params | Result |
+|---|---|---|
+| `console.challenge` | | `{nonce, conn, claim_salt}` |
+| `console.claim` | `{public_key, proof, pages_sha256?}` | `{pairing, den_public_key, bind, console}`, once you `Ctrl+Y` in Den |
+| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view}` |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console` and `card` events as they come |
+| `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
+| `card.get` | `{id}` | the card and a `nonce` |
+| `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
+| `cmd.list` | | `[{name, usage, help, dock}]` |
+| `cmd.complete` | `{prefix}` | the commands that start with it, at most 64 |
+| `cmd.run` | `{text}` | `{ok, note}` |
+
+All but `console.challenge`, `console.claim`, `console.auth` and
+`console.unpair {all: true}` need a proved connection, else `forbidden`
+(`prove first`). `console.unpair {}` ends the console from its own
+connection; `{all: true}` ends every console and app pairing from any
+connection, at most once every ten seconds for everyone, as `den unpair
+all` does in a terminal.
+
+### Events
+
+- `console {kind, pid, start_ticks, started?, program?, reason?}`: `kind`
+  is `connected`, `restored` (the first `console.events` after Den
+  restarted with this console: check `pid` and `start_ticks` are yours),
+  `refused` (another program tried this console) or `unpaired`.
+- `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
+  `new`, `changed` or `settled`. A new or changed card the console may
+  not answer (`dock_answers` false) carries `needs_den_screen: true`: only
+  your answer on Den's own screen settles it. A settled card has no
+  `text_sha256`;
+  `result` is `allowed`, `denied`, `always` or `gone` (it settled without
+  an answer), and `by` is `den` or `console`, absent for `gone`. `rule`
+  is reserved for a later Den that answers by a rule of its own. Take any
+  `by` you do not know as Den's own answer, never the console's or yours,
+  and never drop the event for it.
+- After a re-dial, `cards` in the `console.events` reply is the whole set
+  of cards waiting: one you knew that is not in it is gone. The `new`
+  events that follow are those cards.
+
+### Cards
+
+- `card.get {id}` answers `{id, kind, agent, tool, title, note, body,
+  text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`: the card
+  as Den shows it, and a nonce for one answer, on this connection, for ten
+  minutes. `text_sha256` is the SHA-256 of `kind`, `agent`, `tool`,
+  `title`, `note` and `body` joined by `\n`. Show all of it, `note` (a
+  warning Den shows) too.
+- `card.answer` takes `verb` `allow`, `deny` or `always`, one of the card's
+  `verbs`, with the hash and nonce of a `card.get`. Den answers it as your
+  `Ctrl+Y` would, and replies once it is settled. Refusals:
+  - `not_found`: no such card, or it was answered;
+  - `nonce_expired`: spent, too old, or from another connection;
+  - `card_changed`: the card is not what you read: get it again;
+  - `refused_from_dock`: `dock_answers` is false or the verb is not the
+    card's;
+  - `read_it_first`: a card of more than ten lines, answered within 300 ms
+    of its first `card.get`;
+  - `unavailable`: Den has the card open (it waits for you there), it was
+    answered only in part (Den shows the rest), or more than 20 answers in
+    a minute.
+- Five answers in a row less than a second apart unpair the console.
+- Never from the dock: a console or app pairing, turning the API on,
+  orchestrator guidance, installing on a host, a message to an agent on a
+  host, an app's grant, skills, an agent's question, and any card of or
+  about a remote host.
+
+### Commands
+
+- `cmd.list` is a bare array of `{name, usage, help, dock}`, one row per
+  command in the order Den's help lists them. `name` is the command with
+  its `/`, lower-case letters only (`/fleet`, `/orchestrator`); aliases
+  are not rows, but `cmd.run` takes them. `usage` and `help` are one line
+  of plain text of at most 120 characters. `dock` is `ok` (runs), `card`
+  (runs, and asks you on a card in Den), `needs_den_screen` (it acts on
+  Den's own screen) or `refused`, for the command as it may run with some
+  arguments: `/fleet project` runs, a bare `/fleet` needs Den's screen.
+  Den judges each line.
+- `cmd.complete {prefix}` is the same rows, a bare array, of the commands
+  whose name starts with `prefix` (with its `/`; any case), refused ones
+  left out, at most 64, at most ten calls a second per connection. Use it
+  only to fill the input.
+- `cmd.run {text}`: one command, at most 512 bytes, 30 a minute. Den takes
+  it after Unicode NFKC: no control or format characters, no line or
+  paragraph separators, no `;`, `&&`, `||`, `` ` `` or `$(`, no second
+  command word. It maps it onto one of its own commands, by name or alias
+  in any case, and runs it as typed in Den, with a note in Den's chat
+  naming the console; anything else is `refused_from_dock` with why. A
+  command's own error comes back `unavailable` with Den's words. `note`,
+  and the message of a refusal, is what Den said: one line of plain text
+  (not markdown), at most 200 characters, "" when Den said nothing. A card
+  the command raises comes as a `card` event; `note` may mention it, but
+  only the event says so for sure.
+- From the dock, `/usage set` and `/usage clear` put the figure on a card
+  ("A lower figure can hold off your usage stop."), and no command proposes
+  a mission or runs a template: those wait for Den.
+
+### Console limits
+
+- A console answers for you: a card it may answer is as answered as by
+  your `Ctrl+Y`, and a console can send `/usage set` and answer that card,
+  so it can lower the usage figure your usage stop is measured against.
+  Pair only a program you trust with that.
+- Any program running as you can read Den's screen, and so the code; the
+  `Ctrl+Y` card is there so that a code read off the screen cannot pair in
+  silence. Read the card's program and pid before you pair.
+- Any program running as you can also write Den's console record; a
+  restored console is announced in Den and to the console, so check that
+  it is yours.
