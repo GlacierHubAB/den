@@ -141,6 +141,10 @@ func (m *Model) startMission() tea.Cmd {
 	if ms == nil || ms.Mission == "" {
 		return nil
 	}
+	if why := m.usageStopped(); why != "" {
+		m.flash, m.flashErr = why, true
+		return nil
+	}
 	ms.State = mission.Running
 	ms.Updated = time.Now()
 	m.ov.proposal = ""
@@ -161,6 +165,12 @@ func (m *Model) dropMission() {
 
 // runMission opens a run and asks the orchestrator to dispatch it.
 func (m *Model) runMission(ms *mission.Mission, verb string) tea.Cmd {
+	// A usage stop holds every run, a scheduled one included: it fires
+	// once the human lets the fleet go on.
+	if why := m.usageStopped(); why != "" {
+		m.flash, m.flashErr = why, true
+		return nil
+	}
 	if len(ms.Runs) >= maxRuns {
 		ms.State, ms.Updated = mission.Failed, time.Now()
 		m.missions.Save(ms)

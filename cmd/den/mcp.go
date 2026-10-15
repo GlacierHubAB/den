@@ -12,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/mcp"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/spawn"
+	"github.com/GlacierHubAB/den/internal/usage"
 )
 
 // runMCP is `den mcp`: the MCP server the orchestrator gets through
@@ -46,6 +47,9 @@ func runMCP() {
 				"required": []string{"dir", "brief"},
 			},
 			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+				if err := usageStop(); err != nil {
+					return "", err
+				}
 				in, ok := orch.ParseSpawn(args)
 				if !ok {
 					return "", errDir
@@ -125,6 +129,9 @@ func runMCP() {
 				"required":   []string{"dir"},
 			},
 			Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+				if err := usageStop(); err != nil {
+					return "", err
+				}
 				in, ok := orch.ParseSpawn(args)
 				if !ok {
 					return "", errDir
@@ -194,6 +201,26 @@ func missionTool() mcp.Tool {
 		},
 	}
 }
+
+// usageStop refuses to start anything while Den has the fleet stopped for
+// usage; the human lets it go on in Den. It asks the running Den, and reads
+// Den's usage.json only when no Den answers.
+func usageStop() error {
+	stopped, why := false, ""
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.UsageEvent}
+	if d, err := askUsage(bridge.SocketPath(), env, 3*time.Second); err == nil {
+		stopped, why = d.Behavior == "deny", d.Message
+	} else {
+		stopped, why = usage.Stopped()
+	}
+	if stopped {
+		return errorString("Den has stopped the fleet for usage (" + why + "): nothing new starts until the human lets it go on in Den (/usage resume)")
+	}
+	return nil
+}
+
+// askUsage reaches Den; tests replace it.
+var askUsage = bridge.Call
 
 var errDir = errorString("dir is required")
 

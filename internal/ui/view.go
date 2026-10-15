@@ -19,6 +19,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/transcript"
 	"github.com/GlacierHubAB/den/internal/tree"
+	"github.com/GlacierHubAB/den/internal/usage"
 )
 
 func (m Model) View() tea.View {
@@ -143,6 +144,16 @@ func (m Model) header(w int) []string {
 		if n := m.missions.Running(); n > 0 {
 			links = append(links, fmt.Sprintf("%d missions running", n))
 		}
+	}
+	switch label := usage.Label(m.use.reading, m.use.ok, m.use.st, time.Now()); {
+	case !usage.Shown(m.use.ok, m.use.st):
+		// Never a reading, a figure or a stop: nothing to say.
+	case m.use.st.Stopped:
+		links = append(links, s.err.Render(label))
+	case m.use.ok && m.use.reading.Percent >= 80:
+		links = append(links, s.attn.Render(label))
+	default:
+		links = append(links, label) // "usage unknown" once a reading has gone stale
 	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
@@ -631,6 +642,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
 	case it.Answerable() && it.Kind == inbox.Guidance:
 		out = append(out, key("^Y", "load it")+"  "+key("^N", "leave it off"))
+	case it.Answerable() && it.Kind == inbox.UsageResume:
+		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -736,6 +749,8 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
+	case it.Kind == inbox.Usage && it.State != inbox.Resolved:
+		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {
 		case strings.HasPrefix(it.Resolved, "failed"):
@@ -865,6 +880,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Guidance {
 			acts = key("^Y", "load it") + sp + sp + key("^N", "leave it off")
+		}
+		if it.Kind == inbox.UsageResume {
+			acts = key("^Y", "let the fleet go on") + sp + sp + key("^N", "stay stopped")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
