@@ -85,7 +85,7 @@ func (m Model) standingLines(app string, r api.Rule, why string) []string {
 	}
 	// The human knows the agent by its critter name: that first, the peer
 	// name (the rule's key) beside it once, then the short name.
-	full, short := m.peerWithCritter(r.Peer), r.Peer
+	full, short := m.peerWithCritter(r.Peer), sanitize.Label(r.Peer, 60)
 	if c := m.critterOf(r.Peer); c != "" {
 		short = c
 	}

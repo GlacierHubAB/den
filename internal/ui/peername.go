@@ -30,12 +30,14 @@ func (m Model) critterOf(peer string) string {
 
 // peerWithCritter shows a peer name the way the human reads it: the critter
 // name first and the peer name after it in parentheses, or the peer name
-// alone for one that is not exactly one live agent here.
+// alone for one that is not exactly one live agent here. The peer name is
+// text an agent chose, so it is cleaned either way.
 func (m Model) peerWithCritter(peer string) string {
+	p := sanitize.Label(peer, 60)
 	if c := m.critterOf(peer); c != "" {
-		return c + " (" + peer + ")"
+		return c + " (" + p + ")"
 	}
-	return peer
+	return p
 }
 
 // sendTargetLine is the line a send_message card adds above the tool's

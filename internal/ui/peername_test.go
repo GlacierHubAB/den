@@ -44,6 +44,14 @@ func TestPeerWithCritter(t *testing.T) {
 			t.Errorf("%q shown as %q, want %q", peer, got, want)
 		}
 	}
+	// A peer name is text an agent chose: no control byte gets through, for
+	// a known agent or not.
+	m.base[0].Session.Name = "den-\x1b[2Jci"
+	for _, peer := range []string{"den-\x1b[2Jci", "other-\x1b]0;x\x07name"} {
+		if got := m.peerWithCritter(peer); strings.ContainsAny(got, "\x1b\x07") {
+			t.Errorf("%q shown as %q, with a control byte", peer, got)
+		}
+	}
 }
 
 // /always's card names the agent by critter first, once with the peer name
