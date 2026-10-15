@@ -885,8 +885,10 @@ keybinds or clipboard. Its terminal shows what it says and does; `Ctrl+C`
 there stops it.
 
 **While it runs.** Den reads each call before hypruse gets it. Reading its
-own windows, and clicking and typing in them, goes ahead; anything outside
-the mission is refused; in an app marked outward, every click and keystroke
+own windows, and clicking and typing in them, goes ahead, unless a
+notification or other overlay covers the point, or the keys are one of your
+Hyprland shortcuts (both are refused); anything outside the mission is
+refused; in an app marked outward, every click and keystroke
 asks you on a card, as do Send-like controls anywhere and the agent's own
 `request_approval`. A card shows the reason, the window, the input and a
 screenshot of the window, and is answered only in Den's own window, once.
@@ -921,8 +923,9 @@ The journal, crops and log are deleted ten minutes after the mission ends;
 - hypruse focuses the window and then types, about 50 ms apart, with no check
   in between.
 - A zoom can show a notification drawn over the window.
-- New windows (the apps, the agent's terminal) can take the keyboard for a
-  moment when they open; Den gives the focus back to your window.
+- The apps you allowed can take the keyboard for a moment when they open;
+  Den gives the focus back to your window. (The agent's own terminal opens
+  without taking it.)
 - Strict mode (refusing when you move the mouse) has not been tried against a
   real takeover; treat stopping as the way to take control back.
 - A desktop agent is never restored or reopened by Den. If you resume one by
