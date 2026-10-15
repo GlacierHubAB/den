@@ -272,9 +272,13 @@ func (m *Model) publishAPI() {
 		Roster:    m.laneRoster(),
 		Guidance:  m.guide.active,
 	}
+	snap.Colors = map[string]string{}
 	for _, a := range m.agents {
 		snap.Agents = append(snap.Agents, a)
 		snap.Names[a.Session.SessionID] = a.Name
+		if a.Host == "" {
+			snap.Colors[a.Session.SessionID] = m.colorFor(a.Session.SessionID)
+		}
 	}
 	snap.AgentProcs = m.agentProcs()
 	for _, h := range m.remote.hosts {

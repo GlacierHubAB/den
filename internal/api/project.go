@@ -35,6 +35,8 @@ type Snapshot struct {
 	AgentProcs []AgentProc
 	// Guidance is the approved orchestrator guidance, "" for none.
 	Guidance string
+	// Colors are the colours Den draws agents in, by session id.
+	Colors map[string]string
 }
 
 // View is what the server serves until the next one.
@@ -64,6 +66,19 @@ const labelMax = 80
 
 // summaryMax caps a mission run's summary.
 const summaryMax = 200
+
+// hexColor is c as "#rrggbb" in lower case, "" unless it is one.
+func hexColor(c string) string {
+	if len(c) != 7 || c[0] != '#' {
+		return ""
+	}
+	for _, r := range c[1:] {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return ""
+		}
+	}
+	return strings.ToLower(c)
+}
 
 // Project builds the View. It reads only the fields it names.
 func Project(s Snapshot) *View {
@@ -113,6 +128,9 @@ func Project(s Snapshot) *View {
 			CostUSD:  a.Cost.USD,
 			Host:     sanitize.Label(a.Host, labelMax),
 			Remote:   a.Host != "",
+		}
+		if a.Host == "" {
+			ag.Color = hexColor(s.Colors[a.Session.SessionID])
 		}
 		switch a.Status {
 		case fleet.Working:
