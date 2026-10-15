@@ -17,9 +17,9 @@ func TestAgentInboundHook(t *testing.T) {
 	old := askAgentInbound
 	t.Cleanup(func() { askAgentInbound = old })
 	run := func(prompt string, selfTest bool, answer bridge.Decision, err error) (int, string) {
-		askAgentInbound = func(sock, sid, sha string, wait time.Duration) (bridge.Decision, error) {
-			if sid != "s-otter" || len(sha) != 64 {
-				t.Errorf("asked for %q %q", sid, sha)
+		askAgentInbound = func(sock, sid, sha, from string, wait time.Duration) (bridge.Decision, error) {
+			if sid != "s-otter" || len(sha) != 64 || sock != "/den.sock" {
+				t.Errorf("asked %q for %q %q", sock, sid, sha)
 			}
 			return answer, err
 		}
@@ -48,6 +48,26 @@ func TestAgentInboundHook(t *testing.T) {
 		if code, out := run(env, c.self, c.d, c.err); code != 0 || !strings.Contains(out, `"decision":"block"`) {
 			t.Errorf("%s: %d %q", c.name, code, out)
 		}
+	}
+}
+
+// The hook asks only the absolute --socket Den named, whatever the
+// environment says; without one, an envelope is blocked.
+func TestAgentInboundSocketIsTheArgument(t *testing.T) {
+	t.Setenv("DEN_SOCKET", "/tmp/elsewhere.sock")
+	if self, sock := agentInboundArgs([]string{"--socket", "/run/user/1000/den.sock"}); self || sock != "/run/user/1000/den.sock" {
+		t.Errorf("--socket: %v %q", self, sock)
+	}
+	for _, args := range [][]string{nil, {"--socket"}, {"--socket", "den.sock"}} {
+		if _, sock := agentInboundArgs(args); sock != "" {
+			t.Errorf("%q gave %q", args, sock)
+		}
+	}
+	env := "<cross-session-message from=\"uds:/run/user/1000/cc-socks/1.sock\" from-name=\"lead\" from-mode=\"prompting\">\nhi\n</cross-session-message>"
+	in := `{"hook_event_name":"UserPromptSubmit","session_id":"s-otter","prompt":` + quote(env) + `}`
+	var out, errOut bytes.Buffer
+	if code := agentInbound(strings.NewReader(in), &out, &errOut, false, "", time.Now().Add(5*time.Second)); code != 0 || !strings.Contains(out.String(), "block") {
+		t.Errorf("no socket: %d %q", code, out.String())
 	}
 }
 

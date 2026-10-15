@@ -16,6 +16,8 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/peer"
+	"github.com/GlacierHubAB/den/internal/peermsg"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Den mediates every message to an agent that runs without asking (God
@@ -46,9 +48,13 @@ type agentGuard struct {
 
 // mediationUI is the mediation's part of the model.
 type mediationUI struct {
-	sent   map[string]map[string]time.Time // session id → envelope hash → when Den delivered it
-	guards map[string]*agentGuard          // session id → its guard
+	sent    map[string]map[string]time.Time // session id → envelope hash → when Den delivered it
+	guards  map[string]*agentGuard          // session id → its guard
+	blocked map[string]time.Time            // session id → when Den last raised a blocked-message notice
 }
+
+// blockedNoteEvery coalesces blocked-message notices, per session.
+const blockedNoteEvery = 10 * time.Minute
 
 // sendAs is peer.SendAs; tests replace it.
 var sendAs = peer.SendAs
@@ -122,6 +128,21 @@ func (m *Model) guardAgent(sessionID, den, sock string) (string, error) {
 	return path, nil
 }
 
+// pruneDeliveries forgets deliveries older than deliveredFor: a prompt
+// that never came (its session ended) must not stay.
+func (m *Model) pruneDeliveries() {
+	for sid, hs := range m.med.sent {
+		for h, at := range hs {
+			if time.Since(at) > deliveredFor {
+				delete(hs, h)
+			}
+		}
+		if len(hs) == 0 {
+			delete(m.med.sent, sid)
+		}
+	}
+}
+
 // checkGuards hashes every guarded agent's --settings file and den binary
 // again; a change marks it unguarded, loudly, once.
 func (m *Model) checkGuards() {
@@ -169,8 +190,9 @@ func (m *Model) deliverTo(sessionID, sock, from, fromName, body string) (send fu
 	if m.med.sent[sessionID] == nil {
 		m.med.sent[sessionID] = map[string]time.Time{}
 	}
-	hash := sha256.Sum256([]byte(peer.Envelope(from, fromName, body)))
-	m.med.sent[sessionID][hex.EncodeToString(hash[:])] = time.Now()
+	// The hook hashes the prompt Claude Code hands it, which is the
+	// content SendAs writes, byte for byte: the same function both ways.
+	m.med.sent[sessionID][peermsg.Hash(peer.Envelope(from, fromName, body))] = time.Now()
 	return func() error { return sendAs(sock, from, fromName, body) }, nil
 }
 
@@ -184,6 +206,7 @@ func (m *Model) handleAgentInbound(r *bridge.Request) tea.Cmd {
 	}
 	var in struct {
 		SHA256 string `json:"sha256"`
+		From   string `json:"from"` // as the envelope claims it, for the notice
 	}
 	if json.Unmarshal(r.Envelope.Payload, &in) != nil || len(in.SHA256) != 64 {
 		return deny("den: unreadable request")
@@ -203,7 +226,23 @@ func (m *Model) handleAgentInbound(r *bridge.Request) tea.Cmd {
 		delete(m.med.sent[r.SessionID], in.SHA256)
 	}
 	if !ok || time.Since(at) > deliveredFor {
-		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den blocked a message to " + a.Name + " that Den did not deliver.", at: time.Now()}))
+		// Evidence of a try at an agent that acts without asking: a red
+		// notice, once per agent per blockedNoteEvery.
+		if m.med.blocked == nil {
+			m.med.blocked = map[string]time.Time{}
+		}
+		if time.Since(m.med.blocked[r.SessionID]) >= blockedNoteEvery {
+			m.med.blocked[r.SessionID] = time.Now()
+			from := sanitize.Label(in.From, 120)
+			if from == "" {
+				from = "(none)"
+			}
+			m.store.AddGuardNote(r.SessionID, "Den blocked a message to "+a.Name+" that Den did not deliver", []string{
+				"It claimed to be from " + from + ", as the message says; it is not checked.",
+				a.Name + " acts without asking, so Den lets only its own deliveries reach it.",
+			})
+			m.refresh()
+		}
 		return deny("Den did not deliver this message; it was blocked")
 	}
 	r.Reply(bridge.Decision{Behavior: "allow"})

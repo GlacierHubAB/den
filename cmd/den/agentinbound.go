@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -23,16 +24,32 @@ import (
 // runs it at launch on a made-up one and starts the agent only when it is
 // blocked.
 func runAgentInbound(args []string) {
-	selfTest := false
-	for _, a := range args {
-		selfTest = selfTest || a == "--self-test"
+	selfTest, sock := agentInboundArgs(args)
+	os.Exit(agentInbound(os.Stdin, os.Stdout, os.Stderr, selfTest, sock, time.Now().Add(inboundDeadline)))
+}
+
+// agentInboundArgs reads the hook's arguments: --self-test, and --socket,
+// the den.sock Den named in the settings file. Only that path is asked,
+// whatever the agent's environment says; "" when it is missing or not
+// absolute, and then an envelope is blocked.
+func agentInboundArgs(args []string) (selfTest bool, sock string) {
+	for i, a := range args {
+		switch {
+		case a == "--self-test":
+			selfTest = true
+		case a == "--socket" && i+1 < len(args):
+			sock = args[i+1]
+		}
 	}
-	os.Exit(agentInbound(os.Stdin, os.Stdout, os.Stderr, selfTest, bridge.SocketPath(), time.Now().Add(inboundDeadline)))
+	if !filepath.IsAbs(sock) {
+		sock = ""
+	}
+	return selfTest, sock
 }
 
 // askAgentInbound reaches Den; tests replace it.
-var askAgentInbound = func(sock, sessionID, sha string, wait time.Duration) (bridge.Decision, error) {
-	payload, err := json.Marshal(map[string]string{"sha256": sha})
+var askAgentInbound = func(sock, sessionID, sha, from string, wait time.Duration) (bridge.Decision, error) {
+	payload, err := json.Marshal(map[string]string{"sha256": sha, "from": from})
 	if err != nil {
 		return bridge.Decision{}, err
 	}
@@ -80,10 +97,16 @@ func agentInbound(stdin io.Reader, stdout, stderr io.Writer, selfTest bool, sock
 		return block("Den's self-test: peer messages Den did not deliver are blocked")
 	case in.SessionID == "":
 		return block("Den blocked a peer message: no session to check it for")
+	case sock == "":
+		return block("Den blocked a peer message: its hook has no den.sock to ask")
 	case wait <= 0:
 		return block("Den did not answer in time; the peer message was not delivered")
 	}
-	d, err := askAgentInbound(sock, in.SessionID, peermsg.Hash(in.Prompt), wait)
+	from := ""
+	if e, err := peermsg.Parse(in.Prompt); err == nil {
+		from = e.From
+	}
+	d, err := askAgentInbound(sock, in.SessionID, peermsg.Hash(in.Prompt), from, wait)
 	if err != nil || d.Behavior != "allow" {
 		return block("Den did not deliver this peer message, so it was blocked")
 	}

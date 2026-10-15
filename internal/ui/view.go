@@ -952,7 +952,7 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
-	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote) && it.State != inbox.Resolved:
+	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote || it.Kind == inbox.GuardNote) && it.State != inbox.Resolved:
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {
