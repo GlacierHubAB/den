@@ -195,6 +195,15 @@ func (m Model) header(w int) []string {
 	if w < 72 {
 		brand := s.brand.Render("den") + "  "
 		right := clock
+		if code != "" {
+			// A live code takes the line, whole or as the note, ahead of
+			// the fleet and the flash: the human always sees one is live.
+			text := code
+			if ansi.StringWidth(code) > headerRoom(brand, right, w) {
+				text = codeHidden
+			}
+			return []string{headerRow(brand, s.attn.Render(text), right, w), ansi.Truncate(m.tabs(w), w, "…")}
+		}
 		if flash != "" {
 			right = ansi.Truncate(flash, max(1, w-ansi.StringWidth(brand)-ansi.StringWidth(clock)-3), "…") + "  " + clock
 		}

@@ -79,6 +79,17 @@ func TestHeaderPairingCodeNeverCut(t *testing.T) {
 	}
 	m.srvErr = errors.New("a long error from the bridge, to crowd the line")
 	words := strings.Join(m.ctl.code, " ")
+	// The narrow header has one line: the code or the note is on it.
+	for w := 40; w < 72; w++ {
+		line := ansi.Strip(m.header(w)[0])
+		// The note may be cut at the narrowest widths; the code never is.
+		if !strings.Contains(line, words) && !strings.Contains(line, "Pairing code live") {
+			t.Errorf("w=%d: a live code is not shown in %q", w, line)
+		}
+		if lipgloss.Width(m.header(w)[0]) > w {
+			t.Errorf("w=%d: the line is wider than the window", w)
+		}
+	}
 	for w := 72; w <= 200; w++ {
 		line := ansi.Strip(m.header(w)[3])
 		if strings.Contains(line, words) {
