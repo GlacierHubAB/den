@@ -1,0 +1,199 @@
+package ui
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	tea "charm.land/bubbletea/v2"
+
+	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/desktop"
+	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/sanitize"
+)
+
+// Stopping desktop control. Every way in ends in stopDesktop: /desktop
+// stop in Den, `den desktop stop` over den.sock (for a Hyprland bind the
+// human adds), desktop.stop from the console. None is ever refused for
+// who asks: it only lowers.
+
+// Seams for tests.
+var (
+	deskStopFn = desktop.Stop
+	deskBeacon = desktop.BeaconPath
+	deskNotify = notify.Post
+)
+
+// deskTickMsg drives the desktop chip and notices an agent that ended.
+type deskTickMsg struct{}
+
+func deskTick() tea.Cmd {
+	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg { return deskTickMsg{} })
+}
+
+// deskLive is the live mission, nil when none.
+func (m Model) deskLive() *deskMission {
+	for _, dm := range m.desk.missions {
+		if dm.Ended == "" {
+			return dm
+		}
+	}
+	return nil
+}
+
+// targets are a mission's processes as Den recorded them.
+func (dm *deskMission) targets() desktop.Targets {
+	return desktop.Targets{
+		Child: desktop.Proc{PID: dm.ChildPID, Start: dm.ChildStart, Exe: dm.ChildExe},
+		Proxy: desktop.Proc{PID: dm.ProxyPID, Start: dm.ProxyStart, Exe: dm.ProxyExe},
+		Agent: desktop.Proc{PID: dm.AgentPID, Start: dm.AgentStart, Exe: dm.AgentExe},
+	}
+}
+
+// deskState is what `den desktop stop` reads when no Den is running: the
+// mission's processes and the windows Den launched.
+type deskStateFile struct {
+	Mission string          `json:"mission"`
+	Targets desktop.Targets `json:"targets"`
+	Windows []string        `json:"windows"`
+	Ended   bool            `json:"ended"`
+}
+
+// saveDeskState writes the mission's state file (0600, in its 0700 dir).
+func (dm *deskMission) save() {
+	if dm.Dir == "" {
+		return
+	}
+	st := deskStateFile{Mission: dm.ID, Targets: dm.targets(), Ended: dm.Ended != ""}
+	for a := range dm.Windows {
+		st.Windows = append(st.Windows, a)
+	}
+	data, _ := json.Marshal(st)
+	tmp := filepath.Join(dm.Dir, "mission.json.tmp")
+	if os.WriteFile(tmp, data, 0o600) == nil {
+		os.Rename(tmp, filepath.Join(dm.Dir, "mission.json"))
+	}
+}
+
+// stopDesktop ends every live mission now: hypruse and the agent stopped
+// by pidfd, the mission's windows closed. It returns what it did.
+func (m *Model) stopDesktop(why string) string {
+	var lines []string
+	stopped := false
+	for _, dm := range m.desk.missions {
+		if dm.Ended != "" {
+			continue
+		}
+		stopped = true
+		r := deskStopFn(dm.targets(), deskBeacon())
+		m.endDeskMission(dm, why)
+		m.restoreDeskMission(dm)
+		dm.save()
+		lines = append(lines, r.Line())
+		deskNotify(notify.Note{Summary: "Desktop control stopped", Body: why})
+	}
+	if !stopped {
+		// Nothing of Den's: still say who holds the desktop, if anyone.
+		r := deskStopFn(desktop.Targets{}, deskBeacon())
+		lines = append(lines, r.Line())
+	}
+	m.refresh()
+	return strings.Join(lines, "\n")
+}
+
+// desktopCommand is /desktop: stop, or how it stands.
+func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
+	if len(args) > 0 && strings.EqualFold(args[0], "stop") {
+		out := m.stopDesktop("you stopped it with /desktop stop")
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop: " + out, at: time.Now()}))
+		return m.say("Desktop stop: "+sanitize.Label(out, 200), strings.Contains(out, "did not start"))
+	}
+	dm := m.deskLive()
+	if dm == nil {
+		return m.say("No desktop mission is running. /desktop stop stops one at once.", false)
+	}
+	return m.say("Desktop mission on workspace "+strconv.Itoa(dm.Workspace)+" by "+sanitize.Label(dm.AgentName, 40)+": /desktop stop ends it at once.", false)
+}
+
+// handleDesktopStop is `den desktop stop` over den.sock: never refused.
+func (m *Model) handleDesktopStop(r *bridge.Request) tea.Cmd {
+	out := m.stopDesktop("den desktop stop")
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop: " + out, at: time.Now()}))
+	r.Reply(bridge.Decision{Behavior: "allow", Message: out})
+	return nil
+}
+
+// deskOnTick follows the live mission: the beacon for the chip, and the
+// agent's process, whose end ends the mission.
+func (m *Model) deskOnTick() tea.Cmd {
+	dm := m.deskLive()
+	if dm == nil {
+		m.desk.chip = ""
+		return nil
+	}
+	if dm.AgentPID > 1 && deskStart(dm.AgentPID) != dm.AgentStart {
+		m.finishDeskMission(dm, "the agent's session ended")
+		return nil
+	}
+	b, active := desktop.ReadBeacon(deskBeacon())
+	switch {
+	case active && b.PID == dm.ChildPID && b.Acting(time.Now()):
+		m.desk.chip = "DESKTOP · acting · /desktop stop"
+	default:
+		m.desk.chip = "DESKTOP · on · /desktop stop"
+	}
+	return deskTick()
+}
+
+// deskAgentStopped takes a desktop agent's Stop hook: its turn ended with
+// its report, so the mission is done. Den passes the report on, fenced,
+// and ends the mission; the apps' windows stay for the human.
+func (m *Model) deskAgentStopped(r *bridge.Request) tea.Cmd {
+	for _, dm := range m.desk.missions {
+		if dm.Ended != "" || dm.SessionID == "" || dm.SessionID != r.SessionID {
+			continue
+		}
+		if dm.Paused {
+			return nil // waiting on the human's step
+		}
+		dm.report = r.Input.LastAssistant
+		return m.finishDeskMission(dm, "the agent finished")
+	}
+	return nil
+}
+
+// finishDeskMission ends a mission that ran its course: hypruse and the
+// agent stopped, the report passed to the orchestrator inside Den's
+// agent_report fence, never as plain text.
+func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
+	r := deskStopFn(dm.targets(), deskBeacon())
+	m.endDeskMission(dm, why)
+	dm.save()
+	deskNotify(notify.Note{Summary: "Desktop control ended", Body: why})
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop mission ended: " + why + "; " + r.Line(), at: time.Now()}))
+	m.refresh()
+	if m.orch.proc == nil {
+		return nil
+	}
+	body := "Desktop mission for " + dm.AskedBy + " ended: " + why + "."
+	if strings.TrimSpace(dm.report) != "" {
+		body += "\nThe agent's report, in its words:\n" + dm.report
+	}
+	name := dm.AgentName
+	if name == "" {
+		name = "desktop agent"
+	}
+	return m.sendReport(fleet.Agent{Name: name}, body)
+}
+
+// startDeskWatch begins the tick and says desktop control is on.
+func (m *Model) startDeskWatch(dm *deskMission) tea.Cmd {
+	deskNotify(notify.Note{Summary: "Desktop control on", Body: "A Den agent may drive workspace " + strconv.Itoa(dm.Workspace) + ". /desktop stop or den desktop stop ends it."})
+	m.desk.chip = "DESKTOP · on · /desktop stop"
+	return deskTick()
+}
