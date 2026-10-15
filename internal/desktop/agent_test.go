@@ -75,6 +75,15 @@ func TestAgentArgv(t *testing.T) {
 		} `json:"mcpServers"`
 	}
 	json.Unmarshal([]byte(flag("--mcp-config")), &mcp)
+	var load struct {
+		Servers map[string]struct {
+			AlwaysLoad bool `json:"alwaysLoad"`
+		} `json:"mcpServers"`
+	}
+	json.Unmarshal([]byte(flag("--mcp-config")), &load)
+	if !load.Servers["hypruse"].AlwaysLoad {
+		t.Fatal("the proxy must be alwaysLoad, or the first turn may run without its tools")
+	}
 	if len(mcp.Servers) != 1 || mcp.Servers["hypruse"].Command != "/usr/bin/den" || strings.Join(mcp.Servers["hypruse"].Args, " ") != "desktop-mcp --mission m1 --socket /run/user/1/den.sock" {
 		t.Fatalf("mcp config %+v", mcp)
 	}
@@ -114,6 +123,31 @@ func TestSettingsAndGuard(t *testing.T) {
 	json.Unmarshal(raw, &s)
 	if s.Disable == nil || *s.Disable || s.Inbound != "refuse" {
 		t.Fatalf("settings %s", raw)
+	}
+	var extra struct {
+		Env   map[string]string `json:"env"`
+		Perms struct {
+			Deny  []string `json:"deny"`
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+	}
+	json.Unmarshal(raw, &extra)
+	if extra.Env["ENABLE_TOOL_SEARCH"] != "false" || len(extra.Env) != 1 {
+		t.Fatalf("env %v", extra.Env)
+	}
+	if len(extra.Perms.Allow) != 0 {
+		t.Fatal("the settings must allow nothing: the allow-list is --allowedTools alone")
+	}
+	deny := strings.Join(extra.Perms.Deny, ",")
+	for _, want := range []string{"Bash", "Write", "Edit", "Read", "WebFetch", "SendMessage", "mcp__hypruse__launch", "mcp__hypruse__use_bind", "mcp__hypruse__sequence", "mcp__hypruse__clipboard"} {
+		if !strings.Contains(","+deny+",", ","+want+",") {
+			t.Errorf("%s is not denied: %s", want, deny)
+		}
+	}
+	for _, allowed := range AllowedToolNames() {
+		if strings.Contains(","+deny+",", ","+allowed+",") {
+			t.Errorf("an allowed tool is denied: %s", allowed)
+		}
 	}
 	if len(s.Hooks.Pre) != 1 || s.Hooks.Pre[0].Matcher != ".*" || s.Hooks.Pre[0].Hooks[0].Command != "'"+den+"' hook desktop-gate --socket '/run/user/1/den.sock'" {
 		t.Fatalf("hook %s", raw)

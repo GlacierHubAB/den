@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"math/rand/v2"
@@ -126,5 +127,25 @@ func TestProxyGlideStopsOnRefusal(t *testing.T) {
 		if c["args"].(map[string]any)["action"] == "click" {
 			t.Fatal("clicked after a refused step")
 		}
+	}
+}
+
+// A cancelled call (Esc in Claude Code sends notifications/cancelled,
+// which cancels the call's context) stops the glide at once: no step, no
+// click.
+func TestGlideStopsOnCancel(t *testing.T) {
+	var px *Proxy
+	_, f, _ := rigProxy(t, policyGate(), func(p *Proxy) {
+		p.Cursor = func() (float64, float64, bool) { return 1000, 10, true }
+		px = p
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := px.glide(ctx, map[string]any{"action": "click", "x": 1800.0, "y": 500.0}, Rect{X: 960, W: 960, H: 540})
+	if err == nil || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("glide after cancel: %v", err)
+	}
+	if n := len(f.got()); n != 0 {
+		t.Fatalf("%d steps after the cancel", n)
 	}
 }

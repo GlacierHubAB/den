@@ -10,6 +10,9 @@ import (
 type StartInfo struct {
 	Argv []string `json:"argv"`
 	Env  []string `json:"env"` // HYPRUSE_* and ServerEnv; the proxy adds the session's display variables
+	// Log is where the proxy writes hypruse's stderr and its own errors:
+	// the mission's private folder, since Claude Code keeps neither.
+	Log string `json:"log,omitempty"`
 }
 
 // childPassthrough are the variables of the agent's environment hypruse

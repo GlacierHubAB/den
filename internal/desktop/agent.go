@@ -98,8 +98,11 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 	if !filepath.IsAbs(l.Den) || !filepath.IsAbs(l.Socket) || !filepath.IsAbs(l.Settings) {
 		return nil, errors.New("den, its socket and the settings file must be absolute paths")
 	}
+	// alwaysLoad: Claude Code connects MCP servers in the background and
+	// may send the first request before they are up; with it, startup
+	// waits for this server's tools (up to 5 s) and loads them upfront.
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
-		MCPServer: map[string]any{"command": l.Den, "args": []string{"desktop-mcp", "--mission", l.Mission, "--socket", l.Socket}},
+		MCPServer: map[string]any{"command": l.Den, "args": []string{"desktop-mcp", "--mission", l.Mission, "--socket", l.Socket}, "alwaysLoad": true},
 	}})
 	tools := strings.Join(AllowedToolNames(), ",")
 	argv := []string{
@@ -118,6 +121,14 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 		argv = append(argv, "--model", l.Model)
 	}
 	return append(argv, "--", l.Prompt), nil
+}
+
+// DeniedTools are the settings deny rules of a desktop agent: Claude Code's
+// own tools that act or reach outside, and hypruse's closed tools.
+func DeniedTools() []string {
+	out := []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
+		"Task", "Agent", "SendMessage", "ListAgents", "Skill", "SlashCommand", "KillShell", "BashOutput"}
+	return append(out, ClosedToolNames()...)
 }
 
 // shellQuote quotes s for a POSIX shell.
@@ -153,7 +164,14 @@ func SettingsJSON(den, socket string) ([]byte, error) {
 	return json.MarshalIndent(map[string]any{
 		"disableAllHooks":     false,
 		"crossSessionInbound": "refuse",
-		"hooks":               hooks,
+		// Tool search would defer MCP tools behind the built-in ToolSearch,
+		// which --tools leaves out: all of them load upfront instead.
+		"env": map[string]string{"ENABLE_TOOL_SEARCH": "false"},
+		// Deny rules hold even when a hook fails (a failed PreToolUse hook
+		// lets the tool run) and beat a hook's allow: every tool the agent
+		// must never have is denied here as well as left out of --tools.
+		"permissions": map[string]any{"deny": DeniedTools()},
+		"hooks":       hooks,
 	}, "", "  ")
 }
 
