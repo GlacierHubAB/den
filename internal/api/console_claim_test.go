@@ -1,8 +1,12 @@
 package api
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +76,40 @@ func TestClaimNotCleanPairsAsBefore(t *testing.T) {
 	rc, rid := reconnect(t, h, d.restarted(), "")
 	if l := rc.replyTo(rid); code(l) != CodeForbidden || l.Error.Message != "pair again: there is no pairing to reconnect to" {
 		t.Errorf("reconnect %+v", l.Error)
+	}
+}
+
+// A clean read is kept only with the human's ^Y: a claim denied in Den,
+// or one whose card is not answered in time, leaves no read in memory or
+// in the record.
+func TestClaimReadKeptOnlyWithTheYes(t *testing.T) {
+	defer func(d time.Duration) { pairConfirmLife = d }(pairConfirmLife)
+	pairConfirmLife = 300 * time.Millisecond
+	for _, answer := range []string{"denied", "unanswered"} {
+		store := filepath.Join(t.TempDir(), "consoles.json")
+		_, priv, _ := ed25519.GenerateKey(rand.Reader)
+		h := storeHarness(t, store, priv)
+		fakeUnit(t, testVerifier(), nil)
+		d := newDock(t, h)
+		c, id, ask := d.claimAsk(h.s.StartConsoleCode())
+		if !ask.Rejoins {
+			t.Fatalf("%s: card %+v", answer, ask)
+		}
+		if answer == "denied" {
+			h.s.ConsoleAnswered(ask.ID, false)
+		}
+		if l := c.replyTo(id); l.OK {
+			t.Fatalf("%s: paired", answer)
+		}
+		h.s.con.mu.Lock()
+		cur, pending := h.s.con.cur, h.s.con.pending
+		h.s.con.mu.Unlock()
+		if cur != nil || pending != nil {
+			t.Errorf("%s: console %v, waiting %v", answer, cur, pending)
+		}
+		if raw, err := os.ReadFile(store); err == nil && strings.Contains(string(raw), "verifier") {
+			t.Errorf("%s: the record keeps a read: %s", answer, raw)
+		}
 	}
 }
 
