@@ -184,7 +184,7 @@ func TestRegressSameSessionIDOnTwoHostsIsCalledOut(t *testing.T) {
 func TestRegressContextAndUsageFiguresAreBounded(t *testing.T) {
 	g := stubWith(t, "observe", `
 cat <<'EOF'
-{"type":"snapshot","remote_now":"2026-10-12T12:00:00.000Z","agents":[{"index":0,"session":"`+idA+`","status":"idle","name":"Huge","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":8888888888888,"context_window":1,"has_usage":true,"limits":{"filled":987654,"five_hour":-40,"seven_day":4321,"usd":1e12}},{"index":1,"session":"`+idB+`","status":"idle","name":"Fine","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":150000,"context_window":1000000,"has_usage":true,"limits":{"filled":15,"five_hour":40,"seven_day":10,"usd":12.5}}]}
+{"type":"snapshot","remote_now":"2026-10-12T12:00:00.000Z","agents":[{"index":0,"session":"`+idA+`","status":"idle","name":"Huge","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":8888888888888,"context_window":1,"has_usage":true,"limits":{"filled":9876543,"five_hour":-40,"seven_day":7340291,"usd":1e12}},{"index":1,"session":"`+idB+`","status":"idle","name":"Fine","status_age_ms":0,"started_age_ms":0,"last_active_ms":-1,"context_tokens":150000,"context_window":1000000,"has_usage":true,"limits":{"filled":15,"five_hour":40,"seven_day":10,"usd":12.5}}]}
 EOF
 `)
 	g.start()
@@ -210,10 +210,18 @@ EOF
 			}
 		}
 	}
-	// Nothing out of bounds is written down.
-	for _, bad := range []string{"8888888888888", "987654", "4321"} {
+	// Nothing out of bounds is written down: each figure looked for as the
+	// JSON value of its own key, so a timestamp or offset that happens to
+	// hold the same digits does not count.
+	// The plausible agent's figures are written in that same form.
+	for _, good := range []string{`"context_tokens":150000`, `"seven_day":10`, `"usd":12.5`} {
+		if len(g.l.Local.Grep(good)) == 0 {
+			t.Errorf("%s is not in local state: the search below would find nothing either", good)
+		}
+	}
+	for _, bad := range []string{`"context_tokens":8888888888888`, `"filled":9876543`, `"five_hour":-40`, `"seven_day":7340291`, `"usd":1e+12`} {
 		if hits := g.l.Local.Grep(bad); len(hits) > 0 {
-			t.Errorf("%q was written to local state: %v", bad, hits)
+			t.Errorf("%s was written to local state: %v", bad, hits)
 		}
 	}
 }
