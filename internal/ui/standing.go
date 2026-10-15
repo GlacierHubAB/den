@@ -27,8 +27,10 @@ import (
 
 // askingModes are the permission modes in which a session asks before it
 // acts, so Den sees what a message makes it do: only then is a standing
-// send_message to it offered or used.
-var askingModes = map[string]bool{"default": true, "plan": true}
+// send_message to it offered or used. Only default: plan runs Bash its
+// classifier approves without asking, as auto does, and acceptEdits
+// writes files without asking.
+var askingModes = map[string]bool{"default": true}
 
 // standingOffer is the allowance /always on a card for this request would
 // give, or why there is none.
