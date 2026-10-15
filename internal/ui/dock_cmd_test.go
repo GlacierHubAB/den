@@ -85,6 +85,28 @@ func TestDockLine(t *testing.T) {
 	}
 }
 
+// No command that settles a card by typing runs from the dock, in any raw
+// form: a card is answered only with card.answer, its hash and its nonce.
+func TestDockRefusesCardSettlingCommands(t *testing.T) {
+	forms := []string{"/allow", "/y", "/yes", "/deny", "/n", "/no", "/always", "/a", "/answer"}
+	for _, f := range forms {
+		for _, line := range []string{f, strings.ToUpper(f), " " + f + " ", "／" + f[1:], f + " Otter", f + " 1", "/answer yes"} {
+			if words, _, why := dockLine(line); why == "" {
+				t.Errorf("%q ran as %q", line, words)
+			}
+		}
+	}
+	listed := map[string]string{}
+	for _, c := range dockCommands() {
+		listed[c.Name] = c.Dock
+	}
+	for _, name := range []string{"/allow", "/deny", "/always", "/answer"} {
+		if listed[name] != api.DockRefused {
+			t.Errorf("%s listed as %q", name, listed[name])
+		}
+	}
+}
+
 // A judged word in upper case runs as the lower-case one, or is refused:
 // what runs is what the verdict checked.
 func TestDockLineCaseOfJudgedWords(t *testing.T) {
