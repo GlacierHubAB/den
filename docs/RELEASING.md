@@ -90,12 +90,15 @@ There is no CHANGELOG file; the releases page is the changelog.
 
    ```
    for i in 1 2 3; do
-     gh workflow run heavy.yml --repo GlacierHubAB/den --ref main -f ref=release/v0.4.0
+     gh workflow run heavy.yml --repo GlacierHubAB/den --ref release/v0.4.0 -f ref=release/v0.4.0
    done
    gh workflow run release.yml --repo GlacierHubAB/den --ref release/v0.4.0 -f version=v0.4.0
    ```
 
-   The three `heavy` runs and the `release` dry run (`ci`, `heavy` and
+   Dispatch with `--ref` the release branch, so the run uses that branch's own
+   workflow file (each run gets its own concurrency group); `--ref main` would
+   queue the three runs behind each other. The three `heavy` runs and the
+   `release` dry run (`ci`, `heavy` and
    `build` on that commit, with no `verify` and no `publish`) must all be
    green. Tag only then. A failure is fixed on `dev` and proven again; nothing
    is tagged on a red or unproven commit.
