@@ -79,7 +79,7 @@ func (m Model) standingLines(app string, r api.Rule, why string) []string {
 	return []string{
 		"/always: " + app + " may have the orchestrator message " + r.Peer + " in its turns without asking you: any message it writes.",
 		"That lets " + app + " give " + r.Peer + " any instruction: in effect " + app + " can make " + r.Peer + " do whatever " + r.Peer + " may do without asking you.",
-		r.Peer + " works in " + sanitize.Label(a.Session.CWD, 120) + ", permission mode " + sanitize.Label(m.modeOf(r.SessionID), 30) + " (as its own hooks last said); the allowance is for this session only, never another that takes its name.",
+		r.Peer + " works in " + sanitize.Label(a.Session.CWD, 120) + ", permission mode " + sanitize.Label(m.modeOf(r.SessionID), 30) + " (as the session reports it, through its own hooks); the allowance is for this session only, never another that takes its name.",
 	}
 }
 

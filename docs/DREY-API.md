@@ -366,6 +366,12 @@ The read-only `ask` lane is a separate process: an app turn never holds an
   the screen cannot pair in silence. On Hyprland, its `permission` rules
   for keyboard access and for screen capture (screencopy) can keep other
   programs from both.
+- A standing allowance to message an agent depends on the permission mode
+  that agent reports through its own hooks. Den takes a mode only from the
+  agent's own hook processes, so no other program can claim one for it,
+  but the agent itself could report a mode it is not in (by running Den's
+  hook from its own shell). The card shows the mode "as the session
+  reports it".
 - A pairing is bound to the program Den read for the app. An app run by an
   interpreter (`python3`, `node`) is that interpreter to Den, so the card
   also shows its command line: read it before you pair.
