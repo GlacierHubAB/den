@@ -424,7 +424,7 @@ Ed25519, and the console is bound to one process. Den's `hello` lists
   its eight words in lower case, joined by single spaces.
 - On one connection: `console.challenge {}` answers `{nonce, conn,
   claim_salt}`, each 64 lowercase hex digits but `conn` (32), at most one a
-  second. Then `console.claim {public_key, proof, pages_sha256?}`:
+  second on each connection. Then `console.claim {public_key, proof, pages_sha256?}`:
   - `public_key` is the app's Ed25519 public key, 64 hex digits, drawn for
     this pairing and kept in memory only;
   - `proof` is the hex HMAC-SHA256, under HKDF-SHA256(code, salt =
@@ -441,7 +441,8 @@ Ed25519, and the console is bound to one process. Den's `hello` lists
   den_public_key + "\n" + pairing`. Check it: it proves this Den saw the
   code, and pins Den's key.
 - A refused claim answers `forbidden`: `no code waiting`, `wrong code`,
-  `denied in Den`, `not confirmed in time` or `revoked: the code was used
+  `code spent` (the code was claimed already, right or wrong, and its two
+  minutes are not over), `denied in Den`, `not confirmed in time` or `revoked: the code was used
   by another program too`. `unavailable` comes with `Den is busy` or, for
   30 seconds after a `Ctrl+N`, `wait: a pairing was just declined`.
 - One console at a time: a new one replaces the old, which hears
@@ -459,9 +460,11 @@ Each connection proves once, at its start:
   lines joined by `\n`: `den-console-v1`, `app-to-den`, `conn`, `pairing`,
   the app's public key, Den's public key, *nd*, *na*, and the app's
   identity.
-- It answers `{paired: true, sig, god: {on: false}}`, `sig` Den's signature
+- It answers `{paired: true, sig, god: {on: false}, view: "agent"}`, `sig` Den's signature
   of the same lines with `den-to-app` and Den's identity as the last line.
-  Check it with the pinned `den_public_key`.
+  Check it with the pinned `den_public_key`. `god` and `view` are fixed in
+  this release: God mode is off and every session shows in its own window
+  (`agent`); a later Den adds `user` and an event for each change.
 - The identity is the process as Den reads it in this boot:
   `exe:<path as hex>:<boot_id>:<pid>:<start>`, or
   `unreadable:<boot_id>:<pid>:<start>` when the process is not dumpable;
@@ -479,7 +482,7 @@ Each connection proves once, at its start:
 |---|---|---|
 | `console.challenge` | | `{nonce, conn, claim_salt}` |
 | `console.claim` | `{public_key, proof, pages_sha256?}` | `{pairing, den_public_key, bind, console}`, once you `Ctrl+Y` in Den |
-| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god}` |
+| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view}` |
 | `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console` and `card` events as they come |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
@@ -504,7 +507,10 @@ all` does in a terminal.
 - `card {id, kind, agent, change, text_sha256?, result?, by?}`: `change` is
   `new`, `changed` or `settled`. A settled card has no `text_sha256`;
   `result` is `allowed`, `denied`, `always` or `gone` (it settled without
-  an answer), and `by` is `den` or `console`, absent for `gone`.
+  an answer), and `by` is `den` or `console`, absent for `gone`. `rule`
+  is reserved for a later Den that answers by a rule of its own. Take any
+  `by` you do not know as Den's own answer, never the console's or yours,
+  and never drop the event for it.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
   of cards waiting: one you knew that is not in it is gone. The `new`
   events that follow are those cards.

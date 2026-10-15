@@ -17,8 +17,8 @@ func provedConsole(t *testing.T) (*harness, *client) {
 	p := d.pair(h.s.StartConsoleCode())
 	c := h.dial()
 	c.hello()
-	if l, _, _, _ := d.auth(c, p); !l.OK {
-		t.Fatal(l.Error)
+	if l, _, _, _ := d.auth(c, p); !l.OK || !strings.Contains(string(l.Result), `"view":"agent"`) {
+		t.Fatalf("%+v %s", l.Error, l.Result)
 	}
 	c.call("console.events", nil)
 	c.next() // connected

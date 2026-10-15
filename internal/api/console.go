@@ -117,6 +117,7 @@ type consoleCode struct {
 type consoleState struct {
 	mu          sync.Mutex
 	code        *consoleCode
+	spent       time.Time   // a claimed code's end: claims until then hear "code spent"
 	cur         *consoleRec // the console, nil for none
 	pending     *consoleRec // a claim waiting for the human
 	cooldown    time.Time
@@ -418,11 +419,15 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 	}
 	code := st.code
 	if code == nil || now.After(code.until) {
+		why := ClaimNoCode
+		if now.Before(st.spent) {
+			why = ClaimSpent
+		}
 		st.mu.Unlock()
-		c.fail(req.ID, CodeForbidden, ClaimNoCode)
+		c.fail(req.ID, CodeForbidden, why)
 		return
 	}
-	st.code = nil // one attempt per code, right or wrong
+	st.code, st.spent = nil, code.until // one attempt per code, right or wrong
 	text := codeBytes(code.words)
 	code.words = nil
 	st.mu.Unlock()
@@ -638,7 +643,9 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 	}
 	den := ed25519.Sign(s.ckey.priv, consoleSigned(dirDenToApp, cid, rec.ID, appKey, s.ckey.pubHex, nd, p.Nonce, s.ckey.identity))
-	c.reply(req.ID, map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}})
+	// No God mode and no views yet: God mode is off, and every session
+	// shows in its own window (the agent view).
+	c.reply(req.ID, map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "view": "agent"})
 }
 
 // consoleEvents is console.events: this proved connection of the console

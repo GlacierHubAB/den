@@ -194,7 +194,7 @@ func TestConsoleWrongProofSpendsTheCode(t *testing.T) {
 	}
 	time.Sleep(challengeEvery)
 	ch = d.challenge(c)
-	if l := c.call("console.claim", map[string]string{"public_key": d.pub, "proof": proof(words, ch.ClaimSalt, d.pub)}); code(l) != CodeForbidden || l.Error.Message != ClaimNoCode {
+	if l := c.call("console.claim", map[string]string{"public_key": d.pub, "proof": proof(words, ch.ClaimSalt, d.pub)}); code(l) != CodeForbidden || l.Error.Message != ClaimSpent {
 		t.Errorf("the right code after a wrong one: %+v", l)
 	}
 	// A claim without a challenge first has no salt.
