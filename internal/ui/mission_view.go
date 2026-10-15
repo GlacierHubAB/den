@@ -149,11 +149,20 @@ func ownerWidth(labels []string, w, stateRoom int) int {
 // missionView is the open mission, and the line of its selected WHO
 // DOES WHAT row (-1 for none), for scrolling it into view.
 func (m Model) missionView(w int) ([]string, int) {
+	lines, sel, _ := m.missionLayout(w)
+	return lines, sel
+}
+
+// missionLayout is missionView with the line where each section starts:
+// marks[0] ends the fixed header (the blank row under the meta line is
+// part of it), and each later mark is a section's label or first line.
+func (m Model) missionLayout(w int) ([]string, int, []int) {
 	s := m.st
 	ms := m.missions.Get(m.ov.open)
 	if ms == nil {
-		return nil, -1
+		return nil, -1, nil
 	}
+	var marks []int
 	selLine := -1
 	body := ovBody(w)
 	now := time.Now()
@@ -187,7 +196,9 @@ func (m Model) missionView(w int) ([]string, int) {
 	for _, l := range m.costLines(ms, w) {
 		out = append(out, m.ovLine(strings.TrimLeft(l, " "), w))
 	}
-	out = append(out, "", m.ovLine(m.sectionLabel("GOAL"), w))
+	out = append(out, "")
+	marks = append(marks, len(out))
+	out = append(out, m.ovLine(m.sectionLabel("GOAL"), w))
 	for _, l := range strings.Split(ansi.Wrap(ms.Mission, body, ""), "\n") {
 		out = append(out, m.ovLine(s.fg.Render(l), w))
 	}
@@ -196,10 +207,14 @@ func (m Model) missionView(w int) ([]string, int) {
 	if claimed > 0 {
 		count += fmt.Sprintf(" · %d claimed", claimed)
 	}
-	out = append(out, "", m.ovLine(justify(m.sectionLabel("DONE WHEN"), s.dim.Render(count), body), w))
+	out = append(out, "")
+	marks = append(marks, len(out))
+	out = append(out, m.ovLine(justify(m.sectionLabel("DONE WHEN"), s.dim.Render(count), body), w))
 	out = append(out, m.criterionLines(ms, w)...)
 	rows := m.whoRows(ms)
-	out = append(out, "", m.ovLine(justify(m.sectionLabel("WHO DOES WHAT"), s.dim.Render(fmt.Sprintf("%d sub-goals", len(ms.Goals))), body), w))
+	out = append(out, "")
+	marks = append(marks, len(out))
+	out = append(out, m.ovLine(justify(m.sectionLabel("WHO DOES WHAT"), s.dim.Render(fmt.Sprintf("%d sub-goals", len(ms.Goals))), body), w))
 	if len(rows) == 0 {
 		out = append(out, m.ovLine(s.attn.Render("No sub-goals yet: ask the orchestrator who does what."), w))
 	}
@@ -249,13 +264,14 @@ func (m Model) missionView(w int) ([]string, int) {
 	}
 	if len(past) > 0 {
 		out = append(out, "")
+		marks = append(marks, len(out))
 		for _, p := range past {
 			out = append(out, m.ovLine(s.dim.Render(p), w))
 		}
 	}
 	out = append(out, "", m.ovLine(justify(s.key.Render("↑↓")+s.keyLabel.Render(" owner  ")+s.key.Render("Enter")+s.keyLabel.Render(" transcript  ")+s.dim.Render("/mission met c1 · /pause /resume /stop"), s.key.Render("Esc")+s.keyLabel.Render(" back"), body), w))
 	out = append(out, m.ovLine(s.dim.Render("type to tell the orchestrator: it tracks every mission"), w))
-	return out, selLine
+	return out, selLine, marks
 }
 
 // proposalView is a proposal waiting for ^Y, in the open mission's shape.
@@ -415,24 +431,27 @@ func (m Model) expandedProposal(ms *mission.Mission, head string, w int) []strin
 	s := m.st
 	fg, dim, _, _, _, _, _, marker := m.rowStyles(true)
 	body := ovBody(w)
+	// The body starts under the proposal's name, after its shape glyph, so
+	// it reads as that row's own and not as more rows.
+	in := fg.Render("  ")
 	var lines []string
 	lines = append(lines, head)
-	for i, l := range strings.Split(ansi.Wrap(ms.Mission, max(10, body-6), ""), "\n") {
+	for i, l := range strings.Split(ansi.Wrap(ms.Mission, max(10, body-8), ""), "\n") {
 		lead := "      "
 		if i == 0 {
 			lead = "GOAL  "
 		}
-		lines = append(lines, fg.Render(lead+l))
+		lines = append(lines, in+fg.Render(lead+l))
 	}
 	for _, c := range ms.Criteria {
-		lines = append(lines, fg.Render("☐ "+c.ID+" "+c.Text))
+		lines = append(lines, in+fg.Render("☐ "+c.ID+" "+c.Text))
 	}
 	owners := m.proposalOwners(ms)
-	ownerW := ownerWidth(owners, w, 0)
+	ownerW := ownerWidth(owners, w-2, 0)
 	for i, g := range ms.Goals {
-		lines = append(lines, fg.Render(m.goalCols(g.ID, g.Text, ansi.Strip(owners[i]), "", w, ownerW)))
+		lines = append(lines, in+fg.Render(m.goalCols(g.ID, g.Text, ansi.Strip(owners[i]), "", w-2, ownerW)))
 	}
-	lines = append(lines, justifyIn(dim.Render("or tell the orchestrator what to change"), s.key.Background(lipgloss.Color(s.pal.Sel)).Render("^Y")+fg.Render(" start · ")+s.key.Background(lipgloss.Color(s.pal.Sel)).Render("^N")+fg.Render(" drop"), body, fg))
+	lines = append(lines, in+justifyIn(dim.Render("or tell the orchestrator what to change"), s.key.Background(lipgloss.Color(s.pal.Sel)).Render("^Y")+fg.Render(" start · ")+s.key.Background(lipgloss.Color(s.pal.Sel)).Render("^N")+fg.Render(" drop"), body-2, fg))
 	out := make([]string, len(lines))
 	for i, l := range lines {
 		out[i] = m.ovSelLine(l, w, fg, marker)

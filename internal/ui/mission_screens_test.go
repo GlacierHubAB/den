@@ -143,6 +143,35 @@ func TestSelectedRowBandHasNoHole(t *testing.T) {
 	}
 }
 
+// The open mission scrolls to section starts, keeps its header and the
+// blank row under it, and never ends on a label alone.
+func TestMissionScrollsBySection(t *testing.T) {
+	lines := make([]string, 30)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("L%02d", i)
+	}
+	marks := []int{5, 10, 15, 25} // header ends at 5; sections at 5, 10, 15, 25
+	got := scrollMission(lines, 27, marks, 12)
+	if strings.Join(got, ",") != "L00,L01,L02,L03,L04,L25,L26,L27,L28,L29" {
+		t.Errorf("selected in the last section: %v", got)
+	}
+	if got := scrollMission(lines, 18, marks, 12); got[5] != "L15" || got[len(got)-1] != "L21" {
+		t.Errorf("selected in the third section: %v", got)
+	}
+	if got := scrollMission(lines, 6, marks, 12); got[5] != "L05" {
+		t.Errorf("no scroll needed: %v", got)
+	}
+	// A section taller than the room starts partway, with the selected row
+	// last, on the section's own text.
+	if got := scrollMission(lines, 24, []int{5, 10, 15}, 9); got[len(got)-1] != "L24" || got[5] != "L21" {
+		t.Errorf("a tall section: %v", got)
+	}
+	// A label that would end the view alone is left out.
+	if got := scrollMission(lines, 6, []int{3, 7}, 8); got[len(got)-1] != "" {
+		t.Errorf("an orphaned label: %v", got)
+	}
+}
+
 func TestMissionPanesKeepTheirMargins(t *testing.T) {
 	for _, w := range []int{48, 78, 118} {
 		m := missionModel()

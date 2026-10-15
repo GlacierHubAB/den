@@ -313,24 +313,48 @@ func (m Model) missionsPaneOwned(w, h int) (lines []string, owners []int) {
 		lines = m.transcriptView(w, h)
 	case m.ov.open != "":
 		var sel int
-		lines, sel = m.missionView(w)
-		if len(lines) > h {
-			// The header (a blank line, the name and state, the meta line)
-			// stays put; the rest scrolls only as far as it must to keep
-			// the selected WHO DOES WHAT row in view.
-			const head = 3
-			rest, room := lines[head:], max(1, h-head)
-			start := 0
-			if s := sel - head; s > room-2 {
-				start = s - (room - 2)
-			}
-			start = clamp(start, 0, max(0, len(rest)-room))
-			lines = append(append([]string(nil), lines[:head]...), rest[start:min(len(rest), start+room)]...)
+		var marks []int
+		lines, sel, marks = m.missionLayout(w)
+		if len(lines) > h && len(marks) > 0 {
+			lines = scrollMission(lines, sel, marks, h)
 		}
 	default:
 		lines = m.missionRows(w, h)
 	}
 	return lines, noOwners(len(lines))
+}
+
+// scrollMission fits an open mission into h lines. The header (down to
+// the blank row under the meta line) stays put. The rest scrolls only when
+// the selected row would leave the view, and then to a section's start, so
+// a section shows from its label; only a section taller than the room may
+// start partway, on its own text. A label never ends the view alone.
+func scrollMission(lines []string, sel int, marks []int, h int) []string {
+	head := marks[0]
+	room := h - head
+	if room < 2 {
+		return lines[:h]
+	}
+	start := head
+	if sel >= head+room {
+		start = sel - room + 1 // partway: the selected row last
+		for _, b := range marks {
+			if b <= sel && sel < b+room {
+				start = b // the earliest section start that keeps it in view
+				break
+			}
+		}
+	}
+	end := min(len(lines), start+room)
+	view := append(append([]string(nil), lines[:head]...), lines[start:end]...)
+	// A section's label (or the blank above one) on the last line, with
+	// nothing of its section under it, is left out.
+	for _, b := range marks[1:] {
+		if b == end-1 || b-1 == end-1 {
+			view[len(view)-1] = ""
+		}
+	}
+	return view
 }
 
 // noOwners is n lines that draw no chat entry.
