@@ -603,6 +603,11 @@ dock). After your `Ctrl+Y` on its card, the console may:
   and `clear` apply at once). The console can answer those cards too, so it
   can lower the usage figure your usage stop is measured against. Den's chat
   notes every command a console sent.
+- chat with the orchestrator, as an app's messages, never as yours. While
+  the console has its powers, the orchestrator lists agents and messages
+  them for it without a card, as it does for your chat in Den; anything
+  else it wants still waits for your `Ctrl+Y`, and with its powers locked
+  every tool waits again.
 
 The header shows your console while one is paired (`console: app-host pid
 N since 14:05`). `den unpair` ends it from any terminal; `den unpair all`
@@ -617,7 +622,11 @@ all`. When the app itself restarts, pair it again with `den pair`.
 What stays: any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
 answers for you, within the limits above, so pair only an app you trust,
-and unpair it when you are not using it. On Hyprland, `permission` rules for
+and unpair it when you are not using it. Anything that can type into the
+console's chat, or drive the console's process, can message any of your
+agents through the orchestrator without a card; to stop that, lock the
+console's powers (`/api lock`, until your `Ctrl+Y` on Den's powers card)
+or unpair it. On Hyprland, `permission` rules for
 keyboard access and screen capture can keep other programs from Den's
 window.
 

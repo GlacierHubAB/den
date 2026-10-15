@@ -364,7 +364,7 @@ func (m Model) laneRoster() []orch.RosterAgent {
 }
 
 // apiCommand is /api, /api on, /api off, /api disconnect, /api resume,
-// /api pair and /api unpair.
+// /api pair, /api unpair and /api lock.
 func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 	sub := ""
 	if len(args) > 0 {
@@ -373,6 +373,8 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 	switch sub {
 	case "console":
 		return m.consoleCommand()
+	case "lock":
+		return m.consoleLockCommand()
 	case "pair", "unpair":
 		return m.controlCommand(sub)
 	case "disallow", "control":

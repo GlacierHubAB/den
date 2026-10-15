@@ -49,11 +49,11 @@ var dockVerbs = []dockVerb{
 	{"/deny", []string{"/n", "/no"}, "/deny", "deny the selected request", always(api.DockRefused, whyCard)},
 	{"/always", []string{"/a"}, "/always", "allow, and from now on", always(api.DockRefused, whyCard)},
 	{"/answer", nil, "/answer <text>", "answer a question held in Den", always(api.DockRefused, whyNever)},
-	{"/api", nil, "/api [off|disconnect|unpair|disallow <n>|all|control off]", "den-api.sock", func(a []string) (string, string) {
+	{"/api", nil, "/api [off|disconnect|unpair|lock|disallow <n>|all|control off]", "den-api.sock", func(a []string) (string, string) {
 		switch {
 		case len(a) == 0, a[0] == "status", a[0] == "list":
 			return api.DockOK, ""
-		case a[0] == "off", a[0] == "disconnect", a[0] == "unpair", a[0] == "disallow":
+		case a[0] == "off", a[0] == "disconnect", a[0] == "unpair", a[0] == "lock", a[0] == "disallow":
 			return api.DockOK, ""
 		case a[0] == "control" && len(a) > 1 && a[1] == "off":
 			return api.DockOK, ""

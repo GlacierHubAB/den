@@ -89,6 +89,16 @@ func (s *Server) askPowers(rec *consoleRec, why string) {
 }
 
 // ConsolePowersAnswered is the human's ^Y (ok) or ^N on the powers card.
+// ConsolePowered reports whether id is the console paired now, with its
+// powers: in its turns Den runs ListAgents and send_message without a card.
+// It is asked at each tool, so a lock in the middle of a turn holds for the
+// rest of it.
+func (s *Server) ConsolePowered(id string) bool {
+	s.con.mu.Lock()
+	defer s.con.mu.Unlock()
+	return id != "" && s.con.cur != nil && s.con.cur.ID == id && s.con.cur.powers
+}
+
 func (s *Server) ConsolePowersAnswered(id string, ok bool) {
 	s.con.mu.Lock()
 	cur := s.con.cur
