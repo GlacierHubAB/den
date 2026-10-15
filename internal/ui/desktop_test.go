@@ -59,6 +59,13 @@ func deskRig(t *testing.T) Model {
 		return 1, "x", true
 	}
 	deskGrab = func(context.Context, desktop.Window, string) error { return nil }
+	oldNoFocus := deskNoFocus
+	t.Cleanup(func() { deskNoFocus = oldNoFocus })
+	noFocusCalls = nil
+	deskNoFocus = func(class string) error {
+		noFocusCalls = append(noFocusCalls, class)
+		return nil
+	}
 	m := closeModel(t)
 	m.addDeskMission(&deskMission{
 		Mission: desktop.Mission{
@@ -71,6 +78,9 @@ func deskRig(t *testing.T) Model {
 	})
 	return m
 }
+
+// noFocusCalls records the no-initial-focus rule's declarations.
+var noFocusCalls []string
 
 func deskReq(pid int, in bridge.DesktopInput) *bridge.Request {
 	in.Mission = "m1"

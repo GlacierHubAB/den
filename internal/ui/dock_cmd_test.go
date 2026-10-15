@@ -186,7 +186,7 @@ func TestDockCommandsStartNoHumanTurn(t *testing.T) {
 		"/unflag": "/unflag Otter", "/fleet": "/fleet project", "/project": "/project add /tmp/x", "/template": "/template save mine",
 		"/usage": "/usage stop", "/orchestrator": "/orch new", "/close": "/close Otter", "/reopen": "/reopen Otter",
 		"/merge": "/merge Otter", "/cleanup": "/cleanup Otter", "/mission": "/mission move other",
-		"/mode": "/mode auto",
+		"/mode": "/mode auto", "/desktop": "/desktop",
 	}
 	for _, v := range dockVerbs {
 		flag, _ := v.verdict([]string{"x"})

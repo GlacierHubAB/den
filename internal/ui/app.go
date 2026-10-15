@@ -270,7 +270,7 @@ func (m Model) Close() {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
+	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe(), clearNoFocus}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
 	}

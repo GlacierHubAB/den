@@ -78,7 +78,10 @@ var (
 	deskMove   = func(addr string, ws int) error { return hypr.MoveToWorkspace(addr, strconv.Itoa(ws)) }
 	deskClose  = hypr.CloseWindow
 	deskFocus  = hypr.Focus
-	deskSpawn  = spawn.Run
+	// deskNoFocus declares Den's no-initial-focus rule for a class, or
+	// with "" disables it.
+	deskNoFocus = hypr.NoInitialFocus
+	deskSpawn   = spawn.Run
 	// deskSession finds a session's Claude Code process by session id.
 	deskSession = func(id string) (int, bool) {
 		sessions, _ := discover.Scan()
@@ -350,6 +353,10 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	req := spawn.Request{Dir: p.offer.in.Dir, Agent: true, Brief: prompt, Name: "desktop", Model: p.offer.in.Model,
 		Custom: func(name string) []string {
 			launch.Name = name
+			// The agent's terminal opens without taking the keyboard from
+			// the human: a rule for its marker class alone, lifted once it
+			// is up (below), at the mission's end and at Den's start.
+			deskNoFocus(hypr.Marker(name))
 			argv, _ := desktop.AgentArgv(launch)
 			return desktop.TerminalArgv(argv, den, missionID)
 		},
@@ -360,9 +367,10 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		res, err := deskSpawn(ctx, req)
-		// New windows take the keyboard when they map: the apps Den
-		// opened and the agent's terminal must never catch what the human
-		// is typing elsewhere, so the focus goes back where it was.
+		deskNoFocus("")
+		// The apps Den opened take the keyboard when they map (their
+		// classes are not Den's own, so no rule may name them): the focus
+		// goes back where it was, which also backs the rule up.
 		if focused != "" {
 			deskFocus(focused)
 		}
@@ -545,4 +553,13 @@ var deskSameExe = func(pid int, path string) bool {
 	}
 	b, err := os.Stat(path)
 	return err == nil && os.SameFile(a, b)
+}
+
+// clearNoFocus lifts a no-initial-focus rule a Den that stopped mid-launch
+// left behind.
+func clearNoFocus() tea.Msg {
+	if hypr.Available() {
+		deskNoFocus("")
+	}
+	return nil
 }

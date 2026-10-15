@@ -142,7 +142,16 @@ func TestDesktopMissionCardAndStart(t *testing.T) {
 	if len(focusedBack) == 0 || focusedBack[len(focusedBack)-1] != "0xe" {
 		t.Fatalf("focus given back to %v", focusedBack)
 	}
+	// The rule names the agent's marker class only, and is lifted once
+	// the terminal is up.
+	if len(noFocusCalls) < 1 || noFocusCalls[len(noFocusCalls)-1] != "" {
+		t.Fatalf("rule calls %q: not lifted after the launch", noFocusCalls)
+	}
+	noFocusCalls = nil
 	argv := (*spawned)[0].Custom("desktop")
+	if len(noFocusCalls) != 1 || noFocusCalls[0] != "io.glacierhub.den.desktop" {
+		t.Fatalf("rule declared for %q", noFocusCalls)
+	}
 	joined := strings.Join(argv, " ")
 	for _, want := range []string{"--strict-mcp-config", "--permission-mode dontAsk", `"desktop-mcp","--mission"`, "--settings ", "--session-id "} {
 		if !strings.Contains(joined, want) {

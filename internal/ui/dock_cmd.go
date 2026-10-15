@@ -67,7 +67,7 @@ var dockVerbs = []dockVerb{
 		return api.DockRefused, "connecting with a changed policy is for Den only"
 	}},
 	// Stopping desktop control only lowers: always allowed from the dock.
-	{"/desktop", nil, "/desktop [stop]", "desktop control: stop it at once", always(api.DockOK, "")},
+	{"/desktop", nil, "/desktop [stop|keep]", "desktop control: stop it at once, or keep the last mission's files", always(api.DockOK, "")},
 	{"/open", []string{"/o", "/focus"}, "/open", "focus the agent's terminal", always(api.DockDenScreen, whyScreen)},
 	{"/copy", nil, "/copy", "copy the last code block", always(api.DockDenScreen, whyScreen)},
 	{"/close", []string{"/kill"}, "/close <name>[, name…] | idle [dur] [--force]", "close agents, on a card", func(a []string) (string, string) {
