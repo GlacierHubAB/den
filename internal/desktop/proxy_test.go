@@ -15,8 +15,9 @@ import (
 // gets, and on start sends the client a request and a notification that
 // must never get through.
 type fakeHypruse struct {
-	mu    sync.Mutex
-	calls []map[string]any
+	mu     sync.Mutex
+	calls  []map[string]any
+	refuse string // an action it refuses, as hypruse's guards would
 }
 
 func (f *fakeHypruse) serve(in io.Reader, out io.Writer) {
@@ -53,6 +54,13 @@ func (f *fakeHypruse) serve(in io.Reader, out io.Writer) {
 			f.calls = append(f.calls, map[string]any{"name": c.Name, "args": c.Arguments})
 			f.mu.Unlock()
 			text := "ok " + c.Name
+			f.mu.Lock()
+			refused := f.refuse != "" && c.Arguments["action"] == f.refuse
+			f.mu.Unlock()
+			if refused {
+				w(map[string]any{"jsonrpc": "2.0", "id": m.ID, "result": map[string]any{"content": []map[string]any{{"type": "text", "text": "refused"}}, "isError": true}})
+				continue
+			}
 			if c.Name == "desktop" {
 				text = `{"monitors":[{"name":"DP-1"},{"name":"DP-2"}],"workspaces":[{"id":9}],"windows":[{"address":"0xe","title":"note"},{"address":"0xh","title":"secret"}],"active_window":"0xh","cursor":[5,5]}`
 			}
@@ -88,6 +96,13 @@ func (g *fakeGate) Call(ctx context.Context, tool string, args json.RawMessage, 
 // rig runs a proxy against the fake and returns a send-and-wait func.
 func rig(t *testing.T, gate Gate) (func(method string, params any) message, *fakeHypruse, func(string) bool) {
 	t.Helper()
+	send, f, leaked := rigProxy(t, gate, nil)
+	return send, f, leaked
+}
+
+// rigProxy is rig with the proxy configured by setup before it runs.
+func rigProxy(t *testing.T, gate Gate, setup func(*Proxy)) (func(method string, params any) message, *fakeHypruse, func(string) bool) {
+	t.Helper()
 	cr, cw := io.Pipe()   // client -> proxy
 	pr, pw := io.Pipe()   // proxy -> client
 	chr, chw := io.Pipe() // proxy -> child
@@ -95,6 +110,9 @@ func rig(t *testing.T, gate Gate) (func(method string, params any) message, *fak
 	f := &fakeHypruse{}
 	go f.serve(chr, hw)
 	p := &Proxy{Gate: gate, Client: cr, ToClient: pw, Child: hr, ToChild: chw}
+	if setup != nil {
+		setup(p)
+	}
 	go p.Run(context.Background())
 	t.Cleanup(func() { cw.Close(); hw.Close(); chw.Close() })
 	replies := make(chan message, 16)

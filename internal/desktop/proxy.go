@@ -7,8 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // The proxy stands between a desktop agent's Claude Code and hypruse: the
@@ -32,6 +36,8 @@ type Answer struct {
 	Token string `json:"token,omitempty"`
 	// Scope comes with an allowed desktop call: what the result may show.
 	Scope *Scope `json:"scope,omitempty"`
+	// Bounds comes with an allowed pointer call: its glide stays inside.
+	Bounds *Rect `json:"bounds,omitempty"`
 }
 
 // Gate is Den, as the proxy asks it. token is "" for a new call; for the
@@ -57,6 +63,15 @@ type Proxy struct {
 	ToClient io.Writer
 	Child    io.Reader // what hypruse sends
 	ToChild  io.Writer
+	// Cursor is where the pointer is now; with it, an allowed pointer call
+	// glides there (Glide) instead of jumping. nil: no glide.
+	Cursor func() (x, y float64, ok bool)
+	// Pointer is the pointer file for the overlay's outline ("" for none).
+	Pointer string
+	// Seed seeds the glides; 0 picks one.
+	Seed  uint64
+	shown bool // the outline is showing (the pointer file says so)
+	rng   *rand.Rand
 
 	outMu   sync.Mutex // one writer to the client at a time
 	childMu sync.Mutex // one writer to the child at a time
@@ -218,12 +233,25 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 	if json.Unmarshal(ans.Args, &args) != nil || args == nil {
 		return toolError("Den's answer carried no input; nothing was done")
 	}
+	if in.Name == "keyboard" {
+		p.hideOutline()
+	}
 	if in.Name == "keyboard" && args["action"] == "type" {
 		return p.typeText(ctx, args, ans.Token)
+	}
+	if in.Name == "pointer" && ans.Bounds != nil {
+		if err := p.glide(ctx, args, *ans.Bounds); err != nil {
+			return toolError("stopped before acting: " + err.Error())
+		}
 	}
 	res, err := p.callChild(ctx, in.Name, args)
 	if err != nil {
 		return toolError(err.Error())
+	}
+	if in.Name == "pointer" {
+		if x, y, ok := pointArgs(args); ok {
+			p.writePointer(x, y, false)
+		}
 	}
 	if in.Name == "desktop" {
 		return filterResult(res, ans.Scope)
@@ -442,4 +470,104 @@ func isError(res json.RawMessage) bool {
 func rpcError(code int, msg string) json.RawMessage {
 	b, _ := json.Marshal(map[string]any{"code": code, "message": msg})
 	return b
+}
+
+// glide moves the pointer to the call's point along a human-like path,
+// every step a hypruse pointer move inside bounds, before the call itself.
+// The steps carry no authority of their own: they lead only to the point
+// Den allowed, stay in the window (or monitor) Den named, go through
+// hypruse's guards, and stop at the first refusal or a cancel.
+func (p *Proxy) glide(ctx context.Context, args map[string]any, bounds Rect) error {
+	if p.Cursor == nil {
+		return nil
+	}
+	x, y, ok := pointArgs(args)
+	if !ok {
+		return nil
+	}
+	cx, cy, ok := p.Cursor()
+	if !ok {
+		return nil
+	}
+	if p.rng == nil {
+		seed := p.Seed
+		if seed == 0 {
+			seed = uint64(time.Now().UnixNano())
+		}
+		p.rng = rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+	}
+	samples := Glide([2]float64{cx, cy}, [2]float64{x, y}, bounds, p.rng, 60)
+	began := time.Now()
+	// The last sample is the point itself: the call moves there.
+	for _, s := range samples[:len(samples)-1] {
+		if err := ctx.Err(); err != nil {
+			return errors.New("cancelled")
+		}
+		res, err := p.callChild(ctx, "pointer", map[string]any{"action": "move", "x": s.X, "y": s.Y, "then": "none"})
+		if err != nil {
+			return err
+		}
+		if isError(res) {
+			return errors.New("hypruse refused a step")
+		}
+		p.writePointer(s.X, s.Y, false)
+		if wait := time.Duration(s.T*float64(time.Second)) - time.Since(began); wait > 0 {
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return errors.New("cancelled")
+			}
+		}
+	}
+	return nil
+}
+
+// pointArgs is where a pointer call acts first: x, y.
+func pointArgs(args map[string]any) (float64, float64, bool) {
+	x, okx := args["x"].(float64)
+	y, oky := args["y"].(float64)
+	return x, y, okx && oky
+}
+
+// writePointer writes the overlay's pointer file: "x y", or "x y hidden"
+// while typing hides the real pointer. 0600, replaced atomically.
+func (p *Proxy) writePointer(x, y float64, hidden bool) {
+	if p.Pointer == "" {
+		return
+	}
+	line := fmt.Sprintf("%.0f %.0f", x, y)
+	if hidden {
+		line += " hidden"
+	}
+	tmp := p.Pointer + ".tmp"
+	if os.WriteFile(tmp, []byte(line+"\n"), 0o600) == nil && os.Rename(tmp, p.Pointer) == nil {
+		p.shown = !hidden
+	}
+}
+
+// hideOutline tells the overlay to fade the outline out before keys are
+// pressed (Hyprland hides the real pointer on a key press), and waits for
+// the fade.
+func (p *Proxy) hideOutline() {
+	if p.Pointer == "" || !p.shown {
+		return
+	}
+	raw, err := os.ReadFile(p.Pointer)
+	if err != nil {
+		return
+	}
+	var x, y float64
+	if _, err := fmt.Sscanf(string(raw), "%f %f", &x, &y); err != nil {
+		return
+	}
+	p.writePointer(x, y, true)
+	time.Sleep(hideFade)
+}
+
+// hideFade is how long the outline takes to fade; tests shorten it.
+var hideFade = 550 * time.Millisecond
+
+// PointerPath is the overlay's pointer file.
+func PointerPath() string {
+	return filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "den-agent-pointer")
 }

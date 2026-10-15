@@ -74,6 +74,9 @@ type Verdict struct {
 	Args map[string]any
 	// Target is the window the call acts on or reads, when there is one.
 	Target *Window
+	// Bounds is where a pointer call's glide may go: the target window, or
+	// the mission monitor for a bare move.
+	Bounds *Rect
 }
 
 func deny(format string, a ...any) Verdict {
@@ -167,7 +170,7 @@ func decidePointer(args map[string]any, m Mission, s Snapshot) Verdict {
 		if !okx || !oky || !mon.Contains(x, y) {
 			return deny("pointer move: the point must be on the monitor showing the mission workspace")
 		}
-		return Verdict{Kind: Allow, Args: args}
+		return Verdict{Kind: Allow, Args: args, Bounds: &Rect{X: mon.X, Y: mon.Y, W: mon.W, H: mon.H}}
 	case "click", "scroll", "drag":
 		if !okx || !oky {
 			return deny("pointer %s: give x and y; a click at wherever the cursor is cannot be checked", act)
@@ -195,7 +198,7 @@ func decidePointer(args map[string]any, m Mission, s Snapshot) Verdict {
 			}
 			under = append(under, end...)
 		}
-		v := Verdict{Kind: Allow, Args: args, Target: &w}
+		v := Verdict{Kind: Allow, Args: args, Target: &w, Bounds: &Rect{X: w.At[0], Y: w.At[1], W: w.Size[0], H: w.Size[1]}}
 		if act != "scroll" {
 			for _, u := range under {
 				if m.Outward(u) == OutwardAsk {
