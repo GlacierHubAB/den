@@ -216,6 +216,38 @@ func TestDreyInterface(t *testing.T) {
 	// they return comes back to Update, as Bubble Tea does: a console's turn
 	// starts the orchestrator through one and hears it through more.
 	l := &loop{t: t, m: &m, msgs: make(chan tea.Msg, 64)}
+	// paced says each card answer is carried out a second after the last
+	// (below); the suite's Burst turns it off for its burst, and back on.
+	// It is read and set on the loop's goroutine only (onModel).
+	paced := true
+	apiCmd := func(args ...string) {
+		mm, cmd := m.apiCommand(args)
+		m = mm.(Model)
+		l.run(cmd)
+	}
+	// Den's /api unpair, as the human types it.
+	console.Unpair = func(ctx context.Context) error {
+		return onModel(ctx, func() error { apiCmd("unpair"); return nil })
+	}
+	// /api disconnect, then /api resume, so the pairing may prove again.
+	console.Disconnect = func(ctx context.Context) error {
+		return onModel(ctx, func() error {
+			apiCmd("disconnect")
+			apiCmd("resume")
+			return nil
+		})
+	}
+	console.Burst = func(ctx context.Context) (func(), error) {
+		if err := onModel(ctx, func() error { paced = false; return nil }); err != nil {
+			return nil, err
+		}
+		return func() {
+			onModel(context.Background(), func() error {
+				paced, lastAnswer = true, time.Now()
+				return nil
+			})
+		}, nil
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -297,7 +329,7 @@ func TestDreyInterface(t *testing.T) {
 		case act := <-late:
 			handle(act)
 		case act := <-m.api.srv.Acts():
-			if act.CardAnswer != nil {
+			if act.CardAnswer != nil && paced {
 				at := time.Now()
 				if earliest := lastAnswer.Add(1100 * time.Millisecond); at.Before(earliest) {
 					at = earliest

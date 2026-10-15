@@ -6,6 +6,8 @@
 package denconformance
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/hkdf"
@@ -16,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -26,6 +29,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // ConsoleOptions turns on the console subtests (the console section of
@@ -43,6 +47,24 @@ type ConsoleOptions struct {
 	Confirm func(ctx context.Context) error
 	// Decline stands in for ^N. Left nil, the cooldown subtest is skipped.
 	Decline func(ctx context.Context) error
+	// Unpair has Den unpair its own console (/api unpair in Den, or den
+	// unpair in a terminal, which any program on the machine may run):
+	// "unpaired cause den" wants its unpaired event with cause "den".
+	// Left nil, that subtest is skipped.
+	Unpair func(ctx context.Context) error
+	// Disconnect stands in for /api disconnect (or the API turned off and
+	// on): every connection ends with no unpaired event, and
+	// "unpaired: not at end of file" wants the pairing to prove again
+	// after. Left nil, that subtest is skipped.
+	Disconnect func(ctx context.Context) error
+	// Burst is for a server's test build or test hooks only, never a
+	// switch in a running server: it turns a safety guard's pacing off.
+	// It turns the server's pacing of card answers off for
+	// "unpaired cause burst", which then answers five cards (from Card)
+	// less than a second apart and wants cause "burst"; restore turns the
+	// pacing back on, so the other card subtests never meet the guard.
+	// Left nil, that subtest is skipped.
+	Burst func(ctx context.Context) (restore func(), err error)
 	// Card raises a pending card the dock may answer (dock_answers true,
 	// "deny" among its verbs) and returns its id. Left nil, the card
 	// subtests are skipped.
@@ -60,6 +82,21 @@ type ConsoleOptions struct {
 	// move also satisfies shown; the server's own test pins which. Left
 	// false, it is skipped.
 	View bool
+	// Request says the server pairs a console by console.request for this
+	// test process (its unit check stood in for, as Den's harness does):
+	// "console.request" pairs one from a fresh key, with Confirm answering
+	// the code-less card as it stands in for ^Y, and "console.reconnect"
+	// then rejoins that pairing (Den records the unit only for a request).
+	// Left false, "console.request" is skipped and "console.reconnect"
+	// uses the code-claimed console.
+	Request bool
+	// Reconnect says the server answers console.reconnect at once, as a
+	// silent reconnect, for this test process: "console.reconnect" runs
+	// its signature checks. Den checks the dock's systemd unit first,
+	// which a test process is not; a refusal "not drey-host.service" or
+	// "pair again" skips the rest. Left false, only the subtest's known
+	// answer for its own verify runs.
+	Reconnect bool
 	// ThiefTest and SocketPath turn on "console thief": the suite runs
 	// this test binary again (os.Args[0] -test.run=^ThiefTest$), and the
 	// copy proves with the console's own key from another process. The
@@ -84,7 +121,27 @@ var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
 	"console.events", "card.get", "card.answer", "card read timer", "card replay", "view.hide keeps a waiting card", "console orch.say", "console connections",
-	"console.auth refusals", "console thief", "console.unpair unproved", "console.unpair all", "console cooldown",
+	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.unpair unproved", "console.unpair all",
+	"unpaired cause self", "unpaired cause replaced", "unpaired cause proofs", "unpaired cause intruders",
+	"unpaired cause burst", "unpaired cause den", "unpaired: not at end of file", "unpaired cause other", "console cooldown",
+}
+
+// Den's known answer for console.reconnect's den_sig (DREY-API.md): the
+// key from the Ed25519 seed of 32 bytes 0x01, and its signature with nonce
+// 64 × "5a", pairing 32 × "0a" and the dock's key 64 × "0b".
+const (
+	reconnectVectorDen = "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+	reconnectVectorSig = "7a3ce0532530d6793e45ebbf3360530055b842dbb42c30278e5fd70e0fe77c285967f693c26f10e4996d2ead6e8990a2729b50a525e3ac3e3de6bfa35927dd05"
+)
+
+// verifyReconnect checks den_sig: Ed25519 under Den's console key over
+// "den-console-reconnect-v1", nonce, pairing and the dock's new key,
+// joined by "\n", with no newline at the end.
+func verifyReconnect(den ed25519.PublicKey, nonce, pairing, dockKey string, sig []byte) bool {
+	if len(den) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(den, []byte("den-console-reconnect-v1\n"+nonce+"\n"+pairing+"\n"+dockKey), sig)
 }
 
 // Wire constants of the console (DREY-API.md, the console section).
@@ -108,6 +165,7 @@ type consolePairing struct {
 	priv    ed25519.PrivateKey
 	pairing string
 	denPub  ed25519.PublicKey
+	pages   string // the pages_sha256 a console.request sent, "" for a claim
 }
 
 func (p *consolePairing) pubHex() string    { return hex.EncodeToString(p.pub) }
@@ -914,20 +972,9 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		//nolint:gosec // re-running this test binary is the point; ThiefTest is the server's own test name, from its own Options
-		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+co.ThiefTest+"$", "-test.v")
-		cmd.Env = append(os.Environ(),
-			"DENCONFORMANCE_THIEF_AS="+self, // the real console's identity, public in Den's header
-			"DENCONFORMANCE_THIEF_SOCK="+co.SocketPath,
-			"DENCONFORMANCE_THIEF_PAIRING="+tp.pairing,
-			"DENCONFORMANCE_THIEF_KEY="+hex.EncodeToString(tp.priv), // a test key only
-			"DENCONFORMANCE_THIEF_DEN="+tp.denPubHex())
-		out, err := cmd.CombinedOutput()
+		pid, err := co.thief(ctx, tp, self, false)
 		if err != nil {
-			t.Fatalf("the thief process failed: %v\n%s", err, out)
-		}
-		if !strings.Contains(string(out), "thief refused") {
-			t.Fatalf("the thief process did not report its refusal:\n%s", out)
+			t.Fatal(err)
 		}
 		ev, err := nextEvent(ctx, ec, "console")
 		if err != nil {
@@ -938,10 +985,183 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			PID  int    `json:"pid"`
 		}
 		_ = json.Unmarshal(ev, &d)
-		if d.Kind != "refused" || d.PID != cmd.Process.Pid {
-			t.Fatalf("after the thief: want a refused console event with pid %d, got %s", cmd.Process.Pid, ev)
+		if d.Kind != "refused" || d.PID != pid {
+			t.Fatalf("after the thief: want a refused console event with pid %d, got %s", pid, ev)
 		}
 	})
+
+	// console.request: a console paired without a code (DREY-API.md,
+	// console.request), from a fresh key, once Confirm answers its card.
+	// The reply names Den's key as hello does, and the pairing proves.
+	run("console.request", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, co != nil && co.Request, co != nil && co.Confirm != nil)
+		rp, err := requestConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = rp
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, rp); err != nil {
+			t.Fatalf("console.auth with the requested pairing: %v", err)
+		}
+	})
+
+	// console.reconnect: a dock whose service restarted with a fresh key
+	// gets a new pairing, signed by Den's console key over its own nonce
+	// (DREY-API.md, console.reconnect). It may come before hello.
+	run("console.reconnect", func(t *testing.T, ctx context.Context, cl *client) {
+		// The suite's own verify against Den's known answer.
+		seed := bytes.Repeat([]byte{0x01}, ed25519.SeedSize)
+		kaKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+		if hex.EncodeToString(kaKey) != reconnectVectorDen {
+			t.Fatalf("the known answer's Den key: %x", kaKey)
+		}
+		kaSig, _ := hex.DecodeString(reconnectVectorSig)
+		kaNonce, kaPairing, kaDock := strings.Repeat("5a", 32), strings.Repeat("0a", 16), strings.Repeat("0b", 32)
+		if !verifyReconnect(kaKey, kaNonce, kaPairing, kaDock, kaSig) {
+			t.Fatal("the suite's verify fails Den's known answer")
+		}
+		if verifyReconnect(kaKey, strings.Repeat("5b", 32), kaPairing, kaDock, kaSig) {
+			t.Fatal("the suite's verify passes the known answer with another nonce")
+		}
+		need(t, p != nil, co != nil && co.Reconnect)
+
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pk := hex.EncodeToString(pub)
+		// raw dials a connection that says nothing yet: a reconnect may
+		// be its first request.
+		raw := func() *conn {
+			t.Helper()
+			nc, err := o.Dial(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &conn{nc: nc, r: bufio.NewReaderSize(nc, 64*1024)}
+		}
+		// A nonce that is missing or not 64 hex digits is bad_request,
+		// each on its own connection (one reconnect a second on each).
+		for _, nonce := range []string{"", "xyz", strings.Repeat("A", 64), strings.Repeat("5a", 31)} {
+			c := raw()
+			params := map[string]string{"public_key": pk}
+			if nonce != "" {
+				params["nonce"] = nonce
+			}
+			wantCode(t, fmt.Sprintf("console.reconnect with nonce %q", nonce), c.call(ctx, "console.reconnect", params, nil), CodeBadRequest)
+			c.close()
+		}
+
+		var rep struct {
+			Pairing string `json:"pairing"`
+			DenSig  string `json:"den_sig"`
+			Powers  *bool  `json:"powers"`
+		}
+		// The console being rejoined, watched: a silent repair supersedes
+		// it, so it hears unpaired with cause replaced.
+		old, err := co.watch(ctx, o.Dial, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer old.close()
+		nonce := randHex(32)
+		c := raw()
+		defer c.close()
+		params := map[string]string{"public_key": pk, "nonce": nonce}
+		if p.pages != "" {
+			params["pages_sha256"] = p.pages // the same pages as at pairing: nothing changed
+		}
+		err = c.call(ctx, "console.reconnect", params, &rep)
+		var we *WireError
+		if errors.As(err, &we) && we.Code == codeForbidden && (strings.HasPrefix(we.Message, "not drey-host.service") || strings.HasPrefix(we.Message, "pair again")) {
+			t.Skipf("the server refuses this process's reconnect: %v", err)
+		}
+		if err != nil {
+			t.Fatalf("console.reconnect before hello: %v", err)
+		}
+		sig, _ := hex.DecodeString(rep.DenSig)
+		if !hex32Re.MatchString(rep.Pairing) || !hex128Re.MatchString(rep.DenSig) || rep.Powers == nil {
+			t.Fatalf("console.reconnect's reply: %+v", rep)
+		}
+		// Answered at once is a silent reconnect: no powers until the
+		// human's Ctrl+Y on Den's card.
+		if *rep.Powers {
+			t.Error("a silent console.reconnect came with powers: only a reconnect the human answered in Den may")
+		}
+		h, in, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.close()
+		denKey, err := hex.DecodeString(in.ConsolePublicKey)
+		if err != nil || len(denKey) != ed25519.PublicKeySize || !bytes.Equal(denKey, p.denPub) {
+			t.Fatalf("hello's console_public_key %q is not the key pinned at pairing (%s)", in.ConsolePublicKey, p.denPubHex())
+		}
+		if !verifyReconnect(denKey, nonce, rep.Pairing, pk, sig) {
+			t.Fatal("den_sig does not verify under hello's console_public_key")
+		}
+		if verifyReconnect(denKey, randHex(32), rep.Pairing, pk, sig) {
+			t.Fatal("den_sig verifies over another nonce")
+		}
+		if cause, reason, err := nextUnpaired(ctx, old); err != nil {
+			t.Errorf("the superseded console heard no unpaired: %v", err)
+		} else if cause != "replaced" || utf8.RuneCountInString(reason) > 40 {
+			t.Errorf("the superseded console's unpaired: cause %q, reason %q; want cause replaced", cause, reason)
+		}
+		// The new pairing is the console now: it proves as always.
+		p = &consolePairing{pub: pub, priv: priv, pairing: rep.Pairing, denPub: p.denPub, pages: p.pages}
+		pc, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pc.close()
+		if err := co.prove(ctx, pc, p); err != nil {
+			t.Fatalf("console.auth with the reconnected pairing: %v", err)
+		}
+	})
+
+	// Why a console was unpaired (DREY-API.md, Events): each cause the
+	// suite can bring about, on a fresh console watched on one proved
+	// connection subscribed to console.events. The event names exactly
+	// that cause, and its reason is at most 40 characters.
+	fresh := func(t *testing.T, ctx context.Context) (*consolePairing, *conn) {
+		t.Helper()
+		pp, err := claimConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = pp
+		w, err := co.watch(ctx, o.Dial, pp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(w.close)
+		return pp, w
+	}
+	wantCause := func(t *testing.T, ctx context.Context, w *conn, cause string) {
+		t.Helper()
+		got, reason, err := nextUnpaired(ctx, w)
+		if err != nil {
+			t.Fatalf("waiting for unpaired with cause %q: %v", cause, err)
+		}
+		if got != cause {
+			t.Errorf("unpaired with cause %q, want %q", got, cause)
+		}
+		if utf8.RuneCountInString(reason) > 40 {
+			t.Errorf("unpaired's reason is over 40 characters: %q", reason)
+		}
+		p = nil
+	}
+	var lastAll time.Time // the last console.unpair {all}: one each 10 s
+	claims := func(t *testing.T) {
+		t.Helper()
+		need(t, co != nil && co.Offer != nil, co != nil && co.Confirm != nil)
+	}
 
 	run("console.unpair unproved", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t)
@@ -955,6 +1175,11 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 
 	run("console.unpair all", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t, p != nil)
+		w, err := co.watch(ctx, o.Dial, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.close()
 		c, _, err := open(ctx, o.Dial) // hello'd, never proved
 		if err != nil {
 			t.Fatal(err)
@@ -963,9 +1188,14 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		var rep struct {
 			Unpaired int `json:"unpaired"`
 		}
+		lastAll = time.Now()
 		if err := c.call(ctx, "console.unpair", map[string]bool{"all": true}, &rep); err != nil {
 			t.Fatalf("console.unpair {all} without a proof: %v", err)
 		}
+		// Another program's unpair of every pairing: cause other.
+		pp := p
+		wantCause(t, ctx, w, "other")
+		p = pp
 		if rep.Unpaired < 1 {
 			t.Errorf("console.unpair {all}: unpaired %d, want at least the console", rep.Unpaired)
 		}
@@ -982,6 +1212,179 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Error("the console still proves after console.unpair {all}")
 		}
 		p = nil
+	})
+
+	run("unpaired cause self", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		pp, w := fresh(t, ctx)
+		// From another proved connection of the console, so w reads only
+		// events (call skips them while it waits for its reply).
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, pp); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.call(ctx, "console.unpair", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "self")
+	})
+
+	run("unpaired cause replaced", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		_, w := fresh(t, ctx)
+		np, err := claimConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "replaced")
+		p = np
+	})
+
+	run("unpaired cause proofs", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		pp, w := fresh(t, ctx)
+		_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+		for i := range 3 {
+			c, _, err := open(ctx, o.Dial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch, err := getChallenge(ctx, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			self, _, err := co.identities(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			na := randHex(32)
+			sig := hex.EncodeToString(ed25519.Sign(otherKey, signedText("app-to-den", ch.Conn, pp.pairing, pp.pubHex(), pp.denPubHex(), ch.Nonce, na, self)))
+			if err := c.call(ctx, "console.auth", map[string]string{"pairing": pp.pairing, "nonce": na, "sig": sig}, nil); err == nil {
+				t.Fatalf("wrong proof %d accepted", i+1)
+			}
+			c.close()
+		}
+		wantCause(t, ctx, w, "proofs")
+	})
+
+	run("unpaired cause intruders", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.ThiefTest != "" && co.SocketPath != "")
+		pp, w := fresh(t, ctx)
+		self, _, err := co.identities(w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range 3 {
+			if _, err := co.thief(ctx, pp, self, i == 2); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantCause(t, ctx, w, "intruders")
+	})
+
+	run("unpaired cause burst", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.Card != nil, co != nil && co.Burst != nil)
+		pp, w := fresh(t, ctx)
+		restore, err := co.Burst(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restore()
+		// The answers go on their own connection, so w reads only events.
+		a, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.close()
+		if err := co.prove(ctx, a, pp); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 5 {
+			id, err := co.Card(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, err := cardGet(ctx, a, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = a.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+			if err != nil && i < 4 {
+				t.Fatalf("answer %d: %v", i+1, err)
+			}
+		}
+		wantCause(t, ctx, w, "burst")
+	})
+
+	run("unpaired cause den", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.Unpair != nil)
+		_, w := fresh(t, ctx)
+		if err := co.Unpair(ctx); err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "den")
+	})
+
+	// An end of file with no unpaired event is not an unpairing: the
+	// pairing stands and proves again.
+	run("unpaired: not at end of file", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.Disconnect != nil)
+		pp, w := fresh(t, ctx)
+		if err := co.Disconnect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		// The watching connection ends: an end of file or a closed
+		// connection, soon, and no unpaired before it.
+		dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		cause, _, err := nextUnpaired(dctx, w)
+		cancel()
+		switch {
+		case err == nil:
+			t.Fatalf("a disconnect sent unpaired with cause %q", cause)
+		case errors.Is(err, os.ErrDeadlineExceeded):
+			t.Fatal("Disconnect did not end the console's connection within 2 s")
+		case !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, syscall.ECONNRESET):
+			t.Fatalf("the console's connection after Disconnect: want an end of file, got %v", err)
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, pp); err != nil {
+			t.Fatalf("the pairing did not stand after a disconnect: %v", err)
+		}
+		p = pp
+	})
+
+	// console.unpair {all} from a connection that is not the console's:
+	// cause other. One each 10 s, so the wait for the last runs first.
+	run("unpaired cause other", func(t *testing.T, _ context.Context, cl *client) {
+		claims(t)
+		if wait := 10*time.Second + 200*time.Millisecond - time.Since(lastAll); !lastAll.IsZero() && wait > 0 {
+			time.Sleep(wait)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
+		defer cancel()
+		_, w := fresh(t, ctx)
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		lastAll = time.Now()
+		if err := c.call(ctx, "console.unpair", map[string]bool{"all": true}, nil); err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "other")
 	})
 
 	run("console cooldown", func(t *testing.T, ctx context.Context, cl *client) {
@@ -1029,6 +1432,118 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 
 // claimConsole pairs a new console: Offer, a claim with the code proof,
 // Confirm, and the bind checked. A new console replaces the old one.
+// watch opens a connection proved as pp and subscribed to console.events,
+// past its first console event (connected, about itself).
+func (o *ConsoleOptions) watch(ctx context.Context, dial Dialer, pp *consolePairing) (*conn, error) {
+	c, _, err := open(ctx, dial)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.prove(ctx, c, pp); err != nil {
+		c.close()
+		return nil, err
+	}
+	if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+		c.close()
+		return nil, err
+	}
+	if _, err := nextEvent(ctx, c, "console"); err != nil {
+		c.close()
+		return nil, err
+	}
+	return c, nil
+}
+
+// thief runs this test binary again as ThiefTest: another process proves
+// with pp's key as self, and must be refused. With last, its try may be
+// the one that unpairs the console, so its second may find none. It
+// returns that process's pid.
+func (o *ConsoleOptions) thief(ctx context.Context, pp *consolePairing, self string, last bool) (int, error) {
+	//nolint:gosec // re-running this test binary is the point; ThiefTest is the server's own test name, from its own Options
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+o.ThiefTest+"$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		"DENCONFORMANCE_THIEF_AS="+self, // the real console's identity, public in Den's header
+		"DENCONFORMANCE_THIEF_SOCK="+o.SocketPath,
+		"DENCONFORMANCE_THIEF_PAIRING="+pp.pairing,
+		"DENCONFORMANCE_THIEF_KEY="+hex.EncodeToString(pp.priv), // a test key only
+		"DENCONFORMANCE_THIEF_DEN="+pp.denPubHex())
+	if last {
+		cmd.Env = append(cmd.Env, "DENCONFORMANCE_THIEF_LAST=1")
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("the thief process failed: %w\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "thief refused") {
+		return 0, fmt.Errorf("the thief process did not report its refusal:\n%s", out)
+	}
+	return cmd.Process.Pid, nil
+}
+
+// nextUnpaired reads console events on c until an unpaired one, and
+// returns its cause and reason.
+func nextUnpaired(ctx context.Context, c *conn) (cause, reason string, err error) {
+	for {
+		raw, err := nextEvent(ctx, c, "console")
+		if err != nil {
+			return "", "", err
+		}
+		var d struct {
+			Kind   string `json:"kind"`
+			Cause  string `json:"cause"`
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal(raw, &d) == nil && d.Kind == "unpaired" {
+			return d.Cause, d.Reason, nil
+		}
+	}
+}
+
+// requestConsole pairs a console by console.request: a fresh key and a
+// pages hash, and Den's reply once Confirm answers its card. The reply's
+// den_public_key must be the console_public_key hello named.
+func requestConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*consolePairing, error) {
+	c, in, err := open(ctx, dial)
+	if err != nil {
+		return nil, err
+	}
+	defer c.close()
+	if !hex64Re.MatchString(in.ConsolePublicKey) {
+		return nil, fmt.Errorf("hello names no console_public_key (%q): a request's reply cannot be checked", in.ConsolePublicKey)
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	pages := randHex(32)
+	var rep struct {
+		Pairing      string `json:"pairing"`
+		DenPublicKey string `json:"den_public_key"`
+		Console      bool   `json:"console"`
+		Powers       *bool  `json:"powers"`
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- c.call(ctx, "console.request", map[string]string{"public_key": hex.EncodeToString(pub), "pages_sha256": pages}, &rep)
+	}()
+	if err := co.Confirm(ctx); err != nil {
+		return nil, err
+	}
+	if err := <-done; err != nil {
+		return nil, err
+	}
+	if !hex32Re.MatchString(rep.Pairing) || !hex64Re.MatchString(rep.DenPublicKey) || !rep.Console || rep.Powers == nil {
+		return nil, fmt.Errorf("console.request's reply not as pinned: %+v", rep)
+	}
+	if rep.DenPublicKey != in.ConsolePublicKey {
+		return nil, fmt.Errorf("console.request's den_public_key %s is not hello's console_public_key %s", rep.DenPublicKey, in.ConsolePublicKey)
+	}
+	// Paired by the human's Ctrl+Y: with powers, the counterpart of a
+	// silent reconnect's none.
+	if !*rep.Powers {
+		return nil, errors.New("console.request confirmed in Den came without powers")
+	}
+	den, _ := hex.DecodeString(rep.DenPublicKey)
+	return &consolePairing{pub: pub, priv: priv, pairing: rep.Pairing, denPub: den, pages: pages}, nil
+}
+
 func claimConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*consolePairing, error) {
 	code, err := co.Offer(ctx)
 	if err != nil {
@@ -1206,6 +1721,11 @@ func ConsoleThiefHelper(t *testing.T) {
 		co := &ConsoleOptions{Identity: as}
 		err = co.prove(ctx, c, p)
 		c.close()
+		// The third other program in ten minutes unpairs the console with
+		// its first try ("unpaired cause intruders"): its next finds none.
+		if os.Getenv("DENCONFORMANCE_THIEF_LAST") == "1" && as == "" && codeOf(err) == CodeNotFound {
+			continue
+		}
 		if codeOf(err) != codeForbidden {
 			t.Fatalf("a proof with the console's key from another process, signed as %q: want forbidden, got %v", as, err)
 		}
