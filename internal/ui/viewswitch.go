@@ -22,6 +22,28 @@ var viewSwitcher = view.New
 // it cannot switch.
 type viewDoneMsg struct{ view string }
 
+// viewKeep says why Den's own window must stay up, "" when it need not: a
+// card waits on the human. It is the one place that decides it, for a hide.
+func (m *Model) viewKeep() string {
+	if m.store.Waiting() > 0 {
+		return "a card waits"
+	}
+	return ""
+}
+
+// showDen brings back Den's own window alone, from special:den, and does
+// nothing when it is not hidden (view.Switcher.ShowOwn). The view Den is in
+// stays as it is. It answers with a viewRaisedMsg.
+func (m *Model) showDen() tea.Cmd {
+	sw := viewSwitcher()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), view.Budget+time.Second)
+		defer cancel()
+		_, err := sw.ShowOwn(ctx)
+		return viewRaisedMsg{err: err}
+	}
+}
+
 // applyView carries out an app's view.show or view.hide. The live agents on
 // this machine are handed over here, on the UI's goroutine; the windows
 // move off it, and the answer goes back to the API when they have. What
@@ -39,9 +61,7 @@ func (m *Model) applyView(r *api.ViewReq) tea.Cmd {
 			rq.Hold = append(rq.Hold, a.Session.SessionID)
 		}
 	}
-	if m.store.Waiting() > 0 {
-		rq.Keep = "a card waits"
-	}
+	rq.Keep = m.viewKeep()
 	sw := viewSwitcher()
 	return func() tea.Msg {
 		res, err := sw.Switch(context.Background(), rq)
@@ -129,11 +149,5 @@ func (m *Model) checkViewStranded() tea.Cmd {
 		return nil
 	}
 	m.api.raised = true
-	sw := viewSwitcher()
-	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), view.Budget+time.Second)
-		defer cancel()
-		_, err := sw.ShowOwn(ctx)
-		return viewRaisedMsg{err: err}
-	}
+	return m.showDen()
 }
