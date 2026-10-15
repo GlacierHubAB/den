@@ -62,3 +62,25 @@ func TestSocketLimits(t *testing.T) {
 		t.Errorf("after the others were answered: %+v %v", d, ok)
 	}
 }
+
+// Every question Den answers itself, not only a hook's, holds its
+// connection for Den's decision: an event missing from the held list
+// gets {"ok":true} at once and its caller never hears Den's answer.
+func TestDenAnsweredEventsAreHeld(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "den.sock")
+	srv, err := Listen(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	for _, ev := range []string{"PermissionRequest", CloseEvent, SkillsEvent, InstallEvent, SendEvent, InboundEvent, MissionEvent, UsageEvent, OrchSendEvent} {
+		go func() {
+			r := <-srv.Requests()
+			r.Reply(Decision{Behavior: "deny", Message: "from Den: " + r.Event})
+		}()
+		d, ok := Ask(path, Envelope{Event: ev, SessionID: "s1"}, 3*time.Second)
+		if !ok || d.Behavior != "deny" || d.Message != "from Den: "+ev {
+			t.Errorf("%s: %+v %v", ev, d, ok)
+		}
+	}
+}

@@ -179,7 +179,7 @@ func (s *Server) serve(conn net.Conn) {
 		req.PeerPID = pid
 	}
 	_ = json.Unmarshal(env.Payload, &req.Input)
-	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == InboundEvent || env.Event == MissionEvent || env.Event == UsageEvent {
+	if env.Event == "PermissionRequest" || env.Event == CloseEvent || env.Event == SkillsEvent || env.Event == InstallEvent || env.Event == SendEvent || env.Event == InboundEvent || env.Event == MissionEvent || env.Event == UsageEvent || env.Event == OrchSendEvent {
 		if s.held.Add(1) > MaxHeld {
 			s.held.Add(-1)
 			return // too many waiting: no decision, fail open
