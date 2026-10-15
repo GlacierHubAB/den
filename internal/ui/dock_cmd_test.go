@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
 // A console's line maps onto one verb of the closed list, or is refused, in
@@ -15,7 +16,11 @@ func TestDockLine(t *testing.T) {
 		run  string // the line run, "" for refused
 	}{
 		{"/api off", "/api off"},
-		{"  /API   Off ", "/api Off"},
+		{"  /API   Off ", "/api off"},
+		{"/API CONTROL OFF", "/api control off"},
+		{"/remote RETRY Devbox", "/remote retry Devbox"},
+		{"/close Otter", "/close Otter"},
+		{"/flag Otter: Look", "/flag Otter: Look"},
 		{"/api control off", "/api control off"},
 		{"/api on", ""},
 		{"/API ON", ""},
@@ -38,8 +43,9 @@ func TestDockLine(t *testing.T) {
 		{"/fleet", ""},
 		{"/usage resume", "/usage resume"},
 		{"/usage stop", "/usage stop"},
-		{"/usage set 10", ""},
-		{"/usage clear", ""},
+		{"/usage set 10", "/usage set 10"},
+		{"/usage clear", "/usage clear"},
+		{"/usage nosuch", ""},
 		{"/mission ship the site", ""},
 		{"/template review ~/code/x", ""},
 		{"/template save mine", "/template save mine"},
@@ -70,6 +76,72 @@ func TestDockLine(t *testing.T) {
 		if flags[name] != want {
 			t.Errorf("%s listed as %q, want %q", name, flags[name], want)
 		}
+	}
+}
+
+// A judged word in upper case runs as the lower-case one, or is refused:
+// what runs is what the verdict checked.
+func TestDockLineCaseOfJudgedWords(t *testing.T) {
+	for _, line := range []string{
+		"/api off", "/api disconnect", "/api unpair", "/api disallow 2", "/api control off", "/remote retry h", "/fleet project",
+		"/fleet flat", "/mission move other", "/template save mine", "/usage stop", "/usage resume", "/usage set 10",
+		"/usage clear", "/orch new", "/orch restart",
+	} {
+		low, _, why := dockLine(line)
+		if why != "" {
+			t.Fatalf("%q refused: %s", line, why)
+		}
+		f := strings.Fields(line)
+		f[1] = strings.ToUpper(f[1])
+		if f[1] == "CONTROL" {
+			f[2] = strings.ToUpper(f[2])
+		}
+		up, _, why := dockLine(strings.Join(f, " "))
+		if why == "" && strings.Join(up, " ") != strings.Join(low, " ") {
+			t.Errorf("%q upper-cased runs as %q, not %q", line, up, low)
+		}
+	}
+}
+
+// A console's /usage set or clear waits on a card; ^Y there takes it.
+func TestDockUsageFigureOnACard(t *testing.T) {
+	m := testModel(140, 40)
+	r := &api.CommandRun{Text: "/usage set 10", Console: "drey-host", Reply: make(chan api.CommandResult, 1)}
+	m.runFromDock(r)
+	if res := <-r.Reply; res.Code != "" {
+		t.Fatalf("/usage set from the dock: %+v", res)
+	}
+	if m.use.st.SetPercent != nil {
+		t.Fatal("the figure was taken without a card")
+	}
+	var it *inbox.Item
+	for _, x := range m.store.Items() {
+		if x.Kind == inbox.UsageSet && x.Answerable() {
+			it = x
+		}
+	}
+	if it == nil {
+		t.Fatal("no card for the figure")
+	}
+	text := strings.Join(it.Body, "\n")
+	for _, want := range []string{"your figure now: none", "the figure sent: 10%", "A lower figure can hold off your usage stop."} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the card says %q, not %q", text, want)
+		}
+	}
+	if m.dockFrom != "" {
+		t.Error("dockFrom outlived the command")
+	}
+	mm, _ := m.answerItem(it, "allow")
+	m = mm.(Model)
+	if m.use.st.SetPercent == nil || *m.use.st.SetPercent != 10 || it.State != inbox.Resolved {
+		t.Errorf("after ^Y: figure %v, state %v", m.use.st.SetPercent, it.State)
+	}
+	// Typed in Den, it is the human's own: no card.
+	mm, _ = m.usageCommand([]string{"clear"})
+	m = mm.(Model)
+	if m.use.st.SetPercent != nil {
+		t.Error("the human's /usage clear asked on a card")
 	}
 }
 

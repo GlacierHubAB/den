@@ -50,6 +50,7 @@ const (
 	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
 	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
 	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
+	UsageSet                  // Den asks: take this usage figure, as the console sent it? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -106,6 +107,8 @@ func (k Kind) String() string {
 		return "app's turn"
 	case Console:
 		return "console"
+	case UsageSet:
+		return "usage figure"
 	case ConsoleNote:
 		return "console note"
 	}
@@ -171,7 +174,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -775,6 +778,15 @@ func (s *Store) AddUsageResume(title string, body []string) *Item {
 		return nil
 	}
 	return s.add(&Item{SessionID: UsageSession, Kind: UsageResume, Tool: "usage_resume", Title: title, Body: body})
+}
+
+// AddUsageSet adds Den's question: take the usage figure the console
+// sent? One at a time; nil while one is open.
+func (s *Store) AddUsageSet(title string, body []string) *Item {
+	if s.hasOpen("", UsageSession, UsageSet) {
+		return nil
+	}
+	return s.add(&Item{SessionID: UsageSession, Kind: UsageSet, Tool: "usage_set", Title: title, Body: body})
 }
 
 // AddMissionMove adds Den's question: move this mission to another

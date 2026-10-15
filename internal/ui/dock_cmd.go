@@ -136,16 +136,16 @@ var dockVerbs = []dockVerb{
 	{"/pause", nil, "/pause", "pause the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/resume", nil, "/resume", "resume the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/stop", nil, "/stop", "stop the open mission", always(api.DockDenScreen, whyScreen)},
-	{"/usage", nil, "/usage [stop|resume]", "the weekly limit", func(a []string) (string, string) {
+	{"/usage", nil, "/usage [set <pct>|clear|stop|resume]", "the weekly limit", func(a []string) (string, string) {
 		switch {
 		case len(a) == 0, a[0] == "stop":
 			return api.DockOK, ""
-		case a[0] == "resume":
+		case a[0] == "resume", a[0] == "set", a[0] == "clear":
+			// set and clear change the figure the stop is measured
+			// against: Den asks on a card.
 			return api.DockCard, ""
 		}
-		// set and clear change the figure the stop is measured against: a
-		// lower one could hold off a stop the human set.
-		return api.DockRefused, "the usage figure is for Den only"
+		return api.DockRefused, "no such /usage command"
 	}},
 	{"/budget", nil, "/budget", "the open mission's budget", always(api.DockDenScreen, whyScreen)},
 	{"/orchestrator", []string{"/orch"}, "/orchestrator [new|restart]", "the orchestrator", func(a []string) (string, string) {
@@ -157,6 +157,11 @@ var dockVerbs = []dockVerb{
 	{"/help", []string{"/?"}, "/help", "Den's help", always(api.DockDenScreen, whyScreen)},
 	{"/quit", []string{"/q", "/exit"}, "/quit", "quit Den", always(api.DockRefused, whyNever)},
 }
+
+// dockJudged is how many leading words each verb's verdict judges: they
+// run in the form judged (lowercased), so what runs is what was checked;
+// the words after (names, notes, paths) run as typed.
+var dockJudged = map[string]int{"/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1}
 
 // dockVerbOf is the verb a command word names, by its name or an alias.
 func dockVerbOf(word string) (dockVerb, bool) {
@@ -232,6 +237,13 @@ func dockLine(text string) ([]string, dockVerb, string) {
 	if flag != api.DockOK && flag != api.DockCard {
 		return nil, v, why
 	}
+	n := dockJudged[v.name]
+	if v.name == "/api" && len(lower) > 0 && lower[0] == "control" {
+		n = 2
+	}
+	for i := 0; i < n && i < len(args); i++ {
+		args[i] = lower[i]
+	}
 	return append([]string{v.name}, args...), v, ""
 }
 
@@ -244,8 +256,10 @@ func (m *Model) runFromDock(r *api.CommandRun) tea.Cmd {
 	}
 	line := strings.Join(words, " ")
 	m.flash, m.flashErr = "", false
+	m.dockFrom = sanitize.Label(r.Console, 40)
 	mm, cmd := m.command(line)
 	*m = mm.(Model)
+	m.dockFrom = ""
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "from " + sanitize.Label(r.Console, 40) + ": " + sanitize.Label(line, 200), at: time.Now()}))
 	note := sanitize.Label(m.flash, 200)
 	if m.flashErr {

@@ -781,6 +781,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "load it")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.UsageResume:
 		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
+	case it.Answerable() && it.Kind == inbox.UsageSet:
+		out = append(out, key("^Y", "take the figure")+"  "+key("^N", "keep yours"))
 	case it.Answerable() && it.Kind == inbox.APIOn:
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.Grant:
@@ -1037,6 +1039,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.UsageResume {
 			acts = key("^Y", "let the fleet go on") + sp + sp + key("^N", "stay stopped")
+		}
+		if it.Kind == inbox.UsageSet {
+			acts = key("^Y", "take the figure") + sp + sp + key("^N", "keep yours")
 		}
 		if it.Kind == inbox.APIOn {
 			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")

@@ -114,6 +114,8 @@ type Model struct {
 	missionUpdates map[string]mission.Update
 	// use is the usage guard (usage.go).
 	use usageGuard
+	// dockFrom names the console while its command runs, "" otherwise.
+	dockFrom string
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
 	ments *mentionSet
@@ -1415,6 +1417,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.UsageResume {
 		return m.decideUsageResume(it, verb)
+	}
+	if it.Kind == inbox.UsageSet {
+		return m.decideUsageSet(it, verb)
 	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
