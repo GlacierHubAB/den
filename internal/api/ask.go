@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
@@ -774,7 +776,8 @@ func (l *lane) start(j *askJob) (*laneProc, error) {
 }
 
 // fence wraps a client's question as data: sanitised, < and > made
-// harmless, inside a block Den writes.
+// harmless (after NFKC, so a fullwidth ＜ is caught too), inside a block
+// Den writes.
 func fence(text string) string {
 	t := strings.Map(func(r rune) rune {
 		switch r {
@@ -784,6 +787,6 @@ func fence(text string) string {
 			return '›'
 		}
 		return r
-	}, sanitize.Text(text))
+	}, norm.NFKC.String(sanitize.Text(text)))
 	return `<client_request client="drey">` + "\n" + strings.TrimSpace(t) + "\n</client_request>"
 }
