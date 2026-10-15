@@ -3,6 +3,7 @@ package ui
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -177,6 +178,10 @@ func (m *Model) godSpawn() (bridge.Decision, bool) {
 	if err != nil || serr != nil {
 		return bridge.Decision{}, false
 	}
+	if n := m.guardsWaiting(); n >= guardsWaitingMax {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "God mode: " + strconv.Itoa(n) + " new agents have not started yet, so the next starts in " + m.agentMode() + ".", at: time.Now()}))
+		return bridge.Decision{}, false
+	}
 	sid := newSessionID()
 	path, err := m.guardAgent(sid, den, sock, agentHooks{Inbound: true})
 	if err != nil {
@@ -185,6 +190,35 @@ func (m *Model) godSpawn() (bridge.Decision, bool) {
 	}
 	m.med.guards[sid].launched = time.Now()
 	return bridge.Decision{Behavior: "allow", Message: permmode.Bypass, Answers: map[string]string{"session_id": sid, "settings": path}}, true
+}
+
+// guardsWaitingMax caps guards handed out whose agent has not started;
+// guardWait is how long one waits before Den drops it.
+const (
+	guardsWaitingMax = 8
+	guardWait        = 2 * time.Minute
+)
+
+// guardsWaiting counts guards handed out whose agent has not started.
+func (m Model) guardsWaiting() int {
+	n := 0
+	for _, g := range m.med.guards {
+		if !g.launched.IsZero() && !g.registered {
+			n++
+		}
+	}
+	return n
+}
+
+// dropStaleGuards forgets guards whose agent never started within
+// guardWait, with their files.
+func (m *Model) dropStaleGuards() {
+	for sid, g := range m.med.guards {
+		if !g.launched.IsZero() && !g.registered && time.Since(g.launched) > guardWait {
+			os.Remove(g.settings)
+			delete(m.med.guards, sid)
+		}
+	}
 }
 
 // handleGodOff is `den god off` over den.sock. It only lowers, so it is

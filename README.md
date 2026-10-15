@@ -569,8 +569,11 @@ unpair end it.
 
 While it is on, Den's header says so in red, and:
 
-- agents Den starts on this machine run in `bypassPermissions`; remote
-  hosts keep their own policy;
+- agents the orchestrator starts on this machine run in
+  `bypassPermissions`: Claude Code never asks them, so Den shows no
+  permission cards for them at all. Remote hosts keep their own policy;
+  agents a lead starts, and agents Den reopens, start in the global mode,
+  and a bypass agent cannot start agents of its own;
 - Den answers, yes, its own close, cleanup, restore, mission-update and
   mission-move cards that came after God mode went on, with a line in its
   chat for each;

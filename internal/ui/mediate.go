@@ -45,6 +45,7 @@ type agentGuard struct {
 	denSHA      string
 	unguarded   string    // why Den no longer trusts the guard, "" while it holds
 	launched    time.Time // when Den handed the guard out for a new agent
+	registered  bool      // the agent started, with the session id Den drew
 }
 
 // mediationUI is the mediation's part of the model.

@@ -117,13 +117,18 @@ func TestGodModeFromOutside(t *testing.T) {
 func TestGodModeSpawnsGuarded(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := testModel(140, 40)
-	ask := func(lead string) bridge.Decision {
+	old := fromOrchestrator
+	t.Cleanup(func() { fromOrchestrator = old })
+	fromOrchestrator = func(_ *Model, pid int) bool { return pid == 4242 }
+	askFrom := func(pid int, lead string) bridge.Decision {
 		payload, _ := json.Marshal(map[string]string{"lead": lead})
 		r := bridge.TestRequest(bridge.Envelope{Event: bridge.ModeEvent, Payload: payload})
+		r.PeerPID = pid
 		m.modeQuery(r)
 		d, _ := r.Decided()
 		return d
 	}
+	ask := func(lead string) bridge.Decision { return askFrom(4242, lead) }
 	if d := ask(""); d.Message == permmode.Bypass {
 		t.Fatalf("bypass with God mode off: %+v", d)
 	}
@@ -143,8 +148,28 @@ func TestGodModeSpawnsGuarded(t *testing.T) {
 	if d2 := ask(""); d2.Answers["session_id"] == sid {
 		t.Error("a session id given out twice")
 	}
-	if d := ask("otter"); d.Message == permmode.Bypass || d.Answers != nil {
-		t.Errorf("a lead's agent: %+v", d)
+	// Another process saying it is the orchestrator's spawn gets the
+	// global mode, and no guard is written.
+	n := len(m.med.guards)
+	if d := askFrom(7777, ""); d.Message == permmode.Bypass || d.Answers != nil || len(m.med.guards) != n {
+		t.Errorf("an unrelated caller: %+v, guards %d", d, len(m.med.guards))
+	}
+	// At most guardsWaitingMax wait for their agent; a stale one goes.
+	for i := 0; i < guardsWaitingMax; i++ {
+		ask("")
+	}
+	if d := ask(""); d.Message == permmode.Bypass || m.guardsWaiting() > guardsWaitingMax {
+		t.Errorf("past the cap: %+v, waiting %d", d, m.guardsWaiting())
+	}
+	for _, g := range m.med.guards {
+		g.launched = time.Now().Add(-guardWait - time.Second)
+	}
+	m.dropStaleGuards()
+	if len(m.med.guards) != 0 {
+		t.Errorf("stale guards kept: %d", len(m.med.guards))
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("a stale guard's file kept: %v", err)
 	}
 }
 
