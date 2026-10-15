@@ -183,8 +183,7 @@ func (s *Server) cmdRun(c *conn, req Request) {
 		c.fail(req.ID, CodeUnavailable, "too many commands")
 		return
 	}
-	cur, _ := s.CurrentConsole()
-	r := &CommandRun{Text: p.Text, Console: ExeLabel(cur.Exe), Reply: make(chan CommandResult, 1)}
+	r := &CommandRun{Text: p.Text, Console: ConsoleLabel, Reply: make(chan CommandResult, 1)}
 	if !s.act(Act{Command: r}) {
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return

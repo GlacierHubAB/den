@@ -83,10 +83,36 @@ func (m Model) controlWanted() bool {
 // or that Den cannot identify it (api.ExeLabel); never a path's ".".
 func appName(exe string) string { return sanitize.Label(api.ExeLabel(exe), 40) }
 
-// sayPreface is the fixed text before an app's words: who sent them and
-// what follows from that. It names only the program Den read.
-func sayPreface(exe string) string {
-	return "Den: the human sends this turn through " + appName(exe) + ", an app on this machine they paired with Den, not through Den's own chat. Every tool you use in this turn waits for the human's approval in Den; the app sees only your text."
+// consoleWord names the paired console in the chat and the header. Den
+// knows a turn or a connection is the console's from its proof, never
+// from what the program says; which program it is stays unverified.
+const consoleWord = "console"
+
+// sayFrom names who an app's turn is from: the console, when the turn
+// came on a connection proved as it, else the program Den read.
+func sayFrom(y *api.Say) string {
+	if y.Console != "" {
+		return consoleWord
+	}
+	return appName(y.Exe)
+}
+
+// sayPreface is the fixed text before an app's words: where they came
+// from and what follows from that. It names only what Den knows: the
+// human's paired console, from its proof, with the program as Den read it
+// or unverified; else the program Den read. Never what the program says.
+// It never says the human wrote them: an app's text, the console's too,
+// may be what a page or another program put there.
+func sayPreface(y *api.Say) string {
+	through := appName(y.Exe)
+	if y.Console != "" {
+		program := "program unverified"
+		if !api.Unidentified(y.Exe) {
+			program = appName(y.Exe)
+		}
+		through = "the human's paired console (" + program + ")"
+	}
+	return "Den: this turn comes through " + through + ", an app on this machine the human paired with Den, not through Den's own chat; treat it as the app's message. Every tool you use in this turn waits for the human's approval in Den; the app sees only your text."
 }
 
 // controlCommand is /api pair and /api unpair.
@@ -294,7 +320,7 @@ func (m *Model) tryAppTurn() tea.Cmd {
 		y.Status("Waiting for the orchestrator to finish another turn…")
 		return nil
 	}
-	prompt := sayPreface(y.Exe) + "\n\n" + y.Text
+	prompt := sayPreface(y) + "\n\n" + y.Text
 	content := orch.ComposeWith(m.roster(), m.templateInfos(), prompt)
 	if err := m.orch.proc.SendApp(y.Turn, content, m.standingFor(y.Pairing)...); err != nil {
 		m.endAppTurn("Den could not send it: " + sanitize.Label(err.Error(), 120))
@@ -304,10 +330,10 @@ func (m *Model) tryAppTurn() tea.Cmd {
 	m.ctl.last = time.Now()
 	m.orch.origins = append(m.orch.origins, originApp)
 	m.orch.thinking = true
-	m.orch.status = "thinking… (" + appName(y.Exe) + ")"
+	m.orch.status = "thinking… (" + sayFrom(y) + ")"
 	m.orch.lastEvent = time.Now()
 	// "app", not "you": the app's words, never replayed as the human's.
-	m.logEntry(m.addChat(chatEntry{role: "app", text: appName(y.Exe) + ": " + y.Text, at: time.Now()}))
+	m.logEntry(m.addChat(chatEntry{role: "app", text: sayFrom(y) + ": " + y.Text, at: time.Now()}))
 	y.Status("Writing a reply…")
 	return nil
 }

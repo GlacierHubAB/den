@@ -60,6 +60,12 @@ func Unidentified(exe string) bool { return exe == "" || strings.HasPrefix(exe, 
 // unidentified names such a peer, for the human.
 const unidentified = "a program Den cannot identify"
 
+// ConsoleLabel names the paired console in Den's notes: Den knows a turn,
+// an answer or a command is the console's from its proof, never from
+// anything the program says, and never names it by what it says it is.
+// Which program it is stays unverified while Den cannot read it.
+const ConsoleLabel = "the console"
+
 // ExeLabel is how Den names a peer to the human: its executable's base
 // name, or, when Den could not read it, unidentified; never a path's
 // "." or the identity itself.

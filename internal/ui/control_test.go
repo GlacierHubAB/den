@@ -309,7 +309,7 @@ func TestAppTurnInDen(t *testing.T) {
 		t.Fatalf("chunks %v", got)
 	}
 	turns, _ := os.ReadFile(filepath.Join(dir, "turns"))
-	if !strings.Contains(string(turns), "Den: the human sends this turn through") || !strings.Contains(string(turns), "who is busy? SPAWN-PLEASE") {
+	if !strings.Contains(string(turns), "Den: this turn comes through ") || !strings.Contains(string(turns), "who is busy? SPAWN-PLEASE") {
 		t.Errorf("turn %s", turns)
 	}
 	answers, _ := os.ReadFile(filepath.Join(dir, "answers"))

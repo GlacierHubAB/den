@@ -535,28 +535,22 @@ func (m Model) apiChipParts() []string {
 	if len(paired) > 0 {
 		return []string{m.st.attn.Render("paired: " + strings.Join(paired, ", "))}
 	}
-	names := map[string]bool{}
-	unidentified := map[int]bool{}
-	asking := false
-	for _, c := range srv.Clients() {
-		if c.Agent {
-			continue
-		}
-		if api.Unidentified(c.Exe) {
-			unidentified[c.PID] = true
-		} else {
-			names[sanitize.Label(c.Label, 20)] = true
-		}
-		asking = asking || c.Asking
+	consoleExe := ""
+	if c, ok := srv.CurrentConsole(); ok {
+		consoleExe = c.Exe
 	}
+	chips, asking := connectedChips(srv.Clients(), consoleExe)
 	lane := laneChip(srv.LaneState())
-	if len(names) == 0 && len(unidentified) == 0 {
+	if len(chips) == 0 {
 		if lane != "" {
 			return []string{"API on", lane}
 		}
 		return []string{"API on"}
 	}
-	parts := []string{m.st.attn.Render(connectedChip(sortedKeys(names), len(unidentified)))}
+	var parts []string
+	for _, c := range chips {
+		parts = append(parts, m.st.attn.Render(c))
+	}
 	if asking {
 		parts = append(parts, m.st.attn.Render("asking"))
 	}
@@ -576,6 +570,44 @@ func connectedChip(names []string, unidentified int) string {
 		return "⇄ " + strings.Join(names, ", ") + " connected"
 	}
 	return "⇄ " + strings.Join(names, ", ") + ", " + strconv.Itoa(unidentified) + " unidentified connected"
+}
+
+// connectedChips are the header's words for what is connected, and
+// whether any of it is asking. A connection proved as the console is
+// "console", which Den knows from the pairing, never from what the
+// program says, with the program as Den read it (consoleExe), "program
+// unverified" when it could not read one. Every other app keeps its own
+// words (connectedChip).
+func connectedChips(clients []api.Client, consoleExe string) ([]string, bool) {
+	names := map[string]bool{}
+	unidentified := map[int]bool{}
+	asking, console := false, false
+	for _, c := range clients {
+		if c.Agent {
+			continue
+		}
+		asking = asking || c.Asking
+		switch {
+		case c.Console:
+			console = true
+		case api.Unidentified(c.Exe):
+			unidentified[c.PID] = true
+		default:
+			names[sanitize.Label(c.Label, 20)] = true
+		}
+	}
+	var out []string
+	if console {
+		what := "program unverified"
+		if !api.Unidentified(consoleExe) {
+			what = appName(consoleExe)
+		}
+		out = append(out, "⇄ "+consoleWord+" connected · "+what)
+	}
+	if len(names) > 0 || len(unidentified) > 0 {
+		out = append(out, connectedChip(sortedKeys(names), len(unidentified)))
+	}
+	return out, asking
 }
 
 // appCount is "1 app" or "N apps".

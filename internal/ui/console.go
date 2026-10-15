@@ -220,11 +220,13 @@ func (m Model) consoleChip() string {
 	if !ok {
 		return ""
 	}
-	who := appName(c.Exe)
+	who := appName(c.Exe) + " pid "
 	if api.Unidentified(c.Exe) {
-		who = "an unidentified app"
+		// Den knows the console from the pairing; which program it is,
+		// it cannot read.
+		who = "program unverified, pid "
 	}
-	return m.st.attn.Render("console: " + who + " pid " + strconv.Itoa(c.PID) + " since " + c.Since.Local().Format("15:04"))
+	return m.st.attn.Render(consoleWord + ": " + who + strconv.Itoa(c.PID) + " since " + c.Since.Local().Format("15:04"))
 }
 
 // pairCallerRefusal is why Den refuses den pair from pid: it runs under
