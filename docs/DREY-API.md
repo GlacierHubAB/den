@@ -557,6 +557,14 @@ Ed25519, and the console is bound to one process. Den's `hello` lists
   `den-console-bind-v1`) of `"den-console-bind-v1\n" + public_key + "\n" +
   den_public_key + "\n" + pairing`. Check it: it proves this Den saw the
   code, and pins Den's key.
+- After a right proof, before the card, Den also reads the claimant as
+  "Pairing with no code" does. If it is the main process of a
+  `drey-host.service` that passes every check there, Den keeps what it
+  read, the card says the dock may rejoin with no code after a restart,
+  and `console.reconnect` works for it as for a pairing with no code. Any
+  other claimant pairs as before, with no word of the read on the card
+  and no strike. The read can take up to ten seconds; a code whose two
+  minutes end meanwhile answers `no code waiting`.
 - A refused claim answers `forbidden`: `no code waiting`, `wrong code`,
   `code spent` (the code was claimed already, right or wrong, and its two
   minutes are not over), `denied in Den`, `not confirmed in time` or `revoked: the code was used
