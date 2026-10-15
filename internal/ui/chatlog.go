@@ -2,12 +2,15 @@ package ui
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -50,6 +53,67 @@ type cardRecord struct {
 
 // maxChatLog is how many records come back on launch.
 const maxChatLog = 500
+
+// What comes back is capped too: the chat is laid out whole on the first
+// frame and on every resize, at about 0.45 µs a byte, and the log has no
+// limit of its own.
+const (
+	maxRestoredText = 32 << 10  // per text of a record; the rest stays in the log
+	restoreBudget   = 512 << 10 // all restored text, newest first; older records stay in the log
+	maxChatLine     = 4 << 20   // a longer line is skipped, and the lines after it still read
+)
+
+// cutMark ends a text that was cut on restore.
+const cutMark = "\n\n(cut: the rest is in the orchestrator log)"
+
+// cutText keeps at most max bytes of s, ending on a whole character.
+func cutText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	i := max
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + cutMark
+}
+
+// recordText is how much text a record brings back.
+func recordText(r chatRecord) int {
+	n := len(r.Text)
+	if r.Card != nil {
+		n += len(r.Card.Brief) + len(r.Card.Result)
+	}
+	return n
+}
+
+// eachLine calls fn for each line of r, without its newline. A line longer
+// than max is skipped whole, so one oversized record does not end the read.
+func eachLine(r io.Reader, max int, fn func([]byte)) {
+	br := bufio.NewReaderSize(r, 64<<10)
+	var line []byte
+	skip := false
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if !skip {
+			if len(line)+len(chunk) > max {
+				line, skip = line[:0], true
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if !skip && len(line) > 0 {
+			fn(bytes.TrimSuffix(line, []byte("\n")))
+		}
+		line, skip = line[:0], false
+		if err != nil {
+			return
+		}
+	}
+}
 
 // ChatLogPath is the orchestrator log: one JSON record per line.
 func ChatLogPath() string {
@@ -119,21 +183,31 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 	}
 	defer f.Close()
 	var records []chatRecord
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
+	eachLine(f, maxChatLine, func(line []byte) {
 		var r chatRecord
-		if json.Unmarshal(sc.Bytes(), &r) != nil {
-			continue
+		if json.Unmarshal(line, &r) != nil {
+			return
 		}
 		if r.Kind == "session" {
 			session = r.Session
-			continue
+			return
+		}
+		r.Text = cutText(r.Text, maxRestoredText)
+		if r.Card != nil {
+			r.Card.Brief, r.Card.Result = cutText(r.Card.Brief, maxRestoredText), cutText(r.Card.Result, maxRestoredText)
 		}
 		records = append(records, r)
-	}
+	})
 	if len(records) > n {
 		records = records[len(records)-n:]
+	}
+	// Newest first, until the budget is spent.
+	left, older := restoreBudget, 0
+	for i := len(records) - 1; i >= 0; i-- {
+		if left -= recordText(records[i]); left < 0 {
+			older, records = i+1, records[i+1:]
+			break
+		}
 	}
 	cards := map[string]*dispatch{}
 	for _, r := range records {
@@ -167,6 +241,9 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 	if len(chat) > 0 {
 		first, last := chat[0].at, chat[len(chat)-1].at
 		note := fmt.Sprintf("restored %d entries · %s to %s", len(chat), first.Format("Jan 2 15:04"), last.Format("15:04"))
+		if older > 0 {
+			note += fmt.Sprintf(" · %d older records stay in the log", older)
+		}
 		chat = append([]chatEntry{{role: "note", text: note, at: time.Now()}}, chat...)
 	}
 	return chat, session
