@@ -87,6 +87,23 @@ func TestCardGetAndAnswer(t *testing.T) {
 	}
 }
 
+// A console that subscribes gets the cards already waiting, as new.
+func TestConsoleEventsReplayPendingCards(t *testing.T) {
+	h, _ := consoleHarness(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{card("w-1", 1, true)}}))
+	d := newDock(t, h)
+	p := d.pair(h.s.StartConsoleCode())
+	c := h.dial()
+	c.hello()
+	d.auth(c, p)
+	c.call("console.events", nil)
+	c.next() // connected
+	var ev CardEvent
+	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.ID != "w-1" || ev.Change != "new" {
+		t.Errorf("no replay of the waiting card: %+v", e)
+	}
+}
+
 // What a console may not do with a card.
 func TestCardAnswerRefusals(t *testing.T) {
 	h, c := provedConsole(t)

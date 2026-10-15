@@ -671,6 +671,13 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	c.mu.Unlock()
 	c.reply(req.ID, map[string]bool{"ok": true})
 	c.push(Event{Event: EventConsole, Data: ev}, true)
+	// The cards already waiting, as if new: after a re-dial or a reload the
+	// console sees what Den sees, not only what changes from now on.
+	if v := s.view.Load(); v != nil {
+		for _, card := range v.Cards {
+			c.push(Event{Event: EventCard, Data: CardEvent{ID: card.ID, Kind: card.Kind, Agent: card.Agent, Change: "new", Hash: card.Hash}}, true)
+		}
+	}
 }
 
 // consoleUnpair is console.unpair: {} ends this console, from its own
