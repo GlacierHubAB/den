@@ -229,11 +229,11 @@ func (m Model) turnOrigin() string {
 // already killed. Its session is never resumed; a fresh one starts, which
 // runs the hook's self-test first.
 func (m *Model) onBackstop(why, kind string) tea.Cmd {
-	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
+	if m.orch.proc != nil && m.orch.proc.SessionID() != "" {
 		if m.orch.poisoned == nil {
 			m.orch.poisoned = map[string]bool{}
 		}
-		m.orch.poisoned[m.orch.proc.SessionID] = true
+		m.orch.poisoned[m.orch.proc.SessionID()] = true
 	}
 	m.orch.proc = nil
 	m.orch.resume, m.orch.replay = "", ""

@@ -116,7 +116,7 @@ func (m *Model) handleSkillsRequest(r *bridge.Request) {
 	if a, ok := m.agentByPeer(in.AskedBy); ok {
 		sid = a.Session.SessionID
 	} else if m.orch.proc != nil {
-		sid = m.orch.proc.SessionID
+		sid = m.orch.proc.SessionID()
 	}
 	it := m.store.AddSkills(sid, title, body, r)
 	it.Role = in.Role
