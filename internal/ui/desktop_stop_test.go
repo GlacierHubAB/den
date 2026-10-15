@@ -2,8 +2,11 @@ package ui
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desktop"
@@ -109,4 +112,43 @@ func TestDesktopStopIsADockCommand(t *testing.T) {
 		}
 	}
 	t.Fatal("no /desktop dock command")
+}
+
+// An ended mission's journal, crops and log are deleted after deskKeepFor,
+// unless the human keeps them.
+func TestDesktopPrivateFilesPurged(t *testing.T) {
+	m, _, _ := stopRig(t)
+	dm := m.deskMission("m1")
+	for _, f := range []string{"journal.ndjson", "desktop.log", "crop-i1.png", "settings.json"} {
+		os.WriteFile(filepath.Join(dm.Dir, f), []byte("x"), 0o600)
+	}
+	mm, _ := m.desktopCommand([]string{"stop"})
+	*m = mm.(Model)
+	if !m.deskPurge(time.Now()) {
+		t.Fatal("nothing waits after the stop")
+	}
+	if _, err := os.Stat(filepath.Join(dm.Dir, "journal.ndjson")); err != nil {
+		t.Fatal("deleted before its time")
+	}
+	m.deskPurge(time.Now().Add(deskKeepFor + time.Second))
+	for _, f := range []string{"journal.ndjson", "desktop.log", "crop-i1.png"} {
+		if _, err := os.Stat(filepath.Join(dm.Dir, f)); err == nil {
+			t.Errorf("%s survived", f)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dm.Dir, "settings.json")); err != nil {
+		t.Error("the settings file is not one of the private files")
+	}
+
+	m2, _, _ := stopRig(t)
+	dm2 := m2.deskMission("m1")
+	os.WriteFile(filepath.Join(dm2.Dir, "journal.ndjson"), []byte("x"), 0o600)
+	mm, _ = m2.desktopCommand([]string{"stop"})
+	*m2 = mm.(Model)
+	mm, _ = m2.desktopCommand([]string{"keep"})
+	*m2 = mm.(Model)
+	m2.deskPurge(time.Now().Add(deskKeepFor + time.Second))
+	if _, err := os.Stat(filepath.Join(dm2.Dir, "journal.ndjson")); err != nil {
+		t.Fatal("a kept journal was deleted")
+	}
 }

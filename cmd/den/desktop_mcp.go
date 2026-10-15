@@ -80,7 +80,8 @@ func runDesktopMCP(args []string) {
 	if info.Log != "" && filepath.IsAbs(info.Log) {
 		if f, err := os.OpenFile(info.Log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
 			defer f.Close()
-			child.Stderr = f
+			filter = &desktop.LogFilter{W: f}
+			child.Stderr = filter
 			logTo = f
 			// A crash anywhere in the proxy writes its trace to fd 2:
 			// into the log too, where it can be read.
@@ -116,7 +117,7 @@ func runDesktopMCP(args []string) {
 	}
 	proxyLog("Den took hypruse's process; relaying")
 	p := &desktop.Proxy{Gate: denGate{socket: socket, mission: mission}, Client: os.Stdin, ToClient: os.Stdout, Child: fromChild, ToChild: toChild,
-		Cursor: cursorPos, Pointer: desktop.PointerPath()}
+		Cursor: cursorPos, Pointer: desktop.PointerPath(), Log: filter}
 	if err := p.Run(context.Background()); err != nil {
 		proxyLog("relay ended: %v", err)
 	} else {
@@ -227,8 +228,12 @@ func cursorPos() (float64, float64, bool) {
 	return c.X, c.Y, true
 }
 
-// logTo is the mission's proxy log, once Den named it.
-var logTo *os.File
+// logTo is the mission's proxy log, once Den named it, and filter what
+// hypruse's stderr goes through on its way there.
+var (
+	logTo  *os.File
+	filter *desktop.LogFilter
+)
 
 // proxyLog writes one line to the proxy log, when there is one.
 func proxyLog(format string, a ...any) {

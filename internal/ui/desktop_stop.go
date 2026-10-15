@@ -110,6 +110,19 @@ func (m *Model) stopDesktop(why string) string {
 
 // desktopCommand is /desktop: stop, or how it stands.
 func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
+	if len(args) > 0 && strings.EqualFold(args[0], "keep") {
+		var last *deskMission
+		for _, dm := range m.desk.missions {
+			if dm.Ended != "" && !dm.purged && (last == nil || dm.endedAt.After(last.endedAt)) {
+				last = dm
+			}
+		}
+		if last == nil {
+			return m.say("No ended desktop mission's files are waiting to be deleted.", true)
+		}
+		last.kept = true
+		return m.say("Kept the last desktop mission's journal, screenshots and log in "+last.Dir+".", false)
+	}
 	if len(args) > 0 && strings.EqualFold(args[0], "stop") {
 		out := m.stopDesktop("you stopped it with /desktop stop")
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop: " + out, at: time.Now()}))
@@ -136,6 +149,9 @@ func (m *Model) deskOnTick() tea.Cmd {
 	dm := m.deskLive()
 	if dm == nil {
 		m.desk.chip = ""
+		if m.deskPurge(time.Now()) {
+			return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return deskTickMsg{} })
+		}
 		return nil
 	}
 	if dm.AgentPID > 1 && deskStart(dm.AgentPID) != dm.AgentStart {
@@ -178,7 +194,7 @@ func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 	m.endDeskMission(dm, why)
 	dm.save()
 	deskNotify(notify.Note{Summary: "Desktop control ended", Body: why})
-	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop mission ended: " + why + "; " + r.Line(), at: time.Now()}))
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop mission ended: " + why + "; " + r.Line() + ". Its journal, screenshots and log are deleted in 10 minutes; /desktop keep keeps them.", at: time.Now()}))
 	m.refresh()
 	if m.orch.proc == nil {
 		return nil
@@ -255,4 +271,31 @@ var deskRecorded = func() (map[string]bool, bool) {
 		out[st.Session] = true
 	}
 	return out, unsure
+}
+
+// deskKeepFor is how long an ended mission's private files (the journal,
+// the screenshot crops, the proxy log) stay before Den deletes them,
+// unless the human types /desktop keep.
+var deskKeepFor = 10 * time.Minute
+
+// deskPurge deletes the private files of missions that ended more than
+// deskKeepFor ago and were not kept. It reports whether any ended mission
+// still waits for that.
+func (m *Model) deskPurge(now time.Time) bool {
+	waiting := false
+	for _, dm := range m.desk.missions {
+		if dm.Ended == "" || dm.kept || dm.purged || dm.Dir == "" {
+			continue
+		}
+		if now.Sub(dm.endedAt) < deskKeepFor {
+			waiting = true
+			continue
+		}
+		dm.purged = true
+		files, _ := filepath.Glob(filepath.Join(dm.Dir, "crop-*.png"))
+		for _, f := range append(files, filepath.Join(dm.Dir, "journal.ndjson"), filepath.Join(dm.Dir, "desktop.log")) {
+			os.Remove(f)
+		}
+	}
+	return waiting
 }

@@ -49,7 +49,9 @@ type deskMission struct {
 	// The executables of the agent, the proxy and hypruse, as Den read
 	// them when each started: a stop checks them again.
 	AgentExe, ProxyExe, ChildExe string
-	report                       string // the agent's last words, from its Stop hook
+	report                       string    // the agent's last words, from its Stop hook
+	endedAt                      time.Time // when it ended: its private files go deskKeepFor later
+	kept, purged                 bool      // the human kept its files; they were deleted
 	tokens                       map[string]deskToken
 	turn                         string // the open your-turn card's item id
 }
@@ -509,6 +511,7 @@ func (m *Model) endDeskMission(dm *deskMission, why string) {
 		return
 	}
 	dm.Ended = why
+	dm.endedAt = time.Now()
 	for id, p := range m.desk.pending {
 		if p.mission != dm.ID {
 			continue
