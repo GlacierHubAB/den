@@ -652,10 +652,11 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 				cc.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "refused", PID: c.peer.PID, StartTicks: c.peer.Start, Program: sanitize.Label(ExeLabel(c.peer.Exe), 40)}}, false)
 			}
 		}
-		c.fail(req.ID, CodeForbidden, "another program holds this console")
+		// Unpaired first, then told, as for a burst.
 		if unpair {
 			s.UnpairConsole("three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
 		}
+		c.fail(req.ID, CodeForbidden, "another program holds this console")
 		return
 	}
 	appKey, pub := rec.pubHex, rec.pub
@@ -669,12 +670,13 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		st.mu.Lock()
 		unpair := st.cur == rec && rec.strike(now)
 		st.mu.Unlock()
-		c.fail(req.ID, CodeForbidden, "wrong proof")
-		time.Sleep(50 * time.Millisecond) // the answer first, as for too_large
-		c.close()
+		// Unpaired first, then told, as for a burst.
 		if unpair {
 			s.UnpairConsole("three wrong console proofs in ten minutes: the console is unpaired; pair again with den pair")
 		}
+		c.fail(req.ID, CodeForbidden, "wrong proof")
+		time.Sleep(50 * time.Millisecond) // the answer first, as for too_large
+		c.close()
 		return
 	}
 	st.mu.Lock()
