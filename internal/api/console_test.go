@@ -416,3 +416,66 @@ func TestConsoleIdentity(t *testing.T) {
 		}
 	}
 }
+
+// The console code typed into any text an app sends Den is refused before
+// Den keeps it, in ask, orch.say and cmd.run: the code is cancelled, a
+// claim made with it that waits for the human is refused, and Den notes it.
+func TestConsoleCodeLeakRefused(t *testing.T) {
+	typed := func(words []string) string { return "the code is " + strings.ToUpper(strings.Join(words[:5], ", ")) }
+	dead := func(t *testing.T, h *harness, path string) {
+		t.Helper()
+		if _, live := h.s.ConsoleCodeLive(); live {
+			t.Errorf("%s: a leaked console code stays live", path)
+		}
+		found := false
+		for _, n := range drainNotes(h.s) {
+			found = found || n == "The console code was typed into a chat; pair again with den pair."
+		}
+		if !found {
+			t.Errorf("%s: no note", path)
+		}
+	}
+	h, _ := consoleHarness(t)
+	c := h.dial()
+	c.hello()
+	drainNotes(h.s)
+	words := h.s.StartConsoleCode()
+	if l := c.call("ask", map[string]string{"text": typed(words)}); code(l) != CodeBadRequest {
+		t.Errorf("ask with the console code: %+v", l)
+	}
+	dead(t, h, "ask")
+	pc, _, _ := paired(t, h)
+	drainNotes(h.s)
+	words = h.s.StartConsoleCode()
+	if l := pc.call("orch.say", map[string]string{"text": typed(words)}); code(l) != CodeBadRequest {
+		t.Errorf("orch.say with the console code: %+v", l)
+	}
+	dead(t, h, "orch.say")
+
+	h2, cc := provedConsole(t)
+	drainNotes(h2.s)
+	words = h2.s.StartConsoleCode()
+	if l := cc.call("cmd.run", map[string]string{"text": "/flag Otter: " + strings.Join(words, " ")}); code(l) != CodeBadRequest {
+		t.Errorf("cmd.run with the console code: %+v", l)
+	}
+	dead(t, h2, "cmd.run")
+
+	// A claim waiting for the human's ^Y, made with the code that leaks.
+	h3, _ := consoleHarness(t)
+	d := newDock(t, h3)
+	words = h3.s.StartConsoleCode()
+	c3 := h3.dial()
+	c3.hello()
+	ch := d.challenge(c3)
+	id := c3.send("console.claim", map[string]string{"public_key": d.pub, "proof": proof(words, ch.ClaimSalt, d.pub)})
+	ctlAct(t, h3.s, func(a Act) bool { return a.Console != nil })
+	if !h3.s.leaked(typed(words)) {
+		t.Fatal("the waiting claim's code not taken for the code")
+	}
+	if l := c3.replyTo(id); code(l) != CodeForbidden || l.Error.Message != ClaimLeaked {
+		t.Errorf("the waiting claim: %+v", l)
+	}
+	if _, ok := h3.s.CurrentConsole(); ok {
+		t.Error("paired with a leaked code")
+	}
+}

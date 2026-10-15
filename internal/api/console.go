@@ -49,6 +49,10 @@ const CodeConsoleInUse = "console_in_use"
 // ClaimCooldown refuses a console claim within consoleCooldown of a decline.
 const ClaimCooldown = "wait: a pairing was just declined"
 
+// ClaimLeaked refuses a console claim whose code was typed into a chat
+// while the claim waited for the human.
+const ClaimLeaked = "revoked: the code was typed into a chat"
+
 // The labels the console's MACs and signatures start with: no value made
 // for one use is ever valid for another.
 const (
@@ -105,6 +109,11 @@ type consoleRec struct {
 	pub      ed25519.PublicKey
 	pubHex   string
 	confirm  chan bool
+	// words are the code a claim waiting for the human was made with, for
+	// the chat leak check (leakedConsole); nil once the claim is answered.
+	// leaked says the code was typed into a chat while it waited.
+	words    []string
+	leaked   bool
 	strikes  []time.Time
 	restored bool // restored from before a Den restart, not yet announced
 }
@@ -361,6 +370,36 @@ func (s *Server) isConsoleProcess(peer Peer) bool {
 	return cur != nil && cur.PID == peer.PID && cur.start == peer.Start
 }
 
+// leakedConsole reports whether words hold the console code: the live
+// one, or the one a claim waiting for the human was made with, at least
+// pairLeakWords of its words, counted as leaked() counts them. Den then
+// cancels the live code, refuses the waiting claim and notes it.
+func (s *Server) leakedConsole(words []string) bool {
+	st := &s.con
+	st.mu.Lock()
+	live := st.code != nil && time.Now().Before(st.code.until) && codeWordsIn(st.code.words, words) >= pairLeakWords
+	if live {
+		st.code = nil
+	}
+	var refuse chan bool
+	if p := st.pending; p != nil && p.words != nil && codeWordsIn(p.words, words) >= pairLeakWords {
+		p.leaked = true
+		refuse, p.confirm = p.confirm, nil
+	}
+	st.mu.Unlock()
+	if !live && refuse == nil {
+		return false
+	}
+	if live {
+		s.act(Act{ConsoleCodeGone: true})
+	}
+	if refuse != nil {
+		close(refuse)
+	}
+	s.note("The console code was typed into a chat; pair again with den pair.")
+	return true
+}
+
 // consoleChallenge is console.challenge: a fresh nonce for console.auth,
 // and a claim salt for a console.claim on this connection. It reveals and
 // spends nothing about any code.
@@ -437,6 +476,7 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 	}
 	st.code, st.spent = nil, code.until // one attempt per code, right or wrong
 	text := codeBytes(code.words)
+	words := code.words
 	code.words = nil
 	st.mu.Unlock()
 	s.act(Act{ConsoleCodeGone: true})
@@ -454,7 +494,7 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 	rec := &consoleRec{
 		Console:  Console{ID: id, Exe: c.peer.Exe, PID: c.peer.PID, Since: now, PagesSHA: p.Pages},
 		identity: identity, start: c.peer.Start, pub: ed25519.PublicKey(pub), pubHex: p.PublicKey,
-		confirm: make(chan bool, 1),
+		confirm: make(chan bool, 1), words: words,
 	}
 	ask := ConsoleAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
 	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
@@ -508,6 +548,10 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		mine := st.pending == rec
 		if mine {
 			st.pending = nil
+		}
+		rec.words = nil
+		if rec.leaked {
+			ok, why = false, ClaimLeaked
 		}
 		var old *consoleRec
 		if ok && mine {

@@ -405,8 +405,9 @@ func codeWords(text string) []string {
 
 // leaked reports whether text holds the pairing code: at least
 // pairLeakWords of its words, while it is live and for pairLeakAfter after
-// it was spent. Den then cancels the code (it is no longer secret) and
-// notes it; the text itself is never kept.
+// it was spent; or the console code (leakedConsole). Den then cancels the
+// code (it is no longer secret) and notes it; the text itself is never
+// kept.
 func (s *Server) leaked(text string) bool {
 	words := codeWords(text)
 	holds := func(c *pairCode) bool { return codeWordsIn(c.words, words) >= pairLeakWords }
@@ -430,8 +431,10 @@ func (s *Server) leaked(text string) bool {
 	}
 	s.ctl.spent = kept
 	s.ctl.mu.Unlock()
+	// The console code is checked the same way, every text an app sends.
+	console := s.leakedConsole(words)
 	if !live && len(revoke) == 0 {
-		return false
+		return console
 	}
 	if live {
 		s.act(Act{CodeGone: true})

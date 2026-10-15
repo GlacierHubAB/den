@@ -174,6 +174,11 @@ func (s *Server) cmdRun(c *conn, req Request) {
 		c.fail(req.ID, CodeBadRequest, "text: one command of at most 512 bytes")
 		return
 	}
+	// Den's chat logs the line: a code in it is out, before it is kept.
+	if s.leaked(p.Text) {
+		c.fail(req.ID, CodeBadRequest, "the line holds a pairing or console code; Den cancelled it")
+		return
+	}
 	if !s.cmdLimits.allow(time.Now()) {
 		c.fail(req.ID, CodeUnavailable, "too many commands")
 		return
