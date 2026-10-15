@@ -240,8 +240,10 @@ Den: the app never approves, answers or starts anything.
   minutes, or a claimed code again within ten minutes (even after another
   `/api pair`), means another program had the code too (anything that can
   read Den's screen can): Den revokes the pairing that code made, closes its
-  connections and notes "the pairing code was used by another program
-  (<program>, pid N); pair again".
+  connections and notes "two programs used the pairing code: <program>,
+  pid N claimed it first, then <program>, pid M; the pairing is revoked,
+  pair again", naming both, since either may be the one that should not
+  have had it.
 - Den and the app keep the key in memory only; when either restarts, pair
   again. A pairing is bound to the program Den read for the app (its
   executable): no other program can use it.

@@ -475,9 +475,22 @@ func (s *Server) claim(c *conn, req Request) {
 		}
 		st.spent = kept
 		if len(revoke) > 0 {
-			st.mu.Unlock()
+			// Name both claimants, the first as Den read it: either may be
+			// the one that should not have had the code.
+			first := map[string]string{}
 			for _, id := range revoke {
-				s.Unpair(id, "the pairing code was used by another program ("+sanitize.Label(filepath.Base(c.peer.Exe), 40)+", pid "+itoa(c.peer.PID)+"); pair again")
+				if pr := st.pairings[id]; pr != nil {
+					first[id] = sanitize.Label(filepath.Base(pr.Exe), 40) + ", pid " + itoa(pr.PID)
+				}
+			}
+			st.mu.Unlock()
+			second := sanitize.Label(filepath.Base(c.peer.Exe), 40) + ", pid " + itoa(c.peer.PID)
+			for _, id := range revoke {
+				who := first[id]
+				if who == "" {
+					who = "a program"
+				}
+				s.Unpair(id, "two programs used the pairing code: "+who+" claimed it first, then "+second+"; the pairing is revoked, pair again")
 			}
 			c.fail(req.ID, CodeForbidden, ClaimSpent)
 			return

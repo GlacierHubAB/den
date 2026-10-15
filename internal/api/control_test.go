@@ -180,7 +180,7 @@ func TestPairClaimRaceRevokes(t *testing.T) {
 		t.Errorf("second claim: %+v", l)
 	}
 	notes := drainNotes(h.s)
-	if len(notes) != 1 || !strings.Contains(notes[0], "the pairing code was used by another program") {
+	if len(notes) != 1 || !strings.Contains(notes[0], "two programs used the pairing code: api.test, pid ") || !strings.Contains(notes[0], "claimed it first, then api.test, pid ") {
 		t.Errorf("notes %q", notes)
 	}
 	for _, p := range h.s.Pairings() {
