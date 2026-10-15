@@ -92,8 +92,10 @@ func runDesktopMCP(args []string) {
 		fmt.Fprintln(os.Stderr, "den desktop-mcp: Den did not take hypruse's process; stopped it")
 		os.Exit(1)
 	}
-	p := &desktop.Proxy{Gate: denGate{socket: socket, mission: mission}, Client: os.Stdin, ToClient: os.Stdout, Child: fromChild, ToChild: toChild}
+	p := &desktop.Proxy{Gate: denGate{socket: socket, mission: mission}, Client: os.Stdin, ToClient: os.Stdout, Child: fromChild, ToChild: toChild,
+		Cursor: cursorPos, Pointer: desktop.PointerPath()}
 	p.Run(context.Background())
+	os.Remove(desktop.PointerPath())
 	toChild.Close()
 	done := make(chan struct{})
 	go func() { child.Wait(); close(done) }()
@@ -181,4 +183,19 @@ func runDesktopGate(args []string) {
 		deny(d.Message)
 	}
 	os.Exit(0) // no decision: the allow-list and the proxy decide
+}
+
+// cursorPos is where the pointer is, from Hyprland.
+func cursorPos() (float64, float64, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "hyprctl", "cursorpos", "-j").Output()
+	if err != nil {
+		return 0, 0, false
+	}
+	var c struct{ X, Y float64 }
+	if json.Unmarshal(out, &c) != nil {
+		return 0, 0, false
+	}
+	return c.X, c.Y, true
 }

@@ -91,6 +91,7 @@ func (m *Model) stopDesktop(why string) string {
 		}
 		stopped = true
 		r := deskStopFn(dm.targets(), deskBeacon())
+		os.Remove(desktop.PointerPath())
 		m.endDeskMission(dm, why)
 		m.restoreDeskMission(dm)
 		dm.save()
@@ -172,6 +173,7 @@ func (m *Model) deskAgentStopped(r *bridge.Request) tea.Cmd {
 // agent_report fence, never as plain text.
 func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 	r := deskStopFn(dm.targets(), deskBeacon())
+	os.Remove(desktop.PointerPath())
 	m.endDeskMission(dm, why)
 	dm.save()
 	deskNotify(notify.Note{Summary: "Desktop control ended", Body: why})

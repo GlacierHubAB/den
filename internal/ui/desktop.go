@@ -289,7 +289,7 @@ func (m *Model) deskAllow(r *bridge.Request, dm *deskMission, tool string, v des
 	if tool == "desktop" {
 		return
 	}
-	a := desktop.Answer{Args: mustJSON(v.Args)}
+	a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds}
 	if pieces > 0 && v.Target != nil {
 		a.Token = newToken()
 		dm.tokens[a.Token] = deskToken{window: v.Target.Address, left: pieces, until: time.Now().Add(2 * time.Minute)}
@@ -437,7 +437,7 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		m.refresh()
 		return m.say("Approved.", false)
 	}
-	a := desktop.Answer{Args: mustJSON(p.verdict.Args)}
+	a := desktop.Answer{Args: mustJSON(p.verdict.Args), Bounds: p.verdict.Bounds}
 	if p.pieces > 0 && p.verdict.Target != nil {
 		a.Token = newToken()
 		dm.tokens[a.Token] = deskToken{window: p.verdict.Target.Address, left: p.pieces, until: time.Now().Add(2 * time.Minute)}

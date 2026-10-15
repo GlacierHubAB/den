@@ -27,6 +27,7 @@ func desktopCmd(args []string) {
 		return
 	}
 	fmt.Println(stopWithoutDen(desktopStateDir()))
+	os.Remove(desktop.PointerPath())
 }
 
 // desktopStateDir is where Den keeps its desktop missions.
