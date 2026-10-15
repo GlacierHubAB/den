@@ -20,8 +20,9 @@ are in [GITHUB-SETUP.md](GITHUB-SETUP.md).
 
 `main` is merged into with merge commits and never squashed, so after a release
 `dev` is still an ancestor of `main` and the next release pull request has no
-conflicts of its own making. The last step of a release fast-forwards `dev` to
-`main`, so the two branches are the same commit again (step 7 below).
+conflicts of its own making. `dev` is not moved up to `main` after a release
+(step 7 below): it takes pull requests only, and the next release branch merges
+`main` back in.
 
 ## Versions
 
@@ -90,12 +91,15 @@ There is no CHANGELOG file; the releases page is the changelog.
 
    ```
    for i in 1 2 3; do
-     gh workflow run heavy.yml --repo GlacierHubAB/den --ref main -f ref=release/v0.4.0
+     gh workflow run heavy.yml --repo GlacierHubAB/den --ref release/v0.4.0 -f ref=release/v0.4.0
    done
    gh workflow run release.yml --repo GlacierHubAB/den --ref release/v0.4.0 -f version=v0.4.0
    ```
 
-   The three `heavy` runs and the `release` dry run (`ci`, `heavy` and
+   Dispatch with `--ref` the release branch, so the run uses that branch's own
+   workflow file (each run gets its own concurrency group); `--ref main` would
+   queue the three runs behind each other. The three `heavy` runs and the
+   `release` dry run (`ci`, `heavy` and
    `build` on that commit, with no `verify` and no `publish`) must all be
    green. Tag only then. A failure is fixed on `dev` and proven again; nothing
    is tagged on a red or unproven commit.
@@ -149,45 +153,19 @@ There is no CHANGELOG file; the releases page is the changelog.
    chmod +x den_linux_amd64 && ./den_linux_amd64 version
    ```
 
-7. **Fast-forward `dev` to `main`.** The release merge commits land only on
-   `main`, so after a release `dev` is an ancestor of `main` and GitHub shows it
-   "N commits behind" although the two trees are the same. Moving `dev` up to
-   `main` is a plain fast-forward (no force, nothing rewritten), but the `dev`
-   ruleset refuses any push and any merge commit, so a maintainer switches
-   that one ruleset off for the single push. The chain turns it back on even
-   when the push fails:
-
-   ```
-   R=GlacierHubAB/den
-   DEV_RULESET=$(gh api "repos/$R/rulesets" --jq '.[] | select(.name == "dev") | .id')
-   MAIN=$(gh api "repos/$R/git/ref/heads/main" --jq .object.sha)
-   DEV=$(gh api "repos/$R/git/ref/heads/dev" --jq .object.sha)
-   gh pr list --repo "$R" --base dev --state open      # none, or wait
-   git fetch origin
-   git merge-base --is-ancestor "$DEV" "$MAIN" && echo fast-forward   # stop if not
-   gh api "repos/$R/rulesets/$DEV_RULESET" > ruleset-before.json
-
-   gh api -X PUT "repos/$R/rulesets/$DEV_RULESET" -f enforcement=disabled --jq .enforcement
-   git push origin "$MAIN:refs/heads/dev"; push=$?
-   until [ "$(gh api -X PUT "repos/$R/rulesets/$DEV_RULESET" -f enforcement=active --jq .enforcement)" = active ]; do sleep 3; done
-   echo "push exit $push"
-   ```
-
-   Then check that nothing else changed and that the branches agree:
-
-   ```
-   gh api "repos/$R/rulesets/$DEV_RULESET" > ruleset-after.json
-   diff <(jq -S 'del(.updated_at)' ruleset-before.json) <(jq -S 'del(.updated_at)' ruleset-after.json) && echo unchanged
-   gh api "repos/$R/compare/main...dev" --jq '{status, ahead_by, behind_by}'   # "identical", 0, 0
-   ```
-
-   If the ruleset does not read `active` again, do nothing else until it does.
-   Never pass `--force`: if the push is refused as a non-fast-forward, `dev` has
-   commits `main` lacks; leave it, and the next release brings them together.
+7. **Leave `dev` as it is.** The release merge commits land only on `main`,
+   so after a release `dev` is an ancestor of `main` and GitHub shows it
+   "N commits behind" although the two trees are the same. `dev` takes changes
+   by pull request only (its ruleset refuses any push, even a plain
+   fast-forward: "Changes must be made through a pull request"), so it cannot
+   be moved up to `main` with a push. Do not switch the ruleset off and do not
+   use a bypass to do it. Nothing is lost: the next release branch merges
+   `main` back in (step 2), with no content change, and pull requests keep
+   squash-merging into `dev` as usual.
 
    Between releases `dev` is normally ahead of `main` by the pull requests
-   merged since the last release, and after a release and before this step it
-   is behind by the release merges. Both are expected.
+   merged since the last release and behind it by the release merges. Both
+   are expected.
 
 ## When the release workflow fails
 
