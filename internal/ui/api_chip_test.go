@@ -65,6 +65,19 @@ func TestHeaderPartsFitWhole(t *testing.T) {
 // with a connected app's chip and the bridge's error beside it, the code's
 // words are on the line whole whenever its part fits the room at all.
 func TestHeaderPairingCodeNeverCut(t *testing.T) {
+	for _, live := range []struct {
+		name          string
+		pair, console bool
+	}{{"pairing", true, false}, {"console", false, true}, {"both", true, true}} {
+		t.Run(live.name, func(t *testing.T) { headerCodesNeverCut(t, live.pair, live.console) })
+	}
+}
+
+// headerCodesNeverCut checks the header with the pairing code, the console
+// code or both live, a connected app's chip and the bridge's error beside
+// them: each code is on the line whole, or its note is, and no part of a
+// code is drawn otherwise.
+func headerCodesNeverCut(t *testing.T, pair, console bool) {
 	apiEnv(t)
 	m := testModel(160, 40)
 	apiOn(t, &m)
@@ -72,29 +85,50 @@ func TestHeaderPairingCodeNeverCut(t *testing.T) {
 	for end := time.Now().Add(2 * time.Second); len(m.api.srv.Clients()) == 0 && time.Now().Before(end); {
 		time.Sleep(5 * time.Millisecond)
 	}
-	mm, _ := m.apiCommand([]string{"pair"})
-	m = mm.(Model)
-	if m.codeLine() == "" {
-		t.Fatalf("no pairing code: %q", m.flash)
+	type code struct {
+		prefix, words, note string
+		line                func() string
+	}
+	var codes []code
+	if pair {
+		mm, _ := m.apiCommand([]string{"pair"})
+		m = mm.(Model)
+		if m.codeLine() == "" {
+			t.Fatalf("no pairing code: %q", m.flash)
+		}
+		codes = append(codes, code{"Pairing code (", strings.Join(m.ctl.code, " "), codeHidden, m.codeLine})
+	}
+	if console {
+		if why := m.startConsoleCode(); why != "" {
+			t.Fatal(why)
+		}
+		codes = append(codes, code{"Console code (", strings.Join(m.con.code, " "), consoleCodeHidden, m.consoleCodeLine})
 	}
 	m.srvErr = errors.New("a long error from the bridge, to crowd the line")
-	words := strings.Join(m.ctl.code, " ")
-	// shown checks a header line: exactly one of the whole code (its
-	// prefix and all its words) or the note, and "Pairing" nowhere else,
-	// so no cut of the code, its prefix included, can pass. cut allows
-	// the note itself to be cut, at the narrowest widths.
-	shown := func(w int, line string, cut bool) (code bool) {
-		code = strings.Contains(line, "Pairing code (") && strings.Contains(line, words)
-		note := strings.Contains(line, codeHidden) || cut && strings.Contains(line, "Pairing code live")
-		if code == note {
-			t.Errorf("w=%d: want the whole code or the note, once: %q", w, line)
+	// shown checks a header line for each code: exactly one of the whole
+	// code (its prefix and all its words) or its note, and the code's
+	// name nowhere else, so no cut of a code, its prefix included, can
+	// pass. cut allows a note itself to be cut, at the narrowest widths.
+	shown := func(w int, line string, cut bool) (whole []bool) {
+		for i, c := range codes {
+			name := strings.TrimSuffix(c.prefix, " (")
+			isCode := strings.Contains(line, c.prefix) && strings.Contains(line, c.words)
+			switch {
+			case strings.Contains(line, c.prefix) && !isCode:
+				t.Errorf("w=%d: part of the %s is drawn in %q", w, name, line)
+			case strings.Count(line, c.prefix) > 1:
+				t.Errorf("w=%d: the %s twice in %q", w, name, line)
+			case !cut && isCode == strings.Contains(line, c.note):
+				t.Errorf("w=%d: want the whole %s or its note, once: %q", w, name, line)
+			case cut && i == 0 && !strings.Contains(line, name):
+				t.Errorf("w=%d: no sign of the live %s in %q", w, name, line)
+			}
+			whole = append(whole, isCode)
 		}
-		if n := strings.Count(line, "Pairing"); n != 1 {
-			t.Errorf("w=%d: %d times \"Pairing\" in %q", w, n, line)
-		}
-		return code
+		return whole
 	}
-	// The narrow header has one line: the code or the note is on it.
+	// The narrow header has one line: the codes or their notes are on it;
+	// at the narrowest widths a later note may be cut off the end.
 	for w := 40; w < 72; w++ {
 		shown(w, ansi.Strip(m.header(w)[0]), true)
 		if lipgloss.Width(m.header(w)[0]) > w {
@@ -103,11 +137,9 @@ func TestHeaderPairingCodeNeverCut(t *testing.T) {
 	}
 	for w := 72; w <= 200; w++ {
 		line := ansi.Strip(m.header(w)[3])
-		if shown(w, line, false) {
-			continue
-		}
-		if room := headerRoom(m.logoRows()[2]+"      ", "  ", w); room >= ansi.StringWidth(m.codeLine()) {
-			t.Errorf("w=%d: the code fits but is not shown whole in %q", w, line)
+		whole := shown(w, line, false)
+		if room := headerRoom(m.logoRows()[2]+"      ", "  ", w); !whole[0] && room >= ansi.StringWidth(codes[0].line()) {
+			t.Errorf("w=%d: the first code fits but is not shown whole in %q", w, line)
 		}
 	}
 }

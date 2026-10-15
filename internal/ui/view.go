@@ -201,15 +201,7 @@ func (m Model) header(w int) []string {
 		if len(codes) > 0 {
 			// A live code takes the line, whole or as its note, ahead of
 			// the fleet and the flash: the human always sees one is live.
-			parts := make([]string, len(codes))
-			used := 0
-			for i, c := range codes {
-				parts[i] = c.line
-				if used+ansi.StringWidth(c.line) > headerRoom(brand, right, w) {
-					parts[i] = c.hidden
-				}
-				used += ansi.StringWidth(parts[i]) + 3
-			}
+			parts := fitCodes(codes, headerRoom(brand, right, w))
 			return []string{headerRow(brand, s.attn.Render(strings.Join(parts, " · ")), right, w), ansi.Truncate(m.tabs(w), w, "…")}
 		}
 		if flash != "" {
@@ -235,16 +227,9 @@ func (m Model) header(w int) []string {
 		}
 	}
 	// A code that does not fit whole is never shown in part: its note
-	// says where it went instead. Codes are fitted in order, so a later
-	// one that no longer fits after an earlier one shows its note.
-	used := 0
-	for i, c := range codes {
-		shown := c.line
-		if used+ansi.StringWidth(c.line) > headerRoom(logo[2], flash+"  ", w) {
-			shown = c.hidden
-			sys[i].text = s.attn.Render(c.hidden)
-		}
-		used += ansi.StringWidth(shown) + 3
+	// says where it went instead (fitCodes).
+	for i, p := range fitCodes(codes, headerRoom(logo[2], flash+"  ", w)) {
+		sys[i].text = s.attn.Render(p)
 	}
 	rows := []string{
 		"",
@@ -296,6 +281,27 @@ const (
 
 // liveCode is a code Den shows in its header, and its note.
 type liveCode struct{ line, hidden string }
+
+// fitCodes is what the header shows of each live code in room columns,
+// joined by " · ": a code whole only when it fits and the notes of the
+// codes after it still fit too, else its note, so every live code shows
+// at least as its note whenever the notes fit at all.
+func fitCodes(codes []liveCode, room int) []string {
+	out := make([]string, len(codes))
+	used := 0
+	for i, c := range codes {
+		after := 0
+		for _, later := range codes[i+1:] {
+			after += 3 + ansi.StringWidth(later.hidden)
+		}
+		out[i] = c.hidden
+		if used+ansi.StringWidth(c.line)+after <= room {
+			out[i] = c.line
+		}
+		used += ansi.StringWidth(out[i]) + 3
+	}
+	return out
+}
 
 // liveCodes are the codes live now: the app pairing code, then the
 // console code.
