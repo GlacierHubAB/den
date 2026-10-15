@@ -1,9 +1,9 @@
 The Den API conformance suite, as Den carries it
 
-This folder is a byte-identical copy of the conformance suite for
-den-api.sock (docs/DREY-API.md), written by the client's authors, who check
-their client against the same suite. Den changes nothing in it: a finding
-is fixed upstream and the copy pinned again.
+This folder is a copy of the conformance suite for den-api.sock
+(docs/DREY-API.md), written by the client's authors, who check their client
+against the same suite. Den changes none of its code, and its README only as
+noted below: a finding is fixed upstream and the copy pinned again.
 
 Source        the client's conformance package, pinned at commit
               613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0
@@ -14,8 +14,10 @@ Code          client.go, d1.go, denconformance.go at commit
               denconformance.go 31ee8a6292ced9dbed6eeb98ebb67dd01766ea62c192592259a62d0e0669ed65
               package hash (sha256sum of the .go files in name order, hashed)
                                 d251218a9b2f46804bbca41e47439d2e783b990a5711aa979b1f5e9bb40b075f
-README.md     at commit 1a47af4, the one that records the pin above
-              261c539f402d07a1ddf69f6cbb78f3bc88e5f008d50a3f1ccf24cd0fa5eddbfb
+README.md     at commit 1a47af4, the one that records the pin above, with
+              one source line removed and the cd step dropped from the hash
+              command; all other files byte-identical
+              b98f23695951a0d149c1ff5ca9849e4d13cccfe3e10059f19ccf2c1ca6de782b
 License       MIT, in README.md and the files' own headers
 
 It is test-only. It imports nothing but the standard library, only

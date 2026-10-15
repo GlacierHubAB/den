@@ -5,13 +5,12 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Source: github.com/GlacierHubAB/drey, `pkg/denconformance`.
 Exported at Drey commit `613e65b4cf33bfcfd38456c8f7a6d6ee88a55cc0`, package SHA-256 `d251218a9b2f46804bbca41e47439d2e783b990a5711aa979b1f5e9bb40b075f`.
 
 The package SHA-256 is computed over the Go files in name order:
 
 ```
-cd pkg/denconformance && sha256sum $(ls *.go | sort) | sha256sum
+sha256sum $(ls *.go | sort) | sha256sum
 ```
 
 ## Copying it

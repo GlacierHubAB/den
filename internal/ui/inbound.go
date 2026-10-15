@@ -32,9 +32,10 @@ const (
 	refusalEvery = time.Minute     // one refusal note per sender this often
 )
 
-// D1LaneName is the session name of Den's read-only lane for apps; it
+// D1LaneName is the session name of Den's read-only lane for apps (one
+// name, orch.LaneName, so the gates that refuse the lane always match it); it
 // never reports.
-const D1LaneName = "den-api-lane"
+const D1LaneName = orch.LaneName
 
 // peerState is the reports' bookkeeping.
 type peerState struct {

@@ -15,13 +15,14 @@ import (
 	"testing"
 )
 
-// The conformance copy is byte-identical to the pinned upstream files.
+// The conformance copy's code is byte-identical to the pinned upstream
+// files, and its README is as PROVENANCE says.
 func TestConformanceCopyIsPinned(t *testing.T) {
 	want := map[string]string{
 		"client.go":         "00a38c499b49839a11f7d4aa22644fe8d9b494cf725a60f897c4b0f8d1484372",
 		"d1.go":             "e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416",
 		"denconformance.go": "31ee8a6292ced9dbed6eeb98ebb67dd01766ea62c192592259a62d0e0669ed65",
-		"README.md":         "261c539f402d07a1ddf69f6cbb78f3bc88e5f008d50a3f1ccf24cd0fa5eddbfb",
+		"README.md":         "b98f23695951a0d149c1ff5ca9849e4d13cccfe3e10059f19ccf2c1ca6de782b",
 	}
 	var sums strings.Builder
 	var goFiles []string
