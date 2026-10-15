@@ -177,6 +177,9 @@ func (m *Model) applyConsoleAct(act api.Act) tea.Cmd {
 			"pid " + strconv.Itoa(p.PID) + " · " + procWhen(p.Started) + " · parent " + sanitize.Label(parent, 40),
 			"command line, as the program reports it (it can be spoofed): " + sanitize.Label(p.Cmdline, 200),
 		}
+		if p.Rejoins && !p.Codeless {
+			body = append(body, "Den read it as "+sanitize.Label(p.Unit, 60)+" through your systemd user manager: this dock may rejoin without a code after a restart, without powers until you confirm.")
+		}
 		if p.Codeless {
 			unit := sanitize.Label(p.Unit, 60)
 			title = "Pair " + unit + " (pid " + strconv.Itoa(p.PID) + ", " + procWhen(p.Started) + ") as your console?"

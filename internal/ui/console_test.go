@@ -137,6 +137,33 @@ func TestConsoleCodelessCard(t *testing.T) {
 	}
 }
 
+// A claim by code that Den read clean as the service says the dock may
+// rejoin with no code; one that did not read clean says nothing of it.
+func TestConsoleClaimCardSaysItMayRejoin(t *testing.T) {
+	const line = "this dock may rejoin without a code after a restart, without powers until you confirm"
+	for _, rejoins := range []bool{true, false} {
+		m := consoleModel(t)
+		ask := &api.ConsoleAsk{ID: "c-4", PID: 4242, Exe: "/home/u/.local/bin/console-host"}
+		if rejoins {
+			ask.Rejoins, ask.Unit = true, api.ConsoleUnit
+		}
+		m.applyConsoleAct(api.Act{Console: ask})
+		var card *inbox.Item
+		for _, it := range m.store.Items() {
+			if it.Kind == inbox.Console {
+				card = it
+			}
+		}
+		if card == nil {
+			t.Fatal("no card")
+		}
+		text := strings.Join(card.Body, "\n")
+		if got := strings.Contains(text, "Den read it as "+api.ConsoleUnit+" through your systemd user manager: "+line+"."); got != rejoins {
+			t.Errorf("rejoins %v: the line shown %v:\n%s", rejoins, got, text)
+		}
+	}
+}
+
 // A reconnect that asks names why; the powers card is Den's own, one at a
 // time, and its ^Y reaches the API; neither is the dock's to answer.
 func TestConsoleReconnectAndPowersCards(t *testing.T) {

@@ -81,7 +81,11 @@ type ConsoleAsk struct {
 	Codeless bool
 	// Reconnect is a console.reconnect the human answers: the service
 	// restarted, and Changes says why it is not re-paired silently.
-	Reconnect  bool
+	Reconnect bool
+	// Rejoins is a claim by code whose process Den read clean as Unit:
+	// the dock may re-pair after a restart with no code, as one paired
+	// with none, and the card says so.
+	Rejoins    bool
 	Changes    []string
 	Unit       string
 	Program    string
@@ -136,9 +140,10 @@ type consoleRec struct {
 	strikes  []time.Time
 	restored bool // restored from before a Den restart, not yet announced
 	// verifier is what Den read of the console's service when the human
-	// paired it (console.request), nil for a pairing by code. trusted is
-	// set when this Den took it itself; one read back from disk after a
-	// Den start is never trusted for a silent re-pair.
+	// paired it (console.request, or a claim by code that read clean),
+	// nil for any other pairing by code. trusted is set when this Den
+	// took it itself; one read back from disk after a Den start is never
+	// trusted for a silent re-pair.
 	verifier *sysd.Verifier
 	trusted  bool
 	// powers is whether the console may answer cards and run commands:
@@ -525,17 +530,38 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, ClaimWrong)
 		return
 	}
+	// Proved: the claimant is read as the console's service, as a
+	// console.request is, outside the lock. A clean read is kept, so the
+	// dock may re-pair after a restart as one paired with no code; any
+	// other read leaves the pairing as a code makes it, with no strike.
+	self := sysd.ProcID{PID: c.peer.PID, Start: c.peer.Start}
+	v, err := readUnit(self)
+	if time.Now().After(code.until) {
+		zero(text)
+		c.fail(req.ID, CodeForbidden, ClaimNoCode)
+		return
+	}
 	pub, _ := hex.DecodeString(p.PublicKey)
 	id := randHex()
 	rec := &consoleRec{
-		Console:  Console{ID: id, Exe: c.peer.Exe, PID: c.peer.PID, Since: now, PagesSHA: p.Pages},
-		identity: identity, start: c.peer.Start, pub: ed25519.PublicKey(pub), pubHex: p.PublicKey,
+		Console:  Console{ID: id, Exe: c.peer.Exe, PID: self.PID, Since: now, PagesSHA: p.Pages},
+		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: p.PublicKey,
 		confirm: make(chan bool, 1), words: words,
 	}
-	ask := ConsoleAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
-	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
+	ask := ConsoleAsk{ID: id, Exe: c.peer.Exe, PID: self.PID}
+	if err == nil {
+		rec.verifier, rec.trusted = &v, true
+		ask.Rejoins, ask.Unit = true, ConsoleUnit
+	}
+	ask.Started, ask.Parent, ask.Cmdline = procInfo(self.PID)
 	rec.Started = ask.Started
 	st.mu.Lock()
+	if time.Now().Before(st.cooldown) {
+		st.mu.Unlock()
+		zero(text)
+		c.fail(req.ID, CodeUnavailable, ClaimCooldown)
+		return
+	}
 	if st.pending != nil {
 		st.mu.Unlock()
 		zero(text)
