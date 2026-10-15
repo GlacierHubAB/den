@@ -81,6 +81,25 @@ There is no CHANGELOG file; the releases page is the changelog.
    into `dev` by pull request first, then into the release branch with
    `git merge origin/dev`.
 
+   **Prove the candidate before any tag.** The exact commit that will be
+   tagged passes the whole pipeline on GitHub first, because a tag whose
+   release run fails is spent (see "When the release workflow fails"). The
+   release pull request's own checks already include the race detector three
+   times on two CPUs and, because it goes into `main`, the slow suite. On the
+   release branch's tip, also:
+
+   ```
+   for i in 1 2 3; do
+     gh workflow run heavy.yml --repo GlacierHubAB/den --ref main -f ref=release/v0.4.0
+   done
+   gh workflow run release.yml --repo GlacierHubAB/den --ref release/v0.4.0 -f version=v0.4.0
+   ```
+
+   The three `heavy` runs and the `release` dry run (`ci`, `heavy` and
+   `build` on that commit, with no `verify` and no `publish`) must all be
+   green. Tag only then. A failure is fixed on `dev` and proven again; nothing
+   is tagged on a red or unproven commit.
+
 3. **Merge it with a merge commit** once `ci-passed` is green (the only method
    `main` allows):
 
@@ -106,8 +125,10 @@ There is no CHANGELOG file; the releases page is the changelog.
    - `verify`: the tag is `vMAJOR.MINOR.PATCH[-PRERELEASE]`, annotated, and
      its commit is on `main`;
    - `ci`: the whole CI workflow on the tagged commit;
-   - `build`: `make release VERSION=<tag>` with the newest Go 1.26 patch and
-     no cache, then checks `den version` and `SHA256SUMS`;
+   - `heavy`: the slow suite, and the race detector three times on two CPUs;
+   - `build` (after `verify`, `ci` and `heavy`): `make release VERSION=<tag>`
+     with the newest Go 1.26 patch and no cache, then checks `den version` and
+     `SHA256SUMS`;
    - `publish`: the only job that can write. It checks the checksums again,
      records a build provenance attestation and creates the release with
      `den_linux_amd64`, `den_linux_arm64`, `THIRD_PARTY_LICENSES` and
@@ -171,9 +192,10 @@ There is no CHANGELOG file; the releases page is the changelog.
 ## When the release workflow fails
 
 A tag is never moved or reused once pushed, even when its workflow failed and
-nothing was published (v0.3.0 is such a tag). Fix the problem on `dev` the
-usual way, release it, and tag the next patch version. The failed tag stays,
-without a release.
+nothing was published (v0.3.0, v0.5.0 and v0.5.1 are such tags). Fix the
+problem on `dev` the usual way, prove the new candidate as in step 2, and tag
+the next patch version. The failed tag stays, without a release, and the next
+release's notes say that it was never published.
 
 ## Hotfixes
 
