@@ -298,6 +298,45 @@ func NewTerminal(before, after []Client) (Client, bool) {
 	return Client{}, false
 }
 
+// MarkerHolds reports whether pid runs in the one window that carries
+// marker (its initial class): exactly one window has it, its terminal
+// process has no other window, and pid descends from that process. When
+// any of that fails Den cannot tell whose window it is, and the answer is
+// false.
+func MarkerHolds(marker string, pid int) bool {
+	if marker == "" || pid <= 1 || !Available() {
+		return false
+	}
+	all, err := Clients()
+	if err != nil {
+		return false
+	}
+	return markerHolds(all, marker, procs.Ancestors(pid))
+}
+
+func markerHolds(all []Client, marker string, chain []procs.Proc) bool {
+	var found []Client
+	for _, c := range all {
+		if c.InitialClass == marker {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 || found[0].PID <= 1 {
+		return false
+	}
+	for _, c := range all {
+		if c.PID == found[0].PID && c.Address != found[0].Address {
+			return false
+		}
+	}
+	for _, p := range chain {
+		if p.PID == found[0].PID {
+			return true
+		}
+	}
+	return false
+}
+
 // ActiveHolds reports whether the focused window belongs to one of pid's
 // ancestors: the terminal a process runs in is in front. When that terminal
 // process owns several windows (Ghostty runs them all in one) or a

@@ -262,14 +262,32 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	deadline := time.Now().Add(SessionWait)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		sessions, _ := discover.Scan()
-		for _, s := range sessions {
-			if s.Alive && s.Name == res.Name && !s.Started().Before(started.Add(-time.Second)) {
-				res.SessionID = s.SessionID
-				res.Critter = badge.Name(s.SessionID)
-				res.Registered = true
-				_ = winmark.Bind(res.Name, s.SessionID)
-				return res, nil
+		// Another session may have taken the name too. The one that runs
+		// in the marked window is the agent, and only it gets the marker;
+		// when Den cannot tell, the first is the agent, as before, and the
+		// marker stays unbound, so closing never touches the window.
+		var first *discover.Session
+		for i, s := range sessions {
+			if !s.Alive || s.Name != res.Name || s.Started().Before(started.Add(-time.Second)) {
+				continue
 			}
+			if first == nil {
+				first = &sessions[i]
+			}
+			if marker == "" || !hyprOK {
+				break
+			}
+			pid := s.PID
+			if ok, _ := winmark.Bind(res.Name, s.SessionID, func(mk string) bool { return hypr.MarkerHolds(mk, pid) }); ok {
+				first = &sessions[i]
+				break
+			}
+		}
+		if first != nil {
+			res.SessionID = first.SessionID
+			res.Critter = badge.Name(first.SessionID)
+			res.Registered = true
+			return res, nil
 		}
 		sleep(ctx, pollEvery)
 	}

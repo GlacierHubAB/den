@@ -50,20 +50,26 @@ func Record(peer, marker string) error {
 }
 
 // Bind ties the newest unbound entry for peer to the session that
-// registered under that name.
-func Bind(peer, session string) error {
-	if peer == "" || session == "" {
-		return nil
+// registered under that name, but only when holds says the session runs
+// in the window that carries the entry's marker: another session can take
+// the same name first. It reports whether it bound.
+func Bind(peer, session string, holds func(marker string) bool) (bool, error) {
+	if peer == "" || session == "" || holds == nil {
+		return false, nil
 	}
-	return update(func(es []Entry) []Entry {
+	bound := false
+	err := update(func(es []Entry) []Entry {
 		for i := len(es) - 1; i >= 0; i-- {
 			if es[i].Peer == peer && es[i].Session == "" {
-				es[i].Session = session
+				if holds(es[i].Marker) {
+					es[i].Session, bound = session, true
+				}
 				break
 			}
 		}
 		return es
 	})
+	return bound, err
 }
 
 // For is the marker Den gave the session's terminal, "" when Den did not

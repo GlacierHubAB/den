@@ -3,6 +3,8 @@ package hypr
 import (
 	"strings"
 	"testing"
+
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 func TestStripStatusGlyph(t *testing.T) {
@@ -51,6 +53,33 @@ func TestMarker(t *testing.T) {
 	} {
 		if got := Marker(in); got != want {
 			t.Errorf("Marker(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// TestMarkerHolds: only a process under the one window with the marker,
+// whose terminal has no other window, holds it.
+func TestMarkerHolds(t *testing.T) {
+	mark := "io.glacierhub.den.helper"
+	win := Client{Address: "0x1", PID: 100, InitialClass: mark}
+	other := Client{Address: "0x2", PID: 200, InitialClass: "kitty"}
+	under := []procs.Proc{{PID: 300, Comm: "claude"}, {PID: 250, Comm: "sh"}, {PID: 100, Comm: "ghostty"}}
+	elsewhere := []procs.Proc{{PID: 400, Comm: "claude"}, {PID: 200, Comm: "kitty"}}
+	for _, c := range []struct {
+		name  string
+		all   []Client
+		chain []procs.Proc
+		want  bool
+	}{
+		{"the agent in its window", []Client{win, other}, under, true},
+		{"an impostor in another window", []Client{win, other}, elsewhere, false},
+		{"no window has the marker", []Client{other}, under, false},
+		{"two windows have it", []Client{win, {Address: "0x3", PID: 500, InitialClass: mark}}, under, false},
+		{"its terminal has another window", []Client{win, {Address: "0x4", PID: 100, InitialClass: "x"}}, under, false},
+		{"a window with no pid", []Client{{Address: "0x1", InitialClass: mark}}, under, false},
+	} {
+		if got := markerHolds(c.all, mark, c.chain); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
 }
