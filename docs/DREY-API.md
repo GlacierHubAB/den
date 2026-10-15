@@ -869,6 +869,10 @@ other. `bypassPermissions` is never the global mode.
   cannot be read, Den knows it by `CAP_WAKE_ALARM`, which no program of
   yours can give itself: a forged manager then takes root, or a file
   root installed with that capability.
+- Den tells a program changed after its process started by the file's
+  change time against the start, both on the wall clock. A forward step
+  of that clock (NTP setting it) between a swap of the program and Den's
+  read could hide the swap; no program of yours can set the clock.
 - The dock's pin of Den's key holds against another program on Den's
   socket, not against one running as you: such a program can read Den's
   key file (`local.key`), rewrite the dock's pinned copy of Den's key, or
