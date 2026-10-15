@@ -255,6 +255,7 @@ func TestControlBackstop(t *testing.T) {
 		{"SendMessage ran in a human turn", false, []string{toolUse("u1", "SendMessage"), toolResult("u1", false)}, true},
 		{"SendMessage refused in an app's turn", true, []string{toolUse("u1", "SendMessage"), refused}, false},
 		{"SendMessage refused in a human turn", false, []string{toolUse("u1", "SendMessage"), refused}, false},
+		{"SendMessage failed some other way", false, []string{toolUse("u1", "SendMessage"), toolResult("u1", true)}, true},
 		{"SendMessage asked for, no result yet", false, []string{toolUse("u1", "SendMessage")}, false},
 		{"ListAgents and a denied call", true, []string{toolUse("u1", "ListAgents"), toolResult("u1", false), toolUse("u2", CloseAgentTool), toolResult("u2", true)}, false},
 	} {

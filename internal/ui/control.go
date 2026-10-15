@@ -292,7 +292,8 @@ func (m *Model) tryAppTurn() tea.Cmd {
 	m.orch.thinking = true
 	m.orch.status = "thinking… (" + appName(y.Exe) + ")"
 	m.orch.lastEvent = time.Now()
-	m.logEntry(m.addChat(chatEntry{role: "you", text: appName(y.Exe) + ": " + y.Text, at: time.Now()}))
+	// "app", not "you": the app's words, never replayed as the human's.
+	m.logEntry(m.addChat(chatEntry{role: "app", text: appName(y.Exe) + ": " + y.Text, at: time.Now()}))
 	y.Status("Writing a reply…")
 	return nil
 }

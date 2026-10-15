@@ -312,6 +312,22 @@ func TestAppTurnInDen(t *testing.T) {
 	if l.m.ctl.turn != nil {
 		t.Error("the app's turn outlived its result")
 	}
+	// The app's words are its own in the chat, and a fresh session's
+	// restored conversation leaves them out rather than replay them as
+	// the human's.
+	app := false
+	for _, e := range l.m.orch.chat {
+		app = app || (e.role == "app" && strings.Contains(e.text, "SPAWN-PLEASE"))
+		if e.role == "you" && strings.Contains(e.text, "SPAWN-PLEASE") {
+			t.Error("the app's turn is logged as the human's")
+		}
+	}
+	if !app {
+		t.Error("no app entry in the chat")
+	}
+	if r := l.m.replayText(); strings.Contains(r, "SPAWN-PLEASE") {
+		t.Errorf("replayed: %q", r)
+	}
 }
 
 // The human's own words in Den stop an app's turn and go first; a report

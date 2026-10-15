@@ -131,7 +131,7 @@ func (m Model) sendTarget(to string) (fleet.Agent, string) {
 	case !inboxPath(hits[0].Session.Socket, hits[0].Session.PID):
 		return fleet.Agent{}, p + " has no inbox socket where Claude Code puts one"
 	case !orch.SendVerifiedVersion(hits[0].Session.Version):
-		return fleet.Agent{}, p + " runs a Claude Code release Den has not checked send_message on; use SendMessage's way (den send)"
+		return fleet.Agent{}, p + " runs a Claude Code release Den has not checked send_message on: Den cannot deliver to that session while control is on; tell the human"
 	}
 	if _, ok := sessionProc(hits[0].Session.PID, hits[0].Session.StartedAt, ""); !ok {
 		return fleet.Agent{}, p + "'s process is not the one its session started with"

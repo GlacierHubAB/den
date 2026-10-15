@@ -483,6 +483,7 @@ func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string, ctl *con
 				}
 				delete(c.perms, id)
 			}
+			clear(c.sends)
 		}
 		orc.mu.Unlock()
 		orc.emitMust(Event{Kind: Exited, Text: msg, Stderr: first})
@@ -849,7 +850,7 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 			for _, b := range blocks(l.Message.Content) {
 				switch {
 				case b.Type == "tool_result":
-					o.controlToolResult(b.ToolUseID, b.IsError)
+					o.controlToolResult(b.ToolUseID, b.IsError, resultText(b.Content))
 					o.emit(Event{Kind: ToolResult, ToolUseID: b.ToolUseID, Text: resultText(b.Content), IsError: b.IsError})
 				case l.IsReplay && b.Type == "text" && peermsg.HasEnvelope(b.Text):
 					// A turn the model will see holds a peer's envelope:

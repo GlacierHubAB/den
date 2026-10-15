@@ -346,17 +346,21 @@ func (o *Orchestrator) controlToolUse(id, tool string) {
 	o.mu.Unlock()
 }
 
+// sendRefused is what 2.1.289 and 2.1.296 answer a call to a disallowed
+// SendMessage with, in an error result, having run nothing.
+const sendRefused = "No such tool available: SendMessage"
+
 // controlToolResult checks that a tool that ran was one Den allowed: a
 // SendMessage, in any turn, trips the backstop; in an app's turn so does
-// any tool but ListAgents Den did not allow. A call Claude Code refused
-// (an error result; SendMessage is disallowed, so it answers "No such tool
-// available") ran nothing and trips nothing.
-func (o *Orchestrator) controlToolResult(id string, isError bool) {
+// any tool but ListAgents Den did not allow. Only Claude Code's refusal of
+// the disallowed SendMessage (an error result saying sendRefused) shows it
+// ran nothing; any other result for it, an error too, trips.
+func (o *Orchestrator) controlToolResult(id string, isError bool, text string) {
 	o.mu.Lock()
 	c := o.ctl
 	why := ""
 	if c != nil {
-		if c.sends[id] && !isError {
+		if c.sends[id] && !(isError && strings.Contains(text, sendRefused)) {
 			why = "Claude Code's own SendMessage ran, which control disallows"
 		}
 		delete(c.sends, id)
@@ -396,6 +400,9 @@ func (o *Orchestrator) controlResult() string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	c := o.ctl
+	if c != nil {
+		clear(c.sends) // a turn's calls have their results before its result
+	}
 	if c == nil || !c.app.open || !c.app.replayed {
 		return ""
 	}

@@ -164,7 +164,9 @@ func (m *Model) newOrchestratorSession() tea.Cmd {
 }
 
 // replayText is the restored conversation, for a fresh session that could
-// not resume the old one: the last exchanges, oldest first.
+// not resume the old one: the last exchanges, oldest first. A paired
+// app's turns ("app") are left out: replayed, they would read as the
+// human's.
 func (m Model) replayText() string {
 	var lines []string
 	for _, e := range m.orch.chat {
@@ -700,6 +702,10 @@ func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string,
 		switch e.role {
 		case "you":
 			from = s.dim.Render("you")
+			body = m.plainLines(e.text, bodyW, s.fg)
+		case "app":
+			// A paired app's turn (orch.say): its words, plain.
+			from = s.dim.Render("app")
 			body = m.plainLines(e.text, bodyW, s.fg)
 		case "orchestrator":
 			from = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor)).Bold(true).Render("orchestrator")
