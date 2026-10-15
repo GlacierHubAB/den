@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,10 +25,11 @@ import (
 // viewWM is a window manager with a few windows; Move changes them. No real
 // hyprctl.
 type viewWM struct {
-	mu    sync.Mutex
-	cs    []hypr.Client
-	moves []string
-	down  bool
+	mu     sync.Mutex
+	cs     []hypr.Client
+	moves  []string
+	down   bool
+	noMove map[string]bool // addresses that will not move
 }
 
 func (w *viewWM) Available() bool { return !w.down }
@@ -42,6 +44,9 @@ func (w *viewWM) Move(_ context.Context, addr, ws string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.moves = append(w.moves, addr+" "+ws)
+	if w.noMove[addr] {
+		return nil // says ok, and the window stays
+	}
 	for i := range w.cs {
 		if w.cs[i].Address == addr {
 			w.cs[i].Workspace.Name = ws
@@ -461,5 +466,51 @@ func TestHooksStateIsPublished(t *testing.T) {
 		if ag := a.(map[string]any); ag["id"] == "s-b" && ag["hooks"] != "off" {
 			t.Errorf("without hooks installed: %v", ag["hooks"])
 		}
+	}
+}
+
+// TestStrandedCardIsRetriedUntilTheWindowIsBack: a raise that could not run
+// (a close or a switch holds the lock) or did not take is tried again on the
+// next tick, and a window that came up then stays.
+func TestStrandedCardIsRetriedUntilTheWindowIsBack(t *testing.T) {
+	m, wm := viewRig(t)
+	defer func(f func(*Model) bool) { consoleUp = f }(consoleUp)
+	consoleUp = func(*Model) bool { return false }
+	_, done := switchView(t, m, api.ViewUser)
+	m.api.view = done.view
+	m.store.AddClose("s-a", "Close?", []string{"x"}, nil)
+
+	tick := func() viewRaisedMsg {
+		t.Helper()
+		cmd := m.checkViewStranded()
+		if cmd == nil {
+			t.Fatal("not tried")
+		}
+		msg := cmd().(viewRaisedMsg)
+		mm, _ := m.Update(msg)
+		*m = mm.(Model)
+		return msg
+	}
+	// Busy once: a close is running.
+	unlock := hypr.LockWindows()
+	if msg := tick(); !errors.Is(msg.err, view.ErrBusy) {
+		t.Fatalf("with a close running: %+v", msg)
+	}
+	unlock()
+	if wm.where("0xden") != api.ViewWorkspace {
+		t.Fatal("moved during the close")
+	}
+	// The window will not move: an error too, tried again.
+	wm.noMove = map[string]bool{"0xden": true}
+	if msg := tick(); !errors.Is(msg.err, view.ErrMove) {
+		t.Fatalf("a window that would not move: %+v", msg)
+	}
+	// The next tick: shown.
+	wm.noMove = nil
+	if msg := tick(); msg.err != nil || wm.where("0xden") != "1" {
+		t.Fatalf("the next tick: %+v, on %q", msg, wm.where("0xden"))
+	}
+	if m.checkViewStranded() != nil {
+		t.Error("tried again after it was shown")
 	}
 }

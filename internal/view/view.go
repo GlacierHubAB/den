@@ -67,6 +67,7 @@ var (
 	ErrWant         = errors.New("a view is agent or user")
 	ErrList         = errors.New("Den could not list the windows")
 	ErrState        = errors.New("Den could not keep the view record")
+	ErrMove         = errors.New("a window would not move")
 )
 
 // Ops is what a switch needs from the window manager; tests fake it.
@@ -460,7 +461,8 @@ func (sw *Switcher) Rescue(ctx context.Context) (moved, left int, err error) {
 // that waits behind a hidden Den window when nobody is connected to call
 // view.show. The window is found by Den's rule (the one window of a process
 // above Den's) or by its record, never otherwise. It reports whether a
-// window moved.
+// window moved. A window that is on special:den and would not move is an
+// error (ErrMove), so the caller tries again.
 func (sw *Switcher) ShowOwn(ctx context.Context) (bool, error) {
 	if !sw.Ops.Available() {
 		return false, ErrNoCompositor
@@ -512,12 +514,17 @@ func (sw *Switcher) ShowOwn(ctx context.Context) (bool, error) {
 		if err != nil {
 			return ErrList
 		}
-		if c, ok := byAddress(after, own.Address); ok && !onSpecial(c) {
-			moved = true
-			st.drop(Moved{Own: true, Address: own.Address})
-			if err := saveState(sw.path(), *st); err != nil {
-				return ErrState
-			}
+		c, ok := byAddress(after, own.Address)
+		switch {
+		case !ok:
+			return nil // it closed meanwhile
+		case onSpecial(c):
+			return ErrMove
+		}
+		moved = true
+		st.drop(Moved{Own: true, Address: own.Address})
+		if err := saveState(sw.path(), *st); err != nil {
+			return ErrState
 		}
 		return nil
 	})

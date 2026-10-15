@@ -852,3 +852,18 @@ func TestShowOwnBringsBackOnlyDensWindow(t *testing.T) {
 		t.Errorf("ShowOwn during a close: %v", err)
 	}
 }
+
+// TestShowOwnSaysWhenTheWindowWillNotMove: a window that stays on special:den
+// is an error, so the caller tries again, not a quiet "nothing to do".
+func TestShowOwnSaysWhenTheWindowWillNotMove(t *testing.T) {
+	r := newRig(t, 1)
+	r.must(User)
+	r.wm.noMove["0xden"] = true
+	if moved, err := r.sw.ShowOwn(context.Background()); moved || !errors.Is(err, ErrMove) {
+		t.Fatalf("a window that would not move: %v %v", moved, err)
+	}
+	delete(r.wm.noMove, "0xden")
+	if moved, err := r.sw.ShowOwn(context.Background()); !moved || err != nil {
+		t.Errorf("the next try: %v %v", moved, err)
+	}
+}
