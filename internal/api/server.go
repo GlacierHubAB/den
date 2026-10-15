@@ -523,9 +523,13 @@ func (s *Server) Publish(v *View) {
 			}
 		}
 	}
+	modeChanged := v.Mode.Global != "" && (old == nil || old.Mode != v.Mode)
 	for _, c := range conns {
 		if fleetChanged && c.subscribed(EventFleet) {
 			c.pushFleet(s.fleetFor(c))
+		}
+		if modeChanged && c.subscribed(EventConsole) {
+			c.push(Event{Event: EventMode, Data: v.Mode}, true)
 		}
 		if c.subscribed(EventInbox) {
 			for _, ch := range changes {
@@ -899,6 +903,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		if s.ckey != nil {
 			info.Features = []string{FeatureConsole}
 		}
+		if v := s.view.Load(); v != nil && v.Mode.Global != "" {
+			mode := v.Mode
+			info.Mode = &mode
+		}
 		c.reply(req.ID, info)
 	case "fleet.snapshot":
 		c.reply(req.ID, s.fleetFor(c))
@@ -1004,6 +1012,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.cmdComplete(c, req)
 	case "cmd.run":
 		s.cmdRun(c, req)
+	case "mode.set":
+		s.modeSet(c, req)
 	case "focus":
 		s.focus(c, req)
 	case "ask.cancel":

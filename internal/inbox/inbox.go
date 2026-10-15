@@ -51,6 +51,7 @@ const (
 	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
 	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
 	UsageSet                  // Den asks: take this usage figure, as the console sent it? y/n answer it
+	ModeSet                   // Den asks: start agents in a mode that asks less? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -107,6 +108,8 @@ func (k Kind) String() string {
 		return "app's turn"
 	case Console:
 		return "console"
+	case ModeSet:
+		return "mode raise"
 	case UsageSet:
 		return "usage figure"
 	case ConsoleNote:
@@ -174,7 +177,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -787,6 +790,19 @@ func (s *Store) AddUsageSet(title string, body []string) *Item {
 		return nil
 	}
 	return s.add(&Item{SessionID: UsageSession, Kind: UsageSet, Tool: "usage_set", Title: title, Body: body})
+}
+
+// ModeSession is the session id of Den's mode cards.
+const ModeSession = "den:mode"
+
+// AddModeSet adds Den's question: start agents in a mode that asks less?
+// One at a time; nil while one is open, which the caller settles first to
+// put a newer request in its place.
+func (s *Store) AddModeSet(title string, body []string) *Item {
+	if s.hasOpen("", ModeSession, ModeSet) {
+		return nil
+	}
+	return s.add(&Item{SessionID: ModeSession, Kind: ModeSet, Tool: "mode_set", Title: title, Body: body})
 }
 
 // AddMissionMove adds Den's question: move this mission to another

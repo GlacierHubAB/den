@@ -71,6 +71,11 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	if act.Command != nil {
 		return m.runFromDock(act.Command)
 	}
+	if act.ModeSet != nil {
+		cmd := m.modeFromDock(act.ModeSet)
+		m.refresh()
+		return cmd
+	}
 	if isConsoleAct(act) {
 		return m.applyConsoleAct(act)
 	}
@@ -292,13 +297,16 @@ func (m *Model) publishAPI() {
 		Guidance:  m.guide.active,
 	}
 	snap.Colors = map[string]string{}
+	snap.Modes = map[string]string{}
 	for _, a := range m.agents {
 		snap.Agents = append(snap.Agents, a)
 		snap.Names[a.Session.SessionID] = a.Name
 		if a.Host == "" {
 			snap.Colors[a.Session.SessionID] = m.colorFor(a.Session.SessionID)
+			snap.Modes[a.Session.SessionID] = m.modeOfAgent(a.Session.SessionID)
 		}
 	}
+	snap.Mode = api.ModeInfo{Global: m.agentMode(), Mixed: len(m.modeDiffers()) > 0}
 	snap.AgentProcs = m.agentProcs()
 	snap.Cards = m.dockCards()
 	snap.Settled = m.dockSettled()

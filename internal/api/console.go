@@ -750,6 +750,10 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	for _, card := range waiting {
 		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}
+	// The mode in force, after the replay, which ends at the listed cards.
+	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
+		c.push(Event{Event: EventMode, Data: v.Mode}, true)
+	}
 }
 
 // consoleUnpair is console.unpair: {} ends this console, from its own

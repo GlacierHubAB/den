@@ -75,7 +75,16 @@ const (
 	EventChat  = "chat"
 	EventGrant = "grant"
 	EventCard  = "card"
+	EventMode  = "mode"
 )
+
+// ModeInfo is the permission mode Den starts agents in (Global) and
+// whether any local agent runs in another or one Den does not know
+// (Mixed): hello's mode, the fleet's, and a mode event's data.
+type ModeInfo struct {
+	Global string `json:"global"`
+	Mixed  bool   `json:"mixed"`
+}
 
 // Info is hello's result.
 type Info struct {
@@ -89,6 +98,8 @@ type Info struct {
 	// Features lists what this Den offers beyond D1: FeatureConsole when
 	// console pairing (console.*) is on. A Den without it sends none.
 	Features []string `json:"features,omitempty"`
+	// Mode is the global permission mode, once Den has published one.
+	Mode *ModeInfo `json:"mode,omitempty"`
 }
 
 // FeatureConsole is Info.Features' entry for console pairing.
@@ -108,6 +119,7 @@ type Fleet struct {
 	Missions []MissionRef `json:"missions"`
 	Cost     Cost         `json:"cost"`
 	Asks     []AskStatus  `json:"asks,omitempty"`
+	Mode     *ModeInfo    `json:"mode,omitempty"`
 }
 
 // Agent states and waits.
@@ -143,6 +155,10 @@ type Agent struct {
 	// Color is the colour Den draws this agent in (its critter, an @Name),
 	// as "#rrggbb"; only for agents on this machine.
 	Color string `json:"color,omitempty"`
+	// PermissionMode is the mode the agent's own hooks last reported, ""
+	// when none did; a mode Den does not know is "unknown". Only for
+	// agents on this machine.
+	PermissionMode string `json:"permission_mode,omitempty"`
 }
 
 // Window is a terminal window Den matched to an agent.

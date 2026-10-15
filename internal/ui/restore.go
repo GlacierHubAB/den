@@ -427,7 +427,8 @@ func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 	exe, _ := os.Executable()
 	var out []spawn.Request
 	for _, a := range plan.agents {
-		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name}
+		// The mode in force now: nothing in the agent's record picks it.
+		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: m.agentMode()}
 		if model := reopenModel(a); strings.HasPrefix(model, "claude-") {
 			req.Model = model
 		}

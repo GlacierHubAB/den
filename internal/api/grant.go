@@ -83,6 +83,8 @@ type Act struct {
 	CardAnswer *CardAnswer
 	// Command is a console's command line, for Den to decide.
 	Command *CommandRun
+	// ModeSet is a console's mode.set, for Den to decide.
+	ModeSet *ModeSet
 }
 
 type grants struct {

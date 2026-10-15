@@ -114,6 +114,8 @@ type Model struct {
 	missionUpdates map[string]mission.Update
 	// use is the usage guard (usage.go).
 	use usageGuard
+	// mode is the global permission mode agents start in (mode.go).
+	mode modeState
 	// dockFrom names the console while its command runs, "" otherwise.
 	dockFrom string
 	// ments are the agents names in rendered text are coloured for
@@ -239,6 +241,7 @@ func New(cfg config.Config) Model {
 	m.fitInput()
 	m.openRemote(cfg)
 	m.startGuidance(cfg.Orchestrator.Guidance)
+	m.startMode(cfg.Agents.PermissionMode, cfg.Agents.ModeRefused)
 	if cfg.API.Enabled {
 		// Only the Den that holds den.sock serves the API too.
 		if m.srv != nil {
@@ -525,7 +528,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.controlTick(time.Now())}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -585,6 +588,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
+	case modeReadMsg:
+		m.applyModeRead(msg)
+		m.refresh()
+		return m, nil
 	case apiActMsg:
 		if msg.from != m.api.srv {
 			return m, nil
@@ -698,6 +705,10 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.ConsoleUnpairEvent {
 		return m.handleConsoleUnpair(r)
+	}
+	if r.Event == bridge.ModeEvent {
+		m.modeQuery(r)
+		return nil
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
@@ -1426,6 +1437,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.UsageSet {
 		return m.decideUsageSet(it, verb)
 	}
+	if it.Kind == inbox.ModeSet {
+		return m.decideModeSet(it, verb)
+	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
 			return m.say(why, true)
@@ -1610,6 +1624,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		}
 	case "/usage":
 		return m.usageCommand(fields[1:])
+	case "/mode":
+		return m.modeCommand(fields[1:])
 	case "/budget":
 		note, isErr := m.budgetCommand(fields[1:])
 		return m.say(note, isErr)

@@ -414,6 +414,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/project <name>`, `/project add <dir>`, `/project drop` | pick, list or unlist a project |
 | `/mission <goal>`, `/pause`, `/resume`, `/stop` | missions |
 | `/mission move <project>` | ask to move the open or selected mission to another listed project; `Ctrl+Y` in the Inbox moves it |
+| `/mode`, `/mode <mode>` | show the permission mode agents start in, and the agents running in another; set it: a mode that asks more applies at once, one that asks less waits on a card (see [Permission mode](#permission-mode)) |
 | `/budget 2M`, `/budget $5`, `/budget off` | set, show (`/budget` alone) or remove the budget on the open or selected mission |
 | `/template`, `/template <name> <target or goal>`, `/template save <name>` | list the mission templates, start a proposal from one, save the open mission as one |
 | `/delete` `/del` | remove the review comment under the cursor |
@@ -679,6 +680,40 @@ elsewhere. If Claude Code has never worked in the folder, it asks you to trust
 it in that terminal first; nothing happens until you answer. Set `spawn =
 false` under `[orchestrator]`, or `DEN_ORCHESTRATOR_SPAWN=off`, to take the two
 tools away.
+
+### Permission mode
+
+Every agent Den starts or reopens runs in one permission mode, passed as
+`claude --permission-mode`. From the mode that asks least to the one that
+asks most:
+
+- `auto` (the default): a classifier approves actions; nothing asks you.
+- `acceptEdits`: edits files in its folder without asking; asks before
+  commands, MCP tools and edits elsewhere.
+- `plan`: asks before edits and MCP tools, but runs any command the
+  classifier allows.
+- `default`: asks before edits, commands and MCP tools.
+- `dontAsk`: runs only what you allowed in advance and denies the rest.
+
+`plan` and `acceptEdits` each run something the other asks for, so neither
+is below the other.
+
+`/mode` shows the mode and names the agents running in another one. The
+header shows the mode when it is not `auto`, and how many agents differ.
+`/mode default` (or any mode that asks more) applies at once. A mode that
+asks less, or a move between `plan` and `acceptEdits`, waits on a card in
+the inbox that shows both modes and what each allows; only `Ctrl+Y` there
+changes it. Agents already running keep their mode until they restart.
+
+The mode is kept as `permission_mode` under `[agents]` in `config.toml`.
+Den treats the file as a request: an edit that asks more applies, and one
+that asks less, made while Den runs, waits on a card like `/mode`.
+`bypassPermissions` is never accepted there, nor by `/mode`.
+
+Agents Den started before this setting existed ran in `auto` too, which is
+what Claude Code uses with no flag. Den now always passes the flag. An
+agent in `auto` can run classifier-approved commands without asking you,
+and those include writing to another agent's terminal input.
 
 **A model per agent.** `spawn_agent` takes a model: `haiku` for small,
 mechanical, well-specified tasks, `sonnet` for ordinary building, writing and
@@ -1260,6 +1295,10 @@ name = "den-orchestrator"   # how the orchestrator session names itself to peers
 spawn = true                # may open terminals and start agents on the workspace you are on
 guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
                             # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
+
+[agents]
+permission_mode = "auto"    # the mode agents Den starts run in: auto, acceptEdits, plan, default or dontAsk;
+                            # /mode in Den changes it, and a change to a mode that asks less waits for your ^Y
 
 [inbox]
 history = 100               # finished turns kept as history

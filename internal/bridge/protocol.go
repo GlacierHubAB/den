@@ -126,6 +126,11 @@ type MissionInput struct {
 // usage. Den answers deny, with why, while it does. Read-only.
 const UsageEvent = "UsageQuery"
 
+// ModeEvent is not a hook event: `den mcp` sends it before it starts an
+// agent, to ask which permission mode Den starts agents in. Den answers
+// allow with the mode as the message. Read-only.
+const ModeEvent = "ModeQuery"
+
 // OrchSendEvent is not a hook event: `den mcp --control` sends it for the
 // orchestrator's send_message call, which control gives it in place of
 // SendMessage. Den delivers the message the way SendMessage would and

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/GlacierHubAB/den/internal/permmode"
 )
 
 // Config is everything Den lets you tune.
@@ -23,6 +25,16 @@ type Config struct {
 		// (shipped with Den) or the absolute path of a file of your own. Off
 		// when empty. It loads only once you approve its SHA-256 in Den.
 		Guidance string
+	}
+	// Agents is how Den starts agents.
+	Agents struct {
+		// PermissionMode is the global mode new agents start in
+		// (claude --permission-mode): one of permmode.Modes(), never
+		// bypassPermissions; permmode.Shipped (auto) when unset. A value
+		// Den refuses keeps that, and ModeRefused holds it, for Den's
+		// note. Den takes it only up to permmode.Shipped: the file asks.
+		PermissionMode string
+		ModeRefused    string
 	}
 	Inbox struct {
 		History int // finished turns kept as history
@@ -108,6 +120,7 @@ func Defaults() Config {
 	c.Orchestrator.Model = "sonnet"
 	c.Orchestrator.Name = "den-orchestrator"
 	c.Orchestrator.Spawn = true
+	c.Agents.PermissionMode = permmode.Shipped
 	c.Inbox.History = 100
 	c.Detail.Recent = 20
 	c.Hooks.PermissionWait = 580
@@ -192,6 +205,13 @@ func (c *Config) apply(kv map[string]string) {
 	str(&c.Orchestrator.Name, "orchestrator.name")
 	boolean(&c.Orchestrator.Spawn, "orchestrator.spawn")
 	str(&c.Orchestrator.Guidance, "orchestrator.guidance")
+	if v, ok := kv["agents.permission_mode"]; ok {
+		if mode, ok := permmode.Parse(v); ok {
+			c.Agents.PermissionMode = mode
+		} else {
+			c.Agents.ModeRefused = v
+		}
+	}
 	num(&c.Inbox.History, "inbox.history")
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
@@ -341,6 +361,34 @@ func GuidanceSetting() (string, error) {
 	return kv["orchestrator.guidance"], nil
 }
 
+// ModeSetting reads agents.permission_mode from the file as it is now, for
+// Den's watch on it: the mode (Default when the key or the file is gone),
+// or the value as written when it is not a mode the global mode may take.
+// A file that is there but does not read is an error. No environment
+// variable sets it.
+func ModeSetting() (mode, refused string, err error) {
+	f, err := os.Open(Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return permmode.Shipped, "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+	kv, err := parseFrom(f)
+	if err != nil {
+		return "", "", err
+	}
+	v, ok := kv["agents.permission_mode"]
+	if !ok {
+		return permmode.Shipped, "", nil
+	}
+	if mode, ok := permmode.Parse(v); ok {
+		return mode, "", nil
+	}
+	return "", v, nil
+}
+
 // parse reads a flat TOML subset: [section] headers and key = value lines
 // with string, integer or boolean values. Keys come back as section.key.
 func parse(path string) map[string]string {
@@ -393,6 +441,10 @@ name = "den-orchestrator"   # how the orchestrator session names itself to peers
 spawn = true                # may open terminals and start agents on the workspace you are on
 guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
                             # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
+
+[agents]
+permission_mode = "auto"    # the mode agents Den starts run in: auto, acceptEdits, plan, default or dontAsk;
+                            # /mode in Den changes it, and a change to a mode that asks less waits for your ^Y
 
 [inbox]
 history = 100               # finished turns kept as history
