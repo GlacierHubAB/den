@@ -101,6 +101,9 @@ func (m *Model) handleSkillsRequest(r *bridge.Request) {
 	title := fmt.Sprintf("Install %s for a %s in %s?", n, in.Role, shortPath(tgt.Dir, ""))
 	if tgt.Scope == skills.Agent {
 		title = fmt.Sprintf("Start %s (%s) with %s?", in.Peer, in.Role, n)
+		if c := m.critterOf(in.Peer); c != "" {
+			title = fmt.Sprintf("Start %s (%s, %s) with %s?", c, in.Peer, in.Role, n)
+		}
 	}
 	body := skills.Lines(ms, tgt)
 	asked := "asked by " + in.AskedBy
