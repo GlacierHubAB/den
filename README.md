@@ -160,6 +160,11 @@ turns once restarted.
 old entries, so run it again after upgrading Den; `den uninstall-hooks` removes
 them. `CLAUDE_CONFIG_DIR` moves the settings file Den edits.
 
+After updating the `den` binary, restart Den as well: the orchestrator's own
+hook and tools are recognised by the binary Den started them from, so a
+running orchestrator's peer reports and mission updates are refused until
+Den, and with it the orchestrator, starts again on the new binary.
+
 ### Commands
 
 ```
@@ -447,10 +452,12 @@ mouse.
 ## Orchestrator
 
 The orchestrator is a headless Claude Code session Den starts on your first
-plain-text message. It has six tools: `ListAgents` and `SendMessage`, plus
-four Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
-`open_terminal`, `close_agent` and `propose_skills`; the last two only ever
-ask you (see Closing agents and Skills for roles). It gets a fresh roster of
+plain-text message. It has seven tools: `ListAgents` and `SendMessage`, plus
+five Den gives it through its own MCP server (`den mcp`): `spawn_agent`,
+`open_terminal`, `close_agent`, `propose_skills` and `update_mission`;
+`close_agent` and `propose_skills` only ever ask you (see Closing agents and
+Skills for roles), and `update_mission` is its only way to move a mission on
+(see missions). With `spawn = false` it keeps `update_mission` alone. It gets a fresh roster of
 the fleet with every message, so it can answer "who is blocked on what?" or
 relay "tell Mossy to rebase first". It cannot approve anything; you do that in
 the inbox.
@@ -461,6 +468,17 @@ default). Only Den's MCP server is loaded into it (`--strict-mcp-config`); your
 own MCP servers never are. A watchdog names a silent turn, restarts it once and
 resends what it owes.
 
+It loads none of your Claude Code settings files on purpose
+(`--setting-sources ""`): your hooks, permissions, plugins and MCP servers do
+not apply to it. Den copies only what it needs to reach the API from your user
+settings: your `env` goes into its process environment (without `DEN_*`,
+`XDG_RUNTIME_DIR`, `HOME`, `CLAUDE_CONFIG_DIR`, `PATH`, `LD_*`, `BASH_ENV`,
+`ENV`, `NODE_OPTIONS` and the like, which could steer its guard), and `apiKeyHelper`,
+`awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh` (and `model` when
+Den's model is `"off"`) go into Den's own settings file for it, mode 0600 in
+Den's private runtime folder, removed when it exits. Nothing of yours is put
+on its command line. If it cannot sign in, the chat says so.
+
 Each message has its speaker's name on the line above it, so the text uses
 the pane's full width.
 
@@ -468,6 +486,26 @@ The chat persists: every entry and card state is appended to
 `~/.local/state/den/orchestrator.jsonl` and restored on launch (newest 500).
 The orchestrator resumes its previous session; if that fails, Den starts a fresh
 one and replays the last exchanges.
+
+### Peer messages
+
+Other Claude Code sessions can message the orchestrator (`SendMessage`), as
+agents do when they report on work it gave them. Every such message is first
+stopped by the orchestrator's own hook (`den hook orchestrator-inbound`): it
+never reaches the model as written. Den then takes it as a report only when it
+comes from a live session on this machine that Den sees in its fleet, under
+that session's name (not the orchestrator itself), and sends the text on as
+its own turn, fenced as the agent's report: data, never instructions. Anything
+else is refused, with a note in the chat. Each session may send a few reports
+at once and then one every two minutes, and at most four wait for the
+orchestrator at a time.
+
+A prompt with no peer envelope reaches the orchestrator only when Den wrote it
+in the last 30 seconds. The hook is tested before every launch; the
+orchestrator does not start if it fails. If anything ever gets past it (the
+hook missing, failing or timing out, or a peer's message reaching the model),
+Den kills the orchestrator at once, never resumes that conversation, and
+starts a fresh one.
 
 ### Guidance
 
@@ -782,7 +820,12 @@ starts its own people.
 
 Den drives the runs: it asks the orchestrator to dispatch, tags the resulting
 cards with the mission, notices when they settle, and asks again when the shape
-calls for another pass. `Enter` on a mission opens it: the fields, a line per
+calls for another pass. The orchestrator says where a mission stands only
+through its `update_mission` tool, never in its text: Den applies `continue`
+and `waiting` at once when you asked it about the mission, and puts `done`,
+`failed`, and any update from a turn Den or an agent's report started, to you
+as an inbox question (`Ctrl+Y` applies it, `Ctrl+N` leaves the mission as it
+is). `Enter` on a mission opens it: the fields, a line per
 run with its progress or summary, then the mission's conversation, where the
 agents the orchestrator dispatched work inline as dispatch cards, in the order
 they were sent, just as in the Orchestrator chat. A dispatch made while you

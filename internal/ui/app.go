@@ -96,6 +96,11 @@ type flashClearMsg struct{}
 
 // Model is the root bubbletea model.
 type Model struct {
+	// peers is the bookkeeping of messages other sessions send the
+	// orchestrator (inbound.go); missionUpdates are the updates waiting on
+	// the human's ^Y, by inbox item (mission_update.go).
+	peers          peerState
+	missionUpdates map[string]mission.Update
 	// hl is the code colouring this frame may still do, set by View;
 	// plainCode draws fenced code uncoloured (remote agents' text).
 	hl        *hlBudget
@@ -599,6 +604,19 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
+	}
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent {
+		// Only the orchestrator's own hook and its `den mcp` (its child
+		// processes) may ask these; any other process on the machine could
+		// otherwise speak as an agent or move a mission.
+		if m.orch.proc == nil || !m.orch.proc.Spawned(r.PeerPID) {
+			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: only the orchestrator's own hook and tools may ask this"})
+			return nil
+		}
+		if r.Event == bridge.InboundEvent {
+			return m.handleInbound(r)
+		}
+		return m.handleMissionUpdate(r)
 	}
 	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
 		// The orchestrator's turns show on their own tab, not in the inbox.
@@ -1263,6 +1281,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Guidance {
 		return m.decideGuidance(it, verb)
+	}
+	if it.Kind == inbox.MissionUpdate {
+		return m.decideMissionUpdate(it, verb)
 	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {

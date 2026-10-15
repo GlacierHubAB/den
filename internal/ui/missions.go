@@ -33,7 +33,7 @@ const missionsDir = `Missions are standing goals on a project that Den runs thro
 Shapes: "once" (one dispatch to one agent, done when it reports back), "loop" (one agent iterates until the goal is met; you re-dispatch to it after each pass until done), "fanout" (a lead with children in parallel, repeated until the lead says done), "schedule" (Den fires a run on the cadence; each run is a once or a fanout). Cadence forms: "every 30m", "every 2h", "daily 08:30", "weekly mon 09:00", or a five-field cron line.
 A mission names who does the work: "agents" are running agents from the roster to reuse; "team" are roles to start, each {"role": "...", "model": "haiku|sonnet|opus", "under": "the role it reports to, or orchestrator"}. Pick each model by how hard its task is: haiku for small mechanical tasks, sonnet for ordinary building and writing, opus for design, architecture, product judgment, review and leading others. Work that needs several specialists gets one lead on opus with the specialists under it.
 When asked to propose, answer in two or three plain sentences and then one fenced json block: {"mission": {"name": "...", "mission": "...", "done_when": "...", "constraints": ["..."], "shape": "once|loop|fanout|schedule", "cadence": "...", "reason": "one line on why this shape", "agents": ["critter names"], "team": [{"role": "...", "model": "...", "under": "..."}]}}. Do not dispatch anything while proposing.
-When asked to run a mission, dispatch per its shape: SendMessage to the agents it reuses, and spawn_agent in the project directory for each team role under the orchestrator, on its model, with a complete brief that carries the mission, its constraints and that role's part. A lead's brief lists the roles under it with their models and parts, and says to start them itself with its spawn_agent tool, wait for their reports, and report to you when the whole piece is done; never start a lead's people yourself. Then say in one line what you sent. When a run's agents have reported and you are asked whether the goal is met, answer in one or two sentences and end with one fenced json block: {"mission_update": {"id": "...", "state": "done|continue|waiting|failed", "summary": "one line"}}; with "continue", dispatch the next pass in the same reply.`
+When asked to run a mission, dispatch per its shape: SendMessage to the agents it reuses, and spawn_agent in the project directory for each team role under the orchestrator, on its model, with a complete brief that carries the mission, its constraints and that role's part. A lead's brief lists the roles under it with their models and parts, and says to start them itself with its spawn_agent tool, wait for their reports, and report to you when the whole piece is done; never start a lead's people yourself. Then say in one line what you sent. When a run's agents have reported and you are asked whether the goal is met, answer in one or two sentences and call the update_mission tool with the mission's id, its state (done, continue, waiting or failed) and a one-line summary; with "continue", dispatch the next pass in the same reply. Never write a mission_update block: Den does not apply one. Den applies done and failed only once the human confirms.`
 
 // proposeMission starts a proposal for the picked project from the
 // human's words.
@@ -86,8 +86,10 @@ func (m *Model) sendMission(id string, withDir bool, shown, prompt string) tea.C
 }
 
 // missionReply reads what the orchestrator said for a mission: a proposal
-// fills the pending one, an update moves a mission on. It returns the text
-// with the json blocks removed, for the chat and the mission's thread.
+// fills the pending one. An update block is no longer applied (text can
+// be steered by whatever the orchestrator read); updates come through the
+// update_mission tool, and the reply says so. It returns the text with the
+// json blocks removed, for the chat and the mission's thread.
 func (m *Model) missionReply(text string) string {
 	shown := text
 	if p, ok := mission.ParseProposal(text); ok && m.ov.proposal != "" {
@@ -98,9 +100,8 @@ func (m *Model) missionReply(text string) string {
 		}
 		shown = mission.Strip(text)
 	}
-	if u, ok := mission.ParseUpdate(text); ok {
-		m.applyUpdate(u)
-		shown = mission.Strip(text)
+	if _, ok := mission.ParseUpdate(text); ok {
+		shown = mission.Strip(text) + "\n\n(Den did not apply the mission_update block in this reply: missions are updated only through the update_mission tool.)"
 	}
 	return shown
 }
@@ -174,6 +175,7 @@ func (m *Model) runMission(ms *mission.Mission, verb string) tea.Cmd {
 	}
 	m.missions.Save(ms)
 	m.turn = missionTurn{id: ms.ID}
+	m.orch.nextOrigin = originDen
 	prompt := fmt.Sprintf("%s mission %s, run %d.\n%sDispatch this run now, then say in one line what you sent.", verb, ms.ID, r.N, ms.Describe())
 	return m.sendMission(ms.ID, false, fmt.Sprintf("%s mission %q, run %d", strings.ToLower(verb), ms.Name, r.N), prompt)
 }
@@ -195,7 +197,8 @@ func (m *Model) judgeMission(ms *mission.Mission, r *mission.Run) tea.Cmd {
 		}
 	}
 	m.turn = missionTurn{id: ms.ID}
-	prompt := fmt.Sprintf("Mission %s run %d: every agent has reported.\n%sResults:\n%s\nIs the goal met? Answer with the mission_update block; with \"continue\", dispatch the next pass now.", ms.ID, r.N, ms.Describe(), strings.Join(results, "\n"))
+	m.orch.nextOrigin = originDen
+	prompt := fmt.Sprintf("Mission %s run %d: every agent has reported.\n%sResults:\n%s\nIs the goal met? Call update_mission; with \"continue\", dispatch the next pass now.", ms.ID, r.N, ms.Describe(), strings.Join(results, "\n"))
 	return m.sendMission(ms.ID, false, fmt.Sprintf("mission %q run %d finished · judging", ms.Name, r.N), prompt)
 }
 

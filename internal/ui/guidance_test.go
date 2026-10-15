@@ -347,9 +347,17 @@ func TestGuidanceRestartWaitsForIdle(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec cat >/dev/null\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The inbound hook's self-test needs a hook that blocks; the settings
+	// file and the user settings it copies from are the test's own.
+	hook := filepath.Join(dir, "den-hook")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\ncat >/dev/null\necho '{\"decision\":\"block\"}'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	proc, err := orch.Start(ctx, orch.Options{Command: []string{script}, Dir: dir})
+	proc, err := orch.Start(ctx, orch.Options{Command: []string{script}, Dir: dir, HookCommand: []string{hook}})
 	if err != nil {
 		t.Fatal(err)
 	}

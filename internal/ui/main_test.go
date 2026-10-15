@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/colors"
 	"github.com/GlacierHubAB/den/internal/gitenvtest"
@@ -14,6 +15,12 @@ import (
 // writes the shared colour record and the task history there, and a test run
 // against the real one replaced the colours every agent badge reads.
 func TestMain(m *testing.M) {
+	// Started as "den-test-sleep", the test binary stands in for Den's own
+	// processes under a fake orchestrator (its hook, its den mcp).
+	if len(os.Args) > 1 && os.Args[1] == "den-test-sleep" {
+		time.Sleep(300 * time.Second)
+		os.Exit(0)
+	}
 	dir, err := os.MkdirTemp("", "den-ui-state-")
 	if err != nil {
 		panic(err)

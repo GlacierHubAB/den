@@ -50,6 +50,32 @@ func PeerUID(c net.Conn) (int, error) {
 	return uid, cerr
 }
 
+// PeerPID is the pid of the process at the other end of a unix socket
+// connection (SO_PEERCRED): the process that connected.
+func PeerPID(c net.Conn) (int, error) {
+	uc, ok := c.(*net.UnixConn)
+	if !ok {
+		return -1, errors.New("not a unix socket")
+	}
+	raw, err := uc.SyscallConn()
+	if err != nil {
+		return -1, err
+	}
+	pid := -1
+	var cerr error
+	err = raw.Control(func(fd uintptr) {
+		var cred *syscall.Ucred
+		cred, cerr = syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
+		if cerr == nil {
+			pid = int(cred.Pid)
+		}
+	})
+	if err != nil {
+		return -1, err
+	}
+	return pid, cerr
+}
+
 // ErrForeign means the process at the other end of a Den socket is not
 // this user's.
 var ErrForeign = errors.New("the socket belongs to another user")
