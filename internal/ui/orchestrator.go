@@ -47,6 +47,9 @@ type chatEntry struct {
 	// rather than the message's first line.
 	tool       string
 	summarized bool
+	// fromAgent is set when full is an agent's own words (a report Den
+	// passed on), not the orchestrator's: mentions in it stay plain.
+	fromAgent bool
 	// memo keeps the entry's rendered text between frames; the chat draws
 	// every entry on every frame, so a long chat must not lean on the
 	// shared cache, which it would cycle through.
@@ -689,7 +692,9 @@ func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string,
 			}
 			body = []string{line + s.fg.Render(ansi.Truncate(sanitize.Line(e.text), room, "…")) + s.dim.Render(" · ") + st.Render(status)}
 			if e.expanded {
-				body = append(body, mo.expandedLines(e.full, bodyW)...)
+				mq := mo
+				mq.quietMentions = mq.quietMentions || e.fromAgent
+				body = append(body, mq.expandedLines(e.full, bodyW)...)
 			}
 		default:
 			if e.status != "" {

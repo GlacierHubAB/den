@@ -227,6 +227,19 @@ func TestMentionsStayPlainInOthersWords(t *testing.T) {
 		t.Errorf("an agent's report and turn in the chat should stay plain:\n%s", out)
 	}
 
+	// A report an agent sent the orchestrator is its words, expanded or
+	// not; the orchestrator's own message to an agent colours.
+	m.orch.chat = []chatEntry{
+		{role: "fan", to: "Plucky", sid: "plucky", tool: "report to the orchestrator", text: "Mossy Lemur approved", full: "Mossy Lemur approved", fromAgent: true, expanded: true, status: "passed on"},
+	}
+	if out, _, _ := m.chatLines(100, func(chatEntry) bool { return true }); strings.Contains(text(out), "@Mossy") {
+		t.Errorf("a report passed on should stay plain:\n%s", text(out))
+	}
+	m.orch.chat[0].fromAgent = false
+	if out, _, _ := m.chatLines(100, func(chatEntry) bool { return true }); !strings.Contains(text(out), "@Mossy Lemur approved") {
+		t.Errorf("the orchestrator's own message should colour its mentions:\n%s", text(out))
+	}
+
 	if out := m.markdownLines("> Mossy Lemur said @Plucky approved", 80); coloured(out) || strings.Contains(text(out), "@Mossy") {
 		t.Errorf("a quote should stay plain: %q", text(out))
 	}
