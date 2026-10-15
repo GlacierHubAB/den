@@ -811,6 +811,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
 	case it.Answerable() && it.Kind == inbox.MissionUpdate:
 		out = append(out, key("^Y", "apply it")+"  "+key("^N", "leave it"))
+	case it.Answerable() && it.Kind == inbox.MissionCriteria:
+		out = append(out, key("^Y", "change the criteria")+"  "+key("^N", "keep them"))
+	case it.Answerable() && it.Kind == inbox.MissionDone:
+		out = append(out, key("^Y", "mission done")+"  "+key("^N", "not done yet"))
 	case it.Answerable() && it.Kind == inbox.MissionMove:
 		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
@@ -1074,6 +1078,12 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.MissionUpdate {
 			acts = key("^Y", "apply it") + sp + sp + key("^N", "leave it")
+		}
+		if it.Kind == inbox.MissionCriteria {
+			acts = key("^Y", "change the criteria") + sp + sp + key("^N", "keep them")
+		}
+		if it.Kind == inbox.MissionDone {
+			acts = key("^Y", "mission done") + sp + sp + key("^N", "not done yet")
 		}
 		if it.Kind == inbox.MissionMove {
 			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")

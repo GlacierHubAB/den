@@ -182,7 +182,7 @@ type permission struct {
 // allows without control (Argv's allow-list), with send_message for
 // SendMessage.
 func humanTools(o Options) map[string]bool {
-	set := map[string]bool{SendMessageTool: true, MissionTool: true}
+	set := map[string]bool{SendMessageTool: true, MissionTool: true, ProposeTool: true}
 	if o.Spawn {
 		for _, t := range []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool, DesktopMissionTool} {
 			set[t] = true

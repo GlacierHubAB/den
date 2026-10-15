@@ -82,6 +82,9 @@ func dockMayAnswer(it *inbox.Item) bool {
 		return false
 	case inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn:
 		// Desktop control: the human's own window only.
+	case inbox.MissionCriteria, inbox.MissionDone:
+		// The done criteria decide when a mission is done: only the
+		// human, in Den.
 		return false
 	}
 	return true

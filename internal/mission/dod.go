@@ -190,7 +190,11 @@ func (m *Mission) ChangeCriterion(id, text string) error {
 	if text == "" {
 		return fmt.Errorf("%s needs its text", c.ID)
 	}
-	c.Text = text
+	if text != c.Text {
+		// A claim or a confirmation was for the old text.
+		c.Text = text
+		c.State, c.Evidence, c.ClaimedAt, c.MetAt = CritOpen, "", time.Time{}, time.Time{}
+	}
 	m.syncDoneWhen()
 	return nil
 }

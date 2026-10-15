@@ -110,9 +110,11 @@ func flashTick(d time.Duration, text string) tea.Cmd {
 type Model struct {
 	// peers is the bookkeeping of messages other sessions send the
 	// orchestrator (inbound.go); missionUpdates are the updates waiting on
-	// the human's ^Y, by inbox item (mission_update.go).
+	// the human's ^Y, by inbox item, and missionAsks the criteria and done
+	// questions (mission_update.go).
 	peers          peerState
-	missionUpdates map[string]mission.Update
+	missionUpdates map[string]bridge.MissionInput
+	missionAsks    map[string]missionAsk
 	// use is the usage guard (usage.go).
 	use usageGuard
 	// mode is the global permission mode agents start in (mode.go).
@@ -747,7 +749,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == "Stop" {
 		deskCmd = m.deskAgentStopped(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.ProposeEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -760,6 +762,8 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleInbound(r)
 		case bridge.OrchSendEvent:
 			return m.handleOrchSend(r)
+		case bridge.ProposeEvent:
+			return m.handlePropose(r)
 		}
 		return m.handleMissionUpdate(r)
 	}
@@ -1509,6 +1513,12 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.MissionUpdate {
 		return m.decideMissionUpdate(it, verb)
 	}
+	if it.Kind == inbox.MissionCriteria {
+		return m.decideMissionCriteria(it, verb)
+	}
+	if it.Kind == inbox.MissionDone {
+		return m.decideMissionDone(it, verb)
+	}
 	if it.Kind == inbox.UsageResume {
 		return m.decideUsageResume(it, verb)
 	}
@@ -1693,6 +1703,12 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		// goal that starts with "move" is a goal.
 		if len(fields) > 2 && strings.EqualFold(fields[1], "move") && m.listsProject(strings.Join(fields[2:], " ")) {
 			return m.askMove(strings.Join(fields[2:], " "))
+		}
+		// "/mission met c2" and "/mission unmet c2": the human's own word on
+		// a criterion, typed in Den only (the dock refuses them).
+		if len(fields) == 3 && (strings.EqualFold(fields[1], "met") || strings.EqualFold(fields[1], "unmet")) && criterionID.MatchString(strings.ToLower(fields[2])) {
+			note, isErr := m.missionMetCommand(strings.EqualFold(fields[1], "met"), fields[2])
+			return m.say(note, isErr)
 		}
 		m.tab = tabOverview
 		return m, m.proposeMission(strings.Join(fields[1:], " "))
