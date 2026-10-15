@@ -93,6 +93,13 @@ func (f *fakeWM) moves() []string {
 	return out
 }
 
+// logs is a copy of every call so far, safe while a switch or a close runs.
+func (f *fakeWM) logs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.log...)
+}
+
 func (f *fakeWM) remove(addr string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

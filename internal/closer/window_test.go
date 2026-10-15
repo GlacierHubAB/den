@@ -63,6 +63,8 @@ func (o *winOps) CloseWindow(a string) error {
 }
 
 func (o *winOps) closes() []string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	var out []string
 	for _, c := range o.calls {
 		if strings.HasPrefix(c, "close ") {

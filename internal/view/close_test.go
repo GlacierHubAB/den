@@ -134,7 +134,7 @@ func TestCloseDuringAHideNeverOverlaps(t *testing.T) {
 		t.Fatal("the close ran while the hide held the lock")
 	case <-time.After(300 * time.Millisecond):
 	}
-	for _, l := range r.wm.log {
+	for _, l := range r.wm.logs() {
 		if strings.HasPrefix(l, "close ") {
 			t.Fatalf("closed a window during the hide: %v", l)
 		}
