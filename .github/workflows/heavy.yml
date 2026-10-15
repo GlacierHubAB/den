@@ -1,8 +1,9 @@
 name: heavy
 
-# The two runs that are too long for every pull request: the slow suite, and
-# the whole tree under the race detector three times on two CPUs (how a small
-# machine behaves). Nightly on dev, on request, and before a release builds.
+# The two long runs: the slow suite, and the whole tree under the race detector
+# three times on two CPUs (how a small machine behaves). Nightly on dev, on
+# request, before a release builds, and from ci.yml on pull requests (race3
+# for every pull request, the slow suite as well for those into main).
 on:
   schedule:
     - cron: "37 2 * * *"
@@ -13,12 +14,18 @@ on:
         required: false
         default: dev
   workflow_call:
+    inputs:
+      which:
+        description: slow, race3 or both (default both)
+        type: string
+        required: false
+        default: both
 
 permissions: {}
 
 concurrency:
-  group: heavy-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  group: heavy-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GO_VERSION: "1.26.x"
@@ -26,6 +33,7 @@ env:
 
 jobs:
   slow:
+    if: inputs.which != 'race3'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -72,6 +80,7 @@ jobs:
         run: XDG_STATE_HOME="$(mktemp -d)" go test -p 1 -count=1 -timeout 50m ./internal/remote ./internal/ui
 
   race3:
+    if: inputs.which != 'slow'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:

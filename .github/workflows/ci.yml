@@ -179,11 +179,24 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .
 
+  # The race detector three times on two CPUs for every pull request, and the
+  # slow suite as well for a pull request into main (a release). Orderings
+  # that only go wrong on a small machine show here, not in a release. Other
+  # events (a push, the weekly run, the release workflow) skip it.
+  heavy:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/heavy.yml
+    with:
+      which: ${{ github.base_ref == 'main' && 'both' || 'race3' }}
+
   # The one check branch protection requires. Its name stays the same when
-  # jobs or the matrix change; it fails unless every job above succeeded.
+  # jobs or the matrix change; it fails unless every job above succeeded
+  # (heavy may also be skipped, on events it does not run for).
   ci-passed:
     if: always()
-    needs: [lint, test, vuln, secrets]
+    needs: [lint, test, vuln, secrets, heavy]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -193,4 +206,4 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'all(.[]; .result == "success")' > /dev/null
+          echo "$NEEDS" | jq -e 'to_entries | all(.[]; .value.result == "success" or (.key == "heavy" and .value.result == "skipped"))' > /dev/null
