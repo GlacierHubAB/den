@@ -70,6 +70,15 @@ type Act struct {
 	Paired   bool
 	CodeGone bool
 	Say      *Say
+	// Console: a claim for the human to confirm (Console), that claim
+	// settled (ConsoleDone, its id), the console changed (ConsoleChanged),
+	// the console code left Den's screen (ConsoleCodeGone), a proof for
+	// the console from another program (ConsoleIntruder).
+	Console         *ConsoleAsk
+	ConsoleDone     string
+	ConsoleChanged  bool
+	ConsoleCodeGone bool
+	ConsoleIntruder *ConsoleIntruder
 }
 
 type grants struct {

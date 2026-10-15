@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +40,9 @@ type Options struct {
 	Version string // Den's release, for hello
 	ChatLog string // api-chat.jsonl
 	Lane    LaneConfig
+	// ConsoleKey is Den's Ed25519 key for console proofs (console.go);
+	// nil leaves console pairing off.
+	ConsoleKey ed25519.PrivateKey
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -54,7 +58,11 @@ type Client struct {
 
 // Server serves den-api.sock.
 type Server struct {
-	opts  Options
+	opts Options
+	// con is the console (console.go); ckey Den's half of its proofs, nil
+	// when console pairing is off.
+	con   consoleState
+	ckey  *consoleKey
 	bp    atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
 	view  atomic.Pointer[View]
 	chat  *chatStore
@@ -106,6 +114,9 @@ func Listen(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opts: o, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refusals: map[string]*refusal{}}
+	if o.ConsoleKey != nil {
+		s.ckey = newConsoleKey(o.ConsoleKey)
+	}
 	s.grants, s.acts, s.lastConn, s.ctl = newGrants(), make(chan Act, 64), map[string]time.Time{}, newControl()
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
@@ -549,6 +560,12 @@ type conn struct {
 	nonce      string
 	challenged time.Time
 	paired     string
+	// cnonce and claimSalt are its live console challenge, cchallenged
+	// when it was given; console the console it proved, "" for none.
+	cnonce      string
+	claimSalt   string
+	cchallenged time.Time
+	console     string
 }
 
 func (c *conn) close() {
@@ -822,7 +839,11 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		} else if first {
 			s.note("an app connected to den-api.sock: " + sanitize.Label(ExeShownShort(c.peer.Exe), 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
 		}
-		c.reply(req.ID, Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()})
+		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()}
+		if s.ckey != nil {
+			info.Features = []string{FeatureConsole}
+		}
+		c.reply(req.ID, info)
 	case "fleet.snapshot":
 		c.reply(req.ID, s.fleetFor(c))
 	case "fleet.events":
@@ -907,6 +928,16 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.auth(c, req)
 	case "orch.say":
 		s.say(c, req)
+	case "console.challenge":
+		s.consoleChallenge(c, req)
+	case "console.claim":
+		s.consoleClaim(c, req)
+	case "console.auth":
+		s.consoleAuth(c, req)
+	case "console.events":
+		s.consoleEvents(c, req)
+	case "console.unpair":
+		s.consoleUnpair(c, req)
 	case "focus":
 		s.focus(c, req)
 	case "ask.cancel":
