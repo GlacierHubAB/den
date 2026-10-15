@@ -235,6 +235,37 @@ func TestViewSwitchOneAtATimeAndThreeAMinute(t *testing.T) {
 	noViewAct(t, h.s, "a refused call")
 }
 
+// TestViewSwitchFreesItsSlotBeforeItsAnswer: a console that calls again the
+// moment it reads an answer is never told busy. While the slot cannot be
+// freed (its lock is held here), the answer does not go out; once it is,
+// the slot is free by the time the answer is read.
+func TestViewSwitchFreesItsSlotBeforeItsAnswer(t *testing.T) {
+	h, _, _, ctl := viewConsole(t, ViewAgent)
+	id := ctl.send("view.hide", nil)
+	a := nextActView(t, h.s)
+	h.s.viewSwitch.mu.Lock()
+	a.View.Reply <- ViewReply{Result: ViewResult{View: ViewUser}}
+	got := make(chan line, 1)
+	go func() { got <- ctl.replyTo(id) }()
+	select {
+	case l := <-got:
+		h.s.viewSwitch.mu.Unlock()
+		t.Fatalf("the answer went out while the slot was still taken: %+v", l)
+	case <-time.After(300 * time.Millisecond):
+	}
+	h.s.viewSwitch.mu.Unlock()
+	if l := <-got; !l.OK {
+		t.Fatalf("answer: %+v", l.Error)
+	}
+	// On reading it, the next call is accepted at once.
+	id = ctl.send("view.show", nil)
+	a = nextActView(t, h.s)
+	a.View.Reply <- ViewReply{Result: ViewResult{View: ViewAgent}}
+	if l := ctl.replyTo(id); !l.OK {
+		t.Fatalf("the call right after an answer: %+v", l.Error)
+	}
+}
+
 // TestViewSwitchEndsWhenTheUIDoesNotAnswer: the call is answered in time
 // for the dock's own timeout, and the slot is free again.
 func TestViewSwitchEndsWhenTheUIDoesNotAnswer(t *testing.T) {

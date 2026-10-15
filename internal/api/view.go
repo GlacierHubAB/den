@@ -35,6 +35,10 @@ type viewSwitch struct {
 	mu      sync.Mutex
 	running bool
 	recent  map[string][]time.Time
+	// order keeps one switch's answer and view event together and ahead of
+	// the next switch's, now that the slot is freed before the answer goes
+	// out.
+	order sync.Mutex
 }
 
 // begin claims the one switch slot, and counts it for who. It reports
@@ -108,18 +112,24 @@ func (s *Server) viewVerb(c *conn, req Request, want string) {
 		return
 	}
 	go func() {
-		defer s.viewSwitch.end()
+		var rep ViewReply
 		select {
-		case rep := <-r.Reply:
-			if rep.Code != "" {
-				c.fail(req.ID, rep.Code, rep.Msg)
-				return
-			}
-			c.reply(req.ID, rep.Result)
-			s.pushView(ViewChange{View: rep.Result.View, Shown: rep.Result.Shown, Total: rep.Result.Total})
+		case rep = <-r.Reply:
 		case <-time.After(viewWait):
-			c.fail(req.ID, CodeUnavailable, "Den did not answer")
+			rep = ViewReply{Code: CodeUnavailable, Msg: "Den did not answer"}
 		}
+		// The slot is freed before the answer goes out: a console that
+		// calls again on reading it must not be told busy. The next
+		// switch's answer and event wait on order, so events stay in order.
+		s.viewSwitch.order.Lock()
+		defer s.viewSwitch.order.Unlock()
+		s.viewSwitch.end()
+		if rep.Code != "" {
+			c.fail(req.ID, rep.Code, rep.Msg)
+			return
+		}
+		c.reply(req.ID, rep.Result)
+		s.pushView(ViewChange{View: rep.Result.View, Shown: rep.Result.Shown, Total: rep.Result.Total})
 	}()
 }
 
