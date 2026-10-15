@@ -139,7 +139,7 @@ func TestPairAndSay(t *testing.T) {
 		t.Fatalf("say: %+v %s", l.Error, l.Result)
 	}
 	y := ctlAct(t, h.s, func(a Act) bool { return a.Say != nil }).Say
-	if y.Turn != r.Turn || y.Text != "who is busy?\nand why" {
+	if y.Turn != r.Turn || y.Text != "who is busy?\nand why" || y.Pairing == "" || y.Console != "" {
 		t.Errorf("say %+v", y)
 	}
 	y.Status("Waiting for the orchestrator…")
@@ -431,5 +431,48 @@ func TestHelloSaysControl(t *testing.T) {
 	h.s.SetControl(true)
 	if in := info(); in.Control != ControlOn {
 		t.Errorf("control %q after /api control on", in.Control)
+	}
+}
+
+// A connection proved as the console may say, as an app pairing may: the
+// same text rules, its own six a minute, and refused while control is off.
+// The turn names the console, never a pairing. A connection that proved
+// neither is refused.
+func TestConsoleSays(t *testing.T) {
+	h, c := provedConsole(t)
+	other := h.dial()
+	other.hello()
+	if l := other.call("orch.say", map[string]string{"text": "hi"}); code(l) != CodeForbidden || !strings.Contains(l.Error.Message, "console.auth") {
+		t.Errorf("orch.say unproved: %+v", l)
+	}
+	l := c.call("orch.say", map[string]string{"text": "who is busy?\r\nand why"})
+	if !l.OK {
+		t.Fatalf("the console's say: %+v", l.Error)
+	}
+	y := ctlAct(t, h.s, func(a Act) bool { return a.Say != nil }).Say
+	cur, _ := h.s.CurrentConsole()
+	if y.Console == "" || y.Console != cur.ID || y.Pairing != "" || y.Text != "who is busy?\nand why" {
+		t.Errorf("the console's turn: %+v", y)
+	}
+	if l := c.call("orch.say", map[string]string{"text": "two"}); code(l) != CodeUnavailable {
+		t.Errorf("a second turn while one runs: %+v", l)
+	}
+	y.Done()
+	if l := c.call("orch.say", map[string]string{"text": "fine\n  /clear"}); code(l) != CodeBadRequest {
+		t.Errorf("a slash line: %+v", l)
+	}
+	h.s.SetControl(false)
+	if l := c.call("orch.say", map[string]string{"text": "off"}); code(l) != CodeForbidden {
+		t.Errorf("with control off: %+v", l)
+	}
+	h.s.SetControl(true)
+	for i := 0; i < 5; i++ {
+		if l := c.call("orch.say", map[string]string{"text": "more"}); !l.OK {
+			t.Fatalf("say %d: %+v", i, l.Error)
+		}
+		ctlAct(t, h.s, func(a Act) bool { return a.Say != nil }).Say.Done()
+	}
+	if l := c.call("orch.say", map[string]string{"text": "seventh"}); code(l) != CodeUnavailable {
+		t.Errorf("a seventh turn in a minute: %+v", l)
 	}
 }

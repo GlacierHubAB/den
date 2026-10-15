@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/tree"
 )
 
@@ -247,4 +248,19 @@ func TestReplayLeavesOutAppTurns(t *testing.T) {
 	chat, _ := loadChatLog(m.chatLog, maxChatLog)
 	m.orch.chat = chat
 	check("restored", m.replayText())
+}
+
+// In the console's turns no standing allowance is offered: they belong to
+// an app pairing, and a console has none. An app's turn still gets one.
+func TestNoStandingInAConsolesTurn(t *testing.T) {
+	m := testModel(140, 40)
+	ev := orch.Event{Tool: orch.MissionTool}
+	m.ctl.turn = &api.Say{Turn: "t-1", Console: "c-1"}
+	if _, why := m.standingOffer(ev); why == "" {
+		t.Error("a standing allowance offered in the console's turn")
+	}
+	m.ctl.turn = &api.Say{Turn: "t-2", Pairing: "p-1"}
+	if _, why := m.standingOffer(ev); why != "" {
+		t.Errorf("an app's turn: %q", why)
+	}
 }

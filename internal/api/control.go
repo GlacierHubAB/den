@@ -260,6 +260,9 @@ type control struct {
 	pairings map[string]*pairing
 	turn     *Say // the app turn running, nil for none
 	off      bool // the human turned control off (SetControl)
+	// consoleSays are the console's recent turns, for its six a minute: a
+	// console is no pairing, and has no pairing's record.
+	consoleSays []time.Time
 }
 
 // Claim refusals: pair.claim's error message is exactly one of these, so
@@ -762,7 +765,8 @@ type Say struct {
 	Turn    string
 	Text    string // after SayText
 	Exe     string // the program, as Den read it
-	Pairing string // the pairing the connection proved
+	Pairing string // the pairing the connection proved, "" for a console
+	Console string // the console the connection proved as, "" for an app
 
 	c      *conn
 	s      *Server
@@ -841,8 +845,10 @@ func (y *Say) end(why string) {
 	y.c.mu.Unlock()
 }
 
-// say is orch.say: from a connection that passed pair.auth, one turn at a
-// time, six a minute.
+// say is orch.say: from a connection that passed pair.auth, or one proved
+// as the console (console.auth), one turn at a time, six a minute. A
+// console's turn is an app's turn in every other way: fenced, every tool
+// waiting for the human in Den, and refused while control is off.
 func (s *Server) say(c *conn, req Request) {
 	var p struct {
 		Text string `json:"text"`
@@ -854,18 +860,29 @@ func (s *Server) say(c *conn, req Request) {
 	c.mu.Lock()
 	paired := c.paired
 	c.mu.Unlock()
+	console := s.consoleOf(c)
 	st := s.ctl
 	st.mu.Lock()
 	pr := st.pairings[paired]
 	if paired == "" || pr == nil || !pr.Confirmed {
-		st.mu.Unlock()
-		c.fail(req.ID, CodeForbidden, "pair.auth first")
-		return
+		pr = nil
 	}
-	if pr.Off {
+	switch {
+	case pr == nil && console == "":
+		st.mu.Unlock()
+		c.fail(req.ID, CodeForbidden, "pair.auth or console.auth first")
+		return
+	case pr != nil && pr.Off:
 		st.mu.Unlock()
 		c.fail(req.ID, CodeForbidden, "control is off for this pairing in Den")
 		return
+	case pr == nil && st.off:
+		st.mu.Unlock()
+		c.fail(req.ID, CodeForbidden, "control is off in Den")
+		return
+	}
+	if pr != nil {
+		console = "" // a connection that proved both speaks as the pairing
 	}
 	st.mu.Unlock()
 	if s.leaked(p.Text) {
@@ -879,8 +896,12 @@ func (s *Server) say(c *conn, req Request) {
 	}
 	now := time.Now()
 	st.mu.Lock()
+	says := st.consoleSays
+	if pr != nil {
+		says = pr.says
+	}
 	var recent []time.Time
-	for _, t := range pr.says {
+	for _, t := range says {
 		if now.Sub(t) < time.Minute {
 			recent = append(recent, t)
 		}
@@ -895,8 +916,12 @@ func (s *Server) say(c *conn, req Request) {
 		c.fail(req.ID, CodeUnavailable, "an app's turn is running")
 		return
 	}
-	pr.says, pr.LastUsed = append(recent, now), now
-	y := &Say{Turn: "t-" + randHex(), Text: text, Exe: c.peer.Exe, Pairing: paired, c: c, s: s, cancel: make(chan struct{}), fin: make(chan struct{})}
+	if pr != nil {
+		pr.says, pr.LastUsed = append(recent, now), now
+	} else {
+		st.consoleSays, paired = append(recent, now), ""
+	}
+	y := &Say{Turn: "t-" + randHex(), Text: text, Exe: c.peer.Exe, Pairing: paired, Console: console, c: c, s: s, cancel: make(chan struct{}), fin: make(chan struct{})}
 	st.turn = y
 	st.mu.Unlock()
 	c.mu.Lock()
