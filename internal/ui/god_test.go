@@ -323,3 +323,13 @@ func TestGodModeLocksTheConsolesPowers(t *testing.T) {
 		t.Errorf("the dock may answer the powers card: %+v", c)
 	}
 }
+
+// The desktop's cards are yours in God mode too: Den never answers them by
+// rule, and only Den's window answers them.
+func TestGodModeLeavesDesktopCardsToYou(t *testing.T) {
+	for _, k := range []inbox.Kind{inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn} {
+		if !godTTYKinds[k] || godAutoKinds[k] {
+			t.Errorf("%v: tty only %v, answered by Den %v", k, godTTYKinds[k], godAutoKinds[k])
+		}
+	}
+}

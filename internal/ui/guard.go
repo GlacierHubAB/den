@@ -90,6 +90,10 @@ var denPID = os.Getpid()
 func (m *Model) watchGuards(now time.Time) {
 	for sid, g := range m.med.guards {
 		a, found := m.localAgent(sid)
+		if g.registered && found && !a.Session.Alive {
+			m.forgetGuard(sid) // its agent has gone
+			continue
+		}
 		if !g.registered && !g.launched.IsZero() && found && a.Session.Alive {
 			g.registered = true
 			g.watch = &guardWatch{socket: a.Session.Socket, transcript: a.Path}

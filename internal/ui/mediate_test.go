@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/peer"
@@ -242,5 +243,141 @@ func TestOnlyDeliverToSendsAs(t *testing.T) {
 				return true
 			})
 		}
+	}
+}
+
+// A desktop agent's settings come from guardAgent, as every guarded
+// agent's: private, hooks never off, peer messages refused, Den's gate
+// before every tool and status hooks only otherwise, its never-tools
+// denied and none allowed; and the one tamper check sees an edit or a
+// swapped den.
+func TestDesktopSettingsThroughGuardAgent(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	m := testModel(140, 40)
+	dir := t.TempDir()
+	den := filepath.Join(dir, "den")
+	os.WriteFile(den, []byte("binary"), 0o755)
+	path, err := m.guardAgent("11111111-2222-4333-8444-555555555555", den, "/run/user/1/den.sock", deskHooks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode())
+	}
+	raw, _ := os.ReadFile(path)
+	var s struct {
+		Disable *bool             `json:"disableAllHooks"`
+		Inbound string            `json:"crossSessionInbound"`
+		Env     map[string]string `json:"env"`
+		Perms   struct {
+			Deny  []string `json:"deny"`
+			Allow []string `json:"allow"`
+		} `json:"permissions"`
+		Hooks map[string][]struct {
+			Matcher string `json:"matcher"`
+			Hooks   []struct {
+				Command string `json:"command"`
+				Timeout int    `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.Disable == nil || *s.Disable || s.Inbound != "refuse" {
+		t.Fatalf("settings %s", raw)
+	}
+	if s.Env["ENABLE_TOOL_SEARCH"] != "false" || len(s.Env) != 1 || len(s.Perms.Allow) != 0 {
+		t.Fatalf("env %v, allow %v", s.Env, s.Perms.Allow)
+	}
+	deny := "," + strings.Join(s.Perms.Deny, ",") + ","
+	for _, want := range []string{"Bash", "Write", "Edit", "Read", "WebFetch", "SendMessage", "mcp__hypruse__launch", "mcp__hypruse__use_bind", "mcp__hypruse__sequence", "mcp__hypruse__clipboard"} {
+		if !strings.Contains(deny, ","+want+",") {
+			t.Errorf("%s is not denied", want)
+		}
+	}
+	for _, allowed := range desktop.AllowedToolNames() {
+		if strings.Contains(deny, ","+allowed+",") {
+			t.Errorf("an allowed tool is denied: %s", allowed)
+		}
+	}
+	pre := s.Hooks["PreToolUse"]
+	if len(pre) != 1 || pre[0].Matcher != ".*" || pre[0].Hooks[0].Command != "'"+den+"' hook 'desktop-gate' --socket '/run/user/1/den.sock'" || pre[0].Hooks[0].Timeout != 10 {
+		t.Fatalf("gate hook %s", raw)
+	}
+	for _, never := range []string{"PostToolUse", "PermissionRequest", "UserPromptSubmit"} {
+		if _, ok := s.Hooks[never]; ok {
+			t.Errorf("a %s hook", never)
+		}
+	}
+	for _, ev := range []string{"SessionStart", "SessionEnd", "Stop", "StopFailure", "Notification"} {
+		if h := s.Hooks[ev]; len(h) != 1 || h[0].Matcher != "" || h[0].Hooks[0].Command != "'"+den+"' hook --socket '/run/user/1/den.sock'" {
+			t.Errorf("%s: %+v", ev, h)
+		}
+	}
+	g := m.med.guards["11111111-2222-4333-8444-555555555555"]
+	if why := g.check(); why != "" {
+		t.Fatalf("a fresh guard: %s", why)
+	}
+	os.WriteFile(path, append(raw, ' '), 0o600)
+	if why := g.check(); !strings.Contains(why, "settings") {
+		t.Fatalf("edited settings: %q", why)
+	}
+	m.guardAgent("11111111-2222-4333-8444-555555555555", den, "/run/user/1/den.sock", deskHooks())
+	g = m.med.guards["11111111-2222-4333-8444-555555555555"]
+	os.WriteFile(den, []byte("other"), 0o755)
+	if why := g.check(); !strings.Contains(why, "binary") {
+		t.Fatalf("swapped den: %q", why)
+	}
+}
+
+// A hook with no timeout of its own gets Claude Code's, never a timeout
+// of 0.
+func TestHookWithoutATimeout(t *testing.T) {
+	raw, err := mediationSettings("/usr/bin/den", "/run/user/1/den.sock", agentHooks{Extra: []agentHook{{Event: "Stop"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"timeout"`) {
+		t.Errorf("a timeout written for a hook that has none: %s", raw)
+	}
+}
+
+// A guard goes with its agent: a desktop mission's at its end, a guarded
+// agent's once its session is no longer alive, settings file and all, so
+// a later den update calls nothing unguarded. A live agent keeps its own.
+func TestGuardsGoWithTheirAgents(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	m := testModel(140, 40)
+	den := filepath.Join(t.TempDir(), "den")
+	os.WriteFile(den, []byte("binary"), 0o755)
+	dm := &deskMission{Mission: desktop.Mission{ID: "m1"}, SessionID: "22222222-2222-4333-8444-555555555555"}
+	path, err := m.guardAgent(dm.SessionID, den, "/run/user/1/den.sock", deskHooks())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.endDeskMission(dm, "done")
+	if m.med.guards[dm.SessionID] != nil {
+		t.Error("the desktop agent's guard outlived its mission")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("its settings file stayed: %v", err)
+	}
+	m.base = append([]fleet.Agent(nil), m.agents[0])
+	m.base[0].Host, m.base[0].Session.Alive = "", true
+	sid := m.base[0].Session.SessionID
+	path, _ = m.guardAgent(sid, den, "/run/user/1/den.sock", agentHooks{Inbound: true})
+	m.med.guards[sid].registered = true
+	m.watchGuards(time.Now())
+	if m.med.guards[sid] == nil {
+		t.Fatal("a live agent's guard was dropped")
+	}
+	m.base[0].Session.Alive = false
+	m.watchGuards(time.Now())
+	if m.med.guards[sid] != nil {
+		t.Error("a gone agent's guard stayed")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("its settings file stayed: %v", err)
 	}
 }

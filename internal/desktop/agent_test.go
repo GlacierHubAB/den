@@ -2,8 +2,6 @@ package desktop
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -99,85 +97,6 @@ func TestAgentArgv(t *testing.T) {
 	}
 	if _, err := AgentArgv(AgentLaunch{Den: "den", Socket: "/s", Settings: "/x"}); err == nil {
 		t.Fatal("a relative den must fail")
-	}
-}
-
-func TestSettingsAndGuard(t *testing.T) {
-	dir := t.TempDir()
-	den := filepath.Join(dir, "den")
-	os.WriteFile(den, []byte("binary"), 0o755)
-	path := filepath.Join(dir, "guards", "m1.json")
-	g, err := WriteSettings(path, den, "/run/user/1/den.sock")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
-		t.Fatalf("mode %v", st.Mode())
-	}
-	var s struct {
-		Disable *bool  `json:"disableAllHooks"`
-		Inbound string `json:"crossSessionInbound"`
-		Hooks   struct {
-			Pre []struct {
-				Matcher string `json:"matcher"`
-				Hooks   []struct {
-					Command string `json:"command"`
-				} `json:"hooks"`
-			} `json:"PreToolUse"`
-		} `json:"hooks"`
-	}
-	raw, _ := os.ReadFile(path)
-	json.Unmarshal(raw, &s)
-	if s.Disable == nil || *s.Disable || s.Inbound != "refuse" {
-		t.Fatalf("settings %s", raw)
-	}
-	var extra struct {
-		Env   map[string]string `json:"env"`
-		Perms struct {
-			Deny  []string `json:"deny"`
-			Allow []string `json:"allow"`
-		} `json:"permissions"`
-	}
-	json.Unmarshal(raw, &extra)
-	if extra.Env["ENABLE_TOOL_SEARCH"] != "false" || len(extra.Env) != 1 {
-		t.Fatalf("env %v", extra.Env)
-	}
-	if len(extra.Perms.Allow) != 0 {
-		t.Fatal("the settings must allow nothing: the allow-list is --allowedTools alone")
-	}
-	deny := strings.Join(extra.Perms.Deny, ",")
-	for _, want := range []string{"Bash", "Write", "Edit", "Read", "WebFetch", "SendMessage", "mcp__hypruse__launch", "mcp__hypruse__use_bind", "mcp__hypruse__sequence", "mcp__hypruse__clipboard"} {
-		if !strings.Contains(","+deny+",", ","+want+",") {
-			t.Errorf("%s is not denied: %s", want, deny)
-		}
-	}
-	for _, allowed := range AllowedToolNames() {
-		if strings.Contains(","+deny+",", ","+allowed+",") {
-			t.Errorf("an allowed tool is denied: %s", allowed)
-		}
-	}
-	if len(s.Hooks.Pre) != 1 || s.Hooks.Pre[0].Matcher != ".*" || s.Hooks.Pre[0].Hooks[0].Command != "'"+den+"' hook desktop-gate --socket '/run/user/1/den.sock'" {
-		t.Fatalf("hook %s", raw)
-	}
-	for _, never := range []string{"PostToolUse", "PermissionRequest", "UserPromptSubmit"} {
-		if strings.Contains(string(raw), never) {
-			t.Errorf("the desktop agent's settings carry a %s hook", never)
-		}
-	}
-	if !strings.Contains(string(raw), `"Stop"`) || !strings.Contains(string(raw), `"SessionEnd"`) {
-		t.Errorf("Den could not follow the agent: %s", raw)
-	}
-	if why := g.Check(); why != "" {
-		t.Fatalf("fresh guard: %s", why)
-	}
-	os.WriteFile(path, append(raw, ' '), 0o600)
-	if why := g.Check(); !strings.Contains(why, "settings") {
-		t.Fatalf("edited settings: %q", why)
-	}
-	g, _ = WriteSettings(path, den, "/run/user/1/den.sock")
-	os.WriteFile(den, []byte("other"), 0o755)
-	if why := g.Check(); !strings.Contains(why, "binary") {
-		t.Fatalf("swapped den: %q", why)
 	}
 }
 

@@ -81,6 +81,10 @@ type agentHook struct {
 type agentHooks struct {
 	Inbound bool
 	Extra   []agentHook
+	// Deny are permission rules the file denies, and Env its environment:
+	// a deny rule holds even when a hook fails, which lets a tool run.
+	Deny []string
+	Env  map[string]string
 }
 
 // mediationSettings is the --settings JSON for an agent: its hooks, with
@@ -99,7 +103,11 @@ func mediationSettings(den, sock string, h agentHooks) ([]byte, error) {
 			cmd += " " + shellQuote(a)
 		}
 		cmd += " --socket " + shellQuote(sock)
-		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": x.Timeout}}}
+		hook := map[string]any{"type": "command", "command": cmd}
+		if x.Timeout > 0 {
+			hook["timeout"] = x.Timeout // none: Claude Code's own
+		}
+		entry := map[string]any{"hooks": []any{hook}}
 		if x.Matcher != "" {
 			entry["matcher"] = x.Matcher
 		}
@@ -112,6 +120,12 @@ func mediationSettings(den, sock string, h agentHooks) ([]byte, error) {
 	}
 	for _, x := range h.Extra {
 		add(x)
+	}
+	if len(h.Deny) > 0 {
+		settings["permissions"] = map[string]any{"deny": h.Deny}
+	}
+	if len(h.Env) > 0 {
+		settings["env"] = h.Env
 	}
 	settings["hooks"] = hooks
 	return json.Marshal(settings)
@@ -190,17 +204,37 @@ func (m *Model) checkGuards() {
 		if g.unguarded != "" {
 			continue
 		}
-		switch {
-		case fileSHA(g.settings) != g.settingsSHA:
-			g.unguarded = "its Den settings file changed"
-		case fileSHA(g.den) != g.denSHA:
-			g.unguarded = "the den binary its hook runs changed"
-		default:
+		if g.unguarded = g.check(); g.unguarded == "" {
 			continue
 		}
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "UNGUARDED: " + m.nameFor(sid) + ": " + g.unguarded + ". Den delivers no more messages to it; close it, or restart it from Den.", at: time.Now()}))
 		m.flash, m.flashErr = "UNGUARDED: "+m.nameFor(sid)+" ("+g.unguarded+")", true
 	}
+}
+
+// forgetGuard drops a session's guard and its settings file, once its agent
+// has gone: nothing is delivered to it any more, and a later change to the
+// den binary (an update) is no reason to call it unguarded.
+func (m *Model) forgetGuard(sessionID string) {
+	if g := m.med.guards[sessionID]; g != nil {
+		os.Remove(g.settings)
+		delete(m.med.guards, sessionID)
+	}
+}
+
+// check says why the guard no longer holds, now: the settings file or the
+// den binary is not what Den wrote and hashed. "" while it holds; why it
+// stopped once it has.
+func (g *agentGuard) check() string {
+	switch {
+	case g.unguarded != "":
+		return g.unguarded
+	case fileSHA(g.settings) != g.settingsSHA:
+		return "its Den settings file changed"
+	case fileSHA(g.den) != g.denSHA:
+		return "the den binary its hook runs changed"
+	}
+	return ""
 }
 
 // unguarded is why Den no longer trusts a guarded session's guard, "" for

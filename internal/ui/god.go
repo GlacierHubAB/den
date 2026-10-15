@@ -60,6 +60,9 @@ var godTTYKinds = map[inbox.Kind]bool{
 	inbox.Pair: true, inbox.Grant: true, inbox.APIOn: true, inbox.Install: true, inbox.Guidance: true,
 	inbox.Skills: true, inbox.Budget: true, inbox.UsageResume: true, inbox.UsageSet: true, inbox.Message: true,
 	inbox.ControlAsk: true, inbox.Merge: true, inbox.Console: true, inbox.ModeSet: true,
+	// A desktop agent acts on your screen: its install, its mission, each
+	// action it asks for and each step only you do are yours alone.
+	inbox.DesktopInstall: true, inbox.DesktopMission: true, inbox.DesktopAct: true, inbox.YourTurn: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

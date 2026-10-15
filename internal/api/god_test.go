@@ -53,7 +53,7 @@ func TestGodModeOnTheWire(t *testing.T) {
 		t.Errorf("a TTY-only card answered from the dock: %+v", l)
 	}
 	// Unpairing ends God mode too.
-	h.s.UnpairConsole("")
+	h.s.UnpairConsole(CauseSelf, "")
 	if a := ctlAct(t, h.s, func(a Act) bool { return a.GodOff != "" }); a.GodOff == "" {
 		t.Error("no GodOff act on unpair")
 	}
