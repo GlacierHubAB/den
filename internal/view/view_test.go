@@ -714,3 +714,49 @@ func TestARecordedOriginIsOnlyWhatDenWrites(t *testing.T) {
 		t.Errorf("the window is on %q, want the active workspace 6", got)
 	}
 }
+
+// TestRescueBringsBackEverythingOnSpecialDen: the human's way out. A decoy
+// with an agent's class makes that agent's hidden window "not Den's", so a
+// show leaves it; the rescue brings back every window on special:den,
+// one Den can tie goes to its origin, any other to where the human is.
+func TestRescueBringsBackEverythingOnSpecialDen(t *testing.T) {
+	r := newRig(t, 2)
+	r.must(User)
+	// A decoy with agent-1's class, and a stranger's window on special:den.
+	r.wm.cs = append(r.wm.cs, win("0xdecoy", marker(1), 7001, 4), win("0xstray", "org.example.term", 7002, 5))
+	r.wm.cs[len(r.wm.cs)-1].Workspace.ID, r.wm.cs[len(r.wm.cs)-1].Workspace.Name = -99, Workspace
+	r.wm.active = hypr.Workspace{ID: 3}
+
+	res := r.must(Agent)
+	if res.Shown == res.Total || r.wm.where("0xa1") != Workspace {
+		t.Fatalf("a show brought back a window Den cannot tie: %+v, on %q", res, r.wm.where("0xa1"))
+	}
+	moved, left, err := r.sw.Rescue(context.Background())
+	// Two were still there: agent-1's real window, whose class two windows
+	// carry (so Den cannot say whose record that is), and the stranger's.
+	if err != nil || left != 0 || moved != 2 {
+		t.Fatalf("rescue: moved %d, left %d, %v", moved, left, err)
+	}
+	for addr, ws := range map[string]string{"0xa1": "3", "0xa2": "1", "0xden": "1", "0xstray": "3", "0xdecoy": "4"} {
+		if got := r.wm.where(addr); got != ws {
+			t.Errorf("%s is on %q, want %s", addr, got, ws)
+		}
+	}
+	if r.sw.Current() != Agent {
+		t.Errorf("view after a rescue: %q", r.sw.Current())
+	}
+	raw, _ := os.ReadFile(r.sw.StatePath)
+	if strings.Contains(string(raw), `"marker"`) {
+		t.Errorf("records left behind: %s", raw)
+	}
+	// Nothing there: nothing moves, and it says so.
+	if moved, left, err := r.sw.Rescue(context.Background()); err != nil || moved != 0 || left != 0 {
+		t.Errorf("a second rescue: %d %d %v", moved, left, err)
+	}
+	// While a close or a switch runs it does not wait.
+	unlock := hypr.LockWindows()
+	defer unlock()
+	if _, _, err := r.sw.Rescue(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Errorf("rescue during a close: %v", err)
+	}
+}

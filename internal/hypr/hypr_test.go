@@ -214,3 +214,22 @@ func TestWindowsLock(t *testing.T) {
 	}
 	u()
 }
+
+// TestOnlyHyprlandAddressesReachTheDispatcher: an address is "0x" and hex
+// digits; anything else is refused before hyprctl runs.
+func TestOnlyHyprlandAddressesReachTheDispatcher(t *testing.T) {
+	log := fakeHyprctl(t, `echo ok`)
+	for _, a := range []string{"", "0x", "1234", "0xZZ", `0x1"}) os.exit(`, "0x1 2", "address:0x1", "0X1", "0x12345678901234567", "0x1\n"} {
+		if MoveToWorkspace(a, "1") == nil || CloseWindow(a) == nil || Focus(a) == nil {
+			t.Errorf("%q reached the dispatcher", a)
+		}
+	}
+	if raw, _ := os.ReadFile(log); len(raw) != 0 {
+		t.Errorf("hyprctl ran: %s", raw)
+	}
+	for _, a := range []string{"0x1", "0x5581a4c0f2d0", "0xffffffffffffffff"} {
+		if err := MoveToWorkspace(a, "1"); err != nil {
+			t.Errorf("%q: %v", a, err)
+		}
+	}
+}

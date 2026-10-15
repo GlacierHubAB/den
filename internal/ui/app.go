@@ -602,6 +602,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.api.view = msg.view
 		m.publishAPI()
 		return m, nil
+	case viewRescueMsg:
+		return m.applyViewRescue(msg)
 	case apiNoteMsg:
 		if msg.from != m.api.srv {
 			return m, nil
@@ -1495,6 +1497,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.answerQuestion(it, text)
 	case "/api":
 		return m.apiCommand(fields[1:])
+	case "/view":
+		return m.viewCommand(fields[1:])
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":

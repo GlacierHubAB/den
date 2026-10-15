@@ -406,6 +406,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
+| `/view`, `/view rescue` | say whether the windows are shown (Agent view) or hidden on Hyprland's `special:den` (User view, set by an app on den-api.sock); `rescue` brings back every window on `special:den`, whatever it is, to its workspace or the one you are on. Only you can run it, from Den's own screen |
 | `/remote`, `/remote connect <label>`, `/remote retry <label>` | list the remote hosts with their state; retry one now, applying a raise in `remotes.toml` after showing it (`connect`) or not (`retry`) (see [Remote agents](#remote-agents)) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
 | `/fleet project`, `/fleet flat` | group the Fleet by project, or not; remembered |

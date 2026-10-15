@@ -221,3 +221,42 @@ func TestViewSwitchErrorsKeepTheirCodes(t *testing.T) {
 		t.Errorf("without a compositor: %+v", rep)
 	}
 }
+
+// TestViewRescueIsForTheHumanAtDen: /view says the view, /view rescue brings
+// back everything on special:den and says how many.
+func TestViewRescueIsForTheHumanAtDen(t *testing.T) {
+	m, wm := viewRig(t)
+	switchView(t, m, api.ViewUser)
+	wm.cs = append(wm.cs, viewClient("0xstray", "org.example.term", 7002, 5))
+	wm.cs[len(wm.cs)-1].Workspace.ID, wm.cs[len(wm.cs)-1].Workspace.Name = -99, api.ViewWorkspace
+
+	mm, cmd := m.viewCommand(nil)
+	if cmd == nil || !strings.Contains(mm.(Model).flash, "View: user") {
+		t.Errorf("/view: %q", mm.(Model).flash)
+	}
+	mm, cmd = m.viewCommand([]string{"rescue"})
+	if cmd == nil {
+		t.Fatal("no rescue")
+	}
+	msg, ok := cmd().(viewRescueMsg)
+	if !ok || msg.err != nil || msg.moved != 4 || msg.left != 0 {
+		t.Fatalf("rescue: %+v", msg)
+	}
+	mm, _ = mm.(Model).applyViewRescue(msg)
+	got := mm.(Model)
+	if !strings.Contains(got.flash, "Brought back 4") || got.flashErr {
+		t.Errorf("flash %q", got.flash)
+	}
+	if got.api.view != api.ViewAgent {
+		t.Errorf("view after a rescue: %q", got.api.view)
+	}
+	for _, c := range wm.cs {
+		if c.Workspace.Name == api.ViewWorkspace {
+			t.Errorf("%s is still on special:den", c.Address)
+		}
+	}
+	// A bad argument changes nothing.
+	if mm, _ := m.viewCommand([]string{"hide"}); !mm.(Model).flashErr {
+		t.Error("/view hide was taken for a command")
+	}
+}

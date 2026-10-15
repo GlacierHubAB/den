@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -68,8 +69,8 @@ func ClientsContext(ctx context.Context) ([]Client, error) {
 // older releases take the classic `focuswindow address:…` form. Den tries
 // the Lua form first and falls back when the compositor does not speak it.
 func Focus(address string) error {
-	if address == "" {
-		return errors.New("no window address")
+	if err := checkAddress(address); err != nil {
+		return err
 	}
 	lua := fmt.Sprintf(`hl.dsp.focus({ window = "address:%s" })`, address)
 	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
@@ -93,8 +94,8 @@ func Focus(address string) error {
 // dispatcher first and the legacy one as the fallback, like Focus. A window
 // that is already gone is reported as not found.
 func CloseWindow(address string) error {
-	if address == "" {
-		return errors.New("no window address")
+	if err := checkAddress(address); err != nil {
+		return err
 	}
 	lua := fmt.Sprintf(`hl.dsp.window.close({ window = "address:%s" })`, address)
 	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
@@ -115,6 +116,21 @@ func CloseWindow(address string) error {
 	}
 	return nil
 }
+
+// checkAddress refuses anything but what Hyprland gives a window, "0x" and
+// up to 16 hex digits: an address is put into a dispatcher's text, and it
+// comes from a list the compositor wrote, so nothing else belongs there.
+func checkAddress(a string) error {
+	if a == "" {
+		return errors.New("no window address")
+	}
+	if !addressRE.MatchString(a) {
+		return errors.New("not a window address")
+	}
+	return nil
+}
+
+var addressRE = regexp.MustCompile(`^0x[0-9a-f]{1,16}$`)
 
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -265,8 +281,8 @@ func MoveToWorkspace(address, workspace string) error {
 
 // MoveToWorkspaceContext is MoveToWorkspace that gives up when ctx ends.
 func MoveToWorkspaceContext(ctx context.Context, address, workspace string) error {
-	if address == "" {
-		return errors.New("no window address")
+	if err := checkAddress(address); err != nil {
+		return err
 	}
 	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", follow = false })`, workspace, address)
 	out, err := exec.CommandContext(ctx, "hyprctl", "dispatch", lua).CombinedOutput()

@@ -409,7 +409,10 @@ own.
   hidden window as on any other, and a switch and a close never run at the
   same time. Where each window came from is kept in `view.json` in Den's
   state before it moves, so a restarted Den knows the view and can bring
-  every window back.
+  every window back. If one is stranded on `special:den` (a window with the
+  same class as an agent's makes Den leave both alone), `/view rescue` in
+  Den's own terminal brings back every window there; no verb reaches it,
+  and Hyprland's own binding for the special workspace works too.
 
 ### What an app's turn may do
 

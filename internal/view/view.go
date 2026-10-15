@@ -364,6 +364,93 @@ func (sw *Switcher) Settle(ctx context.Context, marker string, pid int) (bool, e
 	return hidden, err
 }
 
+// Rescue brings back every window on special:den, whatever it is and
+// whoever put it there: the human's way out when a window is stranded, for
+// instance behind a decoy that carries an agent's class. A window with a
+// recorded origin goes back there; any other goes to the workspace the
+// human is on. It is for the human at Den's own screen only: no API verb
+// reaches it. It reports how many windows moved and how many are still
+// there.
+func (sw *Switcher) Rescue(ctx context.Context) (moved, left int, err error) {
+	if !sw.Ops.Available() {
+		return 0, 0, ErrNoCompositor
+	}
+	unlock, ok := hypr.TryLockWindows()
+	if !ok {
+		return 0, 0, ErrBusy
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, sw.budget())
+	defer cancel()
+	err = sw.withState(ctx, func(st *State) error {
+		all, err := sw.Ops.Clients(ctx)
+		if err != nil {
+			return ErrList
+		}
+		for _, c := range all {
+			if !onSpecial(c) {
+				continue
+			}
+			if ctx.Err() != nil {
+				break
+			}
+			to := ""
+			for _, r := range st.Moved {
+				switch {
+				case r.Own && r.Address == c.Address && r.PID == c.PID && r.Class == c.InitialClass:
+					to = r.From
+				case !r.Own && r.Marker != "" && r.Marker == c.InitialClass && len(windowsOf(all, r.Marker)) == 1:
+					to = r.From
+				}
+			}
+			if !validWorkspace(to) {
+				to = ""
+				if ws, ok := sw.Ops.Active(ctx); ok {
+					to = strconv.Itoa(ws.ID)
+				}
+			}
+			if to != "" {
+				_ = sw.Ops.Move(ctx, c.Address, to)
+			}
+		}
+		final, cancelFinal := context.WithTimeout(context.Background(), callTimeout)
+		defer cancelFinal()
+		after, err := sw.Ops.Clients(final)
+		if err != nil {
+			return ErrList
+		}
+		before := map[string]bool{}
+		for _, c := range all {
+			if onSpecial(c) {
+				before[c.Address] = true
+			}
+		}
+		var keep []Moved
+		for _, c := range after {
+			if before[c.Address] && !onSpecial(c) {
+				moved++
+			}
+			if onSpecial(c) {
+				left++
+			}
+		}
+		for _, r := range st.Moved {
+			for _, c := range after {
+				if onSpecial(c) && (r.Own && r.Address == c.Address || !r.Own && r.Marker == c.InitialClass) {
+					keep = append(keep, r)
+					break
+				}
+			}
+		}
+		st.Moved, st.View = keep, Agent
+		if err := saveState(sw.path(), *st); err != nil {
+			return ErrState
+		}
+		return nil
+	})
+	return moved, left, err
+}
+
 func (sw *Switcher) now() time.Time {
 	if sw.Now != nil {
 		return sw.Now()
@@ -495,7 +582,20 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 	if err != nil {
 		return Result{}, ErrList
 	}
-	res := Result{View: rq.Want, Shown: len(notDens), Total: len(notDens)}
+	// A marker Den cannot tie counts as shown unless one of its windows is
+	// out of sight on special:den: then the hidden one is still hidden.
+	res := Result{View: rq.Want, Total: len(notDens)}
+	for m := range notDens {
+		visible := true
+		for _, c := range windowsOf(after, m) {
+			if onSpecial(c) {
+				visible = false
+			}
+		}
+		if visible {
+			res.Shown++
+		}
+	}
 	var keep []Moved
 	for _, r := range st.Moved {
 		if !r.Own && notDens[r.Marker] {

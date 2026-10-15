@@ -3,6 +3,9 @@ package ui
 import (
 	"context"
 	"errors"
+	"strconv"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -49,4 +52,52 @@ func (m *Model) applyView(r *api.ViewReq) tea.Cmd {
 		r.Reply <- rep
 		return viewDoneMsg{view: sw.Current()}
 	}
+}
+
+// viewRescueMsg is the end of /view rescue.
+type viewRescueMsg struct {
+	moved, left int
+	err         error
+}
+
+// viewCommand is /view and /view rescue, for the human at Den's own screen:
+// no verb of den-api.sock reaches it. /view says which view Den is in;
+// /view rescue brings back every window on special:den, whatever it is,
+// the way out when one is stranded there.
+func (m Model) viewCommand(args []string) (tea.Model, tea.Cmd) {
+	sw := viewSwitcher()
+	cur := sw.Current()
+	if cur == "" {
+		return m.say("This Den cannot switch views: there is no Hyprland to move windows with.", true)
+	}
+	switch strings.ToLower(strings.Join(args, " ")) {
+	case "", "status":
+		return m.say("View: "+cur+". /view rescue brings back every window on special:den.", false)
+	case "rescue":
+		return m, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), view.Budget+time.Second)
+			defer cancel()
+			moved, left, err := sw.Rescue(ctx)
+			return viewRescueMsg{moved: moved, left: left, err: err}
+		}
+	}
+	return m.say("/view shows the view Den is in; /view rescue brings back every window on special:den.", true)
+}
+
+// applyViewRescue says what /view rescue did and keeps the published view
+// right.
+func (m Model) applyViewRescue(msg viewRescueMsg) (tea.Model, tea.Cmd) {
+	m.api.view = viewSwitcher().Current()
+	m.publishAPI()
+	switch {
+	case errors.Is(msg.err, view.ErrBusy):
+		return m.say("A view switch or a close is running: try /view rescue again in a moment.", true)
+	case msg.err != nil:
+		return m.say("/view rescue: "+msg.err.Error()+".", true)
+	case msg.left > 0:
+		return m.say("Brought back "+strconv.Itoa(msg.moved)+" window(s); "+strconv.Itoa(msg.left)+" would not move and are still on special:den.", true)
+	case msg.moved == 0:
+		return m.say("No window is on special:den.", false)
+	}
+	return m.say("Brought back "+strconv.Itoa(msg.moved)+" window(s) from special:den.", false)
 }
