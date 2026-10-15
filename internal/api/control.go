@@ -194,8 +194,14 @@ func (s *Server) Unpair(id, why string) {
 		c.mu.Unlock()
 	}
 	s.mu.Unlock()
-	for _, c := range conns {
-		c.close()
+	if len(conns) > 0 {
+		// What each was last told (its turn's end) goes out first.
+		go func() {
+			time.Sleep(50 * time.Millisecond)
+			for _, c := range conns {
+				c.close()
+			}
+		}()
 	}
 	if why != "" {
 		s.note(why)

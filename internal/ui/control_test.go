@@ -363,3 +363,59 @@ func TestPairRefusedInDen(t *testing.T) {
 		t.Error("control on after ^N")
 	}
 }
+
+// The guard stopping the orchestrator in an app's turn ends the turn and
+// revokes every pairing.
+func TestBackstopUnpairs(t *testing.T) {
+	l, _, _ := controlModel(t)
+	c := pairApp(t, l)
+	c.call("orch.say", map[string]string{"text": "hold on SLOW-PLEASE"})
+	stream := chunks(c)
+	l.until("the app's turn to go out", func() bool { return l.m.ctl.sent }, nil)
+	l.feed(orchEventMsg{ev: orch.Event{Kind: orch.Backstop, Text: "in an app's turn x ran without Den allowing it"}, from: l.m.orch.proc})
+	var got []map[string]any
+	l.until("the app's turn to end", func() bool {
+		select {
+		case got = <-stream:
+			return true
+		default:
+			return false
+		}
+	}, nil)
+	if len(got) == 0 || got[len(got)-1]["type"] != "error" || !strings.Contains(got[len(got)-1]["message"].(string), "Den stopped the orchestrator") {
+		t.Errorf("chunks %v", got)
+	}
+	if l.m.api.srv.Paired() || len(l.m.api.srv.Pairings()) != 0 {
+		t.Errorf("pairings after the backstop: %+v", l.m.api.srv.Pairings())
+	}
+}
+
+// An orchestrator silent for too long in an app's turn: the app is told,
+// and Den stops the turn.
+func TestAppTurnSilenceBound(t *testing.T) {
+	defer func(d time.Duration) { appTurnSilence = d }(appTurnSilence)
+	appTurnSilence = 100 * time.Millisecond
+	l, dir, _ := controlModel(t)
+	c := pairApp(t, l)
+	c.call("orch.say", map[string]string{"text": "quiet one SLOW-PLEASE"})
+	stream := chunks(c)
+	l.until("the app's turn to go out", func() bool { return l.m.ctl.sent }, nil)
+	time.Sleep(150 * time.Millisecond)
+	l.run(l.m.controlTick(time.Now()))
+	var got []map[string]any
+	l.until("the app's turn to end", func() bool {
+		select {
+		case got = <-stream:
+			return true
+		default:
+			return false
+		}
+	}, nil)
+	if last := got[len(got)-1]; last["type"] != "error" || !strings.Contains(last["message"].(string), "said nothing for two minutes") {
+		t.Errorf("chunks %v", got)
+	}
+	controls, _ := os.ReadFile(filepath.Join(dir, "controls"))
+	if !strings.Contains(string(controls), `"interrupt"`) {
+		t.Errorf("controls %s", controls)
+	}
+}

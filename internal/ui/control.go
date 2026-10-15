@@ -23,8 +23,8 @@ import (
 // and puts every tool the orchestrator wants in that turn on an inbox card
 // for the human. The app is told only that something waits in Den.
 
-// Control's bounds on an app's turn.
-const (
+// Control's bounds on an app's turn; tests shorten them.
+var (
 	appTurnMax     = 10 * time.Minute
 	appTurnSilence = 120 * time.Second
 )
