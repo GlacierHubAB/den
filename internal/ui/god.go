@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/permmode"
@@ -82,7 +83,13 @@ func (m Model) godCommand(args []string) (tea.Model, tea.Cmd) {
 		}
 		m.god.armedAt = time.Now()
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: godWarning, at: time.Now()}))
-		return m.say("To turn it on, type: "+godPhrase+" (within a minute; anything else cancels).", true)
+		mm, cmd := m.say("To turn it on, type: "+godPhrase+" (within a minute; anything else cancels).", true)
+		if m.api.view == api.ViewUser {
+			// In User view Den's window is hidden: the warning and the
+			// phrase are read and typed there, so it comes back first.
+			cmd = tea.Batch(m.showDen(), cmd)
+		}
+		return mm, cmd
 	case "off":
 		if !m.god.on {
 			m.god.armedAt = time.Time{}

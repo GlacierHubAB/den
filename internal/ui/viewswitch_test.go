@@ -544,3 +544,38 @@ func TestViewKeepsDensWindowForDesktopCards(t *testing.T) {
 		}
 	}
 }
+
+// TestGodModeKeepsDensWindow: while God mode is on, a hide leaves Den's
+// own window up (its TTY-only cards are answered there), and /god on in
+// User view first brings Den's window back.
+func TestGodModeKeepsDensWindow(t *testing.T) {
+	m, wm := viewRig(t)
+	_, done := switchView(t, m, api.ViewUser)
+	m.api.view = done.view
+	if wm.where("0xden") != api.ViewWorkspace {
+		t.Fatal("Den's window was not hidden")
+	}
+	mm, cmd := m.godCommand([]string{"on"})
+	*m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("/god on in User view did nothing to Den's window")
+	}
+	runAll(cmd)
+	if wm.where("0xden") != "1" {
+		t.Errorf("after /god on Den's window is on %q, want its workspace 1", wm.where("0xden"))
+	}
+	typeLine(m, godPhrase)
+	if !m.godOn() {
+		t.Fatal("God mode is not on")
+	}
+	rep, _ := switchView(t, m, api.ViewUser)
+	if wm.where("0xden") == api.ViewWorkspace {
+		t.Error("a hide in God mode hid Den's window")
+	}
+	if !strings.Contains(rep.Result.Reason, "God mode is on") {
+		t.Errorf("the hide's reason: %q", rep.Result.Reason)
+	}
+	if wm.where("0xa") != api.ViewWorkspace || wm.where("0xb") != api.ViewWorkspace {
+		t.Error("the agents' windows were not hidden")
+	}
+}
