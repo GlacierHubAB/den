@@ -21,7 +21,7 @@ func TestAPIChipShortForm(t *testing.T) {
 	}{
 		{nil, 1, "⇄ 1 app connected · unidentified"},
 		{nil, 2, "⇄ 2 apps connected · unidentified"},
-		{[]string{"drey-host"}, 0, "⇄ drey-host connected"},
+		{[]string{"app-host"}, 0, "⇄ app-host connected"},
 		{[]string{"a", "b"}, 1, "⇄ a, b, 1 unidentified connected"},
 	} {
 		if got := connectedChip(c.names, c.n); got != c.want {
