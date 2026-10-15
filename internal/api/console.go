@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // A console is the one program the human paired, in Den's own window, as
@@ -73,6 +74,20 @@ type ConsoleAsk struct {
 	Parent   string
 	Cmdline  string   // as the program reports it: it can be spoofed
 	Replaces *Console // the console it replaces, nil for none
+	// Codeless is a console.request: no code was typed, and the human
+	// matches the pid, start and fingerprints with the dock's. Unit,
+	// Program and ProgramSHA are the service as Den read it from its
+	// manager; AppFP and DenFP the two keys' fingerprints (Fingerprint).
+	Codeless bool
+	// Reconnect is a console.reconnect the human answers: the service
+	// restarted, and Changes says why it is not re-paired silently.
+	Reconnect  bool
+	Changes    []string
+	Unit       string
+	Program    string
+	ProgramSHA string
+	AppFP      string
+	DenFP      string
 }
 
 // ConsoleIntruder is a proof for the console from another process.
@@ -90,16 +105,20 @@ type Console struct {
 	Since     time.Time
 	LastProof time.Time
 	PagesSHA  string
+	// Powers is whether it may answer cards and run commands now; only
+	// CurrentConsole fills it in.
+	Powers bool
 }
 
 // ConsoleEvent is the data of a console event.
 type ConsoleEvent struct {
-	Kind       string `json:"kind"` // restored, connected, refused or unpaired
+	Kind       string `json:"kind"` // restored, connected, reconnected, powers, refused or unpaired
 	PID        int    `json:"pid"`
 	StartTicks uint64 `json:"start_ticks"`
 	Started    string `json:"started,omitempty"` // HH:MM:SS, local time
 	Program    string `json:"program,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+	On         *bool  `json:"on,omitempty"` // powers: whether the console has them now
 }
 
 type consoleRec struct {
@@ -116,6 +135,19 @@ type consoleRec struct {
 	leaked   bool
 	strikes  []time.Time
 	restored bool // restored from before a Den restart, not yet announced
+	// verifier is what Den read of the console's service when the human
+	// paired it (console.request), nil for a pairing by code. trusted is
+	// set when this Den took it itself; one read back from disk after a
+	// Den start is never trusted for a silent re-pair.
+	verifier *sysd.Verifier
+	trusted  bool
+	// powers is whether the console may answer cards and run commands:
+	// set by the human's ^Y in Den's own window, unset by a silent
+	// re-pair, a Den start, or a refused try for the console.
+	powers bool
+	// reconnected is a silent re-pair not yet told to the console's
+	// first subscribed connection.
+	reconnected bool
 }
 
 type consoleCode struct {
@@ -135,6 +167,8 @@ type consoleState struct {
 	// when each identity last raised an intruder card.
 	recordHash string
 	intruders  map[string]time.Time
+	// godOn says whether God mode is on (SetGodMode), nil for never.
+	godOn func() bool
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches
@@ -275,7 +309,9 @@ func (s *Server) CurrentConsole() (Console, bool) {
 	if s.con.cur == nil {
 		return Console{}, false
 	}
-	return s.con.cur.Console, true
+	c := s.con.cur.Console
+	c.Powers = s.con.cur.powers
+	return c, true
 }
 
 // ConsoleAnswered is the human's ^Y (ok) or ^N on a console card.
@@ -511,6 +547,8 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		ask.Replaces = &old
 	}
 	st.pending = rec
+	// Taken with the claim, under the lock: the human's answer and a leak
+	// clear the field (ConsoleAnswered, leakedConsole) under it too.
 	confirm := rec.confirm
 	st.mu.Unlock()
 	if !s.act(Act{Console: &ask}) {
@@ -523,8 +561,27 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return
 	}
+	s.awaitConsole(c, req, rec, confirm, func() { zero(text) }, func() map[string]any {
+		bindKey := codeKey(text, id, consoleBindInfo)
+		bind := macHex(bindKey, consoleBindInfo+"\n"+rec.pubHex+"\n"+s.ckey.pubHex+"\n"+id)
+		zero(bindKey)
+		return map[string]any{"pairing": id, "den_public_key": s.ckey.pubHex, "bind": bind, "console": true}
+	})
+}
+
+// awaitConsole waits, off the connection's reader, for the human's answer
+// to a console card in Den, then makes rec the console or refuses: the
+// ^Y counts only for the claimant still connected and still the same
+// process, and only while rec is still the claim waiting; a deny cools
+// claims down. confirm is rec's answer channel, as the caller took it
+// under s.con.mu when it made rec the claim waiting; rec.confirm itself is
+// never read here, since the answer clears it under that lock. reply is
+// the success answer, end runs last either way. The human's ^Y in Den's
+// own window gives the console its powers.
+func (s *Server) awaitConsole(c *conn, req Request, rec *consoleRec, confirm chan bool, end func(), reply func() map[string]any) {
+	st := &s.con
 	go func() {
-		defer zero(text)
+		defer end()
 		ok, why := false, ClaimTimeout
 		select {
 		case answer, open := <-confirm:
@@ -555,6 +612,7 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		}
 		var old *consoleRec
 		if ok && mine {
+			rec.powers = true
 			old, st.cur = st.cur, rec
 			s.saveConsoleLocked()
 		} else if why == ClaimDenied && mine {
@@ -565,18 +623,15 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 			if !mine {
 				why = ClaimRevoked
 			}
-			s.act(Act{ConsoleDone: id})
+			s.act(Act{ConsoleDone: rec.ID})
 			c.fail(req.ID, CodeForbidden, why)
 			return
 		}
-		if old != nil {
+		if old != nil && old.ID != rec.ID {
 			s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: "another console was paired"})
 		}
-		bindKey := codeKey(text, id, consoleBindInfo)
-		bind := macHex(bindKey, consoleBindInfo+"\n"+rec.pubHex+"\n"+s.ckey.pubHex+"\n"+id)
-		zero(bindKey)
-		s.act(Act{ConsoleDone: id, ConsoleChanged: true})
-		c.reply(req.ID, map[string]any{"pairing": id, "den_public_key": s.ckey.pubHex, "bind": bind, "console": true})
+		s.act(Act{ConsoleDone: rec.ID, ConsoleChanged: true})
+		c.reply(req.ID, reply())
 	}()
 }
 
@@ -655,6 +710,8 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		// Unpaired first, then told, as for a burst.
 		if unpair {
 			s.UnpairConsole("three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
+		} else {
+			s.LockConsolePowers("another program tried your console")
 		}
 		c.fail(req.ID, CodeForbidden, "another program holds this console")
 		return
@@ -673,6 +730,8 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		// Unpaired first, then told, as for a burst.
 		if unpair {
 			s.UnpairConsole("three wrong console proofs in ten minutes: the console is unpaired; pair again with den pair")
+		} else {
+			s.LockConsolePowers("a wrong proof for your console")
 		}
 		c.fail(req.ID, CodeForbidden, "wrong proof")
 		time.Sleep(50 * time.Millisecond) // the answer first, as for too_large
@@ -686,6 +745,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		return
 	}
 	rec.LastProof = now
+	powers := rec.powers
 	st.mu.Unlock()
 	others := s.consoleConns(rec.ID)
 	c.mu.Lock()
@@ -699,7 +759,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 	den := ed25519.Sign(s.ckey.priv, consoleSigned(dirDenToApp, cid, rec.ID, appKey, s.ckey.pubHex, nd, p.Nonce, s.ckey.identity))
 	// No God mode and no views yet: God mode is off, and every session
 	// shows in its own window (the agent view).
-	c.reply(req.ID, map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "view": "agent"})
+	c.reply(req.ID, map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "view": "agent", "powers": powers})
 }
 
 // consoleEvents is console.events: this proved connection of the console
@@ -725,6 +785,8 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	if rec.restored {
 		kind, rec.restored = "restored", false
 	}
+	reconnected := rec.reconnected
+	rec.reconnected = false
 	ev := ConsoleEvent{Kind: kind, PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started)}
 	st.mu.Unlock()
 	c.mu.Lock()
@@ -753,6 +815,10 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	// The mode in force, after the replay, which ends at the listed cards.
 	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
 		c.push(Event{Event: EventMode, Data: v.Mode}, true)
+	}
+	// Then a silent re-pair, told to the connection that subscribes first.
+	if reconnected {
+		c.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "reconnected", PID: ev.PID, StartTicks: ev.StartTicks, Started: ev.Started}}, true)
 	}
 }
 

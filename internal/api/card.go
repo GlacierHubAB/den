@@ -239,6 +239,10 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
+	if !s.consolePowers(c) {
+		c.fail(req.ID, CodePowersLocked, PowersLocked)
+		return
+	}
 	var p struct {
 		ID    string `json:"id"`
 		Hash  string `json:"text_sha256"`

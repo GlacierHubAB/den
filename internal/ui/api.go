@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -227,10 +228,17 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	os.Chmod(lane, 0o700)
 	cfg := m.cfg
+	// Den's console key never changes in silence: a dock pins it at
+	// pairing. A new one, or none, is said in the chat.
+	_, statErr := os.Lstat(filepath.Join(state, consoleKeyFile))
+	fresh := errors.Is(statErr, fs.ErrNotExist)
 	key, kerr := loadConsoleKey(state)
 	m.con.keyErr = ""
 	if kerr != nil {
 		key, m.con.keyErr = nil, sanitize.Label(kerr.Error(), 160)
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Console pairing is off: Den's console key does not read (" + m.con.keyErr + "). Den makes no new one in its place; a paired dock stays as it is until you fix or remove the file.", at: time.Now()}))
+	} else if fresh {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den made a new console key (" + consoleKeyFile + "): a dock paired with an earlier one sees Den's key changed and must pair again.", at: time.Now()}))
 	}
 	srv, err := api.Listen(api.Options{
 		Version:      Version,

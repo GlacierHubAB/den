@@ -619,6 +619,7 @@ type conn struct {
 	cnonce      string
 	claimSalt   string
 	cchallenged time.Time
+	crequested  time.Time // its last console.request or console.reconnect
 	console     string
 }
 
@@ -847,6 +848,23 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 	hello, agent := c.hello, c.agent
 	c.mu.Unlock()
 	if req.Op != "hello" && !hello {
+		// A reconnecting console may ask first, so that it sends nothing
+		// before Den has proved itself (den_sig); the agent check hello
+		// makes is made here too.
+		if req.Op == "console.reconnect" && req.V == V {
+			// No view yet means Den cannot tell an agent's process: refuse.
+			v := s.view.Load()
+			if v == nil {
+				c.fail(req.ID, CodeUnavailable, "Den is starting")
+				return
+			}
+			if _, isAgent := underAgent(c.peer.PID, v.AgentProcs); isAgent {
+				c.fail(req.ID, CodeForbidden, "an agent's process may not use den-api.sock")
+				return
+			}
+			s.consoleReconnect(c, req)
+			return
+		}
 		c.fail(req.ID, CodeHelloFirst, "")
 		return
 	}
@@ -902,6 +920,9 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()}
 		if s.ckey != nil {
 			info.Features = []string{FeatureConsole}
+			// Public: the dock shows its fingerprint while the human
+			// matches it with Den's card (console.request).
+			info.ConsolePublicKey = s.ckey.pubHex
 		}
 		if v := s.view.Load(); v != nil && v.Mode.Global != "" {
 			mode := v.Mode
@@ -996,6 +1017,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.consoleChallenge(c, req)
 	case "console.claim":
 		s.consoleClaim(c, req)
+	case "console.request":
+		s.consoleRequest(c, req)
+	case "console.reconnect":
+		s.consoleReconnect(c, req)
 	case "console.auth":
 		s.consoleAuth(c, req)
 	case "console.events":
