@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -41,8 +43,12 @@ const consoleKeyFile = "local.key"
 // key that is not a plain file of the user only, or not 32 bytes, is
 // refused rather than trusted.
 func loadConsoleKey(state string) (ed25519.PrivateKey, error) {
+	if fi, err := os.Stat(state); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		// Den's own state folder: no one else needs into it.
+		os.Chmod(state, 0o700)
+	}
 	path := filepath.Join(state, consoleKeyFile)
-	fi, err := os.Lstat(path)
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		seed := make([]byte, ed25519.SeedSize)
 		if _, err := rand.Read(seed); err != nil {
@@ -64,19 +70,23 @@ func loadConsoleKey(state string) (ed25519.PrivateKey, error) {
 		return ed25519.NewKeyFromSeed(seed), nil
 	}
 	if err != nil {
+		// A link is refused here (ELOOP), never followed.
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat() // the file opened, not whatever the name is now
+	if err != nil {
 		return nil, err
 	}
 	if !fi.Mode().IsRegular() || fi.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("%s is not a file only you can read", path)
 	}
-	seed, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if len(seed) != ed25519.SeedSize {
+	seed := make([]byte, ed25519.SeedSize+1)
+	n, _ := io.ReadFull(f, seed)
+	if n != ed25519.SeedSize {
 		return nil, fmt.Errorf("%s is not a console key", path)
 	}
-	return ed25519.NewKeyFromSeed(seed), nil
+	return ed25519.NewKeyFromSeed(seed[:n]), nil
 }
 
 // consoleCommand is /api console: show a console code for two minutes.
@@ -232,7 +242,7 @@ func (m Model) pairCallerRefusal(pid int) string {
 		if sessions[p.PID] {
 			return "it runs under one of your agents' sessions"
 		}
-		if p.Comm == "claude" || filepath.Base(procs.Exe(p.PID)) == "claude" {
+		if exe := procs.Exe(p.PID); p.Comm == "claude" || filepath.Base(exe) == "claude" || strings.Contains(exe, "/claude/versions/") {
 			return "it runs under Claude Code"
 		}
 		if p.Comm == "den" {
@@ -280,7 +290,11 @@ func (m *Model) handleConsoleUnpair(r *bridge.Request) tea.Cmd {
 		n += len(m.api.srv.Pairings())
 		m.api.srv.Unpair("", "")
 	}
-	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "den unpair: " + strconv.Itoa(n) + " pairing(s) ended from a terminal", at: time.Now()}))
+	who := "pid " + strconv.Itoa(r.PeerPID)
+	if exe := procs.Exe(r.PeerPID); exe != "" {
+		who = sanitize.Label(filepath.Base(exe), 40) + " " + who
+	}
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "den unpair from " + who + ": " + strconv.Itoa(n) + " pairing(s) ended", at: time.Now()}))
 	m.restartForControl()
 	m.refresh()
 	r.Reply(bridge.Decision{Behavior: "allow", Message: "Unpaired " + strconv.Itoa(n) + "."})
