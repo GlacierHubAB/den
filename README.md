@@ -482,11 +482,13 @@ on its command line. If it cannot sign in, the chat says so.
 Each message has its speaker's name on the line above it, so the text uses
 the pane's full width.
 
-Agents named in what the orchestrator or an agent writes show as `@Name` in
-that agent's colour: `@Name` always, a bare name only when it is several
+Agents named in what the orchestrator writes show as `@Name` in that
+agent's colour: `@Name` always, a bare name only when it is several
 words written exactly (`Quiet Panda`), never inside code or a link. Only
 agents on this machine count, under the names Den gave them, and never a
-name two of them share; agents on hosts stay plain. Inbox bodies you approve
+name two of them share; agents on hosts stay plain. An agent's own words (its recent activity,
+its turn and report on a card, a report Den passes on) are never
+coloured, so an agent cannot make a name look like Den's. Inbox bodies you approve
 are shown exactly as sent and never restyled. Notifications name a local
 agent as a plain `@Name`.
 

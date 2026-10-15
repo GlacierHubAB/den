@@ -209,8 +209,24 @@ func TestMentionsStayPlainInOthersWords(t *testing.T) {
 
 	tail := []transcript.Entry{{Kind: "claude", Text: "@Plucky approved. Mossy Lemur too."}}
 	local := m.base[3] // Plucky's own pane
-	if out := m.activityLines(tail, local, 80, false); !coloured(out) || !strings.Contains(text(out), "@Mossy Lemur too") {
-		t.Errorf("a local agent's own text should colour its mentions: %q", text(out))
+	// A local agent's own words stay plain too: a coloured @Name is Den's
+	// word, and the agent could otherwise make one appear.
+	if out := m.activityLines(tail, local, 80, false); coloured(out) || !strings.Contains(text(out), "@Plucky approved. Mossy Lemur too.") {
+		t.Errorf("a local agent's own text should stay plain: %q", text(out))
+	}
+	dm := m // Plucky's Fleet detail, "recent"
+	dm.cursor = -1
+	for i := range dm.agents {
+		if dm.agents[i].Session.SessionID == "plucky" {
+			dm.agents[i].Tail, dm.cursor = tail, i
+			dm.agents[i].Session.SessionID = "plucky-0000-0000" // the pane shows 8 characters of it
+		}
+	}
+	if dm.cursor < 0 {
+		t.Fatal("Plucky is not in the fleet")
+	}
+	if lines, _, _ := dm.detailLines(100); !strings.Contains(ansi.Strip(strings.Join(lines, "\n")), "@Plucky approved. Mossy Lemur too.") || coloured(lines) {
+		t.Errorf("a local agent's recent activity in the Fleet detail should stay plain:\n%s", ansi.Strip(strings.Join(lines, "\n")))
 	}
 	far := m.remote.agents[0]
 	if out := m.activityLines(tail, far, 80, false); coloured(out) || !strings.Contains(text(out), "@Plucky approved. Mossy Lemur too.") {
