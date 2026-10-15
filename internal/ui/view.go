@@ -1209,9 +1209,9 @@ func (m Model) hints(w int) string {
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
-		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
+		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"^E click", "actions in full"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
 	case m.tab == tabOverview && m.ov.open != "":
-		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
+		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"^E click", "actions in full"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
 		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
