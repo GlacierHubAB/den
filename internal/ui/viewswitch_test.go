@@ -522,3 +522,25 @@ func TestStrandedCardIsRetriedUntilTheWindowIsBack(t *testing.T) {
 		t.Error("tried again after it was shown")
 	}
 }
+
+// Every desktop card is answered in Den's own window alone: while one
+// waits, a hide leaves that window where it is.
+func TestViewKeepsDensWindowForDesktopCards(t *testing.T) {
+	adds := map[string]func(*inbox.Store){
+		"install": func(s *inbox.Store) { s.AddDesktopInstall("Install hypruse?", nil, nil) },
+		"mission": func(s *inbox.Store) { s.AddDesktopMission("Start a desktop mission?", nil, nil) },
+		"act":     func(s *inbox.Store) { s.AddDesktopAct("s-a", "click", "Click?", nil, nil) },
+		"turn":    func(s *inbox.Store) { s.AddYourTurn("s-a", "Your turn", nil, nil) },
+	}
+	for name, add := range adds {
+		m, wm := viewRig(t)
+		add(m.store)
+		if m.viewKeep() == "" {
+			t.Errorf("%s: no reason to keep Den's window", name)
+		}
+		switchView(t, m, api.ViewUser)
+		if wm.where("0xden") == api.ViewWorkspace {
+			t.Errorf("%s: Den's window was hidden with a desktop card pending", name)
+		}
+	}
+}
