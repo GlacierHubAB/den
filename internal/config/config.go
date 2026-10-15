@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/GlacierHubAB/den/internal/permmode"
 )
 
 // Config is everything Den lets you tune.
@@ -23,6 +25,15 @@ type Config struct {
 		// (shipped with Den) or the absolute path of a file of your own. Off
 		// when empty. It loads only once you approve its SHA-256 in Den.
 		Guidance string
+	}
+	// Agents is how Den starts agents.
+	Agents struct {
+		// PermissionMode is the global mode new agents start in
+		// (claude --permission-mode): one of permmode.Modes(), never
+		// bypassPermissions. A value Den refuses keeps the default, and
+		// ModeRefused holds it, for Den's note.
+		PermissionMode string
+		ModeRefused    string
 	}
 	Inbox struct {
 		History int // finished turns kept as history
@@ -108,6 +119,7 @@ func Defaults() Config {
 	c.Orchestrator.Model = "sonnet"
 	c.Orchestrator.Name = "den-orchestrator"
 	c.Orchestrator.Spawn = true
+	c.Agents.PermissionMode = permmode.Default
 	c.Inbox.History = 100
 	c.Detail.Recent = 20
 	c.Hooks.PermissionWait = 580
@@ -192,6 +204,13 @@ func (c *Config) apply(kv map[string]string) {
 	str(&c.Orchestrator.Name, "orchestrator.name")
 	boolean(&c.Orchestrator.Spawn, "orchestrator.spawn")
 	str(&c.Orchestrator.Guidance, "orchestrator.guidance")
+	if v, ok := kv["agents.permission_mode"]; ok {
+		if mode, ok := permmode.Parse(v); ok {
+			c.Agents.PermissionMode = mode
+		} else {
+			c.Agents.ModeRefused = v
+		}
+	}
 	num(&c.Inbox.History, "inbox.history")
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
@@ -393,6 +412,10 @@ name = "den-orchestrator"   # how the orchestrator session names itself to peers
 spawn = true                # may open terminals and start agents on the workspace you are on
 guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
                             # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
+
+[agents]
+permission_mode = "default" # the mode agents Den starts run in: dontAsk, plan, default, acceptEdits or auto;
+                            # /mode in Den changes it, and a change to a mode that asks less waits for your ^Y
 
 [inbox]
 history = 100               # finished turns kept as history
