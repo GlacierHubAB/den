@@ -317,8 +317,8 @@ func TestAgentProcsAreLocalAndLive(t *testing.T) {
 	}
 	m := testModel(120, 40)
 	m.base = []fleet.Agent{
-		{Name: "Far Otter", Host: "vm1", Status: fleet.Idle, Session: discover.Session{PID: 1079, Alive: true}},
-		{Name: "Old Otter", Status: fleet.Gone, Session: discover.Session{PID: 1481230}},
+		{Name: "Far Otter", Host: "vm1", Status: fleet.Idle, Session: discover.Session{PID: 7100, Alive: true}},
+		{Name: "Old Otter", Status: fleet.Gone, Session: discover.Session{PID: 70200}},
 		{Name: "Reused", Status: fleet.Idle, Session: discover.Session{PID: 5555, Alive: true}},
 		{Name: "Busy Otter", Status: fleet.Working, Session: discover.Session{PID: 4242, Name: "worker-a", Alive: true}},
 	}

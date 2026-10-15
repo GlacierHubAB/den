@@ -184,7 +184,10 @@ func (m Model) pairExe(id string) string {
 // it in the right one. A turn in progress is never cut short: the tick and
 // the turn's result try again.
 func (m *Model) restartForControl() {
-	if m.orch.proc == nil || m.orch.control == m.controlWanted() {
+	// On a release control cannot run on (noControl), the orchestrator
+	// stays as it is: restarting would not help.
+	want := m.controlWanted() && m.ctl.noControl == ""
+	if m.orch.proc == nil || m.orch.control == want {
 		return
 	}
 	if m.orch.thinking || len(m.orch.origins) > 0 || len(m.orch.unanswered) > 0 || len(m.orch.pending) > 0 {
@@ -231,6 +234,10 @@ func (m *Model) tryAppTurn() tea.Cmd {
 	}
 	if !m.controlWanted() {
 		m.endAppTurn("the app is not paired")
+		return nil
+	}
+	if m.ctl.noControl != "" {
+		m.endAppTurn(m.ctl.noControl)
 		return nil
 	}
 	if m.orch.proc != nil && !m.orch.control {

@@ -419,3 +419,39 @@ func TestAppTurnSilenceBound(t *testing.T) {
 		t.Errorf("controls %s", controls)
 	}
 }
+
+// On a Claude Code release control was not checked on, the app's turn ends
+// with an error that says so, and the orchestrator keeps working for the
+// human without control.
+func TestControlNeedsACheckedRelease(t *testing.T) {
+	l, dir, launches := controlModel(t)
+	orchVersion = func(context.Context, []string) (string, error) { return "2.1.300", nil }
+	c := pairApp(t, l)
+	c.call("orch.say", map[string]string{"text": "who is busy?"})
+	stream := chunks(c)
+	var got []map[string]any
+	l.until("the app's turn to end", func() bool {
+		select {
+		case got = <-stream:
+			return true
+		default:
+			return false
+		}
+	}, nil)
+	if last := got[len(got)-1]; last["type"] != "error" || !strings.Contains(last["message"].(string), "2.1.289, 2.1.296") {
+		t.Errorf("chunks %v", got)
+	}
+	if len(*launches) != 1 || (*launches)[0].Control {
+		t.Fatalf("launches %+v", *launches)
+	}
+	proc := l.m.orch.proc
+	l.run(l.m.controlTick(time.Now()))
+	if l.m.orch.proc != proc {
+		t.Error("Den restarted the orchestrator for control it cannot have")
+	}
+	l.run(l.m.tell("", "hello", "hello"))
+	l.until("the human's message", func() bool {
+		raw, _ := os.ReadFile(filepath.Join(dir, "turns"))
+		return strings.Contains(string(raw), "hello")
+	}, nil)
+}

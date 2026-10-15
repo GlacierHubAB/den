@@ -326,17 +326,17 @@ func procTree(t *testing.T, tree map[int][2]uint64) {
 // does, and the note names it.
 func TestDreyHostChainIsNotAnAgent(t *testing.T) {
 	procTree(t, map[int][2]uint64{
-		1508796: {9_000_000, 1481230}, // drey, a child of drey-host
-		1481230: {8_000_000, 1079},    // drey-host
-		1079:    {2_000, 1},           // systemd --user
+		70300: {9_000_000, 70200}, // drey, a child of drey-host
+		70200: {8_000_000, 7100},    // drey-host
+		7100:    {2_000, 1},           // systemd --user
 	})
 	old := identifyHook
 	defer func() { identifyHook = old }()
-	identifyHook = func(p Peer) Peer { p.PID, p.Exe = 1508796, "/home/u/.local/bin/drey"; return p }
+	identifyHook = func(p Peer) Peer { p.PID, p.Exe = 70300, "/home/u/.local/bin/drey"; return p }
 	for name, agents := range map[string][]AgentProc{
 		"no agents":          nil,
-		"reused session pid": {{PID: 1481230, Start: 3_000_000, Name: "agent Old Otter"}},
-		"reused systemd pid": {{PID: 1079, Start: 7_000, Name: "agent Far Away"}},
+		"reused session pid": {{PID: 70200, Start: 3_000_000, Name: "agent Old Otter"}},
+		"reused systemd pid": {{PID: 7100, Start: 7_000, Name: "agent Far Away"}},
 		"agents elsewhere":   {{PID: 4242, Start: 1, Name: "agent Busy"}},
 	} {
 		h := newHarness(t, 2)
@@ -348,7 +348,7 @@ func TestDreyHostChainIsNotAnAgent(t *testing.T) {
 		}
 	}
 	h := newHarness(t, 2)
-	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: 1481230, Start: 8_000_000, Name: "agent Real Otter"}}}))
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), AgentProcs: []AgentProc{{PID: 70200, Start: 8_000_000, Name: "agent Real Otter"}}}))
 	c := h.dial()
 	c.hello()
 	if l := c.call("fleet.snapshot", nil); code(l) != CodeForbidden {
@@ -356,7 +356,7 @@ func TestDreyHostChainIsNotAnAgent(t *testing.T) {
 	}
 	select {
 	case n := <-h.s.Notes():
-		if !strings.Contains(n, "runs under agent Real Otter (pid 1481230)") {
+		if !strings.Contains(n, "runs under agent Real Otter (pid 70200)") {
 			t.Errorf("note %q", n)
 		}
 	case <-time.After(2 * time.Second):
