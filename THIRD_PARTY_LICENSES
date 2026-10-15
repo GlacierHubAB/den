@@ -1034,3 +1034,32 @@ code was copied. There is no external original to credit.
 
 internal/templates/builtin.json (go:embed) is Den's own team templates. No
 fonts, images or other vendored third-party data are embedded in the binary.
+
+6. hypruse (internal/desktop)
+-----------------------------
+
+What Den embeds: only metadata. internal/desktop/pin.go holds hypruse's
+upstream URL, pinned commit and the SHA-256 of each file Den copies;
+internal/desktop/hypruse.lock is a requirements file (package names, versions
+and wheel hashes) derived from hypruse's uv.lock at the same commit. Neither
+contains code or text from hypruse or from the packages it lists.
+
+What Den installs: when, and only when, the human approves `den
+install-hypruse` in Den, Den copies hypruse's package files and its LICENSE
+from a clone the human names into a venv under Den's data directory, refusing
+any file whose SHA-256 differs, and pip installs the listed packages into that
+venv from PyPI (or from a folder of wheels the human names), each pinned by
+hash. Nothing from them is part of the Den binary or its release assets. Each
+is the work of its authors and remains under its license; each wheel carries
+its own license files into the venv.
+
+  IlyasKhallouki/hypruse  https://github.com/IlyasKhallouki/hypruse
+    pinned commit 0035d86db6679aca6a341331b8e60033a07d2670 (version 0.12.1)
+    License: MIT, Copyright (c) 2026 Ilyas Khallouki, from the root LICENSE at
+    the pinned commit (SHA-256
+    d40a2cde9e2c34063411f13d58feb91fba71de2366460f485b07512ee179668c), copied
+    into the venv beside the package. Unmodified.
+
+  The packages in internal/desktop/hypruse.lock (mcp and its dependencies)
+    are under permissive licenses (MIT, BSD, Apache-2.0; certifi is MPL-2.0,
+    installed unmodified), as recorded in each wheel's own metadata.
