@@ -135,7 +135,8 @@ const (
 	CauseBurst = "burst"
 	// CauseProofs: three wrong proofs for the console in ten minutes.
 	CauseProofs = "proofs"
-	// CauseIntruders: three other programs tried the console in ten minutes.
+	// CauseIntruders: three tries for the console from other programs in ten
+	// minutes.
 	CauseIntruders = "intruders"
 	// CauseSelf: the console unpaired itself, with console.unpair.
 	CauseSelf = "self"
@@ -769,7 +770,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 		// Unpaired first, then told, as for a burst.
 		if unpair {
-			s.UnpairConsole(CauseIntruders, "three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
+			s.UnpairConsole(CauseIntruders, "three tries for your console from other programs in ten minutes: it is unpaired; pair again with den pair")
 		} else {
 			s.LockConsolePowers("another program tried your console")
 		}

@@ -284,7 +284,7 @@ func (s *Server) consoleIntruder(rec *consoleRec, peer Peer) {
 		}
 	}
 	if unpair {
-		s.UnpairConsole(CauseIntruders, "three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
+		s.UnpairConsole(CauseIntruders, "three tries for your console from other programs in ten minutes: it is unpaired; pair again with den pair")
 		return
 	}
 	s.LockConsolePowers("another program tried your console")

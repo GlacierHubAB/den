@@ -276,8 +276,11 @@ func TestDreyInterface(t *testing.T) {
 				return d.DialContext(ctx, "unix", path)
 			}),
 			Focusable: sid,
-			Skip:      denconformance.D1Skip,
-			Console:   console,
+			// "unpaired cause intruders" counts other programs, two tries
+			// each, where Den counts tries as DREY-API.md says: skipped
+			// until the suite is fixed upstream and pinned again.
+			Skip:    append(append([]string(nil), denconformance.D1Skip...), "unpaired cause intruders"),
+			Console: console,
 		})
 	}()
 	// handle carries out an act on the model, on this goroutine.
