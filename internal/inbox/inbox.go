@@ -23,23 +23,24 @@ import (
 type Kind int
 
 const (
-	Permission Kind = iota // a tool wants to run; y/n/a answer it
-	Plan                   // ExitPlanMode: approve or ask for changes
-	Question               // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
-	Done                   // a turn finished while you were elsewhere
-	Idle                   // Claude Code's idle notice
-	Sent                   // a message you sent, with its delivery status
-	Close                  // Den asks: close these agents? y/n answer it
-	Skills                 // Den asks: install these catalogue skills? y/n answer it
-	Budget                 // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
-	Restore                // Den asks: reopen these agents with claude --resume? y/n answer it
-	Stalled                // working, but no hook event for a while; never "needs you"
-	Failed                 // a turn ended on an API error, or tool calls keep failing
-	Merge                  // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
-	Cleanup                // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
-	Install                // Den asks: copy this den to a remote host? y/n answer it
-	Message                // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
-	Guidance               // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
+	Permission    Kind = iota // a tool wants to run; y/n/a answer it
+	Plan                      // ExitPlanMode: approve or ask for changes
+	Question                  // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
+	Done                      // a turn finished while you were elsewhere
+	Idle                      // Claude Code's idle notice
+	Sent                      // a message you sent, with its delivery status
+	Close                     // Den asks: close these agents? y/n answer it
+	Skills                    // Den asks: install these catalogue skills? y/n answer it
+	Budget                    // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
+	Restore                   // Den asks: reopen these agents with claude --resume? y/n answer it
+	Stalled                   // working, but no hook event for a while; never "needs you"
+	Failed                    // a turn ended on an API error, or tool calls keep failing
+	Merge                     // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
+	Cleanup                   // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
+	Install                   // Den asks: copy this den to a remote host? y/n answer it
+	Message                   // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
+	Guidance                  // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
+	MissionUpdate             // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -62,6 +63,8 @@ func (k Kind) String() string {
 		return "skills"
 	case Budget:
 		return "budget"
+	case MissionUpdate:
+		return "mission update"
 	case Restore:
 		return "restore"
 	case Stalled:
@@ -136,7 +139,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -717,6 +720,12 @@ func (s *Store) AddGuidance(title string, body []string) *Item {
 // HostPrefix makes a remote host's label an item's SessionID, for Den's
 // questions about the host rather than one of its agents.
 const HostPrefix = "host:"
+
+// AddMissionUpdate adds Den's question: apply the orchestrator's update to a
+// mission? sessionID names the mission ("mission:<id>").
+func (s *Store) AddMissionUpdate(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: MissionUpdate, Tool: "update_mission", Title: title, Body: body})
+}
 
 // AddMerge adds Den's question: merge this agent's worktree branch? sessionID
 // is the agent that works in the worktree.

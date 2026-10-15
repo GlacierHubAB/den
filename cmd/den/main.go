@@ -77,6 +77,17 @@ func main() {
 	case "skills":
 		skillsCmd(os.Args[2:])
 	case "hook":
+		// The orchestrator's hooks are given den.sock as an argument, so
+		// the environment they run in cannot send them to another socket.
+		args := os.Args[2:]
+		for i := 0; i+1 < len(args); i++ {
+			if args[i] == "--socket" {
+				os.Setenv("DEN_SOCKET", args[i+1])
+			}
+		}
+		if len(args) > 0 && args[0] == "orchestrator-inbound" {
+			runInbound(args[1:])
+		}
 		runHook()
 	case "install-hooks":
 		installHooks()

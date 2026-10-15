@@ -32,7 +32,7 @@ func TestRoundTripWithFakeClaude(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	o, err := Start(ctx, Options{Command: []string{script}, Dir: dir})
+	o, err := Start(ctx, Options{Command: []string{script}, Dir: dir, HookCommand: testHook()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestRoundTripWithFakeClaude(t *testing.T) {
 // takes effect.
 func TestArgv(t *testing.T) {
 	t.Setenv("DEN_ORCHESTRATOR_MODEL", "")
-	got := Argv(Options{Command: []string{"claude"}, Name: "den-orchestrator", Spawn: true, Executable: "/usr/bin/den", Resume: "sess-1", Guidance: "Lead with the answer.\n"})
+	got := Argv(Options{Command: []string{"claude"}, Name: "den-orchestrator", Spawn: true, Executable: "/usr/bin/den", Resume: "sess-1", Guidance: "Lead with the answer.\n", SettingsFile: "/run/user/1000/den/orchestrator-settings-0123456789abcdef.json"})
 	want := []string{"claude", "-p",
 		"--input-format", "stream-json",
 		"--output-format", "stream-json",
@@ -97,8 +97,16 @@ func TestArgv(t *testing.T) {
 		"--tools", "ListAgents,SendMessage",
 		"--append-system-prompt", Prompt("Lead with the answer.\n"),
 		"--system-prompt-snapshot", "off",
+		// Only Den's settings, from a private file (never inline: they can
+		// hold the user's keys), and the hook events and replayed turns the
+		// backstop reads.
+		"--setting-sources", "",
+		"--settings", "/run/user/1000/den/orchestrator-settings-0123456789abcdef.json",
+		"--permission-mode", "dontAsk",
+		"--include-hook-events",
+		"--replay-user-messages",
 		"--mcp-config", MCPConfig("/usr/bin/den"), "--strict-mcp-config",
-		"--allowedTools", "ListAgents,SendMessage," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool,
+		"--allowedTools", "ListAgents,SendMessage," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool,
 		"--resume", "sess-1",
 		"--model", "sonnet",
 	}
@@ -126,7 +134,7 @@ func TestExitedCarriesFirstStderrLine(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	o, err := Start(ctx, Options{Command: []string{script}, Dir: dir})
+	o, err := Start(ctx, Options{Command: []string{script}, Dir: dir, HookCommand: testHook()})
 	if err != nil {
 		t.Fatal(err)
 	}

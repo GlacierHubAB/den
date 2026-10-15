@@ -617,6 +617,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "install them")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.Budget:
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
+	case it.Answerable() && it.Kind == inbox.MissionUpdate:
+		out = append(out, key("^Y", "apply it")+"  "+key("^N", "leave it"))
 	case it.Answerable() && it.Kind == inbox.Restore:
 		out = append(out, key("^Y", "reopen")+"  "+key("^N", "leave closed"))
 	case it.Answerable() && it.Kind == inbox.Merge:
@@ -842,6 +844,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.Budget {
 			acts = key("^Y", "keep going") + sp + sp + key("^N", "stop the mission")
+		}
+		if it.Kind == inbox.MissionUpdate {
+			acts = key("^Y", "apply it") + sp + sp + key("^N", "leave it")
 		}
 		if it.Kind == inbox.Restore {
 			acts = key("^Y", "reopen") + sp + sp + key("^N", "leave closed")
