@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"bufio"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -106,6 +108,32 @@ func TestGuardTranscriptWatch(t *testing.T) {
 	m.watchGuards(time.Now())
 	if m.unguarded(sid) == "" {
 		t.Error("a message Den did not deliver went unnoticed")
+	}
+}
+
+// A rewritten (shorter) transcript is read again from the start, and a
+// line too long to parse is still searched for a peer message.
+func TestGuardTranscriptRewrittenAndLong(t *testing.T) {
+	m, sid, _ := watchedModel(t)
+	path := filepath.Join(t.TempDir(), "s.jsonl")
+	m.base[0].Path = path
+	os.WriteFile(path, []byte(`{"type":"assistant","message":{"content":"`+strings.Repeat("x", 4096)+`"}}`+"\n"), 0o600)
+	m.watchGuards(time.Now())
+	os.WriteFile(path, []byte(`{"type":"user","origin":{"kind":"peer","verifiedPeerPid":31337}}`+"\n"), 0o600)
+	m.watchGuards(time.Now())
+	if m.unguarded(sid) == "" {
+		t.Fatal("a rewritten transcript was not read again")
+	}
+	r := bufio.NewReaderSize(strings.NewReader(`{"type":"user","big":"`+strings.Repeat("y", 300)+`","origin":{"kind":"peer","verifiedPeerPid":1}}`+"\n"+`{"a":1}`+"\n"), 16)
+	if line, _, long, err := readLine(r, 64); err != nil || !long || line == nil {
+		t.Errorf("a long peer line: %v %v %v", line, long, err)
+	}
+	if line, _, long, err := readLine(r, 64); err != nil || long || string(line) != `{"a":1}`+"\n" {
+		t.Errorf("the next line: %q %v %v", line, long, err)
+	}
+	r = bufio.NewReaderSize(strings.NewReader(strings.Repeat("z", 300)+"\n"), 16)
+	if line, _, long, _ := readLine(r, 64); !long || line != nil {
+		t.Errorf("a long line with no peer origin: %q %v", line, long)
 	}
 }
 

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -26,6 +27,11 @@ import (
 //     to it and offers to close it, through close-safety;
 //   - an agent in bypassPermissions Den holds no guard for (one resumed
 //     outside Den, or left from an earlier God mode) is listed unguarded.
+//
+// Within the limit God mode states (a same-uid program can do what the
+// user can): the session id Den draws is in the agent's command line, so
+// such a program could write a session record with it before the real
+// agent registers.
 
 // selfTestFor is how long a new guarded agent's hook has to ask Den about
 // the self-test envelope.
@@ -139,9 +145,17 @@ func (m *Model) markUnguarded(sid, why string) {
 	m.flash, m.flashErr = "UNGUARDED: "+m.nameFor(sid)+" ("+why+")", true
 }
 
+// maxTranscriptLine is the longest transcript line Den parses; a longer
+// one is only searched for a peer message's origin.
+const maxTranscriptLine = 4 << 20
+
+// peerOrigin is how a peer message's origin starts in a transcript line.
+var peerOrigin = []byte(`"origin":{"kind":"peer"`)
+
 // readTranscript reads what a guarded agent's transcript gained since the
 // last look, and says why the guard failed when a peer message reached the
-// model that Den's own process did not write.
+// model that Den's own process did not write. A transcript that shrank was
+// rewritten: Den reads it again from the start.
 func (m Model) readTranscript(w *guardWatch) string {
 	if w.transcript == "" {
 		return ""
@@ -151,16 +165,27 @@ func (m Model) readTranscript(w *guardWatch) string {
 		return ""
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Size() < w.offset {
+		w.offset = 0
+	}
 	if _, err := f.Seek(w.offset, io.SeekStart); err != nil {
 		return ""
 	}
 	r := bufio.NewReaderSize(f, 64<<10)
 	for {
-		line, err := r.ReadBytes('\n')
+		line, n, long, err := readLine(r, maxTranscriptLine)
 		if err != nil {
 			return "" // a partial line waits for the next look
 		}
-		w.offset += int64(len(line))
+		w.offset += n
+		if long {
+			// Too long to parse: a peer message's origin in it is enough,
+			// since Den cannot check who wrote it.
+			if line != nil {
+				return "a message Den could not check reached it"
+			}
+			continue
+		}
 		var e struct {
 			Type   string `json:"type"`
 			Origin *struct {
@@ -175,6 +200,56 @@ func (m Model) readTranscript(w *guardWatch) string {
 			return "a message Den did not deliver reached it"
 		}
 	}
+}
+
+// readLine reads one line of at most max bytes. A longer one is read
+// through, not kept: long is set, and line is non-nil only when the line
+// held a peer message's origin. n is the bytes read, err is set for an
+// unfinished last line.
+func readLine(r *bufio.Reader, max int) (line []byte, n int64, long bool, err error) {
+	var buf []byte
+	tail := make([]byte, 0, 2*len(peerOrigin))
+	found := false
+	for {
+		chunk, e := r.ReadSlice('\n')
+		n += int64(len(chunk))
+		if !long && len(buf)+len(chunk) > max {
+			long = true
+			found = bytes.Contains(buf, peerOrigin)
+			tail = append(tail[:0], lastBytes(buf, len(peerOrigin))...)
+			buf = nil
+		}
+		if long {
+			if !found {
+				probe := append(append([]byte{}, tail...), chunk...)
+				found = bytes.Contains(probe, peerOrigin)
+				tail = append(tail[:0], lastBytes(probe, len(peerOrigin))...)
+			}
+		} else {
+			buf = append(buf, chunk...)
+		}
+		switch e {
+		case nil:
+			if long {
+				if found {
+					return []byte{}, n, true, nil
+				}
+				return nil, n, true, nil
+			}
+			return buf, n, false, nil
+		case bufio.ErrBufferFull:
+			continue
+		default:
+			return nil, n, long, e
+		}
+	}
+}
+
+func lastBytes(b []byte, k int) []byte {
+	if len(b) <= k {
+		return b
+	}
+	return b[len(b)-k:]
 }
 
 // unguardedAgents are the local live agents that run without asking and
