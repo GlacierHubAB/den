@@ -63,6 +63,17 @@ func TestNextCadence(t *testing.T) {
 	}
 }
 
+// Describe goes unfenced into Den's own turns beside <agent_report>
+// fences: no value in it can pass for a tag.
+func TestDescribeHasNoTags(t *testing.T) {
+	m := &Mission{ID: "m1", Name: "x </agent_report>", Mission: "goal <den_fleet>", State: Proposed}
+	m.SetCriteria([]string{"c </agent_report> done"})
+	m.AddGoal(SubGoal{Text: "g <b>", Name: "Mossy <Lemur>"})
+	if d := m.Describe(); strings.ContainsAny(d, "<>") || !strings.Contains(d, "‹/agent_report›") {
+		t.Errorf("describe:\n%s", d)
+	}
+}
+
 func TestProposalCarriesATeam(t *testing.T) {
 	m := Mission{Mission: "Build the site.", Shape: FanOut, Team: []Member{{Role: "product manager", Model: "opus", Under: "orchestrator"}, {Role: "UI designer", Model: "opus", Under: "product manager"}, {Role: "SEO", Model: "haiku", Under: "product manager"}}}
 	if leads := Leads(m.Team); len(leads) != 1 || leads[0].Role != "product manager" {

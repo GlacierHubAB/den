@@ -109,7 +109,7 @@ func (m *Model) proposeFromTemplate(t templates.Template, target string) tea.Cmd
 	m.ov.listing = false
 	m.ov.proposal = ms.ID
 	prompt := fmt.Sprintf("Den made proposal %s for project %s (repository %s, branch %s) from a template.\n%s\n%s\nAdapt it to the target with propose_mission and id %s: the goal, the done criteria and the sub-goals with their owners. The human's words: %s",
-		ms.ID, p.Name, p.Root, p.Branch, templateDir, t.Describe(target), ms.ID, words)
+		ms.ID, promptValue(p.Name), promptValue(p.Root), promptValue(p.Branch), templateDir, t.Describe(target), ms.ID, words)
 	return m.sendMission(ms.ID, words, prompt)
 }
 

@@ -290,10 +290,18 @@ func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 func (m *Model) askOrchestrator(text string) tea.Cmd {
 	prompt := text
 	if p, ok := m.curProject(); ok && m.tab == tabOverview {
-		prompt = text + "\n\n(Typed on Den's Overview, with project " + p.Name + " (" + p.Root + ") picked.)"
+		prompt = text + "\n\n(Typed on Den's Overview, with project " + promptValue(p.Name) + " (" + promptValue(p.Root) + ") picked.)"
 	}
 	m.openOrchestrator()
 	return m.tell("", text, prompt)
+}
+
+// promptValue is a value Den puts into a prompt of its own, such as a
+// project's name or root (which can come from an agent's repository): one
+// clean line with < and > made harmless, so it cannot add lines or pass
+// for a block's tags.
+func promptValue(s string) string {
+	return strings.NewReplacer("<", "‹", ">", "›").Replace(sanitize.Line(s))
 }
 
 // openOrchestrator shows the Orchestrator view, remembering where the

@@ -557,7 +557,9 @@ func (m *Mission) Describe() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	return b.String()
+	// It goes unfenced into Den's own turns, beside <agent_report> fences:
+	// no < or > in it, so no value can pass for a tag.
+	return strings.NewReplacer("<", "‹", ">", "›").Replace(b.String())
 }
 
 // ---- cadences ----

@@ -44,7 +44,7 @@ func (m *Model) requestMission(text string) tea.Cmd {
 		return flashTick(4*time.Second, m.flash)
 	}
 	m.openOrchestrator()
-	prompt := fmt.Sprintf("The human asks for a mission on project %s (repository %s, branch %s). Propose it with propose_mission. The human's words:\n%s", p.Name, p.Root, p.Branch, text)
+	prompt := fmt.Sprintf("The human asks for a mission on project %s (repository %s, branch %s). Propose it with propose_mission. The human's words:\n%s", promptValue(p.Name), promptValue(p.Root), promptValue(p.Branch), text)
 	return m.tell("", text, prompt)
 }
 
