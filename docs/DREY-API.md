@@ -731,13 +731,39 @@ all` does in a terminal.
 
 ### Events
 
-- `console {kind, pid, start_ticks, started?, program?, reason?, on?}`: `kind`
+- `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?}`: `kind`
   is `connected`, `restored` (the first `console.events` after Den
   restarted with this console: check `pid` and `start_ticks` are yours),
   `reconnected` (after a silent `console.reconnect`, to the first
   connection that subscribes, after the replay), `powers` (`on` says
   whether the console has them now), `refused` (another program tried
   this console) or `unpaired`. Ignore a kind you do not know.
+  An `unpaired` event carries `cause`, why the console is no longer
+  paired, one of these nine values:
+
+  | `cause` | The console was unpaired because |
+  |---|---|
+  | `burst` | it answered cards faster than anyone could read them |
+  | `proofs` | three proofs for it were wrong in ten minutes |
+  | `intruders` | three other programs tried it in ten minutes |
+  | `self` | the console asked, with `console.unpair` (or `{all: true}` on its own proved connection) |
+  | `den` | the human unpaired it in Den (`den unpair`, `/api unpair`) |
+  | `other` | another program on this machine unpaired every pairing with `console.unpair {all: true}` from a connection that is not the console's own. Not the human's act: never say they did it |
+  | `replaced` | another console was paired in its place |
+  | `record` | Den found its record of the console changed outside Den, so the pairing cannot be trusted. Tell the human that, and do not tell them they unpaired |
+  | `guard` | Den's own guard stopped the orchestrator and unpaired. Not the human's act |
+
+  `reason` stays display text, at most 40 characters ("unpaired in Den"
+  when Den's own words were longer); take the cause from `cause`, never
+  from `reason`. The set may grow: a `cause` you do not know is Den's own
+  act, never the console's or the human's. A Den from before causes sends
+  none, and an `unpaired` event without one means the same as an unknown
+  one. A console whose connections simply end, an end of file with no
+  `unpaired` event, was not unpaired: Den exited, or the API was turned
+  off or its apps disconnected (`/api off`, `/api disconnect`), and the
+  pairing stands. Connect again once Den is back or the API is on again,
+  and prove as before; after a restart the first `console.events` says
+  `restored`.
 - `view {view, shown, total}`: how a `view.show` or `view.hide` ended, as in
   "Switching views".
 - `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
