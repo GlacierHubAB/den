@@ -334,6 +334,10 @@ afterwards, so no later message carries a MAC.
   with `item:<id>` still answers `unavailable` in this release; a later one
   brings Den forward on that card, under the same guard against your own
   typing.
+- A turn is over for Den just before its `done` or `error` goes out, so you
+  may say again as soon as you read it. The next turn's first chunks can
+  then reach you before the last turn's `done` or `error`: tell turns
+  apart by `turn`, never by order.
 - Closing the connection ends the turn: Den stops it, and the stream ends
   with `error "cancelled"` if it can still be written. A turn ends with an
   error after ten minutes, or two minutes without a word from the
