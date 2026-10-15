@@ -166,6 +166,9 @@ type Reader struct {
 	r       *bufio.Reader
 	ino     uint64
 	partial []byte
+	// atEOF, when set, runs each time the file was read to its end, before
+	// the move check: tests write and move the file there.
+	atEOF func()
 }
 
 // Open starts following the stream at its current end, so only events
@@ -191,6 +194,23 @@ func (rd *Reader) open(fromEnd bool) {
 	rd.f, rd.r, rd.ino, rd.partial = f, bufio.NewReader(f), inode(rd.path), nil
 }
 
+// drain reads the open file to its end, calling fn for each whole line;
+// a line without its end yet is kept for the next read.
+func (rd *Reader) drain(fn func(raw []byte, ev Event)) {
+	for rd.r != nil {
+		line, err := rd.r.ReadBytes('\n')
+		rd.partial = append(rd.partial, line...)
+		if err != nil {
+			return // no full line yet: keep what came and wait for the rest
+		}
+		var ev Event
+		if json.Unmarshal(rd.partial, &ev) == nil {
+			fn(rd.partial[:len(rd.partial)-1], ev)
+		}
+		rd.partial = nil
+	}
+}
+
 // Run calls fn for each event as it is appended, until stop is closed. It
 // follows the stream across a move to events.jsonl.1.
 func (rd *Reader) Run(stop <-chan struct{}, fn func(raw []byte, ev Event)) {
@@ -205,20 +225,17 @@ func (rd *Reader) Run(stop <-chan struct{}, fn func(raw []byte, ev Event)) {
 		if rd.f == nil {
 			rd.open(false)
 		}
-		for rd.r != nil {
-			line, err := rd.r.ReadBytes('\n')
-			rd.partial = append(rd.partial, line...)
-			if err != nil {
-				break // no full line yet: keep what came and wait for the rest
-			}
-			var ev Event
-			if json.Unmarshal(rd.partial, &ev) == nil {
-				fn(rd.partial[:len(rd.partial)-1], ev)
-			}
-			rd.partial = nil
+		rd.drain(fn)
+		if rd.atEOF != nil {
+			rd.atEOF()
 		}
 		if n := inode(rd.path); rd.f != nil && n != 0 && n != rd.ino {
-			// Moved aside: what was left of the old file is read; on to the new one.
+			// Moved aside. What was appended to the old file after the read
+			// above, before the move, is read now: the old file still open
+			// here is the moved one. A writer that opened the old path just
+			// before the move can still append after this read, and that
+			// event is lost: the stream is best effort.
+			rd.drain(fn)
 			rd.open(false)
 			continue
 		}
