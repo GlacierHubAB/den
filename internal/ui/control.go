@@ -64,7 +64,7 @@ type heldTurn struct {
 var orchVersion = orch.LaneVersion
 
 // unpairConsole unpairs the console, if one is paired; tests replace it.
-var unpairConsole = func(m *Model, why string) { m.api.srv.UnpairConsole(why) }
+var unpairConsole = func(m *Model, why string) { m.api.srv.UnpairConsole(api.CauseGuard, why) }
 
 // controlWanted reports whether the orchestrator should run in control
 // mode: a pairing is confirmed, or a console is paired (its orch.say is an
@@ -121,7 +121,7 @@ func (m Model) controlCommand(sub string) (tea.Model, tea.Cmd) {
 		return m.say("The API is off: /api on turns it on first.", true)
 	}
 	if sub == "unpair" {
-		console := m.api.srv.UnpairConsole("")
+		console := m.api.srv.UnpairConsole(api.CauseDen, "")
 		if len(m.api.srv.Pairings()) == 0 && console == 0 {
 			return m.say("No app is paired.", false)
 		}

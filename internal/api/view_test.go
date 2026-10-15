@@ -368,6 +368,6 @@ func TestConsoleUpFollowsTheConsoleConnection(t *testing.T) {
 		t.Errorf("a new connection: %+v", l.Error)
 	}
 	// Unpaired: no console, so no dock.
-	h.s.UnpairConsole("test")
+	h.s.UnpairConsole(CauseDen, "test")
 	waitDown("an unpaired console")
 }

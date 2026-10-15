@@ -291,7 +291,7 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		// Unpaired first, then told: a console that hears it is unpaired
 		// never finds it still paired. Its connections close 50 ms after,
 		// so the reply still goes out.
-		s.UnpairConsole("the console answered cards faster than anyone could read: it is unpaired; pair again with den pair")
+		s.UnpairConsole(CauseBurst, "the console answered cards faster than anyone could read: it is unpaired; pair again with den pair")
 		c.fail(req.ID, CodeForbidden, "answers faster than anyone could read: the console is unpaired")
 		return
 	}
