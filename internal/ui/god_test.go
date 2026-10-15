@@ -117,6 +117,7 @@ func TestGodModeFromOutside(t *testing.T) {
 func TestGodModeSpawnsGuarded(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := testModel(140, 40)
+	m.orch.control = true // the orchestrator is on Den's send_message
 	old := fromOrchestrator
 	t.Cleanup(func() { fromOrchestrator = old })
 	fromOrchestrator = func(_ *Model, pid int) bool { return pid == 4242 }
@@ -134,6 +135,11 @@ func TestGodModeSpawnsGuarded(t *testing.T) {
 	}
 	typeLine(&m, "/god on")
 	typeLine(&m, godPhrase)
+	m.orch.control = false
+	if d := ask(""); d.Message == permmode.Bypass {
+		t.Fatalf("bypass before the orchestrator is on send_message: %+v", d)
+	}
+	m.orch.control = true
 	d := ask("")
 	sid, path := d.Answers["session_id"], d.Answers["settings"]
 	if d.Message != permmode.Bypass || len(sid) != 36 || !filepath.IsAbs(path) {

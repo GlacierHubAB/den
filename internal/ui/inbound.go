@@ -245,7 +245,7 @@ func (m *Model) onBackstop(why, kind string) tea.Cmd {
 	m.logEntry(m.addChat(chatEntry{role: "note", text: "Den stopped the orchestrator: " + sanitize.Label(why, 120) + ". " + backstopWhy(kind) + " Nothing it was asking was resent.", at: time.Now()}))
 	m.orch.starting = true
 	m.orch.status = "starting a fresh session…"
-	return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
+	return startOrchestrator(m.cfg, "", m.guide.active, m.sendLaunchWanted())
 }
 
 // backstopWhy says, by the backstop's kind (orch.Trip*), why the

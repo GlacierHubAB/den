@@ -171,7 +171,7 @@ func TestOrchSendOnlyWithControl(t *testing.T) {
 	raw, _ := json.Marshal(bridge.OrchSendInput{To: "worker-otter", Message: "x"})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.OrchSendEvent, Payload: raw})
 	m.handleOrchSend(r)
-	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "only while a paired app has control") {
+	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "only while Den runs the orchestrator on it") {
 		t.Errorf("decision %+v", d)
 	}
 }

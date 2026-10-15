@@ -317,7 +317,7 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 		if m.orch.resume != "" {
 			m.orch.status = "resuming…"
 		}
-		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.controlWanted())
+		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.sendLaunchWanted())
 	}
 	return m.sendToOrchestrator(prompt, origin)
 }
@@ -606,7 +606,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 			m.addChat(chatEntry{role: "note", text: "the previous orchestrator session could not be resumed · starting a fresh one with the conversation so far", at: now})
 			m.orch.starting = true
 			m.orch.status = "starting…"
-			return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
+			return startOrchestrator(m.cfg, "", m.guide.active, m.sendLaunchWanted())
 		}
 		m.orch.status = "stopped"
 		m.addChat(chatEntry{role: "note", text: ev.Text + " · it restarts with your next message", at: now})
@@ -918,5 +918,5 @@ func (m *Model) restartOrchestrator() tea.Cmd {
 	m.orch.starting = true
 	m.orch.status = "restarting…"
 	m.guide.restart = false // the new process starts with the guidance in use
-	return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.controlWanted())
+	return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.sendLaunchWanted())
 }

@@ -170,6 +170,13 @@ func (m *Model) godSweep() tea.Cmd {
 // guard: the agent then starts in the global mode. Agents a lead starts
 // are never bypass (a bypass agent leads no team), nor are reopened ones.
 func (m *Model) godSpawn() (bridge.Decision, bool) {
+	if !m.orch.control {
+		// Messages to the new agent must go through deliverTo, so the
+		// orchestrator must be on send_message first (it restarts into it
+		// when idle).
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "God mode: the orchestrator is not on Den's send_message yet, so the new agent starts in " + m.agentMode() + ".", at: time.Now()}))
+		return bridge.Decision{}, false
+	}
 	den, err := os.Executable()
 	if err == nil {
 		den, err = filepath.EvalSymlinks(den)

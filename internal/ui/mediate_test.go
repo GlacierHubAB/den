@@ -92,10 +92,9 @@ func TestAgentSettingsExtraHooks(t *testing.T) {
 func guardedModel(t *testing.T) (*Model, *[]string) {
 	t.Helper()
 	m := testModel(140, 40)
-	m.base = append(m.base, m.agents...)
-	sid := m.agents[0].Session.SessionID
+	m.base = []fleet.Agent{m.agents[0]}
+	m.base[0].Session.SessionID = "0f2a3b4c-5d6e-4f70-8192-a3b4c5d6e7f8"
 	m.base[0].Session.Alive = true
-	_ = sid
 	old, oldSend := modeCaller, sendAs
 	t.Cleanup(func() { modeCaller, sendAs = old, oldSend })
 	modeCaller = func(pid int, a fleet.Agent) bool { return pid == 4242 }

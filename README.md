@@ -583,9 +583,16 @@ While it is on, Den's header says so in red, and:
   gives an "always" answer to any card;
 - every message to an agent that runs without asking goes through Den: a
   hook Den gives that agent lets a peer message in only if Den delivered
-  it, and Den shows a red notice for any it blocked. If that agent's Den
-  settings file or the den binary changes, Den marks it unguarded in red
-  and delivers nothing more to it.
+  it, and Den shows a red notice for any it blocked. Den tests that hook
+  when the agent starts, and reads the agent's transcript for any peer
+  message Den did not deliver. If the test fails, such a message shows
+  up, or that agent's Den settings file or the den binary changes, Den
+  marks it unguarded in red, delivers nothing more to it and offers to
+  close it. An agent in `bypassPermissions` that Den did not start this
+  way is listed unguarded too;
+- the orchestrator runs on Den's own `send_message`, never Claude Code's
+  `SendMessage`, while God mode is on and while any guarded agent still
+  runs.
 
 What stays open: an agent that runs without asking can do anything you
 can, including changing Den itself. What it reads is not fenced: files,

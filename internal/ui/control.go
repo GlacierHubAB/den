@@ -238,7 +238,7 @@ func (m Model) pairExe(id string) string {
 func (m *Model) restartForControl() {
 	// On a release control cannot run on (noControl), the orchestrator
 	// stays as it is: restarting would not help.
-	want := m.controlWanted() && m.ctl.noControl == ""
+	want := m.sendLaunchWanted() && m.ctl.noControl == ""
 	if m.orch.proc == nil || m.orch.control == want {
 		return
 	}

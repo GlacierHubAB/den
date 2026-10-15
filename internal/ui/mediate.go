@@ -43,9 +43,10 @@ type agentGuard struct {
 	settingsSHA string
 	den         string // the den binary its hook runs
 	denSHA      string
-	unguarded   string    // why Den no longer trusts the guard, "" while it holds
-	launched    time.Time // when Den handed the guard out for a new agent
-	registered  bool      // the agent started, with the session id Den drew
+	unguarded   string      // why Den no longer trusts the guard, "" while it holds
+	launched    time.Time   // when Den handed the guard out for a new agent
+	registered  bool        // the agent started, with the session id Den drew
+	watch       *guardWatch // what Den watches once it runs (guard.go)
 }
 
 // mediationUI is the mediation's part of the model.
@@ -259,6 +260,11 @@ func (m *Model) handleAgentInbound(r *bridge.Request) tea.Cmd {
 	}
 	if !found || !modeCaller(r.PeerPID, a) {
 		return deny("den: only the session's own hook may ask")
+	}
+	if g := m.med.guards[r.SessionID]; g != nil && g.watch != nil && g.watch.selfTest != "" && in.SHA256 == g.watch.selfTest {
+		// Den's own self-test: the hook works; blocked, quietly.
+		g.watch.selfOK = true
+		return deny("Den's self-test")
 	}
 	at, ok := m.med.sent[r.SessionID][in.SHA256]
 	if ok {
