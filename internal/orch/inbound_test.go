@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -138,9 +139,11 @@ func fakeWith(t *testing.T, perTurn ...string) (Options, string) {
 	// The loop body starts with ":" so that it is never empty: with no
 	// lines, "do" straight followed by "done" is a syntax error, and the
 	// fake would exit right after its init line, racing the test's Send.
-	b.WriteString("#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\",\"model\":\"m\"}'\nwhile IFS= read -r line; do\n  :\n")
+	// Lines go out through printf, not echo: dash's echo (/bin/sh on
+	// Ubuntu) turns the \n inside a JSON string into a real newline.
+	b.WriteString("#!/bin/sh\nprintf '%s\\n' '" + fakeInit + "'\nwhile IFS= read -r line; do\n  :\n")
 	for _, l := range perTurn {
-		b.WriteString("  echo '" + l + "'\n")
+		b.WriteString("  printf '%s\\n' '" + l + "'\n")
 	}
 	b.WriteString("done\n")
 	if err := os.WriteFile(script, []byte(b.String()), 0o755); err != nil {
@@ -150,12 +153,46 @@ func fakeWith(t *testing.T, perTurn ...string) (Options, string) {
 }
 
 const (
+	fakeInit    = `{"type":"system","subtype":"init","session_id":"s1","model":"m"}`
 	hookPass    = `{"type":"system","subtype":"hook_response","hook_event":"UserPromptSubmit","stdout":"","exit_code":0,"outcome":"success"}`
 	hookBlockJS = `{"type":"system","subtype":"hook_response","hook_event":"UserPromptSubmit","stdout":"{\"decision\":\"block\",\"reason\":\"x\"}\n","exit_code":0,"outcome":"success"}`
 	hookExit2   = `{"type":"system","subtype":"hook_response","hook_event":"UserPromptSubmit","stdout":"","stderr":"no","exit_code":2,"outcome":"blocked"}`
 	replayMine  = `{"type":"user","message":{"role":"user","content":"hello"},"isReplay":true}`
 	answer      = `{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.01}`
 )
+
+// TestFakeLinesSurviveShells: the fake prints each fixture as one valid
+// JSON line, also when echo expands backslashes the way dash's does
+// (bash -O xpg_echo stands in for dash where it is not installed).
+func TestFakeLinesSurviveShells(t *testing.T) {
+	lines := []string{hookBlockJS, `{"type":"user","message":{"role":"user","content":"a\nb \"c\""},"isReplay":true}`, answer}
+	_, script := fakeWith(t, lines...)
+	runs := [][]string{{"sh", script}}
+	if _, err := exec.LookPath("bash"); err == nil {
+		runs = append(runs, []string{"bash", "-O", "xpg_echo", script})
+	}
+	if _, err := exec.LookPath("dash"); err == nil {
+		runs = append(runs, []string{"dash", script})
+	}
+	want := append([]string{fakeInit}, lines...)
+	for _, r := range runs {
+		cmd := exec.Command(r[0], r[1:]...)
+		cmd.Stdin = strings.NewReader("turn\n")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%v: %v", r, err)
+		}
+		got := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+		if len(got) != len(want) {
+			t.Fatalf("%v: %d lines, want %d:\n%s", r, len(got), len(want), out)
+		}
+		for i, l := range got {
+			if l != want[i] || !json.Valid([]byte(l)) {
+				t.Errorf("%v: line %d = %s, want %s", r, i, l, want[i])
+			}
+		}
+	}
+}
 
 // collect reads events until Exited or the deadline.
 func collect(t *testing.T, o *Orchestrator, d time.Duration) []Event {
