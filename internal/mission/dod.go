@@ -3,6 +3,7 @@ package mission
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,12 @@ const (
 	maxGoalNote   = 200
 	maxEvidence   = 300
 	maxRunSummary = 600
+	// Caps on the rest of a record, applied when it is read back.
+	maxKeptRuns     = 100
+	maxRunCards     = 64
+	maxListed       = 24
+	maxHumanText    = 4000
+	maxGoalSentence = 600
 )
 
 // Criterion is one line of the definition of done.
@@ -255,6 +262,9 @@ func (m *Mission) AddGoal(g SubGoal) (*SubGoal, error) {
 func (m *Mission) nextGoal() int {
 	n := 0
 	for _, g := range m.Goals {
+		if !goalID.MatchString(g.ID) {
+			continue
+		}
 		if k, err := strconv.Atoi(strings.TrimPrefix(g.ID, "g")); err == nil && k > n {
 			n = k
 		}
@@ -370,11 +380,113 @@ func (m *Mission) standingText() bool {
 }
 
 // clip caps what grows with use before a save: run summaries are built
-// from agents' results.
+// from agents' results, and a schedule mission adds a run each cadence
+// for as long as it stands, so only the last maxKeptRuns are kept (each
+// keeps its number).
 func (m *Mission) clip() {
+	if n := len(m.Runs) - maxKeptRuns; n > 0 {
+		m.Runs = append([]Run(nil), m.Runs[n:]...)
+	}
 	for i := range m.Runs {
-		if r := &m.Runs[i]; len(r.Summary) > maxRunSummary {
+		r := &m.Runs[i]
+		if len(r.Summary) > maxRunSummary {
 			r.Summary = sanitize.Label(r.Summary, maxRunSummary)
 		}
+		if len(r.Cards) > maxRunCards {
+			r.Cards = r.Cards[len(r.Cards)-maxRunCards:]
+		}
 	}
+}
+
+// resanitize cleans a record read back from disk the way it was cleaned
+// on entry: the file is writable by any process of the same user, and
+// what it holds is drawn and put into the orchestrator's missions block.
+func (m *Mission) resanitize() {
+	m.Name = sanitize.Label(m.Name, maxLabel)
+	m.ProjectName = sanitize.Label(m.ProjectName, maxLabel)
+	m.Text = cutText(sanitize.Text(m.Text), maxHumanText)
+	m.Mission = sanitize.Label(m.Mission, maxGoalSentence)
+	m.DoneWhen = sanitize.Label(m.DoneWhen, MaxCriteria*(maxCritText+2))
+	m.Cadence = sanitize.Label(m.Cadence, maxLabel)
+	m.Reason = sanitize.Label(m.Reason, maxGoalText)
+	m.Template = sanitize.Label(m.Template, maxLabel)
+	m.Constraints = labels(m.Constraints, maxGoalText, maxListed)
+	m.Agents = labels(m.Agents, maxLabel, maxListed)
+	if len(m.Team) > maxListed {
+		m.Team = m.Team[:maxListed]
+	}
+	for i := range m.Team {
+		t := &m.Team[i]
+		t.Role, t.Model, t.Under = sanitize.Label(t.Role, maxLabel), sanitize.Label(t.Model, maxLabel), sanitize.Label(t.Under, maxLabel)
+	}
+	if len(m.Criteria) > MaxCriteria {
+		m.Criteria = m.Criteria[:MaxCriteria]
+	}
+	for i := range m.Criteria {
+		c := &m.Criteria[i]
+		c.ID = "c" + strconv.Itoa(i+1)
+		c.Text, c.Evidence = sanitize.Label(c.Text, maxCritText), sanitize.Label(c.Evidence, maxEvidence)
+		if c.State != CritClaimed && c.State != CritMet {
+			c.State = CritOpen
+		}
+	}
+	if len(m.Goals) > MaxGoals {
+		m.Goals = m.Goals[:MaxGoals]
+	}
+	seen := map[string]bool{}
+	for i := range m.Goals {
+		g := &m.Goals[i]
+		if !goalID.MatchString(g.ID) || seen[g.ID] {
+			g.ID = "g" + strconv.Itoa(m.nextGoal())
+		}
+		seen[g.ID] = true
+		g.Text, g.Note = sanitize.Label(g.Text, maxGoalText), sanitize.Label(g.Note, maxGoalNote)
+		g.Owner, g.Host = sanitize.Label(g.Owner, maxLabel), sanitize.Label(g.Host, maxLabel)
+		g.Name, g.Role = sanitize.Label(g.Name, maxLabel), sanitize.Label(g.Role, maxLabel)
+		if !validGoalState(g.State) {
+			g.State = GoalTodo
+		}
+	}
+	if len(m.Assigned) > maxAssigned {
+		m.Assigned = m.Assigned[len(m.Assigned)-maxAssigned:]
+	}
+	for i := range m.Assigned {
+		a := &m.Assigned[i]
+		a.Session, a.Host = sanitize.Label(a.Session, maxLabel), sanitize.Label(a.Host, maxLabel)
+		a.Peer, a.Role = sanitize.Label(a.Peer, maxLabel), sanitize.Label(a.Role, maxLabel)
+	}
+	if len(m.History) > maxHistory {
+		m.History = m.History[len(m.History)-maxHistory:]
+	}
+	for i := range m.History {
+		m.History[i].What = sanitize.Label(m.History[i].What, maxGoalText)
+	}
+	for i := range m.Runs {
+		m.Runs[i].Summary = sanitize.Label(m.Runs[i].Summary, maxRunSummary)
+		for j, c := range m.Runs[i].Cards {
+			m.Runs[i].Cards[j] = sanitize.Label(c, maxLabel)
+		}
+	}
+	m.clip()
+}
+
+var goalID = regexp.MustCompile(`^g[1-9][0-9]{0,2}$`)
+
+// labels cleans a list of one-line labels, dropping empty ones.
+func labels(in []string, max, n int) []string {
+	var out []string
+	for _, s := range in {
+		if s = sanitize.Label(s, max); s != "" && len(out) < n {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// cutText caps multi-line text at n runes.
+func cutText(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
 }

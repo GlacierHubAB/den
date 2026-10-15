@@ -321,6 +321,7 @@ func Load(path string) *Store {
 			// written with the name on its next save.
 			m.ProjectName = ProjectLabel(m.Project)
 		}
+		m.resanitize()
 		m.migrate()
 		s.put(&m)
 	}

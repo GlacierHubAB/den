@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -215,5 +216,58 @@ func TestRunSummariesAreCappedOnSave(t *testing.T) {
 	New("").Save(m)
 	if n := len([]rune(m.Runs[0].Summary)); n > maxRunSummary {
 		t.Errorf("summary %d runes", n)
+	}
+}
+
+func TestRunsAreCappedKeepingTheLast(t *testing.T) {
+	m := &Mission{ID: "m1", Shape: Schedule, State: Running}
+	for i := 0; i < maxKeptRuns+30; i++ {
+		r := m.StartRun(t0.Add(time.Duration(i) * time.Hour))
+		r.EndedAt = r.StartedAt.Add(time.Minute)
+	}
+	New("").Save(m)
+	if len(m.Runs) != maxKeptRuns || m.Runs[0].N != 31 || m.Runs[len(m.Runs)-1].N != maxKeptRuns+30 {
+		t.Errorf("%d runs, first %d, last %d", len(m.Runs), m.Runs[0].N, m.Runs[len(m.Runs)-1].N)
+	}
+}
+
+// The record is writable by any process of the same user: what comes back
+// from it is cleaned and capped again before Den draws it or tells the
+// orchestrator.
+func TestRecordIsCleanedAgainOnLoad(t *testing.T) {
+	rlo, lri, esc, bel := string(rune(0x202e)), string(rune(0x2066)), string(rune(0x1b)), string(rune(0x07))
+	path := filepath.Join(t.TempDir(), "missions.jsonl")
+	m := Mission{ID: "m1", V: recordVersion, State: Running, Name: "ok" + rlo + "name" + esc + "]8;;http://x" + bel,
+		Criteria: []Criterion{{ID: "zz", Text: "c" + lri + "one", State: "bogus", Evidence: "e" + esc + "[2Jv"}},
+		Goals:    []SubGoal{{ID: "g1", Text: "a"}, {ID: "g1", Text: "dup"}, {ID: "g9999", Text: "big", State: "weird", Note: strings.Repeat("n", 1000)}},
+	}
+	for i := 0; i < MaxCriteria+3; i++ {
+		m.Criteria = append(m.Criteria, Criterion{Text: "more"})
+	}
+	for i := 0; i < maxListed+5; i++ {
+		m.Constraints = append(m.Constraints, "x")
+	}
+	raw, _ := json.Marshal(m)
+	os.WriteFile(path, append(raw, '\n'), 0o600)
+	got := Load(path).Get("m1")
+	if strings.ContainsAny(got.Name, rlo+esc+bel) || strings.Contains(got.Name, "http") {
+		t.Errorf("name %q", got.Name)
+	}
+	c := got.Criteria[0]
+	if len(got.Criteria) != MaxCriteria || c.ID != "c1" || c.State != CritOpen || strings.ContainsAny(c.Text+c.Evidence, lri+esc) {
+		t.Errorf("criteria %d %+v", len(got.Criteria), c)
+	}
+	ids := map[string]bool{}
+	for _, g := range got.Goals {
+		if ids[g.ID] || !goalID.MatchString(g.ID) {
+			t.Errorf("goal id %q", g.ID)
+		}
+		ids[g.ID] = true
+	}
+	if g := got.Goals[2]; g.State != GoalTodo || len([]rune(g.Note)) > maxGoalNote {
+		t.Errorf("goal %+v", g)
+	}
+	if len(got.Constraints) != maxListed {
+		t.Errorf("%d constraints", len(got.Constraints))
 	}
 }
