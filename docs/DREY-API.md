@@ -72,7 +72,8 @@ Error codes: `unsupported` (an unknown op or version: hide the feature),
 ## Versioning
 
 `v` is 1. `hello {v, client, version, group?}` returns `{version,
-versions:[1], host, control?, features?}`; `features` lists `"console"`
+versions:[1], host, control?, features?, mode?}`; `mode` is `{global,
+mixed}` (see Permission mode); `features` lists `"console"`
 when Den serves a console (see Console); a `v` Den does not serve gets
 `unsupported`. `control` is `"on"` when an app may pair for control (see
 Control), `"off"` when you turned control off in Den (`/api control off`:
@@ -93,7 +94,7 @@ child process or another program. Added fields never change
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?}` |
+| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -143,9 +144,9 @@ exits.
 Metadata only: names, states, ids, times, counts and digests. No prompt text,
 no transcript, and no request body outside `inbox.body`.
 
-- **Fleet** `{taken, agents, windows, missions, cost, asks?}`. An agent is
+- **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?}`. An agent is
   `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
-  remote?, costUsd, turns, lastSeen, color?}`; `state` is `idle`, `working`, `waiting`
+  remote?, costUsd, turns, lastSeen, color?, permission_mode?}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
   `plan`. Agents on other machines carry `remote: true` and their host's
   label; what their hosts report is passed on as labels, never as Den's own
@@ -154,7 +155,11 @@ no transcript, and no request body outside `inbox.body`.
   in Den's own text, as `#rrggbb`; agents on other machines have none.
   Den colours a name only where it is Den's word that the agent is in the
   fleet: never inside an agent's or a host's own text, and never a name two
-  local agents share.
+  local agents share. `permission_mode` is the mode an agent of this machine
+  runs in as its own hooks last reported it (`default`, `acceptEdits`,
+  `plan`, `auto`, `dontAsk`, `bypassPermissions`, or `unknown` for a value
+  Den does not know); it is absent when none reported one. The fleet's
+  `mode` is the same as hello's.
 - **Item** `{id, kind, agent, since, title, digest, host?}`. A **digest** is
   `{firstLine, bytes, hash}`, with `hash` `"sha256:"` + the hex SHA-256 of the
   body; `inbox.body` returns the same hash. For a request from another machine
@@ -498,6 +503,7 @@ Each connection proves once, at its start:
 | `cmd.list` | | `[{name, usage, help, dock}]` |
 | `cmd.complete` | `{prefix}` | the commands that start with it, at most 64 |
 | `cmd.run` | `{text}` | `{ok, note}` |
+| `mode.set` | `{mode}` | `{ok, applied, note}` for a lowering, or `{ok, card, note}` for a raise that waits on that card |
 
 All but `console.challenge`, `console.claim`, `console.auth` and
 `console.unpair {all: true}` need a proved connection, else `forbidden`
@@ -522,6 +528,8 @@ all` does in a terminal.
   is reserved for a later Den that answers by a rule of its own. Take any
   `by` you do not know as Den's own answer, never the console's or yours,
   and never drop the event for it.
+- `mode {global, mixed}`: the permission mode changed (see Permission
+  mode). One follows the replay of `console.events`, once Den has a mode.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
   of cards waiting: one you knew that is not in it is gone. The `new`
   events that follow are those cards.
@@ -583,6 +591,30 @@ all` does in a terminal.
   ("A lower figure can hold off your usage stop."), and no command proposes
   a mission or runs a template: those wait for Den.
 
+### Permission mode
+
+Den starts every agent in one global permission mode, Claude Code's
+`--permission-mode`: `auto` (the default), `acceptEdits`, `plan`,
+`default` or `dontAsk`. Den ranks them by what an agent does without
+asking: `dontAsk < default < plan, acceptEdits < auto`. `plan` runs any
+command Claude Code's classifier allows, where `default` asks, so it is
+above `default`; `plan` and `acceptEdits` are not ranked against each
+other. `bypassPermissions` is never the global mode.
+
+- `mode {global, mixed}`, in hello, the fleet and the `mode` event:
+  `global` is the mode new agents start in; `mixed` is true when an agent
+  of this machine runs in another mode, or in one Den does not know.
+  Running agents keep their mode until they restart.
+- `mode.set {mode}`, from a proved console, takes the mode exactly as
+  spelled above; anything else is `bad_request`. It shares `cmd.run`'s 30
+  a minute. A change to a lower mode applies at once: `{ok, applied:
+  true}`. Any other change (up, or between `plan` and `acceptEdits`) puts
+  a card in Den and answers `{ok, card}`, its id; the mode changes only
+  once that card is allowed. A newer request settles the open card as
+  `gone` and raises its own. Send a `mode.set` that is not a lowering only
+  from a fresh press in the dock's own window.
+- `cmd.run` takes `/mode <mode>` the same way, and a bare `/mode`.
+
 ### Console limits
 
 - A console's chat (`orch.say`) is fenced exactly as an app's is: what it
@@ -592,7 +624,9 @@ all` does in a terminal.
 - A console answers for you: a card it may answer is as answered as by
   your `Ctrl+Y`, and a console can send `/usage set` and answer that card,
   so it can lower the usage figure your usage stop is measured against.
-  Pair only a program you trust with that.
+  In the same way it can raise the permission mode agents start in, by
+  `mode.set` and answering that card. Pair only a program you trust with
+  that.
 - Any program running as you can read Den's screen, and so the code; the
   `Ctrl+Y` card is there so that a code read off the screen cannot pair in
   silence. Read the card's program and pid before you pair.
