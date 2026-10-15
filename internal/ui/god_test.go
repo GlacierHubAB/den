@@ -202,7 +202,9 @@ func TestGodOffLandsOnTheGlobalMode(t *testing.T) {
 		{"den god off", func(m *Model) { m.handleGodOff(bridge.TestRequest(bridge.Envelope{Event: bridge.GodOffEvent})) }},
 		{"the console's god.off", func(m *Model) { m.applyAPIAct(api.Act{GodOff: "the console turned it off"}) }},
 		{"an unpair", func(m *Model) { m.applyAPIAct(api.Act{GodOff: "the console was unpaired"}) }},
-		{"den unpair", func(m *Model) { m.handleConsoleUnpair(bridge.TestRequest(bridge.Envelope{Event: bridge.ConsoleUnpairEvent})) }},
+		{"den unpair", func(m *Model) {
+			m.handleConsoleUnpair(bridge.TestRequest(bridge.Envelope{Event: bridge.ConsoleUnpairEvent}))
+		}},
 	} {
 		m := testModel(140, 40)
 		m.orch.control = true
@@ -259,5 +261,26 @@ func TestGodModeCards(t *testing.T) {
 	typeLine(&m, "/god off")
 	if card := m.dockCard(&inbox.Item{ID: "x", Kind: inbox.Budget, SessionID: "s"}); card.TTYOnly {
 		t.Error("TTY only with God mode off")
+	}
+}
+
+// In God mode a tool the orchestrator wants in your console's turn waits
+// for you in Den's window: Den never answers it by rule, and the dock
+// cannot answer it either.
+func TestGodModeNeverAnswersAConsoleTurnsTools(t *testing.T) {
+	m := testModel(140, 40)
+	typeLine(&m, "/god on")
+	typeLine(&m, godPhrase)
+	if !m.godOn() {
+		t.Fatal("God mode is not on")
+	}
+	m.ctl.turn = &api.Say{Turn: "t-1", Console: "c-1"}
+	it := m.store.AddControlAsk("Requested from the console: Start an agent", []string{"tool: mcp__den__spawn_agent"})
+	m.godSweep()
+	if it.State == inbox.Resolved || it.AnsweredBy == "rule" {
+		t.Errorf("God mode answered the console turn's tool: %v by %q", it.State, it.AnsweredBy)
+	}
+	if card := m.dockCard(it); card.DockAnswers || !card.TTYOnly {
+		t.Errorf("the dock may answer it: dock_answers %v, tty only %v", card.DockAnswers, card.TTYOnly)
 	}
 }

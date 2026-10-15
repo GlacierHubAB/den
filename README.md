@@ -580,7 +580,9 @@ While it is on, Den's header says so in red, and:
 - pairings, app grants, turning the API on, installs, guidance, skills,
   budgets and usage, messages to hosts, an app's turn, merges and your
   console stay yours, and only Den's own window answers them, as it alone
-  gives an "always" answer to any card;
+  gives an "always" answer to any card. That includes each tool in a turn
+  your console's chat started: from the dock alone you cannot approve it
+  while God mode is on, so answer it in Den's window;
 - every message to an agent that runs without asking goes through Den: a
   hook Den gives that agent lets a peer message in only if Den delivered
   it, and Den shows a red notice for any it blocked. Den tests that hook
