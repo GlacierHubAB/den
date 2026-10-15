@@ -59,22 +59,57 @@ const blockedNoteEvery = 10 * time.Minute
 // sendAs is peer.SendAs; tests replace it.
 var sendAs = peer.SendAs
 
-// mediationSettings is the --settings JSON for a guarded agent: the hook,
-// with den and its socket as absolute paths (never a PATH lookup or the
-// agent's environment), every peer message reaching the hook, and hooks
-// never switched off.
-func mediationSettings(den, sock string) ([]byte, error) {
+// agentHook is one hook Den puts in an agent's --settings: for an event,
+// a tool matcher ("" for none), den's own arguments (den and its socket
+// are added, as absolute paths) and Claude Code's timeout for it.
+type agentHook struct {
+	Event   string // UserPromptSubmit, PreToolUse, …
+	Matcher string
+	Args    []string // after `den hook`, e.g. {"desktop-gate"}
+	Timeout int      // seconds
+}
+
+// agentHooks are what an agent's --settings file holds: the inbound
+// mediation hook when Inbound (God mode's guarded agents), and Extra hooks
+// other parts of Den need (a desktop agent's tool gate). One file per
+// agent, so one tamper check covers it all.
+type agentHooks struct {
+	Inbound bool
+	Extra   []agentHook
+}
+
+// mediationSettings is the --settings JSON for an agent: its hooks, with
+// den and its socket as absolute paths (never a PATH lookup or the agent's
+// environment), and hooks never switched off by the agent's own user,
+// project or local settings. With the inbound hook, every peer message
+// reaches it.
+func mediationSettings(den, sock string, h agentHooks) ([]byte, error) {
 	if !filepath.IsAbs(den) || !filepath.IsAbs(sock) {
 		return nil, errors.New("den and its socket must be absolute paths")
 	}
-	cmd := shellQuote(den) + " hook agent-inbound --socket " + shellQuote(sock)
-	return json.Marshal(map[string]any{
-		"disableAllHooks":     false,
-		"crossSessionInbound": "accept",
-		"hooks": map[string]any{
-			"UserPromptSubmit": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": 10}}}},
-		},
-	})
+	hooks := map[string][]any{}
+	add := func(x agentHook) {
+		cmd := shellQuote(den) + " hook"
+		for _, a := range x.Args {
+			cmd += " " + shellQuote(a)
+		}
+		cmd += " --socket " + shellQuote(sock)
+		entry := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": x.Timeout}}}
+		if x.Matcher != "" {
+			entry["matcher"] = x.Matcher
+		}
+		hooks[x.Event] = append(hooks[x.Event], entry)
+	}
+	settings := map[string]any{"disableAllHooks": false}
+	if h.Inbound {
+		add(agentHook{Event: "UserPromptSubmit", Args: []string{"agent-inbound"}, Timeout: 10})
+		settings["crossSessionInbound"] = "accept"
+	}
+	for _, x := range h.Extra {
+		add(x)
+	}
+	settings["hooks"] = hooks
+	return json.Marshal(settings)
 }
 
 // shellQuote quotes s for sh, as Claude Code runs a hook's command.
@@ -99,8 +134,8 @@ func fileSHA(path string) string {
 // guardAgent writes the --settings file for a new guarded agent, in Den's
 // own state (never the project, 0600 in a 0700 folder), and records what
 // it relies on. It returns the file's path for the agent's --settings.
-func (m *Model) guardAgent(sessionID, den, sock string) (string, error) {
-	raw, err := mediationSettings(den, sock)
+func (m *Model) guardAgent(sessionID, den, sock string, h agentHooks) (string, error) {
+	raw, err := mediationSettings(den, sock, h)
 	if err != nil {
 		return "", err
 	}

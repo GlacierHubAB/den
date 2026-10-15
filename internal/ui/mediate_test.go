@@ -25,13 +25,13 @@ import (
 // 0600 in Den's own state.
 func TestMediationSettingsFile(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	if _, err := mediationSettings("den", "/run/den.sock"); err == nil {
+	if _, err := mediationSettings("den", "/run/den.sock", agentHooks{Inbound: true}); err == nil {
 		t.Error("a relative den path was taken")
 	}
 	m := testModel(140, 40)
 	den := filepath.Join(t.TempDir(), "my den")
 	os.WriteFile(den, []byte("binary"), 0o755)
-	path, err := m.guardAgent("s-otter", den, "/run/user/1000/den.sock")
+	path, err := m.guardAgent("s-otter", den, "/run/user/1000/den.sock", agentHooks{Inbound: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +64,26 @@ func TestMediationSettingsFile(t *testing.T) {
 		t.Errorf("disableAllHooks %v, crossSessionInbound %q", s.DisableAllHooks, s.CrossSessionInbound)
 	}
 	if len(s.Hooks.UserPromptSubmit) != 1 || len(s.Hooks.UserPromptSubmit[0].Hooks) != 1 ||
-		s.Hooks.UserPromptSubmit[0].Hooks[0].Command != "'"+den+"' hook agent-inbound --socket '/run/user/1000/den.sock'" {
+		s.Hooks.UserPromptSubmit[0].Hooks[0].Command != "'"+den+"' hook 'agent-inbound' --socket '/run/user/1000/den.sock'" {
 		t.Errorf("hooks %+v", s.Hooks)
+	}
+}
+
+// Another part of Den's hooks share the one file: a tool gate with its
+// matcher, and hooks still never off; without the inbound hook there is no
+// crossSessionInbound.
+func TestAgentSettingsExtraHooks(t *testing.T) {
+	raw, err := mediationSettings("/usr/bin/den", "/run/den.sock", agentHooks{Extra: []agentHook{{Event: "PreToolUse", Matcher: "mcp__hypruse__.*", Args: []string{"desktop-gate"}, Timeout: 10}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s map[string]any
+	json.Unmarshal(raw, &s)
+	if s["disableAllHooks"] != false || s["crossSessionInbound"] != nil {
+		t.Errorf("%s", raw)
+	}
+	if !strings.Contains(string(raw), `"matcher":"mcp__hypruse__.*"`) || !strings.Contains(string(raw), `'/usr/bin/den' hook 'desktop-gate' --socket '/run/den.sock'`) {
+		t.Errorf("%s", raw)
 	}
 }
 
@@ -173,7 +191,7 @@ func TestGuardTamperStopsDelivery(t *testing.T) {
 	sid := m.base[0].Session.SessionID
 	den := filepath.Join(t.TempDir(), "den")
 	os.WriteFile(den, []byte("binary"), 0o755)
-	path, err := m.guardAgent(sid, den, "/run/den.sock")
+	path, err := m.guardAgent(sid, den, "/run/den.sock", agentHooks{Inbound: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +214,7 @@ func TestGuardTamperStopsDelivery(t *testing.T) {
 	}
 	// The den binary too.
 	m2, _ := guardedModel(t)
-	m2.guardAgent(sid, den, "/run/den.sock")
+	m2.guardAgent(sid, den, "/run/den.sock", agentHooks{Inbound: true})
 	os.WriteFile(den, []byte("another binary"), 0o755)
 	m2.checkGuards()
 	if !strings.Contains(m2.unguarded(sid), "den binary") {
