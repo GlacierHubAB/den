@@ -90,12 +90,19 @@ func TestDreyInterface(t *testing.T) {
 	m.refresh()
 	m.api.lastKey = time.Time{}
 
-	path := m.api.srv.Path()
+	path, srv := m.api.srv.Path(), m.api.srv
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		denconformance.Run(t, denconformance.Options{
 			Dial: func(ctx context.Context) (net.Conn, error) {
+				// Each subtest dials afresh while Den may not yet have seen
+				// the last one's connections close: wait, briefly, for room
+				// under the per-process cap, so the cap is not what the
+				// suite measures.
+				for end := time.Now().Add(2 * time.Second); len(srv.Clients()) >= api.MaxConnsPerPID && time.Now().Before(end); {
+					time.Sleep(5 * time.Millisecond)
+				}
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", path)
 			},

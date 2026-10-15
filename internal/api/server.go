@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
@@ -27,6 +28,10 @@ const (
 	writeDeadline  = 5 * time.Second
 	outQueue       = 64
 )
+
+// MaxConnsPerPID is how many connections one process may hold at once; one
+// more is refused with "too many connections".
+const MaxConnsPerPID = maxConnsPerPID
 
 // Options configure the server.
 type Options struct {
@@ -57,6 +62,9 @@ type Server struct {
 	notes chan string
 
 	paused atomic.Bool // /api off or /api disconnect: answer unavailable
+	// draining counts refused connections still reading out what their
+	// client sent (turnAway); past maxDraining they are closed at once.
+	draining atomic.Int32
 
 	grants   *grants
 	acts     chan Act
@@ -567,6 +575,41 @@ func writeNow(nc net.Conn, code, msg string) {
 	nc.Close()
 }
 
+// maxDraining, drainFor and drainMax bound how refused connections are
+// read out before they close.
+const (
+	maxDraining = 8
+	drainFor    = 200 * time.Millisecond
+	drainMax    = 64 << 10
+)
+
+// turnAway answers a connection Den will not serve, on that connection's own
+// goroutine. Closing a unix socket with bytes it has not read resets the
+// client, which then reads ECONNRESET instead of why: so after the error
+// line Den shuts its side for writing and discards what the client sent
+// (never parsed), for at most drainFor and drainMax, then closes. A
+// draining connection is not one of s.conns and counts against no cap;
+// past maxDraining of them, it closes at once.
+func (s *Server) turnAway(nc net.Conn, code, msg string) {
+	if s.draining.Add(1) > maxDraining {
+		s.draining.Add(-1)
+		writeNow(nc, code, msg)
+		return
+	}
+	defer s.draining.Add(-1)
+	defer nc.Close()
+	raw, _ := json.Marshal(Reply{ID: 0, OK: false, Error: &WireError{Code: code, Message: msg}})
+	nc.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := nc.Write(append(raw, '\n')); err != nil {
+		return
+	}
+	if uc, ok := nc.(*net.UnixConn); ok {
+		uc.CloseWrite()
+	}
+	nc.SetReadDeadline(time.Now().Add(drainFor))
+	io.Copy(io.Discard, io.LimitReader(nc, drainMax))
+}
+
 func (s *Server) serve(nc net.Conn) {
 	// Who is it, before reading a byte.
 	peer, err := identify(nc)
@@ -575,7 +618,7 @@ func (s *Server) serve(nc net.Conn) {
 		return
 	}
 	if s.paused.Load() {
-		writeNow(nc, CodeUnavailable, "the human disconnected API clients in Den")
+		s.turnAway(nc, CodeUnavailable, "the human disconnected API clients in Den")
 		return
 	}
 	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}, scope: "conn:" + randHex(), cid: randHex()}
@@ -588,7 +631,7 @@ func (s *Server) serve(nc net.Conn) {
 	}
 	if len(s.conns) >= maxConns || perPID >= maxConnsPerPID {
 		s.mu.Unlock()
-		writeNow(nc, CodeUnavailable, "too many connections")
+		s.turnAway(nc, CodeUnavailable, "too many connections")
 		return
 	}
 	s.conns[c] = true
