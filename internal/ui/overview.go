@@ -9,20 +9,104 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/GlacierHubAB/den/internal/cost"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/transcript"
 )
 
 // overviewState is the Overview tab: which mission row is selected, which
 // mission is open, and the proposal waiting for ^Y.
 type overviewState struct {
-	cur      int
+	// sel is the selected mission's id: the row follows it when the list
+	// re-sorts. idx is its row when last moved, so a mission that goes
+	// selects its neighbour; top is the first mission row in view.
+	sel string
+	idx int
+	top int
+
 	open     string // mission id shown in full
 	proposal string // mission id of the pending proposal
-	scroll   int    // lines from the bottom of the open mission or proposal
+	scroll   int    // the proposal: lines from the top; a transcript: lines from the bottom
 	listing  bool   // the template list is showing in place of the missions
+	// who is the selected row of the open mission's WHO DOES WHAT;
+	// transcript is the session whose transcript shows in its place, with
+	// the entries last read (trAt) for it.
+	who        int
+	transcript string
+	trEntries  []transcript.Entry
+	trAt       time.Time
 	// moves are the /mission move questions in the inbox: item id → what
 	// ^Y on it does.
 	moves map[string]pendingMove
+}
+
+// Margins inside a missions pane: a blank column, the selection bar, a
+// blank column, the content, two blank columns. The border never touches
+// the band or the bar.
+const (
+	ovLeft  = 3
+	ovRight = 2
+)
+
+// ovBody is the content width inside a pane of inner width w.
+func ovBody(w int) int { return max(8, w-ovLeft-ovRight) }
+
+// ovLine is one plain line of a missions pane: margins and the content
+// padded to the pane's width.
+func (m Model) ovLine(content string, w int) string {
+	body := ovBody(w)
+	return "   " + ansi.Truncate(content, body, "…") + strings.Repeat(" ", max(0, body-ansi.StringWidth(ansi.Truncate(content, body, "…")))) + "  "
+}
+
+// ovSelLine is a selected line: the band across the whole width, gaps
+// included, and the bar in the second column.
+func (m Model) ovSelLine(content string, w int, fg lipgloss.Style, marker string) string {
+	body := ovBody(w)
+	c := ansi.Truncate(content, body, "…")
+	// The missions panes' bar is the full-height ▌ the design uses; the
+	// shared row style draws the Fleet's thinner one.
+	marker = strings.Replace(marker, "▎", "▌", 1)
+	return fg.Render(" ") + marker + fg.Render(" ") + c + fg.Render(strings.Repeat(" ", max(0, body-ansi.StringWidth(c))+ovRight))
+}
+
+// justifyIn is justify with the gap drawn in pad's style, so a selected
+// row's band has no hole between its two ends.
+func justifyIn(left, right string, w int, pad lipgloss.Style) string {
+	gap := w - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + pad.Render(strings.Repeat(" ", gap)) + right
+}
+
+// missionCounts is how many of a project's missions are live and how many
+// of those need the human: the chip and the list use the same rules.
+func (m Model) missionCounts(root string) (live, needs, done int) {
+	for _, ms := range m.missions.ForProject(root) {
+		switch {
+		case ms.Live():
+			live++
+			if m.missionState(ms) == mission.Waiting {
+				needs++
+			}
+		case ms.State == mission.Done:
+			done++
+		}
+	}
+	return live, needs, done
+}
+
+// chipCount is a project chip's mission mark: ◐ and how many need the
+// human, else ● and how many are live, else nothing.
+func (m Model) chipCount(root string) (mark string, needsYou bool) {
+	live, needs, _ := m.missionCounts(root)
+	switch {
+	case needs > 0:
+		return fmt.Sprintf("◐%d", needs), true
+	case live > 0:
+		return fmt.Sprintf("●%d", live), false
+	}
+	return "", false
 }
 
 // projectStrip is the row under the tabs that names the projects and the
@@ -51,13 +135,29 @@ func (m Model) projectStrip(w int) string {
 	}
 	var parts []string
 	parts = append(parts, s.section.Render("PROJECT"))
+	sel := lipgloss.Color(s.pal.Sel)
 	for _, p := range m.proj.list {
 		label := fmt.Sprintf("%s %d", p.Name, len(p.Agents))
+		mark, needs := m.chipCount(p.Root)
 		if p.Root == m.proj.cur {
+			// Inside the picked chip the mark takes the chip's own ink: a
+			// colour there reads as a second selection; the glyph says it.
+			if mark != "" {
+				label += " " + mark
+			}
 			parts = append(parts, s.keycapOn.Render(label))
-		} else {
-			parts = append(parts, s.keycap.Render(label))
+			continue
 		}
+		if mark == "" {
+			parts = append(parts, s.keycap.Render(label))
+			continue
+		}
+		ms := s.ok
+		if needs {
+			ms = s.attn
+		}
+		bg := lipgloss.NewStyle().Background(sel)
+		parts = append(parts, s.keycap.Padding(0).Render(" "+label+" ")+ms.Background(sel).Render(mark)+bg.Render(" "))
 	}
 	if m.proj.loose > 0 {
 		parts = append(parts, s.muted.Render(fmt.Sprintf("no project %d", m.proj.loose)))
@@ -72,8 +172,8 @@ func (m Model) projectStrip(w int) string {
 		if p.Branch != "" {
 			right += " · " + p.Branch
 		}
-		if n := len(m.missions.ForProject(p.Root)); n > 0 {
-			right += fmt.Sprintf(" · %d missions", n)
+		if live, _, done := m.missionCounts(p.Root); live+done > 0 {
+			right += fmt.Sprintf(" · %d running · %d done", live, done)
 		}
 		right = s.dim.Render(right) + " "
 	}
@@ -99,18 +199,32 @@ func (m Model) stripBlock(w int) string {
 	return "\n" + m.projectStrip(w) + "\n"
 }
 
+// overviewFull reports whether the missions pane takes the whole width: an
+// open mission, its transcript or a proposal. Esc brings the agents back.
+func (m Model) overviewFull() bool { return m.ov.open != "" || m.ov.proposal != "" }
+
+// agentsWidth is the agents pane's width beside the missions: a 30-column
+// floor under 100 columns, so the list keeps room for its names.
+func agentsWidth(w int) int {
+	if w < 100 {
+		return 30
+	}
+	return clamp(w*42/100, 36, 64)
+}
+
 // overviewPanes lays the tab out: the strip, the project's agents on the
-// left and its missions on the right.
+// left and its missions on the right; an open mission, its transcript or
+// a proposal takes the whole width, under the strip.
 func (m Model) overviewPanes(w, h int) string {
 	strip := m.stripBlock(w)
 	h -= stripRows
 	if h < 4 {
 		return strip
 	}
-	if w < 72 {
+	if w < 72 || m.overviewFull() {
 		return strip + "\n" + m.box(m.missionsTitle(), m.missionsPane(w-2, h-2), w, h, true)
 	}
-	lw := clamp(w*42/100, 36, 64)
+	lw := agentsWidth(w)
 	rw := w - lw
 	title := "Agents"
 	if p, ok := m.curProject(); ok {
@@ -121,21 +235,40 @@ func (m Model) overviewPanes(w, h int) string {
 	return strip + "\n" + lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 }
 
+// listHeight is the missions list's inner height on the Overview as laid
+// out now, for keeping the selection in view.
+func (m Model) listHeight() int {
+	_, ph := m.paneArea()
+	return ph - stripRows - 2
+}
+
 func (m Model) missionsTitle() string {
 	if m.ov.listing {
 		return "Templates"
 	}
 	if ms := m.missions.Get(m.ov.open); ms != nil {
+		if m.ov.transcript != "" {
+			if a, ok := m.agentFor(m.ov.transcript); ok {
+				return "Mission · " + ms.Name + " · " + a.Name
+			}
+		}
 		return "Mission · " + ms.Name
+	}
+	if ms := m.missions.Get(m.ov.proposal); ms != nil && ms.Name != "" {
+		return "Mission proposal · " + ms.Name
 	}
 	if m.ov.proposal != "" {
 		return "Mission proposal"
+	}
+	if p, ok := m.curProject(); ok {
+		return "Missions · " + p.Name
 	}
 	return "Missions"
 }
 
 // projectAgentsPane is the agents pane narrowed to the project, without a
-// cursor: the Fleet view selects agents, this one shows who is here.
+// cursor: the Fleet view selects agents, this one shows who is here. A
+// narrow pane drops the role tags first (the Fleet view has them).
 func (m Model) projectAgentsPane(w, h int) string {
 	agents := m.projectAgents()
 	if len(agents) == 0 {
@@ -145,6 +278,7 @@ func (m Model) projectAgentsPane(w, h int) string {
 	mo.agents = agents
 	mo.cursor = -1
 	mo.tree.mapView = false
+	mo.noRoles = w < 34
 	out := mo.agentsPane(w, h)
 	lines := strings.Split(out, "\n")
 	if len(lines) > h {
@@ -154,39 +288,46 @@ func (m Model) projectAgentsPane(w, h int) string {
 }
 
 // missionsPane shows the proposal while one is pending, the open mission
-// in full, or the project's missions as rows. A proposal or a mission ends
-// in its conversation, so like the chat it follows the tail, honouring
-// scroll-back.
+// or its owner's transcript, or the project's missions as rows.
 func (m Model) missionsPane(w, h int) string {
 	lines, _ := m.missionsPaneOwned(w, h)
 	return strings.Join(lines, "\n")
 }
 
 // missionsPaneOwned is missionsPane's lines, each with the chat entry it
-// draws (-1 for none), so a click can find an action in the thread.
+// draws (-1 for none: the mission views draw no chat).
 func (m Model) missionsPaneOwned(w, h int) (lines []string, owners []int) {
 	switch {
 	case m.ov.listing:
 		lines = m.templateLines(w)
-	case m.ov.proposal != "":
-		lines, owners = m.proposalLinesOwned(w)
-	case m.ov.open != "":
-		lines, owners = m.missionLinesOwned(w)
-	default:
-		lines = m.missionRows(w)
 		if len(lines) > h {
 			lines = lines[:h]
 		}
-		return lines, noOwners(len(lines))
+	case m.ov.proposal != "":
+		lines = m.proposalView(w)
+		if len(lines) > h {
+			start := clamp(m.ov.scroll, 0, len(lines)-h)
+			lines = lines[start : start+h]
+		}
+	case m.ov.open != "" && m.ov.transcript != "":
+		lines = m.transcriptView(w, h)
+	case m.ov.open != "":
+		var sel int
+		lines, sel = m.missionView(w)
+		if len(lines) > h {
+			// The top stays put unless the selected WHO DOES WHAT row
+			// would leave the view.
+			start := 0
+			if sel >= h-3 {
+				start = sel - (h - 3)
+			}
+			start = clamp(start, 0, len(lines)-h)
+			lines = lines[start : start+h]
+		}
+	default:
+		lines = m.missionRows(w, h)
 	}
-	if owners == nil {
-		owners = noOwners(len(lines))
-	}
-	if len(lines) > h {
-		start := clamp(len(lines)-h-m.ov.scroll, 0, len(lines)-h)
-		lines, owners = lines[start:start+h], owners[start:start+h]
-	}
-	return lines, owners
+	return lines, noOwners(len(lines))
 }
 
 // noOwners is n lines that draw no chat entry.
@@ -196,13 +337,6 @@ func noOwners(n int) []int {
 		o[i] = -1
 	}
 	return o
-}
-
-// withThread appends the mission's thread to out, and its owners to the
-// -1s of the lines before it.
-func (m Model) withThread(out []string, ms *mission.Mission, w int) ([]string, []int) {
-	lines, owners := m.threadLinesOwned(ms, w)
-	return append(out, lines...), append(noOwners(len(out)), owners...)
 }
 
 // toggleThreadActions expands every collapsed action in the open mission's
@@ -227,29 +361,76 @@ func (m *Model) toggleThreadActions() bool {
 	return len(in) > 0
 }
 
-// missionRows lists the project's missions, three lines each.
-func (m Model) missionRows(w int) []string {
-	s := m.st
-	list := m.missions.ForProject(m.proj.cur)
+// ovList is the picked project's missions in list order.
+func (m Model) ovList() []*mission.Mission { return m.missions.ForProject(m.proj.cur) }
+
+// ovIndex is the selected mission's row in list: the one with ov.sel, or
+// its neighbour by ov.idx when it went.
+func (m Model) ovIndex(list []*mission.Mission) int {
+	for i, ms := range list {
+		if ms.ID == m.ov.sel {
+			return i
+		}
+	}
+	return clamp(m.ov.idx, 0, max(0, len(list)-1))
+}
+
+// missionsPerScreen is how many three-line rows fit in a list of height h,
+// leaving room for the "more" lines.
+func missionsPerScreen(h int) int { return max(1, (h-3)/4) }
+
+// listWindow is the first and last+1 mission rows in view: the selected
+// row is always whole, and the window moves only when it must.
+func listWindow(top, sel, n, h int) (int, int) {
+	k := missionsPerScreen(h)
+	if n <= k {
+		return 0, n
+	}
+	start := clamp(top, sel-k+1, sel)
+	start = clamp(start, 0, n-k)
+	return start, start + k
+}
+
+// moveMission moves the selection by delta rows and keeps it in view.
+func (m *Model) moveMission(delta int) {
+	list := m.ovList()
 	if len(list) == 0 {
-		var out []string
-		out = append(out, "")
-		for _, l := range strings.Split(ansi.Wrap("No missions here yet. Describe a goal on the command line and the orchestrator will propose how to run it: once, as a loop, as a fan-out across agents, or on a schedule. Nothing starts until you press ^Y.", w-4, ""), "\n") {
-			out = append(out, "  "+s.dim.Render(l))
+		return
+	}
+	i := clamp(m.ovIndex(list)+delta, 0, len(list)-1)
+	m.ov.sel, m.ov.idx = list[i].ID, i
+	m.ov.top, _ = listWindow(m.ov.top, i, len(list), m.listHeight())
+}
+
+// missionRows lists the project's missions, three lines each, the selected
+// one in a band with the bar, scrolled to keep it in view.
+func (m Model) missionRows(w, h int) []string {
+	s := m.st
+	list := m.ovList()
+	if len(list) == 0 {
+		out := []string{""}
+		for _, l := range strings.Split(ansi.Wrap("No missions here yet. Tell the orchestrator the goal on the command line (or /mission <goal>): it proposes the done criteria and who does what. Nothing starts until you press ^Y.", ovBody(w), ""), "\n") {
+			out = append(out, m.ovLine(s.dim.Render(l), w))
 		}
 		return out
 	}
-	var out []string
-	out = append(out, "")
-	for i, ms := range list {
-		fg, dim, muted, bright, ok, attn, errS, marker := m.rowStyles(i == m.ov.cur)
-		state := m.missionState(ms)
+	sel := m.ovIndex(list)
+	start, end := listWindow(m.ov.top, sel, len(list), h)
+	body := ovBody(w)
+	out := []string{""}
+	if start > 0 {
+		out[0] = m.ovLine(s.dim.Render(fmt.Sprintf("↑ %d more", start)), w)
+	}
+	for i := start; i < end; i++ {
+		ms := list[i]
+		selected := i == sel
+		fg, dim, muted, bright, ok, attn, errS, marker := m.rowStyles(selected)
 		var st string
-		switch state {
+		switch m.missionState(ms) {
 		case mission.Running:
 			st = ok.Render("● running · " + humanAge(time.Since(ms.Updated)))
 		case mission.Waiting:
-			st = attn.Render("◐ needs you")
+			st = attn.Render("◐ needs you · " + humanAge(time.Since(ms.Updated)))
 		case mission.Paused:
 			st = dim.Render("‖ paused")
 		case mission.Done:
@@ -257,25 +438,81 @@ func (m Model) missionRows(w int) []string {
 		case mission.Failed:
 			st = errS.Render("✕ failed")
 		case mission.Proposed:
-			st = muted.Render("· proposed")
+			st = attn.Render("proposal")
 		}
 		name := fg.Render(ms.Name)
-		if i == m.ov.cur {
-			name = bright.Render(ms.Name)
+		if selected {
+			name = bright.Bold(true).Render(ms.Name)
 		}
-		head := marker + fg.Render(" ") + fg.Render(ms.Shape.Glyph()) + fg.Render(" ") + name
-		l1 := justify(ansi.Truncate(head, max(8, w-ansi.StringWidth(st)-2), "…"), st, w)
-		l2 := marker + fg.Render("   ") + dim.Render(ansi.Truncate(m.missionBrief(ms), w-4, "…"))
-		l3 := marker + fg.Render("   ") + dim.Render(ansi.Truncate(m.missionNow(ms), w-4, "…"))
+		// The state is never cut: the name gives way.
+		head := fg.Render(ms.Shape.Glyph()+" ") + ansi.Truncate(name, max(4, body-ansi.StringWidth(st)-4), "…")
+		l1 := justifyIn(head, st, body, fg)
+		l2 := fg.Render("  ") + dim.Render(ansi.Truncate("goal: "+ms.Mission, body-2, "…"))
+		l3 := fg.Render("  ") + muted.Render(ansi.Truncate(m.missionLine(ms), body-2, "…"))
 		for _, l := range []string{l1, l2, l3} {
-			out = append(out, fill(l, w, fg))
+			if selected {
+				out = append(out, m.ovSelLine(l, w, fg, marker))
+			} else {
+				out = append(out, m.ovLine(l, w))
+			}
 		}
 		out = append(out, "")
+	}
+	if end < len(list) {
+		out = append(out, m.ovLine(s.dim.Render(fmt.Sprintf("↓ %d more · PgDn", len(list)-end)), w))
+	}
+	if len(out) > h {
+		out = out[:h]
 	}
 	return out
 }
 
-// missionBrief is the row's second line: shape, agents and done-when.
+// missionLine is a row's third line: the criteria met, who owns the
+// sub-goals, and which sub-goal needs the human; a mission from before
+// criteria says what its run is doing.
+func (m Model) missionLine(ms *mission.Mission) string {
+	if len(ms.Criteria) == 0 && len(ms.Goals) == 0 {
+		return m.missionNow(ms)
+	}
+	var parts []string
+	if met, _, total := ms.CriteriaCounts(); total > 0 {
+		parts = append(parts, fmt.Sprintf("done %d/%d", met, total))
+	}
+	var owners []string
+	for _, g := range ms.Goals {
+		o := firstNonEmptyS(g.Name, g.Role)
+		if o != "" && !containsS(owners, o) {
+			owners = append(owners, o)
+		}
+	}
+	if len(owners) > 2 {
+		owners = append(owners[:2], fmt.Sprintf("+%d", len(owners)-2))
+	}
+	if len(owners) > 0 {
+		parts = append(parts, strings.Join(owners, ", "))
+	}
+	for _, g := range ms.Goals {
+		if m.goalNeedsYou(g) {
+			parts = append(parts, g.ID+" needs you")
+		}
+	}
+	if ms.Shape == mission.Schedule && !ms.NextRun.IsZero() && ms.State == mission.Running {
+		parts = append(parts, "next "+untilShort(ms.NextRun))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// goalNeedsYou is a sub-goal's derived state: its owner, on this machine,
+// is waiting on the human. Never stored.
+func (m Model) goalNeedsYou(g mission.SubGoal) bool {
+	if g.Owner == "" || g.Host != "" {
+		return false
+	}
+	a, ok := m.agentFor(g.Owner)
+	return ok && a.Status == fleet.NeedsYou
+}
+
+// missionBrief is a short line of shape, agents and done-when.
 func (m Model) missionBrief(ms *mission.Mission) string {
 	parts := []string{ms.Shape.Label()}
 	if ms.Cadence != "" {
@@ -295,8 +532,8 @@ func (m Model) missionBrief(ms *mission.Mission) string {
 	return strings.Join(parts, " · ")
 }
 
-// missionNow is the row's third line: what is happening in the current
-// run, the last run's summary, or the next scheduled time.
+// missionNow is what is happening in the current run, the last run's
+// summary, or the next scheduled time.
 func (m Model) missionNow(ms *mission.Mission) string {
 	if r := ms.CurrentRun(); r != nil {
 		return fmt.Sprintf("run %d · %s", r.N, m.runProgress(ms, r))
@@ -354,66 +591,6 @@ func untilShort(t time.Time) string {
 	return t.Format("Mon 15:04")
 }
 
-// fieldLines spells out a mission's fields.
-func (m Model) fieldLines(ms *mission.Mission, w int) []string {
-	s := m.st
-	var out []string
-	kv := func(k, v string, style lipgloss.Style) {
-		if v == "" {
-			return
-		}
-		label := s.dim.Render(fmt.Sprintf("  %-12s", k))
-		for i, l := range strings.Split(ansi.Wrap(v, max(10, w-14), ""), "\n") {
-			if i > 0 {
-				label = strings.Repeat(" ", 14)
-			}
-			out = append(out, label+style.Render(l))
-		}
-	}
-	kv("project", ms.ProjectName, s.fg)
-	kv("mission", ms.Mission, s.fg)
-	kv("done when", ms.DoneWhen, s.fg)
-	kv("template", ms.Template, s.fg)
-	if len(ms.Constraints) > 0 {
-		var tags []string
-		for _, c := range ms.Constraints {
-			tags = append(tags, s.keycap.Render(c))
-		}
-		out = append(out, s.dim.Render(fmt.Sprintf("  %-12s", "constraints"))+strings.Join(tags, " "))
-	}
-	shape := s.bright.Render(ms.Shape.Glyph() + " " + ms.Shape.Label())
-	if ms.Cadence != "" {
-		shape += s.fg.Render(" · " + ms.Cadence)
-	}
-	if ms.Reason != "" {
-		shape += s.dim.Render(" · " + ms.Reason)
-	}
-	out = append(out, ansi.Truncate(s.dim.Render(fmt.Sprintf("  %-12s", "shape"))+shape, w, "…"))
-	if len(ms.Agents) > 0 {
-		var names []string
-		for _, n := range ms.Agents {
-			style := s.fg
-			for _, a := range m.agents {
-				if a.Name == n {
-					style = lipgloss.NewStyle().Foreground(lipgloss.Color(m.agentColor(a)))
-				}
-			}
-			names = append(names, style.Render(n))
-		}
-		out = append(out, s.dim.Render(fmt.Sprintf("  %-12s", "agents"))+strings.Join(names, s.dim.Render(", ")))
-	}
-	if len(ms.Team) > 0 {
-		label := s.dim.Render(fmt.Sprintf("  %-12s", "team"))
-		for i, l := range m.teamLines(ms.Team) {
-			if i > 0 {
-				label = strings.Repeat(" ", 14)
-			}
-			out = append(out, ansi.Truncate(label+l, w, "…"))
-		}
-	}
-	return out
-}
-
 // teamLines draws the roles to start as a tree, leads above their people,
 // each with its model.
 func (m Model) teamLines(team []mission.Member) []string {
@@ -457,127 +634,4 @@ func (m Model) teamLines(team []mission.Member) []string {
 		}
 	}
 	return out
-}
-
-// proposalLines is the orchestrator's proposal, waiting for ^Y.
-func (m Model) proposalLines(w int) []string {
-	lines, _ := m.proposalLinesOwned(w)
-	return lines
-}
-
-// proposalLinesOwned is proposalLines with each line's chat entry.
-func (m Model) proposalLinesOwned(w int) ([]string, []int) {
-	s := m.st
-	ms := m.missions.Get(m.ov.proposal)
-	if ms == nil {
-		return nil, nil
-	}
-	var out []string
-	out = append(out, "")
-	if ms.Mission != "" {
-		head := "  " + s.bright.Bold(true).Render(ms.Name) + "  " + s.chip(m.st.pal.Bright).Render("PROPOSAL")
-		out = append(out, ansi.Truncate(head, w, "…"))
-		out = append(out, "")
-		out = append(out, m.fieldLines(ms, w)...)
-		out = append(out, "")
-	}
-	out, owners := m.withThread(out, ms, w)
-	if ms.Mission == "" {
-		out = append(out, "  "+s.key.Render("^N")+s.keyLabel.Render(" drop")+"   "+s.key.Render("Esc")+s.keyLabel.Render(" keep it for later"))
-		return out, append(owners, -1)
-	}
-	out = append(out, "  "+s.key.Render("^Y")+s.keyLabel.Render(" start")+"   "+s.key.Render("^N")+s.keyLabel.Render(" drop")+"   "+s.dim.Render("or type to refine: \"make it a schedule\", \"use Mossy\""))
-	return out, append(owners, -1)
-}
-
-// threadLines is the mission's conversation with the orchestrator, drawn
-// the way the Orchestrator tab draws it: the agents it dispatched work in
-// it as cards, in the order they were sent. A proposal from before threads
-// were kept shows the words it started from.
-func (m Model) threadLines(ms *mission.Mission, w int) []string {
-	lines, _ := m.threadLinesOwned(ms, w)
-	return lines
-}
-
-// threadLinesOwned is threadLines with each line's chat entry.
-func (m Model) threadLinesOwned(ms *mission.Mission, w int) ([]string, []int) {
-	lines, owners, _, _ := m.chatLinesOwned(w, func(e chatEntry) bool {
-		return e.mission == ms.ID || e.card != nil && e.card.MissionID == ms.ID
-	})
-	if len(lines) == 0 && ms.Text != "" {
-		pad := chatPad(w)
-		lines = append([]string{pad + m.st.dim.Render("you")}, m.plainLines(ms.Text, w-2*len(pad), m.st.fg)...)
-		for i := 1; i < len(lines); i++ {
-			lines[i] = pad + lines[i]
-		}
-		lines = append(lines, "")
-		owners = noOwners(len(lines))
-	}
-	return lines, owners
-}
-
-// missionLines is an open mission: its fields, its runs newest first,
-// each a line with its progress or summary, then its conversation, where
-// the runs' agents work.
-func (m Model) missionLines(w int) []string {
-	lines, _ := m.missionLinesOwned(w)
-	return lines
-}
-
-// missionLinesOwned is missionLines with each line's chat entry.
-func (m Model) missionLinesOwned(w int) ([]string, []int) {
-	s := m.st
-	ms := m.missions.Get(m.ov.open)
-	if ms == nil {
-		return nil, nil
-	}
-	now := time.Now()
-	var out []string
-	out = append(out, "")
-	state := m.missionState(ms)
-	st := s.dim.Render(string(state))
-	switch state {
-	case mission.Running:
-		st = s.ok.Render("● running · " + humanAge(now.Sub(ms.Created)))
-	case mission.Waiting:
-		st = s.attn.Render("◐ needs you")
-	case mission.Done:
-		st = s.ok.Render("✓ done")
-	case mission.Failed:
-		st = s.err.Render("✕ failed")
-	case mission.Paused:
-		st = s.dim.Render("‖ paused")
-	}
-	out = append(out, justify("  "+s.bright.Bold(true).Render(ms.Name), st+" ", w))
-	out = append(out, "")
-	out = append(out, m.fieldLines(ms, w)...)
-	out = append(out, m.costLines(ms, w)...)
-	for i := len(ms.Runs) - 1; i >= 0; i-- {
-		r := ms.Runs[i]
-		out = append(out, "")
-		when := r.StartedAt.Format("15:04")
-		if !r.EndedAt.IsZero() {
-			when += " → " + r.EndedAt.Format("15:04")
-		}
-		if rs := m.runSpent(ms, &r); rs.Tokens > 0 {
-			when += " · " + rs.line()
-		}
-		head := s.dim.Render(fmt.Sprintf("  run %d · %s", r.N, when))
-		trail := r.Summary
-		if r.EndedAt.IsZero() {
-			trail = m.runProgress(ms, &r)
-		}
-		if trail != "" {
-			trail = s.dim.Render(ansi.Truncate(trail, max(10, w-30), "…")) + " "
-		}
-		out = append(out, ansi.Truncate(justify(head, trail, w), w, "…"))
-	}
-	for i := len(ms.History) - 1; i >= 0 && i >= len(ms.History)-3; i-- {
-		h := ms.History[i]
-		out = append(out, ansi.Truncate(s.dim.Render("  "+h.At.Format("Jan 2 15:04")+" · "+h.What), w, "…"))
-	}
-	out = append(out, "")
-	out, owners := m.withThread(out, ms, w)
-	out = append(out, "  "+s.key.Render("Esc")+s.keyLabel.Render(" back")+"   "+s.key.Render("/pause /resume /stop /budget /mission move")+"   "+s.dim.Render("type to talk to the mission's agents through the orchestrator"))
-	return out, append(owners, -1)
 }

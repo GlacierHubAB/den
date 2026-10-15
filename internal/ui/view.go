@@ -642,14 +642,14 @@ func (m Model) agentsPane(w, h int) string {
 		}
 		twin := m.twinNote(a.Session.SessionID)
 		role := ""
-		if a.Labels.Role != "" {
+		if a.Labels.Role != "" && !m.noRoles {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
 		}
 		last, stale := m.lastKnown(a)
 		if stale {
 			// Dimmed through and through: the host is not live.
 			glyph, name = muted.Render("·"), dim.Render(a.Name+hostChip(a))
-			if a.Labels.Role != "" {
+			if a.Labels.Role != "" && !m.noRoles {
 				role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
 			}
 		}
@@ -1457,11 +1457,13 @@ func (m Model) hints(w int) string {
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
-		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"^E click", "actions in full"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
+		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"↑ ↓", "scroll"}, {"type", "tell the orchestrator what to change"}, {"Esc", "keep for later"}, {"Tab", "view"}}
+	case m.tab == tabOverview && m.ov.transcript != "":
+		items = [][2]string{{"↑ ↓", "scroll"}, {"Esc", "back to the mission"}, {"drag", "select · click a block: copy"}, {"Tab", "view"}}
 	case m.tab == tabOverview && m.ov.open != "":
-		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"^E click", "actions in full"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
+		items = [][2]string{{"↑ ↓", "owner"}, {"Enter", "transcript"}, {"^Y ^N", "answer"}, {"/mission met c1", ""}, {"/pause /resume /stop /budget", ""}, {"type", "tell the orchestrator"}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
-		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
+		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "open"}, {"^Y ^N", "answer"}, {"type", "tell the orchestrator"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:

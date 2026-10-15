@@ -673,6 +673,7 @@ func (m Model) orchPane(w, h int) string {
 	var lines []string
 	if len(m.orch.chat) == 0 {
 		pad := chatPad(w)
+		lines = append(lines, m.missionStrip(w, h)...)
 		lines = append(lines, "", pad+s.dim.Render("Type without an @ to talk to the orchestrator."), "")
 		for _, l := range strings.Split(ansi.Wrap("It sees every agent's name, state, task and what is waiting on you, and it can message agents for you. It cannot approve anything; you do that in the inbox. The first message starts it, which takes a few seconds.", w-2*len(pad), ""), "\n") {
 			lines = append(lines, pad+s.muted.Render(l))
@@ -686,7 +687,7 @@ func (m Model) orchPane(w, h int) string {
 // orchWindow is what the Orchestrator pane shows: the strip, the chat lines
 // in view, and for each of those the chat entry it draws (-1 for none).
 func (m Model) orchWindow(w, h int) (strip, lines []string, owners []int) {
-	strip = m.stripLines(w-2, time.Now())
+	strip = append(m.missionStrip(w, h), m.stripLines(w-2, time.Now())...)
 	lines, owners, focusStart, focusEnd := m.chatLinesOwned(w, func(chatEntry) bool { return true })
 	// The strip stays put; the chat scrolls under it. With a card focused
 	// the window is anchored to that card, otherwise it follows the tail,

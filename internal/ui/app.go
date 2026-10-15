@@ -198,6 +198,7 @@ type Model struct {
 	ov       overviewState  // the Overview tab
 	missions *mission.Store // standing goals, by project
 	turn     missionTurn    // which mission the orchestrator's turn serves
+	noRoles  bool           // the agents pane is too narrow for role tags
 
 	rev reviewState // the Review view
 
@@ -545,6 +546,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dropStaleGuards()
 		m.watchGuards(time.Now())
 		m.refresh()
+		m.refreshTranscript()
 		m.restartForGuidance()
 		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
@@ -1044,14 +1046,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
-			switch {
-			case m.ov.listing:
-				m.ov.listing = false
-			case m.ov.proposal != "":
-				m.ov.proposal = "" // the proposal stays in the list
-			case m.ov.open != "":
-				m.ov.open, m.ov.scroll = "", 0
-			}
+			m.backOverview()
 			return m, nil
 		}
 		if m.tab == tabReview {
@@ -1186,6 +1181,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(-5)
 		return m, nil
 	case "ctrl+y":
+		if m.proposalKeys() {
+			m.ov.proposal = m.waitingProposal().ID
+			if cmd := m.startMission(); cmd != nil {
+				return m, cmd
+			}
+			return m, flashTick(4*time.Second, m.flash)
+		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			if cmd := m.startMission(); cmd != nil {
 				return m, cmd
@@ -1194,6 +1196,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.answer("allow")
 	case "ctrl+n":
+		if m.proposalKeys() {
+			m.ov.proposal = m.waitingProposal().ID
+			m.dropMission()
+			return m.say("Dropped the proposal.", false)
+		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			m.dropMission()
 			return m, nil
@@ -1236,7 +1243,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
 			if m.tab == tabOverview {
-				m.toggleMission()
+				if note := m.toggleMission(); note != "" {
+					return m.say(note, true)
+				}
 				return m, nil
 			}
 			if m.tab == tabOrch && m.toggleAction() {
@@ -1284,10 +1293,17 @@ func (m *Model) move(delta int) {
 		}
 		m.selectInbox(clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1)))
 	case tabOverview:
-		if m.ov.open != "" || m.ov.proposal != "" {
-			m.ov.scroll = max(0, m.ov.scroll-delta)
-		} else {
-			m.ov.cur = clamp(m.ov.cur+delta, 0, max(0, len(m.missions.ForProject(m.proj.cur))-1))
+		switch {
+		case m.ov.transcript != "":
+			m.ov.scroll = max(0, m.ov.scroll-delta) // from the bottom: it follows the tail
+		case m.ov.open != "":
+			if ms := m.missions.Get(m.ov.open); ms != nil {
+				m.ov.who = clamp(m.ov.who+delta, 0, max(0, len(m.whoRows(ms))-1))
+			}
+		case m.ov.proposal != "":
+			m.ov.scroll = max(0, m.ov.scroll+delta)
+		default:
+			m.moveMission(delta)
 		}
 	case tabOrch:
 		m.moveCard(delta)

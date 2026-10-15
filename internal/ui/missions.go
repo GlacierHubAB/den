@@ -316,10 +316,15 @@ func (m *Model) settleMissions() tea.Cmd {
 }
 
 // missionState is what the row shows: the stored state, with "waiting"
-// when a run's card needs the human.
+// when a run's card or a sub-goal's owner needs the human.
 func (m Model) missionState(ms *mission.Mission) mission.State {
 	if ms.State != mission.Running {
 		return ms.State
+	}
+	for _, g := range ms.Goals {
+		if m.goalNeedsYou(g) {
+			return mission.Waiting
+		}
 	}
 	if r := ms.CurrentRun(); r != nil {
 		for _, d := range m.missionCards(ms, r) {
@@ -382,31 +387,53 @@ func (m Model) ovMission() *mission.Mission {
 	if m.ov.open != "" {
 		return m.missions.Get(m.ov.open)
 	}
-	list := m.missions.ForProject(m.proj.cur)
-	if m.ov.cur >= 0 && m.ov.cur < len(list) {
-		return list[m.ov.cur]
+	if list := m.ovList(); len(list) > 0 {
+		return list[m.ovIndex(list)]
 	}
 	return nil
 }
 
-// toggleMission opens the selected mission, reopens a proposal, or closes
-// the open one.
-func (m *Model) toggleMission() {
-	if m.ov.open != "" {
-		m.ov.open, m.ov.scroll = "", 0
-		return
-	}
-	if m.ov.proposal != "" {
-		return
+// toggleMission is Enter on the Overview: on the list it opens the
+// selected mission (or its proposal); in an open mission it shows the
+// selected owner's transcript. It returns a note for the human, if any.
+func (m *Model) toggleMission() string {
+	switch {
+	case m.ov.transcript != "", m.ov.proposal != "":
+		return ""
+	case m.ov.open != "":
+		note, _ := m.openTranscript()
+		return note
 	}
 	ms := m.ovMission()
 	if ms == nil {
-		return
+		return ""
 	}
-	m.ov.scroll = 0
+	m.ov.sel, m.ov.scroll, m.ov.who = ms.ID, 0, 0
 	if ms.State == mission.Proposed {
 		m.ov.proposal = ms.ID
-		return
+		return ""
 	}
 	m.ov.open = ms.ID
+	return ""
+}
+
+// backOverview is Esc on the Overview: from a transcript to its mission,
+// from a mission or a proposal to the list with that mission selected.
+func (m *Model) backOverview() {
+	switch {
+	case m.ov.listing:
+		m.ov.listing = false
+	case m.ov.transcript != "":
+		m.ov.transcript, m.ov.trEntries, m.ov.scroll = "", nil, 0
+	case m.ov.proposal != "":
+		m.ov.sel, m.ov.proposal = m.ov.proposal, "" // the proposal stays in the list
+	case m.ov.open != "":
+		m.ov.sel, m.ov.open, m.ov.scroll = m.ov.open, "", 0
+	}
+	// The list keeps the mission in view.
+	if list := m.ovList(); len(list) > 0 {
+		i := m.ovIndex(list)
+		m.ov.idx = i
+		m.ov.top, _ = listWindow(m.ov.top, i, len(list), m.listHeight())
+	}
 }
