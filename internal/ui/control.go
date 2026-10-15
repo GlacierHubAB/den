@@ -308,11 +308,13 @@ func (m *Model) holdTurn(prompt, origin string) bool {
 	}
 	m.ctl.held = append(m.ctl.held, heldTurn{prompt: prompt, origin: origin})
 	if origin == originHuman && !m.ctl.ended {
-		m.ctl.turn.Fail("the human wrote in Den; their message goes first")
-		m.ctl.ended = true
+		// The orchestrator is stopped first: the app is never told its
+		// turn is over while the orchestrator still runs it.
 		if m.orch.proc != nil {
 			m.orch.proc.Interrupt()
 		}
+		m.ctl.turn.Fail("the human wrote in Den; their message goes first")
+		m.ctl.ended = true
 	}
 	return true
 }
@@ -337,6 +339,7 @@ func (m *Model) endAppTurn(why string) {
 		return
 	}
 	if !m.ctl.ended {
+		appTurnEndHook()
 		if why == "" {
 			y.Status("")
 			y.Done()
@@ -531,13 +534,20 @@ func (m *Model) controlTick(now time.Time) tea.Cmd {
 		why = "the orchestrator said nothing for two minutes"
 	}
 	if why != "" {
-		m.endAppTurn(why)
+		// Stopped first, then told: the app never hears its turn is over
+		// while the orchestrator still runs it.
 		if m.orch.proc != nil {
+			interruptHook()
 			m.orch.proc.Interrupt()
 		}
+		m.endAppTurn(why)
 	}
 	return nil
 }
+
+// interruptHook and appTurnEndHook let a test see the order in which Den
+// stops the orchestrator and ends an app's stream; they do nothing.
+var interruptHook, appTurnEndHook = func() {}, func() {}
 
 // controlStart checks, before an orchestrator starts in control mode,
 // that its Claude Code release is one send_message was checked on.

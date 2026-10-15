@@ -218,6 +218,33 @@ func TestControlAppTurnEndsOnlyOnItsOwnResult(t *testing.T) {
 	}
 }
 
+// Den's interrupt of an app's turn (when Den ends it, or the human writes)
+// does not close the app's window: a tool request in the tail before the
+// turn's own result is still the app's, asked of the human, never answered
+// as a human turn's.
+func TestControlInterruptKeepsTheAppWindow(t *testing.T) {
+	o, in := controlOrch(true)
+	o.SendApp("t-1", "hello")
+	feed(o, replayOf("hello"))
+	if err := o.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+	if o.AppTurn() != "t-1" {
+		t.Fatal("the interrupt closed the app's turn")
+	}
+	feed(o, canUse("r1", SkillsTool, "u1"))
+	if a := in.answers(); a["r1"] != "" {
+		t.Errorf("a request after the interrupt was answered as a human turn's: %v", a)
+	}
+	feed(o, resultLine)
+	if o.AppTurn() != "" {
+		t.Error("the app's own result did not end its turn")
+	}
+	if a := in.answers(); a["r1"] != "deny" {
+		t.Errorf("the request was left open at the turn's end: %v", a)
+	}
+}
+
 // A request nobody answers is denied after the deadline.
 func TestControlUnansweredIsDenied(t *testing.T) {
 	defer func(d time.Duration) { PermissionDeadline = d }(PermissionDeadline)
