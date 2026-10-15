@@ -50,8 +50,15 @@ func (p Paths) Python() string { return filepath.Join(p.Venv, "bin", "python") }
 
 // ServerArgv is how the hypruse MCP server is started: isolated mode, so
 // neither the working directory nor the user's site-packages nor PYTHON*
-// variables reach it, and no args, which is hypruse's stdio server.
-func (p Paths) ServerArgv() []string { return []string{p.Python(), "-I", "-m", "hypruse"} }
+// variables reach it; -B, so it never writes bytecode into the venv (no
+// .pyc is ever legitimate there, and Verify counts any as added); and no
+// args, which is hypruse's stdio server. Its environment carries
+// PYTHONDONTWRITEBYTECODE=1 as well (ServerEnv).
+func (p Paths) ServerArgv() []string { return []string{p.Python(), "-I", "-B", "-m", "hypruse"} }
+
+// ServerEnv is what the server's environment must carry besides hypruse's
+// own settings.
+func ServerEnv() []string { return []string{"PYTHONDONTWRITEBYTECODE=1"} }
 
 // Plan is an install the human is asked to approve.
 type Plan struct {
@@ -62,6 +69,9 @@ type Plan struct {
 	Packages  int    // how many packages pip installs on this platform
 	Reinstall bool   // a venv is there already and is replaced
 	Pin       Pin    // what is installed: Pinned, except in tests
+	// PythonNote says why the interpreter is not the system's own
+	// /usr/bin/python3, "" when it is.
+	PythonNote string
 }
 
 // MakePlan checks what an install needs before anything is asked: a
@@ -69,15 +79,24 @@ type Plan struct {
 // and a wheels folder when one is named.
 func MakePlan(paths Paths, clone, wheels string) (Plan, error) {
 	p := Plan{Paths: paths, Packages: LockPackages(Lock), Pin: Pinned}
-	py, err := exec.LookPath("python3")
-	if err != nil {
-		return p, errors.New("no python3 on PATH; hypruse needs Python 3.11 or later")
+	// The system's own interpreter first: one earlier on PATH (a
+	// ~/.local/bin, a pyenv shim) is the human's to vouch for, and the card
+	// says so.
+	py := systemPython
+	if _, err := os.Stat(py); err != nil {
+		if py, err = exec.LookPath("python3"); err != nil {
+			return p, errors.New("no python3 found; hypruse needs Python 3.11 or later")
+		}
 	}
+	var err error
 	if py, err = filepath.EvalSymlinks(py); err != nil {
 		return p, fmt.Errorf("python3: %v", err)
 	}
 	if p.Python, err = filepath.Abs(py); err != nil {
 		return p, err
+	}
+	if !strings.HasPrefix(p.Python, "/usr/") {
+		p.PythonNote = "it is not under /usr: it comes from your PATH, not the system"
 	}
 	if clone == "" {
 		return p, errors.New("name the hypruse clone with --from (a clone of " + Pinned.URL + " at " + short(Pinned.Commit) + ")")
@@ -106,6 +125,9 @@ func MakePlan(paths Paths, clone, wheels string) (Plan, error) {
 func (p Plan) Text() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Make a Python venv for hypruse at %s, from %s.\n", p.Venv, p.Python)
+	if p.PythonNote != "" {
+		fmt.Fprintf(&b, "Note on that interpreter: %s.\n", p.PythonNote)
+	}
 	if p.Reinstall {
 		b.WriteString("The venv there now is removed first.\n")
 	}
@@ -167,6 +189,9 @@ func VerifyClone(pin Pin, clone string) error {
 	return nil
 }
 
+// systemPython is the interpreter MakePlan prefers; tests replace it.
+var systemPython = "/usr/bin/python3"
+
 // Runner runs a command for the install; tests replace it.
 type Runner func(ctx context.Context, env []string, argv ...string) ([]byte, error)
 
@@ -209,6 +234,12 @@ func Install(ctx context.Context, p Plan, run Runner) (string, error) {
 		return "", err
 	}
 	_ = os.Remove(p.Manifest)
+	// A link at either path could aim the chmod or the removal elsewhere.
+	for _, d := range []string{p.Root, p.Venv} {
+		if st, err := os.Lstat(d); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%s is a symbolic link; Den installs only into a real folder", d)
+		}
+	}
 	if err := os.MkdirAll(p.Root, 0o700); err != nil {
 		return "", err
 	}
@@ -228,7 +259,7 @@ func Install(ctx context.Context, p Plan, run Runner) (string, error) {
 	if err := os.WriteFile(lock, []byte(Lock), 0o600); err != nil {
 		return "", err
 	}
-	argv := []string{p.Paths.Python(), "-I", "-m", "pip", "install", "--require-hashes", "--only-binary", ":all:", "--no-deps", "--no-compile", "-r", lock}
+	argv := []string{p.Paths.Python(), "-I", "-m", "pip", "install", "--isolated", "--require-hashes", "--only-binary", ":all:", "--no-deps", "--no-compile", "-r", lock}
 	if p.Wheels != "" {
 		argv = append(argv, "--no-index", "--find-links", p.Wheels)
 	}
