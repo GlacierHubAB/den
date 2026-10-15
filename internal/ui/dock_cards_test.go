@@ -28,7 +28,7 @@ func permissionCard(t *testing.T, m *Model) *inbox.Item {
 }
 
 func dockAnswer(m *Model, it *inbox.Item, hash, verb string) api.CardResult {
-	a := &api.CardAnswer{ID: it.ID, Hash: hash, Verb: verb, Console: "drey-host", Reply: make(chan api.CardResult, 1)}
+	a := &api.CardAnswer{ID: it.ID, Hash: hash, Verb: verb, Console: "app-host", Reply: make(chan api.CardResult, 1)}
 	m.answerFromDock(a)
 	return <-a.Reply
 }
@@ -101,7 +101,7 @@ func TestAnswerFromDock(t *testing.T) {
 	}
 	found := false
 	for _, e := range m.orch.chat {
-		found = found || strings.HasPrefix(e.text, "Allowed from drey-host: ")
+		found = found || strings.HasPrefix(e.text, "Allowed from app-host: ")
 	}
 	if !found {
 		t.Error("no chat note naming the console")

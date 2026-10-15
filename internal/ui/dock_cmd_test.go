@@ -134,7 +134,7 @@ func TestDockLineCaseOfJudgedWords(t *testing.T) {
 // A console's /usage set or clear waits on a card; ^Y there takes it.
 func TestDockUsageFigureOnACard(t *testing.T) {
 	m := testModel(140, 40)
-	r := &api.CommandRun{Text: "/usage set 10", Console: "drey-host", Reply: make(chan api.CommandResult, 1)}
+	r := &api.CommandRun{Text: "/usage set 10", Console: "app-host", Reply: make(chan api.CommandResult, 1)}
 	m.runFromDock(r)
 	if res := <-r.Reply; res.Code != "" {
 		t.Fatalf("/usage set from the dock: %+v", res)
@@ -194,7 +194,7 @@ func TestDockCommandsStartNoHumanTurn(t *testing.T) {
 			continue
 		}
 		m := testModel(140, 40)
-		r := &api.CommandRun{Text: line, Console: "drey-host", Reply: make(chan api.CommandResult, 1)}
+		r := &api.CommandRun{Text: line, Console: "app-host", Reply: make(chan api.CommandResult, 1)}
 		m.runFromDock(r)
 		<-r.Reply
 		if len(m.orch.origins) != 0 || len(m.orch.pending) != 0 || m.orch.thinking {
@@ -208,7 +208,7 @@ func TestDockCommandsStartNoHumanTurn(t *testing.T) {
 func TestRunFromDock(t *testing.T) {
 	m := testModel(140, 40)
 	run := func(text string) api.CommandResult {
-		r := &api.CommandRun{Text: text, Console: "drey-host", Reply: make(chan api.CommandResult, 1)}
+		r := &api.CommandRun{Text: text, Console: "app-host", Reply: make(chan api.CommandResult, 1)}
 		m.runFromDock(r)
 		return <-r.Reply
 	}
@@ -220,7 +220,7 @@ func TestRunFromDock(t *testing.T) {
 	}
 	found := false
 	for _, e := range m.orch.chat {
-		found = found || e.text == "from drey-host: /fleet project"
+		found = found || e.text == "from app-host: /fleet project"
 	}
 	if !found {
 		t.Error("no chat note for the console's command")

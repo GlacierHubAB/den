@@ -384,7 +384,7 @@ func TestConsoleUnpairAll(t *testing.T) {
 // A console's identity is one process in one boot, whatever its path.
 func TestConsoleIdentity(t *testing.T) {
 	boot := bootID()
-	path := Peer{PID: 4242, Exe: "/usr/bin/drey-host", Start: 99}
+	path := Peer{PID: 4242, Exe: "/usr/bin/app-host", Start: 99}
 	cases := []struct {
 		name string
 		a, b Peer

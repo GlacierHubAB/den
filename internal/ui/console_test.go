@@ -66,8 +66,8 @@ func TestConsoleCodeAndCard(t *testing.T) {
 	if !strings.Contains(m.consoleCodeLine(), "Console code (") || len(m.con.code) != 8 {
 		t.Fatalf("code line %q", m.consoleCodeLine())
 	}
-	ask := &api.ConsoleAsk{ID: "c-1", Exe: "/usr/bin/drey-host", PID: 4242, Started: time.Date(2026, 10, 15, 13, 5, 7, 0, time.Local), Parent: "systemd", Cmdline: "drey-host --dock",
-		Replaces: &api.Console{ID: "c-0", Exe: "/usr/bin/drey-host", PID: 4100}}
+	ask := &api.ConsoleAsk{ID: "c-1", Exe: "/usr/bin/app-host", PID: 4242, Started: time.Date(2026, 10, 15, 13, 5, 7, 0, time.Local), Parent: "systemd", Cmdline: "app-host --dock",
+		Replaces: &api.Console{ID: "c-0", Exe: "/usr/bin/app-host", PID: 4100}}
 	m.applyConsoleAct(api.Act{Console: ask})
 	var card *inbox.Item
 	for _, it := range m.store.Items() {
@@ -79,7 +79,7 @@ func TestConsoleCodeAndCard(t *testing.T) {
 		t.Fatal("no console card")
 	}
 	body := strings.Join(card.Body, "\n")
-	for _, want := range []string{"drey-host (pid 4242, started 13:05:07)", "program: /usr/bin/drey-host", "it can be spoofed", "replaces your current console (drey-host pid 4100)"} {
+	for _, want := range []string{"app-host (pid 4242, started 13:05:07)", "program: /usr/bin/app-host", "it can be spoofed", "replaces your current console (app-host pid 4100)"} {
 		if !strings.Contains(card.Title+"\n"+body, want) {
 			t.Errorf("card lacks %q:\n%s\n%s", want, card.Title, body)
 		}
