@@ -97,6 +97,9 @@ type Server struct {
 	// pairHook runs between a claim's bookkeeping and its card, in tests
 	// only, to let a second claim in there.
 	pairHook atomic.Pointer[func(string)]
+	// askHook runs between an ask's reply and its queueing, with its id,
+	// in tests only, to let a cancel in there.
+	askHook atomic.Pointer[func(string)]
 
 	grants   *grants
 	acts     chan Act
@@ -1113,9 +1116,21 @@ func (s *Server) ask(c *conn, req Request) {
 		}
 		return ok
 	}
+	// Findable by its id before the app is told it: an ask.cancel sent the
+	// moment the reply is read finds it, and its stream then ends with
+	// "cancelled" once it is taken from the queue.
+	s.lane.register(j)
 	c.reply(req.ID, map[string]string{"session": session, "ask": j.id})
+	if f := s.askHook.Load(); f != nil {
+		(*f)(j.id)
+	}
 	if err := s.lane.enqueue(j); err != nil {
-		j.end(err.Error())
+		s.lane.forget(j)
+		if j.isCancelled() {
+			j.end(j.why())
+		} else {
+			j.end(err.Error())
+		}
 	}
 }
 
