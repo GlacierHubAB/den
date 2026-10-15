@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -197,9 +198,13 @@ func sendMessageTool() mcp.Tool {
 			}
 			payload, _ := json.Marshal(in)
 			env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.OrchSendEvent, Payload: payload}
-			d, ok := bridge.Ask(bridge.SocketPath(), env, 10*time.Second)
-			if !ok {
-				return "", errorString("Not sent: Den is not running or did not answer")
+			d, err := bridge.Call(bridge.SocketPath(), env, 10*time.Second)
+			if errors.Is(err, bridge.ErrNoDen) {
+				return "", errorString("Not sent: Den is not running")
+			}
+			if err != nil {
+				// Den may have been writing it as the wait ran out.
+				return "", errorString("Den did not answer in time; the message may have been sent, so ask " + in.To + " before sending it again")
 			}
 			if d.Behavior != "allow" {
 				return "", errorString("Not sent: " + d.Message)

@@ -67,6 +67,11 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 	from, name, sock, peerName := "uds:"+self.Session.Socket, self.Session.Name, to.Session.Socket, to.Session.Name
 	body := peermsg.Defuse(in.Message)
 	return func() tea.Msg {
+		if r.HungUp() {
+			// send_message gave up waiting and told the orchestrator so:
+			// delivering now could make its retry a second copy.
+			return nil
+		}
 		if err := peer.SendAs(sock, from, name, body); err != nil {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: peerName + ": " + err.Error()})
 			return nil

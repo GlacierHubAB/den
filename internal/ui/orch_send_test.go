@@ -117,6 +117,21 @@ func TestOrchSendLooksLikeSendMessage(t *testing.T) {
 			t.Errorf("to %s: %+v", to, d)
 		}
 	}
+
+	// send_message gave up waiting before Den got to it: nothing is
+	// delivered, so the orchestrator's retry is not a second copy.
+	raw, _ = json.Marshal(bridge.OrchSendInput{To: "worker-otter", Message: "too late"})
+	r = bridge.TestRequest(bridge.Envelope{Event: bridge.OrchSendEvent, Payload: raw})
+	cmd := m.handleOrchSend(r)
+	bridge.TestHangUp(r)
+	if cmd != nil {
+		cmd()
+	}
+	select {
+	case l := <-got:
+		t.Errorf("delivered after the caller hung up: %s", l)
+	case <-time.After(300 * time.Millisecond):
+	}
 }
 
 // Only the orchestrator's own den mcp may ask Den to send.
