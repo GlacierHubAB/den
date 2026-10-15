@@ -62,6 +62,14 @@ type Act struct {
 	Grant   *Grant
 	Expired []string // grant ids no longer answerable
 	Focus   *FocusReq
+	// Control: a claimed code to confirm (Pair), that pairing settled
+	// (PairDone, its id), the pairings changed (Paired), the code left
+	// Den's screen (CodeGone), an app's turn for the orchestrator (Say).
+	Pair     *PairAsk
+	PairDone string
+	Paired   bool
+	CodeGone bool
+	Say      *Say
 }
 
 type grants struct {

@@ -60,6 +60,7 @@ type Server struct {
 
 	grants   *grants
 	acts     chan Act
+	ctl      *control
 	lastConn map[string]time.Time // exe -> when its last connection closed
 
 	focusLimit focusLimit
@@ -85,7 +86,7 @@ func Listen(o Options) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{opts: o, chat: loadChat(o.ChatLog), notes: make(chan string, 16), conns: map[*conn]bool{}, seenExe: map[string]bool{}, refusals: map[string]*refusal{}}
-	s.grants, s.acts, s.lastConn = newGrants(), make(chan Act, 64), map[string]time.Time{}
+	s.grants, s.acts, s.lastConn, s.ctl = newGrants(), make(chan Act, 64), map[string]time.Time{}, newControl()
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	s.lane.changed = s.asksChanged
@@ -466,6 +467,13 @@ type conn struct {
 	// session it named in hello.
 	scope string
 	fleet []byte // a fleet event waiting to be written, latest wins
+	// cid names the connection in pair.auth's proof; nonce is its live
+	// challenge, challenged when it was given; paired the pairing it
+	// proved, "" for none.
+	cid        string
+	nonce      string
+	challenged time.Time
+	paired     string
 }
 
 func (c *conn) close() {
@@ -570,7 +578,7 @@ func (s *Server) serve(nc net.Conn) {
 		writeNow(nc, CodeUnavailable, "the human disconnected API clients in Den")
 		return
 	}
-	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}, scope: "conn:" + randHex()}
+	c := &conn{s: s, nc: nc, peer: peer, since: time.Now(), out: make(chan []byte, outQueue), done: make(chan struct{}), subs: map[string]bool{}, scope: "conn:" + randHex(), cid: randHex()}
 	s.mu.Lock()
 	perPID := 0
 	for o := range s.conns {
@@ -782,6 +790,14 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		c.reply(req.ID, h)
 	case "ask":
 		s.ask(c, req)
+	case "pair.claim":
+		s.claim(c, req)
+	case "pair.challenge":
+		s.challenge(c, req)
+	case "pair.auth":
+		s.auth(c, req)
+	case "orch.say":
+		s.say(c, req)
 	case "focus":
 		s.focus(c, req)
 	case "ask.cancel":
@@ -853,6 +869,10 @@ func (s *Server) ask(c *conn, req Request) {
 	}
 	if r, bad := sanitize.Hidden(p.Text); bad {
 		c.fail(req.ID, CodeBadRequest, fmt.Sprintf("the question holds a control, bidi or invisible character (%U)", r))
+		return
+	}
+	if s.leaked(p.Text) {
+		c.fail(req.ID, CodeBadRequest, "the question holds the pairing code; Den cancelled it")
 		return
 	}
 	session := p.Session

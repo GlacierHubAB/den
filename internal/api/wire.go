@@ -200,6 +200,11 @@ type Chunk struct {
 	Ask     string `json:"ask,omitempty"`
 	Seq     int    `json:"seq,omitempty"`
 	Text    string `json:"text,omitempty"`
+	// Turn is an orch.say turn's id; Card and Item a needs_approval
+	// chunk's inbox card title and item id.
+	Turn string `json:"turn,omitempty"`
+	Card string `json:"card,omitempty"`
+	Item string `json:"item,omitempty"`
 }
 
 // AskStatus is the latest status of a running ask, as the fleet carries
