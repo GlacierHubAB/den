@@ -30,6 +30,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/view"
 	"github.com/GlacierHubAB/den/internal/winmark"
 	"github.com/GlacierHubAB/den/internal/worktree"
 )
@@ -306,6 +307,11 @@ func Run(ctx context.Context, req Request) (Result, error) {
 			continue
 		}
 		if first != nil {
+			if holds {
+				// Only a window bound to the session just now: in User view
+				// it comes up out of sight.
+				settleView(ctx, marker, first.PID)
+			}
 			res.SessionID = first.SessionID
 			res.Critter = badge.Name(first.SessionID)
 			res.Registered = true
@@ -314,6 +320,19 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		sleep(ctx, pollEvery)
 	}
 	return res, nil
+}
+
+// viewSwitcher is what hides a new agent's window in User view; tests
+// replace it.
+var viewSwitcher = view.New
+
+// settleView hides the window the marker names when Den is in User view
+// and the session's process runs in it (internal/view). It never delays the
+// spawn by more than a few seconds and never fails it.
+func settleView(ctx context.Context, marker string, pid int) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, _ = viewSwitcher().Settle(ctx, marker, pid)
 }
 
 // WorktreeBranch is the branch Claude Code gives a worktree called name.

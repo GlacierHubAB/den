@@ -1,6 +1,7 @@
 package spawn
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/procs"
+	"github.com/GlacierHubAB/den/internal/view"
 	"github.com/GlacierHubAB/den/internal/winmark"
 )
 
@@ -405,5 +408,56 @@ func TestGhosttyArgs(t *testing.T) {
 	want := "/usr/bin/ghostty --gtk-single-instance=false --class=io.glacierhub.den.helper --working-directory=/w --title=den · helper -e claude --name helper"
 	if got != want {
 		t.Errorf("argv\n got %s\nwant %s", got, want)
+	}
+}
+
+// fakeView is a window manager with one window, for settleView.
+type fakeView struct {
+	cs    []hypr.Client
+	moved []string
+}
+
+func (f *fakeView) Available() bool { return true }
+func (f *fakeView) Clients(context.Context) ([]hypr.Client, error) {
+	return append([]hypr.Client(nil), f.cs...), nil
+}
+func (f *fakeView) Move(_ context.Context, addr, ws string) error {
+	f.moved = append(f.moved, addr+" "+ws)
+	for i := range f.cs {
+		if f.cs[i].Address == addr {
+			f.cs[i].Workspace.Name = ws
+		}
+	}
+	return nil
+}
+func (f *fakeView) Active(context.Context) (hypr.Workspace, bool) { return hypr.Workspace{}, false }
+
+// TestSettleViewHidesANewAgentOnlyInUserView: a new agent's bound window
+// stays where it is in Agent view and goes to special:den in User view.
+func TestSettleViewHidesANewAgentOnlyInUserView(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	const mk = "io.glacierhub.den.helper"
+	wm := &fakeView{cs: []hypr.Client{{Address: "0x1", PID: 900, InitialClass: mk}}}
+	wm.cs[0].Workspace.ID, wm.cs[0].Workspace.Name = 2, "2"
+	sw := &view.Switcher{
+		Ops:       wm,
+		Marker:    winmark.For,
+		Ancestors: func(int) []procs.Proc { return []procs.Proc{{PID: 300}, {PID: 900}} },
+		Own:       func([]hypr.Client) (hypr.Client, bool) { return hypr.Client{}, false },
+		StatePath: filepath.Join(t.TempDir(), "view.json"),
+	}
+	viewSwitcher = func() *view.Switcher { return sw }
+	t.Cleanup(func() { viewSwitcher = view.New })
+
+	settleView(t.Context(), mk, 300)
+	if len(wm.moved) != 0 {
+		t.Fatalf("moved in Agent view: %v", wm.moved)
+	}
+	if _, err := sw.Switch(t.Context(), view.Request{Want: view.User}); err != nil {
+		t.Fatal(err)
+	}
+	settleView(t.Context(), mk, 300)
+	if wm.cs[0].Workspace.Name != view.Workspace {
+		t.Errorf("window on %q in User view", wm.cs[0].Workspace.Name)
 	}
 }
