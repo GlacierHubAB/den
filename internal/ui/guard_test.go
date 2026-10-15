@@ -131,6 +131,11 @@ func TestGuardTranscriptRewrittenAndLong(t *testing.T) {
 	if line, _, long, err := readLine(r, 64); err != nil || long || string(line) != `{"a":1}`+"\n" {
 		t.Errorf("the next line: %q %v %v", line, long, err)
 	}
+	// Any key order and spacing.
+	r = bufio.NewReaderSize(strings.NewReader(`{"origin": {"verifiedPeerPid": 1, "kind" : "peer"}, "x":"`+strings.Repeat("y", 300)+`"}`+"\n"), 16)
+	if line, _, long, err := readLine(r, 64); err != nil || !long || line == nil {
+		t.Errorf("a long peer line, spaced and reordered: %v %v %v", line, long, err)
+	}
 	r = bufio.NewReaderSize(strings.NewReader(strings.Repeat("z", 300)+"\n"), 16)
 	if line, _, long, _ := readLine(r, 64); !long || line != nil {
 		t.Errorf("a long line with no peer origin: %q %v", line, long)

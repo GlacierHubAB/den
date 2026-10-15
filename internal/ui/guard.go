@@ -2,10 +2,10 @@ package ui
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"io"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -149,8 +149,14 @@ func (m *Model) markUnguarded(sid, why string) {
 // one is only searched for a peer message's origin.
 const maxTranscriptLine = 4 << 20
 
-// peerOrigin is how a peer message's origin starts in a transcript line.
-var peerOrigin = []byte(`"origin":{"kind":"peer"`)
+// peerKind finds a peer message's origin kind in a transcript line too
+// long to parse, in any key order and spacing: loose on purpose, since a
+// false match only marks the agent unguarded, a missed one would be blind.
+var peerKind = regexp.MustCompile(`"kind"\s*:\s*"peer"`)
+
+// peerKindSpan bounds how far a peerKind match can run, for the overlap
+// kept between chunks.
+const peerKindSpan = 256
 
 // readTranscript reads what a guarded agent's transcript gained since the
 // last look, and says why the guard failed when a peer message reached the
@@ -208,22 +214,22 @@ func (m Model) readTranscript(w *guardWatch) string {
 // unfinished last line.
 func readLine(r *bufio.Reader, max int) (line []byte, n int64, long bool, err error) {
 	var buf []byte
-	tail := make([]byte, 0, 2*len(peerOrigin))
+	var tail []byte
 	found := false
 	for {
 		chunk, e := r.ReadSlice('\n')
 		n += int64(len(chunk))
 		if !long && len(buf)+len(chunk) > max {
 			long = true
-			found = bytes.Contains(buf, peerOrigin)
-			tail = append(tail[:0], lastBytes(buf, len(peerOrigin))...)
+			found = peerKind.Match(buf)
+			tail = append(tail[:0], lastBytes(buf, peerKindSpan)...)
 			buf = nil
 		}
 		if long {
 			if !found {
 				probe := append(append([]byte{}, tail...), chunk...)
-				found = bytes.Contains(probe, peerOrigin)
-				tail = append(tail[:0], lastBytes(probe, len(peerOrigin))...)
+				found = peerKind.Match(probe)
+				tail = append(tail[:0], lastBytes(probe, peerKindSpan)...)
 			}
 		} else {
 			buf = append(buf, chunk...)
