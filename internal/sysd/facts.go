@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -106,6 +107,7 @@ var (
 	procCgroup  = readProcCgroup
 	procTracer  = readProcTracer
 	procExe     = func(pid int) (os.FileInfo, error) { return os.Stat("/proc/" + strconv.Itoa(pid) + "/exe") }
+	procCapEff  = readProcCapEff
 	ptraceScope = func() (string, error) { return readTrim("/proc/sys/kernel/yama/ptrace_scope") }
 	bootID      = func() (string, error) { return readTrim("/proc/sys/kernel/random/boot_id") }
 	bootTime    = readBootTime
@@ -351,12 +353,23 @@ func checkManager(p Peer) (ProcID, error) {
 		return id, errors.New("the manager was not started by init")
 	}
 	// The image it runs, as the kernel holds it: not whatever a path
-	// names now.
+	// names now. systemd's own user@.service starts the user's manager
+	// with CAP_WAKE_ALARM, a capability its user does not hold, and the
+	// kernel then keeps that link from the user. So when the link is
+	// refused, and only then, the manager is known by that capability: no
+	// program of the user's can give itself one (only root can grant it),
+	// unless the user holds it too, which Den checks it does not.
 	fi, err := procExe(p.PID)
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrPermission):
+		mgr, err1 := procCapEff(p.PID)
+		self, err2 := procCapEff(os.Getpid())
+		if err1 != nil || err2 != nil || mgr&capWakeAlarm == 0 || self&capWakeAlarm != 0 {
+			return id, errors.New("Den cannot tell this is your systemd user manager")
+		}
+	case err != nil:
 		return id, fmt.Errorf("the manager's program does not read: %v", err)
-	}
-	if !fi.Mode().IsRegular() || !ownedBy(fi, rootUID) || fi.Mode().Perm()&0o022 != 0 {
+	case !fi.Mode().IsRegular() || !ownedBy(fi, rootUID) || fi.Mode().Perm()&0o022 != 0:
 		return id, errors.New("the manager's program is not a root-owned file")
 	}
 	uid := strconv.Itoa(os.Getuid())
@@ -749,6 +762,24 @@ func readProcCgroup(pid int) (string, error) {
 		}
 	}
 	return "", errors.New("no cgroup v2")
+}
+
+// capWakeAlarm is CAP_WAKE_ALARM (35) in a capability set.
+const capWakeAlarm = 1 << 35
+
+// readProcCapEff is a process's effective capabilities (CapEff in its
+// status, which the kernel shows any process of the same user).
+func readProcCapEff(pid int) (uint64, error) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil {
+		return 0, err
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(l, "CapEff:"); ok {
+			return strconv.ParseUint(strings.TrimSpace(v), 16, 64)
+		}
+	}
+	return 0, errors.New("no CapEff")
 }
 
 // readProcTracer is a process's TracerPid.

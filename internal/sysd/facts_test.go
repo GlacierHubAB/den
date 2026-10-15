@@ -2,6 +2,7 @@ package sysd
 
 import (
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,7 +53,8 @@ func newFixture(t *testing.T) *fixture {
 		4242: "/user.slice/user-" + uid + ".slice/user@" + uid + ".service/app.slice/" + testUnit,
 	}
 	starts := map[int]uint64{self: 777, 4242: startTicks}
-	saved := []any{procStat, procCgroup, procTracer, procExe, ptraceScope, bootID, bootTime, rootUID, systemPathFn, clkTck, gtkSystemDirs}
+	saved := []any{procStat, procCgroup, procTracer, procExe, ptraceScope, bootID, bootTime, rootUID, systemPathFn, clkTck, gtkSystemDirs, procCapEff}
+	procCapEff = func(int) (uint64, error) { return 0, nil }
 	gtkSystemDirs = []string{filepath.Join(dir, "sysgtk")}
 	clkTck = 100
 	procStat = func(pid int) (int, uint64, error) {
@@ -85,6 +87,7 @@ func newFixture(t *testing.T) *fixture {
 		systemPathFn = saved[8].(func(string, bool) bool)
 		clkTck = saved[9].(float64)
 		gtkSystemDirs = saved[10].([]string)
+		procCapEff = saved[11].(func(int) (uint64, error))
 	})
 
 	cmd := func(path string) []any {
@@ -246,6 +249,57 @@ func TestReadGtkModules(t *testing.T) {
 	p := write(t, gtkSystemDirs[0], "[Settings]\ngtk-modules=x\n")
 	if _, err := f.read(t); err == nil || !strings.Contains(err.Error(), p) {
 		t.Errorf("the system's: %v", err)
+	}
+}
+
+// The manager's program link: when it reads, the image is checked; when
+// the kernel refuses it (a manager with a capability the user lacks), the
+// manager must hold CAP_WAKE_ALARM and Den must not; any other failure
+// fails. Process facts are checked either way.
+func TestCheckManagerImageOrCapability(t *testing.T) {
+	denied := func(int) (os.FileInfo, error) {
+		return nil, &fs.PathError{Op: "stat", Path: "/proc/1079/exe", Err: fs.ErrPermission}
+	}
+	for _, c := range []struct {
+		name           string
+		exe            func(int) (os.FileInfo, error)
+		mgrCap, ownCap uint64 // CapEff of the manager, then of Den
+		err            error  // procCapEff's error
+		want           string
+	}{
+		{"the image reads", nil, 0, 0, nil, ""},
+		{"refused, the manager holds the capability", denied, capWakeAlarm, 0, nil, ""},
+		{"refused, other capabilities only", denied, 1 << 3, 0, nil, "cannot tell"},
+		{"refused, Den holds the capability too", denied, capWakeAlarm, capWakeAlarm, nil, "cannot tell"},
+		{"refused, capabilities do not read", denied, 0, 0, errors.New("no status"), "cannot tell"},
+		{"another error", func(int) (os.FileInfo, error) { return nil, fs.ErrNotExist }, 0, 0, nil, "does not read"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			if c.exe != nil {
+				procExe = c.exe
+			}
+			// The fake manager and Den are one process here: checkManager
+			// reads the manager's first, then its own.
+			reads := 0
+			procCapEff = func(int) (uint64, error) {
+				reads++
+				if c.err != nil {
+					return 0, c.err
+				}
+				if reads == 1 {
+					return c.mgrCap, nil
+				}
+				return c.ownCap, nil
+			}
+			_, err := f.read(t)
+			switch {
+			case c.want == "" && err != nil:
+				t.Errorf("err %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Errorf("err %v, want %q", err, c.want)
+			}
+		})
 	}
 }
 
