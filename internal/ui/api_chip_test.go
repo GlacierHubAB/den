@@ -118,7 +118,7 @@ func headerCodesNeverCut(t *testing.T, pair, console bool) {
 				t.Errorf("w=%d: part of the %s is drawn in %q", w, name, line)
 			case strings.Count(line, c.prefix) > 1:
 				t.Errorf("w=%d: the %s twice in %q", w, name, line)
-			case !cut && isCode == strings.Contains(line, c.note):
+			case !cut && isCode == strings.Contains(line, name+" live"):
 				t.Errorf("w=%d: want the whole %s or its note, once: %q", w, name, line)
 			case cut && i == 0 && !strings.Contains(line, name):
 				t.Errorf("w=%d: no sign of the live %s in %q", w, name, line)
@@ -138,7 +138,14 @@ func headerCodesNeverCut(t *testing.T, pair, console bool) {
 	for w := 72; w <= 200; w++ {
 		line := ansi.Strip(m.header(w)[3])
 		whole := shown(w, line, false)
-		if room := headerRoom(m.logoRows()[2]+"      ", "  ", w); !whole[0] && room >= ansi.StringWidth(codes[0].line()) {
+		// The first code is whole whenever it fits with the later codes'
+		// notes after it, even short, and the column for a cut's "…".
+		after := 0
+		for _, c := range codes[1:] {
+			short, _, _ := strings.Cut(c.note, ":")
+			after += 3 + ansi.StringWidth(short)
+		}
+		if room := headerRoom(m.logoRows()[2]+"      ", "  ", w); !whole[0] && room-1 >= ansi.StringWidth(codes[0].line())+after {
 			t.Errorf("w=%d: the first code fits but is not shown whole in %q", w, line)
 		}
 	}

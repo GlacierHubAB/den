@@ -282,23 +282,42 @@ const (
 // liveCode is a code Den shows in its header, and its note.
 type liveCode struct{ line, hidden string }
 
+// short is the note's short form, its first words: "Pairing code live".
+func (c liveCode) short() string {
+	short, _, _ := strings.Cut(c.hidden, ":")
+	return short
+}
+
 // fitCodes is what the header shows of each live code in room columns,
-// joined by " · ": a code whole only when it fits and the notes of the
-// codes after it still fit too, else its note, so every live code shows
-// at least as its note whenever the notes fit at all.
+// joined by " · ". First the codes, in order: a code is whole only when
+// it fits with the short notes of the codes after it ("Pairing code
+// live"), else it is its short note. Then each short note takes its full
+// form while the line still fits. So every live code shows at least as
+// its short note whenever those fit at all, and never in part.
 func fitCodes(codes []liveCode, room int) []string {
 	out := make([]string, len(codes))
+	// One column for the "…" headerRow puts where the parts after the
+	// codes are cut, so it never lands on a code's note.
+	room--
 	used := 0
 	for i, c := range codes {
 		after := 0
 		for _, later := range codes[i+1:] {
-			after += 3 + ansi.StringWidth(later.hidden)
+			after += 3 + ansi.StringWidth(later.short())
 		}
-		out[i] = c.hidden
+		out[i] = c.short()
 		if used+ansi.StringWidth(c.line)+after <= room {
 			out[i] = c.line
 		}
 		used += ansi.StringWidth(out[i]) + 3
+	}
+	used -= 3
+	for i, c := range codes {
+		if out[i] == c.short() {
+			if grow := ansi.StringWidth(c.hidden) - ansi.StringWidth(c.short()); used+grow <= room {
+				out[i], used = c.hidden, used+grow
+			}
+		}
 	}
 	return out
 }
