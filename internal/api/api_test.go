@@ -327,8 +327,8 @@ func procTree(t *testing.T, tree map[int][2]uint64) {
 func TestDreyHostChainIsNotAnAgent(t *testing.T) {
 	procTree(t, map[int][2]uint64{
 		70300: {9_000_000, 70200}, // drey, a child of drey-host
-		70200: {8_000_000, 7100},    // drey-host
-		7100:    {2_000, 1},           // systemd --user
+		70200: {8_000_000, 7100},  // drey-host
+		7100:  {2_000, 1},         // systemd --user
 	})
 	old := identifyHook
 	defer func() { identifyHook = old }()
