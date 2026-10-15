@@ -573,9 +573,11 @@ app shows before you answer.
 **Control.** `/api pair` shows a code of eight words in Den's header for two
 minutes. Type it only into the app's own pairing window. Den then asks you on
 a card, naming the program, its path, pid and command line; only your
-`Ctrl+Y` pairs it. A paired app may speak to the orchestrator as you would
-in Den's chat. Everything that would change your fleet still waits for you
-in Den. `/api control off` stops it, and `/api unpair` revokes every pairing, your console's too.
+`Ctrl+Y` pairs it. A paired app may send messages to the orchestrator. Den
+marks them as the app's, and anything the orchestrator would do for them
+waits for your `Ctrl+Y`: for an app pairing, everything that would change
+your fleet waits for you in Den. `/api control off` stops it, and `/api
+unpair` revokes every pairing, your console's too.
 
 **Your console.** `den pair` in a terminal (or `/api console` in Den) shows a
 console code the same way, for the one app you make your console (Drey's
@@ -594,13 +596,20 @@ dock). After your `Ctrl+Y` on its card, the console may:
   pairing, `/view rescue`, mission proposals and template runs are refused.
   Commands that act on Den's own screen (`/open`, `/dismiss` and the like)
   stay in Den. `/close`, `/reopen`, `/merge`, `/cleanup`, `/mission move` and
-  `/usage resume`, `set` and `clear` raise a card, as they would typed in
-  Den. Den's chat notes every command a console sent.
+  `/usage resume`, `set` and `clear` raise a card (typed in Den, `/usage set`
+  and `clear` apply at once). The console can answer those cards too, so it
+  can lower the usage figure your usage stop is measured against. Den's chat
+  notes every command a console sent.
 
 The header shows your console while one is paired (`console: app-host pid
 N since 14:05`). `den unpair` ends it from any terminal; `den unpair all`
-ends it and every app pairing. A code typed into a chat or a command line is
-refused, and the code is cancelled.
+ends it and every app pairing. A code an app sends, in a question, a
+message to the orchestrator or a console command, is refused and the code
+cancelled.
+
+After Den restarts, it restores your console and says so in its chat, with
+the program's pid and start time: if that is not your app, run `den unpair
+all`. When the app itself restarts, pair it again with `den pair`.
 
 What stays: any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
