@@ -437,9 +437,38 @@ func TestAppTurnSilenceBound(t *testing.T) {
 	if last := got[len(got)-1]; last["type"] != "error" || !strings.Contains(last["message"].(string), "said nothing for two minutes") {
 		t.Errorf("chunks %v", got)
 	}
-	controls, _ := os.ReadFile(filepath.Join(dir, "controls"))
+	// Den wrote the interrupt before it ended the stream; the fake
+	// orchestrator records it once it reads it, so wait for that, bounded.
+	var controls []byte
+	for end := time.Now().Add(5 * time.Second); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		if controls, _ = os.ReadFile(filepath.Join(dir, "controls")); strings.Contains(string(controls), `"interrupt"`) {
+			break
+		}
+	}
 	if !strings.Contains(string(controls), `"interrupt"`) {
 		t.Errorf("controls %s", controls)
+	}
+}
+
+// When an app's turn is cut short, Den writes the interrupt to the
+// orchestrator before it ends the app's stream: the app is never told the
+// turn is over while the orchestrator still runs it.
+func TestAppTurnInterruptBeforeTheEnd(t *testing.T) {
+	defer func(d time.Duration) { appTurnSilence = d }(appTurnSilence)
+	appTurnSilence = 100 * time.Millisecond
+	l, _, _ := controlModel(t)
+	c := pairApp(t, l)
+	c.call("orch.say", map[string]string{"text": "quiet one SLOW-PLEASE"})
+	l.until("the app's turn to go out", func() bool { return l.m.ctl.sent }, nil)
+	var order []string
+	defer func(f func()) { interruptHook = f }(interruptHook)
+	interruptHook = func() { order = append(order, "interrupt") }
+	defer func(f func()) { appTurnEndHook = f }(appTurnEndHook)
+	appTurnEndHook = func() { order = append(order, "end") }
+	time.Sleep(150 * time.Millisecond)
+	l.run(l.m.controlTick(time.Now()))
+	if strings.Join(order, ",") != "interrupt,end" {
+		t.Errorf("order %v", order)
 	}
 }
 
