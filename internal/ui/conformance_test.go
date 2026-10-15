@@ -23,7 +23,7 @@ import (
 
 // conformanceLane is a fake claude that behaves like the read-only lane
 // (see internal/api's fakeLane): --version, the control answers, init with
-// the first turn, one reply per turn.
+// the first turn, one reply per turn, a second after the turn came.
 const conformanceLane = `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "2.1.289 (Claude Code)"; exit 0; fi
 sid=""
@@ -47,6 +47,7 @@ while IFS= read -r line; do
     printf '%s\n' '{"type":"system","subtype":"init","session_id":"'"$sid"'","model":"m","claude_code_version":"2.1.289","tools":[],"mcp_servers":[]}'
     inited=1
   fi
+  sleep 1 # a turn takes a moment, as a real one does: the suite cancels and supersedes turns that are still running
   echo '{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"About 12 dollars."}}}'
   echo '{"type":"result","subtype":"success","is_error":false,"result":"About 12 dollars.","total_cost_usd":0.01}'
 done
