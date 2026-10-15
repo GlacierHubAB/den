@@ -69,7 +69,10 @@ type Proxy struct {
 	// Pointer is the pointer file for the overlay's outline ("" for none).
 	Pointer string
 	// Seed seeds the glides; 0 picks one.
-	Seed  uint64
+	Seed uint64
+	// Log, when set, is told every text the agent types, so hypruse's
+	// stderr never carries it into the mission's log.
+	Log   *LogFilter
 	shown bool // the outline is showing (the pointer file says so)
 	rng   *rand.Rand
 
@@ -234,6 +237,12 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 		return toolError("Den's answer carried no input; nothing was done")
 	}
 	if in.Name == "keyboard" {
+		if text, ok := args["text"].(string); ok {
+			p.Log.Typed(text)
+			for _, piece := range Chunks(text) {
+				p.Log.Typed(piece.Text)
+			}
+		}
 		p.hideOutline()
 	}
 	if in.Name == "keyboard" && args["action"] == "type" {
