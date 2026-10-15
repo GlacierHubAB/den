@@ -341,7 +341,7 @@ func TestBackstopNeverResumes(t *testing.T) {
 	}
 	t.Cleanup(func() { launchOrchestrator = old })
 	m, _ := inboundModel(t)
-	m.orch.proc.SessionID = "killed-session"
+	m.orch.proc.SetSessionID("killed-session")
 	m.orch.resume = "killed-session"
 	cmd := m.handleOrchEvent(orch.Event{Kind: orch.Backstop, Text: "a peer's message reached the orchestrator", Trip: orch.TripPeer})
 	if cmd == nil {

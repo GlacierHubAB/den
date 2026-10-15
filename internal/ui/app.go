@@ -707,7 +707,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return nil
 	}
-	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
+	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID() {
 		// The orchestrator's turns show on their own tab, not in the inbox.
 		if r.WantsReply() {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: the orchestrator may only list and message sessions"})

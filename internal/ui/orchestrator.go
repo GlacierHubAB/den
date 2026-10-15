@@ -221,7 +221,7 @@ func (m Model) isOrchestrator(a fleet.Agent) bool {
 	if a.Session.Name == OrchestratorName || m.isLane(a) {
 		return true // the API's read-only lane is never a fleet member either
 	}
-	return m.orch.proc != nil && (a.Session.PID == m.orch.proc.PID || (m.orch.proc.SessionID != "" && a.Session.SessionID == m.orch.proc.SessionID))
+	return m.orch.proc != nil && (a.Session.PID == m.orch.proc.PID || (m.orch.proc.SessionID() != "" && a.Session.SessionID == m.orch.proc.SessionID()))
 }
 
 // roster describes the fleet for the orchestrator.
@@ -701,8 +701,8 @@ func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string,
 	// The orchestrator's code highlights carry its own colour, the way an
 	// agent's do in the detail pane.
 	orchColor := s.pal.Bright
-	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
-		orchColor = m.colorFor(m.orch.proc.SessionID)
+	if m.orch.proc != nil && m.orch.proc.SessionID() != "" {
+		orchColor = m.colorFor(m.orch.proc.SessionID())
 	}
 	mo := m
 	mo.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor))

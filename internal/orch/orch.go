@@ -221,13 +221,41 @@ type Orchestrator struct {
 	emitMu       sync.Mutex
 	eventsClosed bool
 
-	SessionID string
-	Model     string
+	// sessionID and model are what the process's init said, set on its
+	// stdout goroutine and read by the UI's: only under idMu, through
+	// SessionID and Model.
+	idMu      sync.Mutex
+	sessionID string
+	model     string
 	PID       int
 	// start is when the process started (procs.StartTicks), so a pid
 	// reused after it ends is never taken for it; exe is the den binary
 	// its hook and MCP server run.
 	start, exe string
+}
+
+// SessionID is the session the process's init named, "" before its init.
+// Safe from any goroutine.
+func (o *Orchestrator) SessionID() string {
+	o.idMu.Lock()
+	defer o.idMu.Unlock()
+	return o.sessionID
+}
+
+// Model is the model the process's init named, "" before its init. Safe
+// from any goroutine.
+func (o *Orchestrator) Model() string {
+	o.idMu.Lock()
+	defer o.idMu.Unlock()
+	return o.model
+}
+
+// SetSessionID sets the session id as an init would: for tests of code
+// that reads it.
+func (o *Orchestrator) SetSessionID(id string) {
+	o.idMu.Lock()
+	o.sessionID = id
+	o.idMu.Unlock()
 }
 
 // Start launches the process. Events arrive on Events() until Exited.
@@ -800,7 +828,9 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 		case "system":
 			switch l.Subtype {
 			case "init":
-				o.SessionID, o.Model = l.SessionID, l.Model
+				o.idMu.Lock()
+				o.sessionID, o.model = l.SessionID, l.Model
+				o.idMu.Unlock()
 				e := Event{Kind: Started, SessionID: l.SessionID, Model: l.Model, Tools: append([]string{}, l.Tools...), ClaudeVersion: l.ClaudeVersion}
 				for _, s := range l.MCPServers {
 					e.MCPServers = append(e.MCPServers, s.Name)

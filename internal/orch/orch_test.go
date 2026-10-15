@@ -290,3 +290,45 @@ printf '%s\n' '`+answer+`'
 		t.Errorf("events %v: the lines before the exit, then Exited", k)
 	}
 }
+
+// The session id the process's init names is set on its stdout goroutine
+// while the UI may read it on its own (a backstop before init, say): read
+// through SessionID, the two never race. Run with -race: the read here
+// comes before the init with nothing ordering the two but the accessor's
+// lock.
+func TestSessionIDReadBeforeInit(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "claude")
+	os.WriteFile(script, []byte(`#!/bin/sh
+IFS= read -r line
+printf '%s\n' '`+fakeInit+`'
+while IFS= read -r line; do :; done
+`), 0o755)
+	o, err := Start(context.Background(), Options{Command: []string{script}, Dir: dir, HookCommand: testHook()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(o.Close)
+	if id := o.SessionID(); id != "" {
+		t.Fatalf("a session id before init: %q", id)
+	}
+	if err := o.Send("hello"); err != nil {
+		t.Fatal(err)
+	}
+	reads := make(chan struct{})
+	go func() {
+		defer close(reads)
+		for i := 0; i < 1000 && o.SessionID() == ""; i++ {
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	for e := range o.Events() {
+		if e.Kind == Started {
+			break
+		}
+	}
+	<-reads
+	if o.SessionID() == "" || o.Model() == "" {
+		t.Errorf("after init: session %q, model %q", o.SessionID(), o.Model())
+	}
+}
