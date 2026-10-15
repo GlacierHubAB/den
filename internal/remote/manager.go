@@ -55,6 +55,10 @@ type HostStatus struct {
 	Dropped  int       // events Den dropped from the host since it started (gate)
 	Hint     string    // what the human can do, for needs attention and version mismatch
 	Pending  string    // a raise remotes.toml asks for that waits for /remote connect, and how to apply it
+	// Unread is when remotes.toml last stopped reading cleanly, set once
+	// it has not for unreadAfter; Den keeps the settings it had. Zero
+	// while it reads.
+	Unread time.Time
 }
 
 // UpdateKind says what an Update carries.
@@ -273,9 +277,11 @@ type Manager struct {
 	state map[string]*hostState
 
 	// rmu serialises reload's reads of remotes.toml; lastRead is the last
-	// one it read, starting from the Config NewManager was given.
+	// one it read, starting from the Config NewManager was given; unread
+	// is when the reads stopped being clean, zero while they are.
 	rmu      sync.Mutex
 	lastRead Config
+	unread   time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -363,14 +369,17 @@ func (m *Manager) Start() {
 // policy. A file that does not read keeps the settings in use.
 func (m *Manager) reload(raise, seen string) {
 	cfg, ok := m.read()
+	ups := m.noteUnread()
 	if !ok {
+		for _, u := range ups {
+			m.send(u)
+		}
 		return
 	}
 	now := map[string]Host{}
 	for _, h := range cfg.Enabled() {
 		now[h.Label] = h
 	}
-	var ups []Update
 	m.mu.Lock()
 	for _, h := range m.hosts {
 		st, want := m.state[h.Label], now[h.Label]
@@ -595,6 +604,34 @@ func (m *Manager) Reconnect(label string) { m.retry(label, "", "") }
 // it changed.
 var reloadSettle = 100 * time.Millisecond
 
+// unreadAfter is how long remotes.toml may fail to read cleanly before the
+// hosts say so: an editor's save is over well within it.
+var unreadAfter = 30 * time.Second
+
+// noteUnread marks every host with when remotes.toml stopped reading
+// cleanly, once that has lasted unreadAfter, and clears the mark when it
+// reads again. It returns the hosts' updates.
+func (m *Manager) noteUnread() []Update {
+	m.rmu.Lock()
+	since := m.unread
+	m.rmu.Unlock()
+	if !since.IsZero() && time.Since(since) < unreadAfter {
+		since = time.Time{}
+	}
+	var ups []Update
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, h := range m.hosts {
+		st := m.state[h.Label]
+		if st == nil || st.status.Unread.Equal(since) {
+			continue
+		}
+		st.status.Unread = since
+		ups = append(ups, Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(st.host)})
+	}
+	return ups
+}
+
 // read reads remotes.toml for reload. A file that does not read keeps the
 // settings in use. One that reads other than last time is read again
 // after reloadSettle, and taken only when both reads agree: a file being
@@ -609,11 +646,18 @@ func (m *Manager) read() (Config, bool) {
 	}
 	m.rmu.Lock()
 	defer m.rmu.Unlock()
+	unclean := func() {
+		if m.unread.IsZero() {
+			m.unread = time.Now()
+		}
+	}
 	cfg, err := m.o.Reload()
 	if err != nil {
+		unclean()
 		return Config{}, false
 	}
 	if reflect.DeepEqual(cfg, m.lastRead) {
+		m.unread = time.Time{}
 		return cfg, true
 	}
 	select {
@@ -623,10 +667,16 @@ func (m *Manager) read() (Config, bool) {
 	}
 	again, err := m.o.Reload()
 	if err != nil {
+		unclean()
 		return Config{}, false
 	}
 	m.lastRead = again
-	return cfg, reflect.DeepEqual(cfg, again)
+	if !reflect.DeepEqual(cfg, again) {
+		unclean()
+		return cfg, false
+	}
+	m.unread = time.Time{}
+	return cfg, true
 }
 
 // Connect is the human's /remote connect: Reconnect, applying what

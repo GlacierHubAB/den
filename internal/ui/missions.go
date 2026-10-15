@@ -44,7 +44,7 @@ func (m *Model) proposeMission(text string) tea.Cmd {
 	}
 	if host := projectHost(p.Root); host != "" {
 		m.flash, m.flashErr = p.Name+" is on "+host+": missions on remote hosts come later.", true
-		return tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		return flashTick(4*time.Second, m.flash)
 	}
 	now := time.Now()
 	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: text, State: mission.Proposed, Created: now, Updated: now}

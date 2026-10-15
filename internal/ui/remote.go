@@ -226,7 +226,7 @@ func (m *Model) handleRemote(msg remoteMsg) tea.Cmd {
 		if h, ok := m.hostStatus(u.Host); ok && m.flash == "Connecting to "+u.Host+"…" && h.State != remote.Connecting {
 			// /remote connect said it was trying; say how it went.
 			m.flash, m.flashErr = hostNow(u.Host, h.State), h.State != remote.Live
-			cmd = tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+			cmd = flashTick(4*time.Second, m.flash)
 		}
 		if u.Kind == remote.HostChanged {
 			cmd = tea.Batch(cmd, m.remoteReviewChanged(u.Host))
@@ -491,6 +491,9 @@ func hostDetail(h remote.HostStatus) []string {
 	}
 	if h.Pending != "" {
 		out = append(out, h.Pending)
+	}
+	if !h.Unread.IsZero() {
+		out = append(out, "remotes.toml has not read cleanly since "+h.Unread.Local().Format("15:04")+"; Den keeps the settings it had")
 	}
 	return out
 }

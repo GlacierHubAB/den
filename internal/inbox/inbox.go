@@ -176,6 +176,10 @@ type Store struct {
 	history int            // see HistoryLimit
 	failing int            // see ToolFailureLimit
 	streak  map[string]int // agentKey(host, session) -> tool calls failed in a row
+	// heldQ is when a host's agent last had a question held for Den: the
+	// host's own "has a question" event for it, which can come late, says
+	// nothing more for a while (heldQuiet).
+	heldQ   map[string]time.Time
 	items   []*Item
 	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
@@ -405,6 +409,12 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 	}
 	it.State, it.Resolved, it.req = Waiting, "", r
 	it.Questions, it.Answers, it.Step = qs, map[string]string{}, 0
+	if r.Host != "" {
+		if s.heldQ == nil {
+			s.heldQ = map[string]time.Time{}
+		}
+		s.heldQ[agentKey(r.Host, in.SessionID)] = time.Now()
+	}
 	it.describeStep()
 	// Claude Code's "permission_prompt" notice is this dialog too, and an
 	// earlier question of the session is gone from its terminal by now.

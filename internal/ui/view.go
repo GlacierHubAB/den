@@ -184,22 +184,25 @@ func (m Model) header(w int) []string {
 		}
 	}
 	if w < 72 {
-		left := s.brand.Render("den") + "  " + fleetLine
+		brand := s.brand.Render("den") + "  "
 		right := clock
 		if flash != "" {
-			right = flash + "  " + clock
+			right = ansi.Truncate(flash, max(1, w-ansi.StringWidth(brand)-ansi.StringWidth(clock)-3), "…") + "  " + clock
 		}
-		return []string{justify(left, right, w), ansi.Truncate(m.tabs(w), w, "…")}
+		return []string{headerRow(brand, fleetLine, right, w), ansi.Truncate(m.tabs(w), w, "…")}
 	}
 	logo := make([]string, len(wordmark))
 	for i, r := range m.logoRows() {
 		logo[i] = "  " + r + "    "
 	}
+	if flash != "" {
+		flash = ansi.Truncate(flash, max(1, w-ansi.StringWidth(logo[2])-3), "…")
+	}
 	rows := []string{
 		"",
-		justify(logo[0]+fleetLine, clock+"  ", w),
-		justify(logo[1]+linksLine, "", w),
-		justify(logo[2]+sysLine, flash+"  ", w),
+		headerRow(logo[0], fleetLine, clock+"  ", w),
+		headerRow(logo[1], linksLine, "", w),
+		headerRow(logo[2], sysLine, flash+"  ", w),
 		"",
 		m.tabs(w),
 	}
@@ -236,6 +239,17 @@ func (m Model) logoRows() []string {
 }
 
 // justify spaces left and right apart to fill w.
+// headerRow is a header line: the logo, then text, then right at the end
+// of the row. When they do not all fit, the text gives way (cut with "…"),
+// so a flash or the clock is never pushed past the edge.
+func headerRow(logo, text, right string, w int) string {
+	room := w - ansi.StringWidth(logo) - ansi.StringWidth(right) - 1
+	if ansi.StringWidth(text) > room {
+		text = ansi.Truncate(text, max(0, room), "…")
+	}
+	return justify(logo+text, right, w)
+}
+
 func justify(left, right string, w int) string {
 	gap := w - ansi.StringWidth(left) - ansi.StringWidth(right)
 	if gap < 1 {

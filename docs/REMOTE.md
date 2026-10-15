@@ -148,9 +148,9 @@ Enabling it again is a raise, applied by `/remote connect`. Adding a host takes
 a restart of Den; a file that does not parse keeps the settings in use. A
 change counts once Den reads it twice, a tenth of a second apart, so a file
 caught half rewritten (by a shell's `>` or an editor that writes in place)
-changes nothing.
-`policy` and `default_policy` take `observe` or `approve`.
-They also take `full`.
+changes nothing. A file that has not read cleanly for 30 seconds says so on
+every host ("remotes.toml has not read cleanly since …") until it does.
+`policy` and `default_policy` take `observe`, `approve` or `full`.
 
 ## Policies
 

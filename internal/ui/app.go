@@ -94,7 +94,16 @@ type focusedMsg struct {
 	note string
 	err  error
 }
-type flashClearMsg struct{}
+
+// flashClearMsg ends the flash it was set for, if that flash still shows:
+// an older flash's timer must not take a newer one away.
+type flashClearMsg struct{ text string }
+
+// flashTick clears text from the top bar after d, unless another flash
+// took its place.
+func flashTick(d time.Duration, text string) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return flashClearMsg{text: text} })
+}
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -497,7 +506,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			m.flash, m.flashErr = "clipboard: "+msg.err.Error(), true
-			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+			return m, flashTick(3*time.Second, m.flash)
 		case msg.path != "":
 			return m, m.attach(msg.path)
 		case msg.text != "":
@@ -592,7 +601,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
-		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		return m, flashTick(4*time.Second, m.flash)
 	case closeDoneMsg:
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
@@ -614,9 +623,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.flash, m.flashErr = "Focused "+msg.note, false
 		}
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		return m, flashTick(3*time.Second, m.flash)
 	case flashClearMsg:
-		m.flash = ""
+		if msg.text == m.flash {
+			m.flash = ""
+		}
 	case tea.KeyPressMsg:
 		m.api.lastKey = time.Now()
 		return m.handleKey(msg)
