@@ -69,20 +69,27 @@ type askJob struct {
 	reason    string     // why it was cancelled
 }
 
-func (j *askJob) cancel() { j.cancelWith("cancelled") }
+func (j *askJob) cancel() bool { return j.cancelWith("cancelled") }
 
 // superseded is why an ask ends when its scope asks again.
 const superseded = "superseded by a newer question"
 
 // cancelWith stops the ask; the first reason given is the one its stream
-// ends with.
-func (j *askJob) cancelWith(reason string) {
+// ends with. False when the stream already ended: then it was not
+// stopped, and the client was told how it ended. The check and the stop
+// are one step with end's, under mu, so a stopped ask always ends with
+// its reason and an ended one is never reported stopped.
+func (j *askJob) cancelWith(reason string) bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.ended {
+		return false
+	}
 	j.once.Do(func() {
-		j.mu.Lock()
 		j.reason = reason
-		j.mu.Unlock()
 		close(j.cancelled)
 	})
+	return true
 }
 
 // why is the reason the ask was stopped.
@@ -115,7 +122,9 @@ func (j *askJob) status(text string) int {
 	return j.seq
 }
 
-// end sends the stream's last chunk, once: done, or error with why.
+// end sends the stream's last chunk, once: done, or error with why. An
+// ask stopped before its end ends with why it was stopped, even when its
+// turn had finished.
 func (j *askJob) end(errMsg string) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -123,6 +132,9 @@ func (j *askJob) end(errMsg string) {
 		return
 	}
 	j.ended = true
+	if errMsg == "" && j.reason != "" {
+		errMsg = j.reason
+	}
 	if errMsg == "" {
 		j.send(Chunk{Type: "done", Ask: j.id, Session: j.session})
 		return
@@ -380,10 +392,9 @@ func (l *lane) cancel(id, exe string) bool {
 	l.mu.Lock()
 	j := l.jobs[id]
 	l.mu.Unlock()
-	if j == nil || j.exe != exe {
+	if j == nil || j.exe != exe || !j.cancel() {
 		return false
 	}
-	j.cancel()
 	l.mu.Lock()
 	queued := false
 	kept := l.queue[:0]
