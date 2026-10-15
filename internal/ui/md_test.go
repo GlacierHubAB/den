@@ -262,6 +262,50 @@ func TestMarkdownBlocks(t *testing.T) {
 	}
 }
 
+// TestMarkdownSoftBreaks: a paragraph's single line breaks join it, so
+// emphasis spans them; hard breaks, blank lines and new blocks do not.
+func TestMarkdownSoftBreaks(t *testing.T) {
+	m := Model{st: newStyles(theme.Deepharness)}
+	for _, c := range []struct {
+		name, in string
+		want     []string
+	}{
+		{"bold across lines", "**bold\ncontinues** here", []string{"bold continues here"}},
+		{"plain paragraph", "one\ntwo\nthree", []string{"one two three"}},
+		{"two spaces break", "one  \ntwo", []string{"one", "two"}},
+		{"backslash breaks", "one\\\ntwo", []string{"one", "two"}},
+		{"backslash at the end stays", "the path C:\\", []string{"the path C:\\"}},
+		{"blank line", "one\n\ntwo", []string{"one", "", "two"}},
+		{"list item continues", "- item\n  goes on\n- next", []string{"• item goes on", "• next"}},
+		{"list after a paragraph", "Steps:\n- a\n- b", []string{"Steps:", "• a", "• b"}},
+		{"heading stays", "# Title\nbody", []string{"Title", "body"}},
+		{"quote joins", "> one\n> two\nafter", []string{"│ one two", "after"}},
+		{"fence after text", "see\n```\ncode\n```", []string{"see", "┃ code"}},
+		{"table after text", "rows:\n| a | b |\n|---|---|\n| 1 | 2 |", []string{"rows:", "a │ b", "──┼──", "1 │ 2"}},
+	} {
+		got := stripAll(m.markdownLines(c.in, 60))
+		for i := range got {
+			got[i] = strings.TrimRight(got[i], " ")
+		}
+		if !equalLines(got, c.want) {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	// A long paragraph of short lines joins in linear time.
+	budget := time.Second
+	if raceDetector {
+		budget = 20 * time.Second // only a hang fails here
+	}
+	start := time.Now()
+	m.renderMarkdown(strings.Repeat("word\n", 100000), 80)
+	if d := time.Since(start); d > budget {
+		t.Errorf("joining 100000 soft breaks took %v", d)
+	}
+	if out := m.markdownLines("**bold\ncontinues**", 60); len(out) != 1 || !strings.Contains(out[0], m.st.fg.Bold(true).Render("bold continues")) {
+		t.Errorf("bold across a soft break is not bold: %q", out)
+	}
+}
+
 // TestMarkdownSanitises: escapes in the text never reach the output; only
 // Den's own SGR does.
 func TestMarkdownSanitises(t *testing.T) {
