@@ -101,6 +101,13 @@ type Mission struct {
 	Budget      Budget    `json:"budget,omitzero"`
 
 	Template string `json:"template,omitempty"` // the template it was seeded from
+
+	// V is the record's version: 2 has the criteria and sub-goals.
+	V int `json:"v,omitempty"`
+	// Criteria are the definition of done, frozen once the human starts the
+	// mission; Goals are the smaller goals with their owners.
+	Criteria []Criterion `json:"criteria,omitempty"`
+	Goals    []SubGoal   `json:"goals,omitempty"`
 	// Assigned are the sessions Den put on the mission, oldest first;
 	// History is what happened to the mission itself, the last few.
 	Assigned []Assignment `json:"assigned,omitempty"`
@@ -258,12 +265,19 @@ func (m *Mission) CurrentRun() *Run {
 	return nil
 }
 
-// StartRun opens a new run.
+// StartRun opens a new run. A schedule mission's criteria say what each
+// run must achieve, so they open again.
 func (m *Mission) StartRun(now time.Time) *Run {
+	if m.Shape == Schedule && len(m.Runs) > 0 {
+		m.ResetCriteria()
+	}
 	m.Runs = append(m.Runs, Run{N: len(m.Runs) + 1, StartedAt: now})
 	m.Updated = now
 	return &m.Runs[len(m.Runs)-1]
 }
+
+// recordVersion is what a record written now carries.
+const recordVersion = 2
 
 // Store keeps the missions and the record on disk.
 type Store struct {
@@ -274,7 +288,15 @@ type Store struct {
 // New returns an empty store that records to path ("" keeps it in memory).
 func New(path string) *Store { return &Store{path: path} }
 
-// Load replays the record; the last line for an id wins.
+// Compaction: a record over compactSize holding more than compactRatio
+// lines per mission is rewritten on load with one line per mission.
+const (
+	compactSize  = 256 << 10
+	compactRatio = 4
+)
+
+// Load replays the record; the last line for an id wins. The file is made
+// private if it was not, and rewritten whole when it has grown long.
 func Load(path string) *Store {
 	s := New(path)
 	f, err := os.Open(path)
@@ -282,9 +304,14 @@ func Load(path string) *Store {
 		return s
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		_ = f.Chmod(0o600)
+	}
+	lines := 0
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
+		lines++
 		var m Mission
 		if json.Unmarshal(sc.Bytes(), &m) != nil || m.ID == "" {
 			continue
@@ -294,9 +321,48 @@ func Load(path string) *Store {
 			// written with the name on its next save.
 			m.ProjectName = ProjectLabel(m.Project)
 		}
+		m.migrate()
 		s.put(&m)
 	}
+	if fi, err := f.Stat(); err == nil && fi.Size() > compactSize && lines > compactRatio*len(s.items) {
+		_ = s.compact()
+	}
 	return s
+}
+
+// compact rewrites the record with one line per mission: a temporary file
+// beside it, synced, then renamed over it.
+func (s *Store) compact() error {
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".missions-*.jsonl")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	w := bufio.NewWriter(tmp)
+	for _, m := range s.items {
+		raw, err := json.Marshal(m)
+		if err != nil {
+			tmp.Close()
+			return err
+		}
+		w.Write(append(raw, '\n'))
+	}
+	if err := w.Flush(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), s.path)
 }
 
 func (s *Store) put(m *Mission) {
@@ -314,14 +380,16 @@ func (s *Store) Save(m *Mission) {
 	if s == nil {
 		return
 	}
+	m.V = recordVersion
+	m.clip()
 	s.put(m)
 	if s.path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return
 	}
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
