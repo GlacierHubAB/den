@@ -287,13 +287,45 @@ func Run(t *testing.T, o Options) {
 			c  *conn
 			id string
 		}
+		// held keeps the chat events an ask's call read past on its way
+		// to the reply: a newer ask on the same connection supersedes the
+		// running one, and the server may write that one's error before
+		// the newer ask's reply (both are legal orders). call would drop
+		// it, and end would then wait for a chunk already read. end keeps
+		// other asks' chunks here too, so turns on one connection may end
+		// in any order.
+		held := map[*conn][]*line{}
 		ask := func(c *conn, text string) turn {
 			t.Helper()
 			var rep struct {
 				Ask string `json:"ask"`
 			}
-			if err := c.call(ctx, "ask", map[string]string{"text": text}, &rep); err != nil {
+			if dl, ok := ctx.Deadline(); ok {
+				_ = c.nc.SetDeadline(dl)
+			}
+			id, err := c.send("ask", map[string]string{"text": text})
+			if err != nil {
 				t.Fatal(err)
+			}
+			for {
+				l, err := c.read()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if l.Event == "chat" {
+					held[c] = append(held[c], l)
+					continue
+				}
+				if l.Event != "" || l.ID == nil || *l.ID != id || l.OK == nil {
+					continue
+				}
+				if !*l.OK {
+					t.Fatalf("ask: %v", l.Error)
+				}
+				if err := json.Unmarshal(l.Result, &rep); err != nil {
+					t.Fatalf("ask: result: %v", err)
+				}
+				break
 			}
 			if !askIDRe.MatchString(rep.Ask) {
 				t.Fatalf("the ask reply's id %q is not \"a-\" and 32 lowercase hex digits", rep.Ask)
@@ -313,6 +345,30 @@ func Run(t *testing.T, o Options) {
 		// the same connection are skipped.
 		end := func(tr turn) chunk {
 			t.Helper()
+			parse := func(l *line) chunk {
+				t.Helper()
+				var ch chunk
+				if err := json.Unmarshal(l.Data, &ch); err != nil {
+					t.Fatalf("a chat event that is not a chunk: %s", l.Data)
+				}
+				return ch
+			}
+			terminal := func(ch chunk) bool { return ch.Type == "done" || ch.Type == "error" }
+			// What was held first: tr's own chunks are taken, other asks'
+			// stay held for their own end.
+			var keep []*line
+			for i, l := range held[tr.c] {
+				ch := parse(l)
+				if ch.Ask != tr.id {
+					keep = append(keep, l)
+					continue
+				}
+				if terminal(ch) {
+					held[tr.c] = append(keep, held[tr.c][i+1:]...)
+					return ch
+				}
+			}
+			held[tr.c] = keep
 			for {
 				l, err := tr.c.read()
 				if err != nil {
@@ -321,14 +377,12 @@ func Run(t *testing.T, o Options) {
 				if l.Event != "chat" {
 					continue
 				}
-				var ch chunk
-				if err := json.Unmarshal(l.Data, &ch); err != nil {
-					t.Fatalf("a chat event that is not a chunk: %s", l.Data)
-				}
+				ch := parse(l)
 				if ch.Ask != tr.id {
+					held[tr.c] = append(held[tr.c], l) // another ask's, for its end
 					continue
 				}
-				if ch.Type == "done" || ch.Type == "error" {
+				if terminal(ch) {
 					return ch
 				}
 			}

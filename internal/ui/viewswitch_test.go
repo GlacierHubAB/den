@@ -104,6 +104,15 @@ func viewRig(t *testing.T) (*Model, *viewWM) {
 		wm.cs = append(wm.cs, viewClient("0x"+p.peer, mk, 1000+pid, 2+i))
 	}
 	wm.cs = append(wm.cs, viewClient("0xden", "com.mitchellh.ghostty", 900, 1))
+	useViewWM(t, wm, chains)
+	return &m, wm
+}
+
+// useViewWM makes wm the window manager of every view switch in the test:
+// Den's own window is the one at 0xden, and chains gives each agent pid's
+// process chain.
+func useViewWM(t *testing.T, wm *viewWM, chains map[int][]procs.Proc) {
+	t.Helper()
 	sw := &view.Switcher{
 		Ops:       wm,
 		Marker:    winmark.For,
@@ -121,7 +130,6 @@ func viewRig(t *testing.T) (*Model, *viewWM) {
 	was := viewSwitcher
 	viewSwitcher = func() *view.Switcher { return sw }
 	t.Cleanup(func() { viewSwitcher = was })
-	return &m, wm
 }
 
 func switchView(t *testing.T, m *Model, want string) (api.ViewReply, viewDoneMsg) {

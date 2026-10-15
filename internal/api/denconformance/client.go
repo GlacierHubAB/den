@@ -291,6 +291,7 @@ type info struct {
 	Version  string   `json:"version"`
 	Versions []int    `json:"versions"`
 	Features []string `json:"features"`
+	Control  string   `json:"control"` // "on" when an app's or a console's turn may run
 }
 
 func (i info) supports(v int) bool {
