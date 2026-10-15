@@ -202,10 +202,22 @@ func TestDreyInterface(t *testing.T) {
 		denconformance.Run(t, denconformance.Options{
 			Dial: func(ctx context.Context) (net.Conn, error) {
 				// Each subtest dials afresh while Den may not yet have seen
-				// the last one's connections close: wait, briefly, for room
-				// under the per-process cap, so the cap is not what the
-				// suite measures.
-				for end := time.Now().Add(2 * time.Second); len(srv.Clients()) >= api.MaxConnsPerPID && time.Now().Before(end); {
+				// the last one's connections close: wait for room under the
+				// per-process cap, so the cap is not what the suite
+				// measures, but only while connections are still closing
+				// (the count falls), and never into the subtest's deadline.
+				// Connections the suite holds on purpose (the console's
+				// cap) do not close, and a wait for them only eats the
+				// subtest's time.
+				end := time.Now().Add(2 * time.Second)
+				if dl, ok := ctx.Deadline(); ok && dl.Add(-time.Second).Before(end) {
+					end = dl.Add(-time.Second)
+				}
+				last, steady := len(srv.Clients()), time.Now()
+				for n := last; n >= api.MaxConnsPerPID && time.Now().Before(end) && time.Since(steady) < 100*time.Millisecond; n = len(srv.Clients()) {
+					if n != last {
+						last, steady = n, time.Now()
+					}
 					time.Sleep(5 * time.Millisecond)
 				}
 				var d net.Dialer
@@ -226,8 +238,11 @@ func TestDreyInterface(t *testing.T) {
 			if act.Focus != nil {
 				m.api.lastKey = time.Time{} // the human has not typed in Den
 			}
+			// As Bubble Tea does, a command runs on its own goroutine:
+			// some are timers (a flash that clears in 4 s), and run here
+			// they would hold this loop, and with it every hook below.
 			if cmd := m.applyAPIAct(act); cmd != nil {
-				cmd()
+				go cmd()
 			}
 			if act.Grant == nil {
 				continue
