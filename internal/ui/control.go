@@ -45,13 +45,13 @@ type controlState struct {
 	last      time.Time // when the orchestrator last said anything in it
 	held      []heldTurn
 	noControl string // why the orchestrator runs without control, "" when it does or need not
-	// modes is each local session's last permission mode, from its hooks;
-	// always the standing allowance /always on a tool card would give;
-	// expect the session a standing send_message in this turn may reach,
-	// by peer name.
-	modes  map[string]string
+	// modes is each local session's last permission mode, from its own
+	// hooks; always the standing allowance /always on a tool card would
+	// give; watch the sessions a message reached under a standing
+	// allowance, whose next prompt's mode Den checks.
+	modes  map[string]modeSeen
 	always map[*inbox.Item]api.Rule
-	expect map[string]string
+	watch  map[string]bool
 }
 
 // heldTurn is a turn held while an app's turn runs; report is an agent's
@@ -279,7 +279,6 @@ func (m *Model) tryAppTurn() tea.Cmd {
 	}
 	prompt := sayPreface(y.Exe) + "\n\n" + y.Text
 	content := orch.ComposeWith(m.roster(), m.templateInfos(), prompt)
-	m.ctl.expect = nil
 	if err := m.orch.proc.SendApp(y.Turn, content, m.standingFor(y.Pairing)...); err != nil {
 		m.endAppTurn("Den could not send it: " + sanitize.Label(err.Error(), 120))
 		return nil

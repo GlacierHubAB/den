@@ -198,6 +198,26 @@ func (s *Server) Disallow(n int) bool {
 	return false
 }
 
+// RemoveRulesFor takes back every standing allowance bound to a session
+// and says how many there were.
+func (s *Server) RemoveRulesFor(sessionID string) int {
+	s.ctl.mu.Lock()
+	defer s.ctl.mu.Unlock()
+	n := 0
+	for _, pr := range s.ctl.pairings {
+		kept := pr.rules[:0]
+		for _, r := range pr.rules {
+			if r.SessionID == sessionID {
+				n++
+				continue
+			}
+			kept = append(kept, r)
+		}
+		pr.rules = kept
+	}
+	return n
+}
+
 // SetControl turns control on or off for every pairing: off, orch.say is
 // refused and no allowance applies, until it is on again.
 func (s *Server) SetControl(on bool) {
@@ -493,14 +513,27 @@ func (s *Server) claim(c *conn, req Request) {
 	st.mu.Unlock()
 	ask := PairAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
 	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
+	beforePairAct(id)
 	if !s.act(Act{Pair: &ask}) {
 		// Den could not take the card (its queue to the screen is full):
 		// the claim did not happen. The code stays live, unspent, and the
 		// same claim may be sent again.
 		st.mu.Lock()
+		if st.pairings[id] == nil {
+			// Another claim with this code came in meanwhile and revoked
+			// it: two programs had the code, so it stays dead.
+			st.mu.Unlock()
+			c.fail(req.ID, CodeForbidden, ClaimRevoked)
+			return
+		}
 		delete(st.pairings, id)
+		for i, sp := range st.spent {
+			if sp == code {
+				st.spent = append(st.spent[:i], st.spent[i+1:]...)
+				break
+			}
+		}
 		code.spent, code.claimed = time.Time{}, ""
-		st.spent = st.spent[:len(st.spent)-1]
 		if st.code == nil {
 			st.code = code
 		}
@@ -534,6 +567,10 @@ func (s *Server) claim(c *conn, req Request) {
 		c.reply(req.ID, map[string]any{"pairing": id, "key": hex.EncodeToString(key), "control": true})
 	}()
 }
+
+// beforePairAct runs between a claim's bookkeeping and its card; tests use
+// it to let a second claim in there.
+var beforePairAct = func(string) {}
 
 // procInfo is when pid started, its parent's name and its command line,
 // for the pairing card; zero and "" when /proc cannot tell.

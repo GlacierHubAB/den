@@ -648,14 +648,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return m.remoteHeld(r.Host, r)
 	}
-	if r.SessionID != "" && r.Input.PermissionMode != "" {
-		// What each local session last said its permission mode was: a
-		// standing allowance to message one is offered only while it asks.
-		if m.ctl.modes == nil {
-			m.ctl.modes = map[string]string{}
-		}
-		m.ctl.modes[r.SessionID] = r.Input.PermissionMode
-	}
+	m.noteMode(r)
 	if r.Event == bridge.CloseEvent {
 		m.handleCloseRequest(r)
 		return nil

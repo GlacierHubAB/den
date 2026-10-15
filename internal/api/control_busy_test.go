@@ -31,3 +31,29 @@ func TestBusyClaimDoesNotCount(t *testing.T) {
 		t.Errorf("the same claim again: %+v", l.Error)
 	}
 }
+
+// If another claim revoked the pairing while Den was too busy to show it,
+// the rollback does not bring the code back: two programs had it.
+func TestBusyClaimAfterARaceStaysDead(t *testing.T) {
+	h := newHarness(t, 2)
+	words := h.s.StartPairing()
+	for len(h.s.acts) < cap(h.s.acts) {
+		h.s.acts <- Act{}
+	}
+	defer func(f func(string)) { beforePairAct = f }(beforePairAct)
+	beforePairAct = func(id string) { h.s.Unpair(id, "") } // the second claim's revoke
+	c := h.dial()
+	c.hello()
+	if l := c.call("pair.claim", map[string]string{"code": strings.Join(words, " ")}); code(l) != CodeForbidden || l.Error.Message != ClaimRevoked {
+		t.Fatalf("claim %+v", l)
+	}
+	if _, live := h.s.CodeLive(); live {
+		t.Error("a raced code came back live")
+	}
+	h.s.ctl.mu.Lock()
+	n := len(h.s.ctl.spent)
+	h.s.ctl.mu.Unlock()
+	if n != 1 {
+		t.Errorf("spent codes %d, want the raced one kept", n)
+	}
+}

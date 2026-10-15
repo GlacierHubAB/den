@@ -6,8 +6,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -23,7 +25,7 @@ func standingModel(t *testing.T, mode string) (*loop, string) {
 	sessionProc = func(pid int, _ int64, _ string) (api.AgentProc, bool) { return api.AgentProc{PID: pid, Start: 7}, true }
 	sock := filepath.Join(os.Getenv("XDG_RUNTIME_DIR"), "cc-socks", "7002.sock")
 	l.m.base = append(l.m.base, fleet.Agent{Name: "Busy Otter", Status: fleet.Idle, Session: discover.Session{PID: 7002, SessionID: "s-otter", Name: "worker-otter", Socket: sock, Version: "2.1.296", CWD: "/work/otter", Alive: true}})
-	l.m.ctl.modes = map[string]string{"s-otter": mode}
+	l.m.ctl.modes = map[string]modeSeen{"s-otter": {mode: mode, at: time.Now()}}
 	return l, dir
 }
 
@@ -90,7 +92,7 @@ func TestStandingSendMessage(t *testing.T) {
 			l.m.base[i].Session.Socket = filepath.Join(filepath.Dir(l.m.base[i].Session.Socket), strconv.Itoa(7009)+".sock")
 		}
 	}
-	l.m.ctl.modes["s-otter-2"] = "default"
+	l.m.ctl.modes["s-otter-2"] = modeSeen{mode: "default", at: time.Now()}
 	if n := appTurn(t, l, c, "third MSG-PLEASE", "deny"); n != 1 {
 		t.Errorf("%d cards for a new session of the same name", n)
 	}
@@ -141,5 +143,65 @@ func TestUpdateMissionInAnAppTurnAsks(t *testing.T) {
 	}
 	if got := m.missions.Get(ms.ID); got.State != mission.Running || len(missionItems(m)) != 1 {
 		t.Errorf("state %v, items %d", got.State, len(missionItems(m)))
+	}
+}
+
+// A permission mode counts only from the session's own hook: any other
+// process claiming a mode for it is ignored; and a mode too old is
+// unknown.
+func TestModeOnlyFromTheSessionsOwnHook(t *testing.T) {
+	m := testModel(120, 40)
+	m.base = []fleet.Agent{{Name: "Busy Otter", Status: fleet.Idle, Session: discover.Session{PID: 7002, SessionID: "s-otter", Name: "worker-otter", Alive: true}}}
+	old := modeCaller
+	t.Cleanup(func() { modeCaller = old })
+	own := 0
+	modeCaller = func(pid int, a fleet.Agent) bool { return pid == own && a.Session.PID == 7002 }
+	req := func(pid int, mode string) *bridge.Request {
+		r := bridge.TestRequest(bridge.Envelope{Event: "UserPromptSubmit", SessionID: "s-otter"})
+		r.SessionID, r.PeerPID = "s-otter", pid
+		r.Input.PermissionMode = mode
+		return r
+	}
+	own = 7100
+	m.noteMode(req(7200, "default")) // a stranger says the otter asks
+	if m.modeOf("s-otter") != "" {
+		t.Fatal("a mode from another process was taken")
+	}
+	m.noteMode(req(7100, "bypassPermissions"))
+	if m.modeOf("s-otter") != "bypassPermissions" {
+		t.Fatalf("the session's own hook: %q", m.modeOf("s-otter"))
+	}
+	m.ctl.modes["s-otter"] = modeSeen{mode: "default", at: time.Now().Add(-modeFresh - time.Minute)}
+	if m.modeOf("s-otter") != "" {
+		t.Error("a mode older than modeFresh still counts")
+	}
+}
+
+// After a message a standing allowance delivered, the session's next
+// prompt reporting a mode that does not ask ends its allowances, loudly.
+func TestStandingEndsWhenTheTargetDoesNotAsk(t *testing.T) {
+	l, _ := standingModel(t, "default")
+	c := pairApp(t, l)
+	appTurn(t, l, c, "ping the otter MSG-PLEASE", "always")
+	if len(l.m.api.srv.AllRules()) != 1 {
+		t.Fatalf("rules %+v", l.m.api.srv.AllRules())
+	}
+	old := modeCaller
+	t.Cleanup(func() { modeCaller = old })
+	modeCaller = func(int, fleet.Agent) bool { return true }
+	l.m.ctl.watch = map[string]bool{"s-otter": true} // what delivery under the allowance sets
+	r := bridge.TestRequest(bridge.Envelope{Event: "UserPromptSubmit", SessionID: "s-otter"})
+	r.SessionID = "s-otter"
+	r.Input.PermissionMode = "acceptEdits"
+	l.m.noteMode(r)
+	if len(l.m.api.srv.AllRules()) != 0 {
+		t.Error("the allowance survived a target that does not ask")
+	}
+	found := false
+	for _, e := range l.m.orch.chat {
+		found = found || strings.Contains(e.text, "does not ask before it acts. Den removed the allowance")
+	}
+	if !found || !l.m.flashErr {
+		t.Errorf("no loud note: %q", l.m.flash)
 	}
 }

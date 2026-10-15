@@ -47,13 +47,21 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: why})
 		return nil
 	}
-	if sid, ok := m.ctl.expect[orch.PeerName(in.To)]; ok {
-		// Let through by a standing allowance: only to the session it was
-		// given for.
-		delete(m.ctl.expect, orch.PeerName(in.To))
-		if to.Session.SessionID != sid {
-			r.Reply(bridge.Decision{Behavior: "deny", Message: "the standing allowance was for another session of that name"})
-			return nil
+	if y := m.ctl.turn; y != nil && m.ctl.sent && m.api.srv != nil {
+		// In an app's turn: a standing allowance for this name holds only
+		// for the session it was given for, while that session asks.
+		for _, rule := range m.api.srv.Rules(y.Pairing) {
+			if rule.Tool != orch.SendMessageTool || rule.Peer != orch.PeerName(in.To) {
+				continue
+			}
+			if rule.SessionID != to.Session.SessionID || !m.ruleSession(rule) {
+				r.Reply(bridge.Decision{Behavior: "deny", Message: "the standing allowance for " + rule.Peer + " was for another session, or that session no longer asks before it acts"})
+				return nil
+			}
+			if m.ctl.watch == nil {
+				m.ctl.watch = map[string]bool{}
+			}
+			m.ctl.watch[to.Session.SessionID] = true
 		}
 	}
 	from, name, sock, peerName := "uds:"+self.Session.Socket, self.Session.Name, to.Session.Socket, to.Session.Name
