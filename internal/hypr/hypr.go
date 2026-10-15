@@ -259,13 +259,14 @@ func ActiveWorkspace() (ws Workspace, ok bool) {
 }
 
 // MoveToWorkspace moves a window to a workspace (by id or name) without
-// changing which workspace is shown. Lua first (Hyprland 0.56+), then the
-// classic dispatcher.
+// changing which workspace is shown: the focus stays where it is, and a
+// special workspace stays hidden. Lua first (Hyprland 0.56+, whose move takes
+// follow = false for that), then the classic movetoworkspacesilent.
 func MoveToWorkspace(address, workspace string) error {
 	if address == "" {
 		return errors.New("no window address")
 	}
-	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", silent = true })`, workspace, address)
+	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", follow = false })`, workspace, address)
 	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err == nil && (msg == "ok" || msg == "") {
