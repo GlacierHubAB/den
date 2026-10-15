@@ -283,15 +283,27 @@ func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 	return out
 }
 
-// askOrchestrator sends a message typed outside the Overview: the plain
-// chat, shown on the Orchestrator tab.
+// askOrchestrator sends the human's typed text: the plain chat, on the
+// Orchestrator view, from any view. Typed on the Overview with a project
+// picked, the orchestrator is told which project the human is looking at,
+// so "start a mission to ..." needs no project named.
 func (m *Model) askOrchestrator(text string) tea.Cmd {
+	prompt := text
+	if p, ok := m.curProject(); ok && m.tab == tabOverview {
+		prompt = text + "\n\n(Typed on Den's Overview, with project " + p.Name + " (" + p.Root + ") picked.)"
+	}
+	m.openOrchestrator()
+	return m.tell("", text, prompt)
+}
+
+// openOrchestrator shows the Orchestrator view, remembering where the
+// human came from.
+func (m *Model) openOrchestrator() {
 	m.orch.cardCur = -1
 	if m.tab != tabOrch {
 		m.orch.prevTab = m.tab
 	}
 	m.tab = tabOrch
-	return m.tell("", text, text)
 }
 
 // tell is the one way a message reaches the orchestrator. The chat shows
@@ -385,7 +397,7 @@ func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
 		text = m.orch.replay + "\n\nNow the human says:\n" + text
 		m.orch.replay = ""
 	}
-	content := orch.ComposeWith(m.roster(), m.templateInfos(), text)
+	content := orch.ComposeAll(m.roster(), m.templateInfos(), m.missionInfos(), text)
 	proc := m.orch.proc
 	return func() tea.Msg {
 		if err := proc.Send(content); err != nil {

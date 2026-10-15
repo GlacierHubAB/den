@@ -64,7 +64,10 @@ func TestMissionThreadShowsWorkingAgentsInline(t *testing.T) {
 	m.base[1].Session.Name = "peer-snug"
 	m.refresh()
 	m.ov.open = ms.ID
-	m.missionText("ask Snug to look at the header")
+	// Den's own message for the mission (a run): the dispatch it brings
+	// joins the mission's thread.
+	m.turn = missionTurn{id: ms.ID}
+	m.tell(ms.ID, "ask Snug to look at the header", "ask Snug to look at the header")
 	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "Sending it to Snug Capybara."})
 	in, _ := json.Marshal(map[string]string{"to": "peer-snug", "message": "Look at the header spacing."})
 	m.handleOrchEvent(orch.Event{Kind: orch.ToolUse, Tool: "SendMessage", ToolUseID: "t1", Input: in})

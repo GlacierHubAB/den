@@ -21,7 +21,7 @@ import (
 // keeps the open mission's shape and team.
 
 // templateDir is added to a proposal request seeded from a template.
-const templateDir = `The human started this from a template: a shape, constraints, a done-when and a team of roles with models. Propose a mission that keeps the template's shape, constraints, done_when and team (each role with its model and "under") for the target the human named, and change something only when the target calls for it; say in one line what you changed. Answer with the json block as usual and start nothing.`
+const templateDir = `The human started this from a template: a shape, constraints, a done-when and a team of roles with models. Keep the template's shape, constraints and team (each role with its model and "under") for the target the human named, set the done criteria from its done-when and give each sub-goal its owner, and change something only when the target calls for it; say in one line what you changed. Start nothing.`
 
 // templateList loads the templates; err is a problem with the user's file.
 func templateList() ([]templates.Template, error) { return templates.Load(templates.Path()) }
@@ -90,18 +90,27 @@ func (m *Model) proposeFromTemplate(t templates.Template, target string) tea.Cmd
 	p, _ := m.curProject()
 	now := time.Now()
 	words := strings.TrimSpace("template " + t.Name + " " + target)
-	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: words, State: mission.Proposed, Template: t.Name, Created: now, Updated: now}
-	ms.Apply(mission.Proposal{
-		Name:    templateMissionName(t.Name, target),
-		Mission: t.Fill(target), DoneWhen: t.DoneWhen, Constraints: t.Constraints,
+	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: words, State: mission.Proposed, Template: t.Name, Created: now, Updated: now,
+		Name: templateMissionName(t.Name, target), Mission: t.Fill(target), DoneWhen: t.DoneWhen, Constraints: t.Constraints,
 		Shape: t.Shape, Cadence: t.Cadence, Team: t.Team, Reason: "from template " + t.Name,
-	})
+	}
+	if ms.Shape == "" {
+		ms.Shape = mission.Once
+	}
+	// The template's done-when is the first criterion and each role's part
+	// a sub-goal; the orchestrator adapts both to the target.
+	if dw := strings.ToLower(strings.TrimSpace(t.DoneWhen)); dw != "" && dw != "standing" && !strings.HasPrefix(dw, "never") {
+		ms.SetCriteria([]string{t.DoneWhen})
+	}
+	for _, r := range t.Team {
+		ms.AddGoal(mission.SubGoal{Text: r.Role + "'s part", Role: r.Role, State: mission.GoalTodo})
+	}
 	m.missions.Save(ms)
 	m.ov.listing = false
 	m.ov.proposal = ms.ID
-	prompt := fmt.Sprintf("Propose a mission for project %s (repository %s, branch %s), seeded from a template.\n%s\n%s\nThe human's words: %s",
-		p.Name, p.Root, p.Branch, templateDir, t.Describe(target), words)
-	return m.sendMission(ms.ID, true, words, prompt)
+	prompt := fmt.Sprintf("Den made proposal %s for project %s (repository %s, branch %s) from a template.\n%s\n%s\nAdapt it to the target with propose_mission and id %s: the goal, the done criteria and the sub-goals with their owners. The human's words: %s",
+		ms.ID, p.Name, p.Root, p.Branch, templateDir, t.Describe(target), ms.ID, words)
+	return m.sendMission(ms.ID, words, prompt)
 }
 
 // templateMissionName is the row's name: the template and what it is for.

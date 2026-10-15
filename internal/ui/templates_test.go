@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/templates"
@@ -61,7 +62,7 @@ func TestTemplateSeedsAProposalAndStartsNothing(t *testing.T) {
 		t.Fatalf("pending = %q", m.orch.pending)
 	}
 	p := m.orch.pending[0]
-	for _, want := range []string{"seeded from a template", `Template "code-review"`, "team: security auditor on sonnet, under review lead", "fenced json block"} {
+	for _, want := range []string{"from a template", `Template "code-review"`, "team: security auditor on sonnet, under review lead", "propose_mission and id " + ms.ID} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt lacks %q:\n%s", want, p)
 		}
@@ -76,10 +77,21 @@ func TestTemplateSeedsAProposalAndStartsNothing(t *testing.T) {
 			t.Errorf("card lacks %q:\n%s", want, out)
 		}
 	}
-	// The orchestrator adapts it; the template mark stays.
-	m.missionReply("Same team, but read-only.\n```json\n{\"mission\": {\"name\": \"Review demo\", \"mission\": \"Review demo.\", \"done_when\": \"report\", \"shape\": \"fanout\", \"team\": [{\"role\": \"review lead\", \"model\": \"opus\"}]}}\n```")
-	if ms.Name != "Review demo" || len(ms.Team) != 1 || ms.Template != "code-review" {
-		t.Errorf("after reply: %+v", ms)
+	// Den seeded the criteria and the roles' sub-goals from the template.
+	if len(ms.Criteria) != 1 || len(ms.Goals) != 3 || ms.Goals[0].Role != "review lead" {
+		t.Errorf("seeded criteria %+v goals %+v", ms.Criteria, ms.Goals)
+	}
+	// The orchestrator adapts it through its tool, by the id; the template
+	// mark stays.
+	proc, _ := liveOrchestrator(t)
+	m.orch.proc, m.orch.origins = proc, []string{originDen}
+	d := callDen(t, &m, bridge.ProposeEvent, bridge.ProposeInput{ID: ms.ID, Project: ms.Project, Name: "Review demo", Goal: "Review demo.",
+		Criteria: []string{"one report"}, Goals: []bridge.GoalInput{{Text: "Lead the review", Owner: "review lead"}}, Shape: "fanout",
+		Team: []bridge.TeamInput{{Role: "review lead", Model: "opus"}}}, orchChildPID)
+	m.orch.proc, m.orch.origins = nil, nil
+	ms = m.missions.Get(ms.ID)
+	if d.Behavior != "allow" || ms.Name != "Review demo" || len(ms.Team) != 1 || ms.Template != "code-review" {
+		t.Errorf("after the refinement %+v: %+v", d, ms)
 	}
 	m.startMission()
 	if ms.State != mission.Running || len(ms.Runs) != 1 {

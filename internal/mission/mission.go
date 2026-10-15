@@ -479,44 +479,11 @@ func NewID(now time.Time) string {
 
 var fence = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
 
-// Proposal is the orchestrator's answer to "propose a mission".
-type Proposal struct {
-	Name        string   `json:"name"`
-	Mission     string   `json:"mission"`
-	DoneWhen    string   `json:"done_when"`
-	Constraints []string `json:"constraints"`
-	Shape       Shape    `json:"shape"`
-	Cadence     string   `json:"cadence"`
-	Reason      string   `json:"reason"`
-	Agents      []string `json:"agents"`
-	Team        []Member `json:"team"`
-}
-
 // Update is the orchestrator's word on a running mission.
 type Update struct {
 	ID      string `json:"id"`
 	State   string `json:"state"` // done, continue, waiting, failed
 	Summary string `json:"summary"`
-}
-
-// ParseProposal finds a {"mission": {...}} block in the orchestrator's text.
-func ParseProposal(text string) (Proposal, bool) {
-	for _, m := range fence.FindAllStringSubmatch(text, -1) {
-		var wrap struct {
-			Mission *Proposal `json:"mission"`
-		}
-		if json.Unmarshal([]byte(m[1]), &wrap) == nil && wrap.Mission != nil && wrap.Mission.Mission != "" {
-			p := *wrap.Mission
-			p.Shape = Shape(strings.ToLower(strings.ReplaceAll(string(p.Shape), "-", "")))
-			switch p.Shape {
-			case Once, Loop, FanOut, Schedule:
-			default:
-				p.Shape = Once
-			}
-			return p, true
-		}
-	}
-	return Proposal{}, false
 }
 
 // ParseUpdate finds a {"mission_update": {...}} block.
@@ -538,31 +505,11 @@ func Strip(text string) string {
 	return strings.TrimSpace(fence.ReplaceAllString(text, ""))
 }
 
-// Apply fills the mission from a proposal.
-func (m *Mission) Apply(p Proposal) {
-	if p.Name != "" {
-		m.Name = p.Name
-	}
-	m.Mission, m.DoneWhen, m.Constraints = p.Mission, p.DoneWhen, p.Constraints
-	m.Shape, m.Cadence, m.Reason, m.Agents, m.Team = p.Shape, p.Cadence, p.Reason, p.Agents, p.Team
-	if m.Name == "" {
-		m.Name = shortName(m.Mission)
-	}
-}
-
-func shortName(s string) string {
-	words := strings.Fields(s)
-	if len(words) > 6 {
-		words = words[:6]
-	}
-	return strings.TrimRight(strings.Join(words, " "), ".,;:")
-}
-
 // Describe is the mission as the orchestrator is told it.
 func (m *Mission) Describe() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Mission %s (%q) on project %s\n", m.ID, m.Name, m.Project)
-	fmt.Fprintf(&b, "- mission: %s\n", m.Mission)
+	fmt.Fprintf(&b, "- goal: %s\n", m.Mission)
 	if m.DoneWhen != "" {
 		fmt.Fprintf(&b, "- done when: %s\n", m.DoneWhen)
 	}
@@ -576,6 +523,22 @@ func (m *Mission) Describe() string {
 	b.WriteString("\n")
 	if len(m.Agents) > 0 {
 		fmt.Fprintf(&b, "- agents: %s\n", strings.Join(m.Agents, ", "))
+	}
+	// The criteria and sub-goals as the human and the orchestrator set them:
+	// never a sub-goal's note or a claim's evidence, which may carry what an
+	// agent said, since this goes unfenced into Den's own turns.
+	for _, c := range m.Criteria {
+		fmt.Fprintf(&b, "- done criterion %s: %s (%s)\n", c.ID, c.Text, c.State)
+	}
+	for _, g := range m.Goals {
+		owner := "unassigned"
+		switch {
+		case g.Name != "":
+			owner = "owner " + g.Name
+		case g.Role != "":
+			owner = "role to start " + g.Role
+		}
+		fmt.Fprintf(&b, "- sub-goal %s: %s · %s · %s\n", g.ID, g.Text, owner, g.State)
 	}
 	for _, t := range m.Team {
 		line := "- team: " + t.Role

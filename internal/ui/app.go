@@ -194,11 +194,10 @@ type Model struct {
 	detailScroll int       // lines scrolled in the detail pane
 	tree         treeState // who directs whom, and the map
 
-	proj           projectState   // the projects and the pick
-	ov             overviewState  // the Overview tab
-	missions       *mission.Store // standing goals, by project
-	turn           missionTurn    // which mission the orchestrator's turn serves
-	missionDirSent bool           // the orchestrator has had the mission vocabulary
+	proj     projectState   // the projects and the pick
+	ov       overviewState  // the Overview tab
+	missions *mission.Store // standing goals, by project
+	turn     missionTurn    // which mission the orchestrator's turn serves
 
 	rev reviewState // the Review view
 
@@ -1710,8 +1709,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			note, isErr := m.missionMetCommand(strings.EqualFold(fields[1], "met"), fields[2])
 			return m.say(note, isErr)
 		}
-		m.tab = tabOverview
-		return m, m.proposeMission(strings.Join(fields[1:], " "))
+		cmd := m.requestMission(strings.Join(fields[1:], " "))
+		return m, cmd
 	case "/template", "/templates":
 		return m.templateCommand(fields[1:], text)
 	case "/pause", "/resume", "/stop":
