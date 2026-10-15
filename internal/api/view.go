@@ -149,3 +149,21 @@ func (s *Server) pushView(ch ViewChange) {
 		}
 	}
 }
+
+// ConsoleUp reports whether a connection is open that may switch views: the
+// dock that can call view.show. With none, a card that waits behind a hidden
+// Den window has nobody to bring it back.
+func (s *Server) ConsoleUp() bool {
+	s.mu.Lock()
+	conns := make([]*conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		if s.viewLane(c) != "" {
+			return true
+		}
+	}
+	return false
+}

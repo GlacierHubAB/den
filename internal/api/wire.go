@@ -170,6 +170,13 @@ type Fleet struct {
 	View string `json:"view,omitempty"`
 }
 
+// Agent.Hooks values.
+const (
+	HooksOn      = "on"
+	HooksOff     = "off"
+	HooksUnknown = "unknown"
+)
+
 // Agent states and waits.
 const (
 	StateIdle    = "idle"
@@ -197,6 +204,12 @@ type Agent struct {
 	Window   string    `json:"window,omitempty"`
 	Host     string    `json:"host,omitempty"`
 	Remote   bool      `json:"remote,omitempty"`
+	// Hooks says whether Den can see this agent's prompts: HooksOn when Den
+	// has had a hook event from the session since Den started, HooksOff
+	// when Den's hooks are not installed at all, HooksUnknown when they are
+	// but this session has not reported yet (new, or started before the hooks
+	// or before this Den). Agents on other machines carry none.
+	Hooks    string    `json:"hooks,omitempty"`
 	CostUSD  float64   `json:"costUsd"`
 	Turns    int       `json:"turns"`
 	LastSeen time.Time `json:"lastSeen"`

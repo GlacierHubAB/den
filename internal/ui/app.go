@@ -528,7 +528,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now())}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -604,6 +604,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case viewRescueMsg:
 		return m.applyViewRescue(msg)
+	case viewRaisedMsg:
+		if msg.err != nil {
+			m.api.raised = false // try again on the next tick
+		}
+		return m, nil
 	case apiNoteMsg:
 		if msg.from != m.api.srv {
 			return m, nil

@@ -148,7 +148,12 @@ no transcript, and no request body outside `inbox.body`.
   `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
   remote?, costUsd, turns, lastSeen, color?, permission_mode?}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
-  `plan`. Agents on other machines carry `remote: true` and their host's
+  `plan`. `hooks` says whether Den can see the agent's prompts (see
+  "Switching views"): `on` when Den has had a hook event from the session since
+  Den started, `off` when Den's hooks are not installed, `unknown` when they are
+  but the session has not reported yet (new, or started before the hooks or
+  before this Den); an agent on another machine carries none. Treat `unknown`
+  like `off`. Agents on other machines carry `remote: true` and their host's
   label; what their hosts report is passed on as labels, never as Den's own
   words. Windows of agents on other machines are not listed. `color` is the
   colour Den draws an agent of this machine in, its critter and an `@Name`
@@ -424,6 +429,13 @@ own.
     agent that has not registered yet: Den has not hidden its window (a new
     agent comes up hidden only once Den has tied its window to it, which
     happens after the dialog).
+  - With no dock connected: if Den is in User view, a card waits on you, and
+    no proved connection is open to call `view.show` (the dock died, unpaired
+    or lost its connection), Den brings back its own window, and only that
+    one, within about five seconds. The agents' windows stay hidden and the
+    view stays `user`; it does this once per spell of waiting, and a dock that
+    connects again can hide the window once more. A card that waits while a
+    dock is connected is the dock's to show.
   - A new agent spawned in User view comes up hidden once Den has tied its
     window to it; asking `view.hide` again hides any that came up otherwise.
 - Nothing is closed, signalled or typed into. Closing an agent works on a

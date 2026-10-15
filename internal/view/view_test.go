@@ -803,3 +803,52 @@ func TestAPromptingAgentsWindowStaysUp(t *testing.T) {
 		t.Errorf("reason is %d characters", len(res.Reason))
 	}
 }
+
+// TestShowOwnBringsBackOnlyDensWindow: for a card with nobody to call
+// view.show, Den's own window comes back to where it was, the agents'
+// windows stay hidden, and the view stays User.
+func TestShowOwnBringsBackOnlyDensWindow(t *testing.T) {
+	r := newRig(t, 2)
+	if moved, err := r.sw.ShowOwn(context.Background()); moved || err != nil {
+		t.Fatalf("nothing is hidden: %v %v", moved, err)
+	}
+	r.wm.cs[len(r.wm.cs)-1].Workspace.ID, r.wm.cs[len(r.wm.cs)-1].Workspace.Name = 4, "4"
+	r.must(User)
+	if r.wm.where("0xden") != Workspace {
+		t.Fatal("Den's window was not hidden")
+	}
+	moved, err := r.sw.ShowOwn(context.Background())
+	if !moved || err != nil {
+		t.Fatalf("ShowOwn: %v %v", moved, err)
+	}
+	if got := r.wm.where("0xden"); got != "4" {
+		t.Errorf("Den's window is on %q, want its origin 4", got)
+	}
+	if r.wm.where("0xa1") != Workspace || r.wm.where("0xa2") != Workspace {
+		t.Error("an agent's window came back")
+	}
+	if r.sw.Current() != User {
+		t.Errorf("the view is %q, want user", r.sw.Current())
+	}
+	if moved, _ := r.sw.ShowOwn(context.Background()); moved {
+		t.Error("a second ShowOwn moved something")
+	}
+	for _, m := range r.wm.moves() {
+		if strings.Contains(m, "0xa") && strings.HasSuffix(m, " 4") {
+			t.Errorf("moved an agent: %s", m)
+		}
+	}
+	// A restarted Den that cannot tell its window any more finds it by the
+	// record, and the next show finds nothing of Den's own to bring back.
+	r.must(User)
+	r.own = nil
+	if moved, _ := r.sw.ShowOwn(context.Background()); !moved {
+		t.Error("the record did not find Den's window")
+	}
+	// While a close or a switch runs it does not wait.
+	unlock := hypr.LockWindows()
+	defer unlock()
+	if _, err := r.sw.ShowOwn(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Errorf("ShowOwn during a close: %v", err)
+	}
+}

@@ -455,6 +455,75 @@ func (sw *Switcher) Rescue(ctx context.Context) (moved, left int, err error) {
 	return moved, left, err
 }
 
+// ShowOwn brings back Den's own window alone, from special:den, and leaves
+// every other window, and the view Den is in, as they are. It is for a card
+// that waits behind a hidden Den window when nobody is connected to call
+// view.show. The window is found by Den's rule (the one window of a process
+// above Den's) or by its record, never otherwise. It reports whether a
+// window moved.
+func (sw *Switcher) ShowOwn(ctx context.Context) (bool, error) {
+	if !sw.Ops.Available() {
+		return false, ErrNoCompositor
+	}
+	unlock, ok := hypr.TryLockWindows()
+	if !ok {
+		return false, ErrBusy
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, sw.budget())
+	defer cancel()
+	moved := false
+	err := sw.withState(ctx, func(st *State) error {
+		all, err := sw.Ops.Clients(ctx)
+		if err != nil {
+			return ErrList
+		}
+		var own hypr.Client
+		found := false
+		if c, ok := sw.Own(all); ok && onSpecial(c) {
+			own, found = c, true
+		}
+		to := ""
+		for _, r := range st.Moved {
+			if !r.Own {
+				continue
+			}
+			c, ok := byAddress(all, r.Address)
+			if ok && c.PID == r.PID && c.InitialClass == r.Class && onSpecial(c) {
+				own, found, to = c, true, r.From
+			}
+		}
+		if !found {
+			return nil
+		}
+		if !validWorkspace(to) {
+			to = ""
+			if ws, ok := sw.Ops.Active(ctx); ok {
+				to = strconv.Itoa(ws.ID)
+			}
+		}
+		if to == "" {
+			return nil
+		}
+		_ = sw.Ops.Move(ctx, own.Address, to)
+		final, cancelFinal := context.WithTimeout(context.Background(), callTimeout)
+		defer cancelFinal()
+		after, err := sw.Ops.Clients(final)
+		if err != nil {
+			return ErrList
+		}
+		if c, ok := byAddress(after, own.Address); ok && !onSpecial(c) {
+			moved = true
+			st.drop(Moved{Own: true, Address: own.Address})
+			if err := saveState(sw.path(), *st); err != nil {
+				return ErrState
+			}
+		}
+		return nil
+	})
+	return moved, err
+}
+
 func (sw *Switcher) now() time.Time {
 	if sw.Now != nil {
 		return sw.Now()

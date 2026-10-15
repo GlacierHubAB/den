@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -361,5 +362,104 @@ func TestHideSaysWhenItCannotTellDensWindow(t *testing.T) {
 	rep, _ := switchView(t, m, api.ViewUser)
 	if rep.Result.Shown != 0 || rep.Result.Total != 2 || rep.Result.Reason != "Den's own window not found" {
 		t.Fatalf("hide: %+v", rep)
+	}
+}
+
+// TestACardWaitingForNoDockBringsDensWindowBack: in User view with a card
+// waiting and no dock connected, Den's own window comes back, alone; with a
+// dock connected, or nothing waiting, it stays hidden; and it is done once.
+func TestACardWaitingForNoDockBringsDensWindowBack(t *testing.T) {
+	m, wm := viewRig(t)
+	dock := false
+	defer func(f func(*Model) bool) { consoleUp = f }(consoleUp)
+	consoleUp = func(*Model) bool { return dock }
+	if m.checkViewStranded() != nil {
+		t.Fatal("acted while in Agent view")
+	}
+	_, done := switchView(t, m, api.ViewUser)
+	m.api.view = done.view
+	if wm.where("0xden") != api.ViewWorkspace {
+		t.Fatal("Den's window was not hidden")
+	}
+	if m.checkViewStranded() != nil {
+		t.Fatal("acted with nothing waiting")
+	}
+
+	it := m.store.AddClose("s-a", "Close?", []string{"x"}, nil)
+	dock = true
+	if m.checkViewStranded() != nil || wm.where("0xden") != api.ViewWorkspace {
+		t.Fatal("brought Den's window back with a dock connected")
+	}
+	dock = false
+	cmd := m.checkViewStranded()
+	if cmd == nil {
+		t.Fatal("a card waits behind a hidden window with no dock, and nothing was done")
+	}
+	if msg, ok := cmd().(viewRaisedMsg); !ok || msg.err != nil {
+		t.Fatalf("raise: %+v", msg)
+	}
+	if wm.where("0xden") != "1" {
+		t.Errorf("Den's window is on %q, want its workspace 1", wm.where("0xden"))
+	}
+	if wm.where("0xa") != api.ViewWorkspace || wm.where("0xb") != api.ViewWorkspace {
+		t.Error("an agent's window came back")
+	}
+	if viewSwitcher().Current() != api.ViewUser {
+		t.Error("the view changed")
+	}
+	if m.checkViewStranded() != nil {
+		t.Error("acted twice for one card")
+	}
+	// The card is answered; the next one, with the window shown again by
+	// the dock's hide, is handled afresh.
+	m.store.Settle(it, true, "answered")
+	if m.checkViewStranded() != nil {
+		t.Error("acted with nothing waiting")
+	}
+	if _, done := switchView(t, m, api.ViewUser); done.view != api.ViewUser || wm.where("0xden") != api.ViewWorkspace {
+		t.Fatalf("the second hide: %+v", done)
+	}
+	m.store.AddClose("s-b", "Close?", []string{"x"}, nil)
+	if m.checkViewStranded() == nil {
+		t.Error("a second card was not handled")
+	}
+	// A failed attempt is tried again on the next tick.
+	mm, _ := m.Update(viewRaisedMsg{err: context.Canceled})
+	if got := mm.(Model); got.api.raised {
+		t.Error("a failed raise was not retried")
+	}
+}
+
+// TestHooksStateIsPublished: the fleet says, per agent on this machine,
+// whether Den has seen its hooks report.
+func TestHooksStateIsPublished(t *testing.T) {
+	m, _ := viewRig(t)
+	m.hooksReady = true
+	m.att.ready()
+	m.att.lastHook["s-a"] = time.Now()
+	if cmd := m.startAPI(); cmd == nil {
+		t.Fatal("the API did not start")
+	}
+	defer m.closeAPI()
+	c := dialAPI(t, m)
+	res := c.call("fleet.snapshot", nil)["result"].(map[string]any)
+	hooks := map[string]any{}
+	for _, a := range res["agents"].([]any) {
+		ag := a.(map[string]any)
+		hooks[ag["id"].(string)] = ag["hooks"]
+	}
+	if hooks["s-a"] != "on" || hooks["s-b"] != "unknown" {
+		t.Errorf("hooks: %v", hooks)
+	}
+	if v, has := hooks["s-r"]; !has || v != nil {
+		t.Errorf("the remote agent: %v %v", v, has)
+	}
+	m.hooksReady = false
+	m.publishAPI()
+	res = c.call("fleet.snapshot", nil)["result"].(map[string]any)
+	for _, a := range res["agents"].([]any) {
+		if ag := a.(map[string]any); ag["id"] == "s-b" && ag["hooks"] != "off" {
+			t.Errorf("without hooks installed: %v", ag["hooks"])
+		}
 	}
 }

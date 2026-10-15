@@ -53,6 +53,11 @@ type Snapshot struct {
 	// View is the view Den is in (ViewAgent or ViewUser), "" when it cannot
 	// switch views.
 	View string
+	// HooksInstalled is whether Den's hooks are installed; HookSeen holds the
+	// sessions on this machine that have reported a hook event since Den
+	// started.
+	HooksInstalled bool
+	HookSeen       map[string]bool
 }
 
 // modeLabel is a mode as the wire carries it: one Claude Code names, else
@@ -166,6 +171,16 @@ func Project(s Snapshot) *View {
 			CostUSD:  a.Cost.USD,
 			Host:     sanitize.Label(a.Host, labelMax),
 			Remote:   a.Host != "",
+		}
+		if a.Host == "" {
+			switch {
+			case s.HookSeen[a.Session.SessionID]:
+				ag.Hooks = HooksOn
+			case !s.HooksInstalled:
+				ag.Hooks = HooksOff
+			default:
+				ag.Hooks = HooksUnknown
+			}
 		}
 		if a.Host == "" {
 			ag.Color = hexColor(s.Colors[a.Session.SessionID])

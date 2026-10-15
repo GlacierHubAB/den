@@ -36,6 +36,7 @@ type apiState struct {
 	lastKey time.Time              // the human's last key in Den: no focus from outside right after it
 	warned  bool                   // the second socket replacement was noted
 	view    string                 // the view Den is in (viewswitch.go), "" when it cannot switch
+	raised  bool                   // Den's own window was brought back for a card, with no dock to ask (viewswitch.go)
 }
 
 // focusQuiet is how long after the human's last key in Den an app may not
@@ -309,6 +310,14 @@ func (m *Model) publishAPI() {
 		Roster:    m.laneRoster(),
 		Guidance:  m.guide.active,
 		View:      m.api.view,
+
+		HooksInstalled: m.hooksReady,
+		HookSeen:       map[string]bool{},
+	}
+	for sid := range m.att.lastHook {
+		if hostOf(sid) == "" {
+			snap.HookSeen[sid] = true
+		}
 	}
 	snap.Colors = map[string]string{}
 	snap.Modes = map[string]string{}

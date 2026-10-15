@@ -106,3 +106,34 @@ func (m Model) applyViewRescue(msg viewRescueMsg) (tea.Model, tea.Cmd) {
 	}
 	return m.say("Brought back "+strconv.Itoa(msg.moved)+" window(s) from special:den.", false)
 }
+
+// consoleUp says whether a dock is connected that could call view.show;
+// tests replace it.
+var consoleUp = func(m *Model) bool { return m.api.srv != nil && m.api.srv.ConsoleUp() }
+
+// viewRaisedMsg is the end of bringing Den's own window back for a card.
+type viewRaisedMsg struct{ err error }
+
+// checkViewStranded runs on the periodic tick. In User view, with a card
+// waiting on the human and no dock connected to call view.show, the card
+// would wait behind a hidden Den window with nobody able to show it: Den
+// brings back its own window, and only that one. The agents' windows stay
+// hidden, and the view stays User. It does so once for as long as the
+// situation lasts, and again after it has passed and returned.
+func (m *Model) checkViewStranded() tea.Cmd {
+	if m.api.view != api.ViewUser || m.store.Waiting() == 0 || consoleUp(m) {
+		m.api.raised = false
+		return nil
+	}
+	if m.api.raised {
+		return nil
+	}
+	m.api.raised = true
+	sw := viewSwitcher()
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), view.Budget+time.Second)
+		defer cancel()
+		_, err := sw.ShowOwn(ctx)
+		return viewRaisedMsg{err: err}
+	}
+}

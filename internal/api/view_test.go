@@ -237,3 +237,67 @@ func TestViewSwitchEndsWhenTheUIDoesNotAnswer(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestFleetAgentsCarryTheirHooksState: on when the session has reported
+// since Den started, off when Den's hooks are not installed, unknown when
+// they are but it has not reported; none for an agent on another machine.
+func TestFleetAgentsCarryTheirHooksState(t *testing.T) {
+	state := func(installed bool, seen ...string) map[string]string {
+		snap := snapshot()
+		snap.HooksInstalled = installed
+		snap.HookSeen = map[string]bool{}
+		for _, id := range seen {
+			snap.HookSeen[id] = true
+		}
+		out := map[string]string{}
+		for _, a := range Project(snap).Fleet.Agents {
+			out[a.ID] = a.Hooks
+		}
+		return out
+	}
+	if got := state(true, "s-1"); got["s-1"] != HooksOn || got["s-2"] != HooksUnknown || got["s-3"] != "" {
+		t.Errorf("hooks installed: %v", got)
+	}
+	if got := state(false, "s-1"); got["s-1"] != HooksOn || got["s-2"] != HooksOff || got["s-3"] != "" {
+		t.Errorf("hooks not installed: %v", got)
+	}
+	// On the wire, an agent on another machine has no hooks field.
+	h := newHarness(t, 2)
+	snap := snapshot()
+	snap.HooksInstalled = true
+	h.s.Publish(Project(snap))
+	c := h.dial()
+	c.hello()
+	var f Fleet
+	if l := c.call("fleet.snapshot", nil); json.Unmarshal(l.Result, &f) != nil || len(f.Agents) != 3 {
+		t.Fatalf("fleet: %s", l.Result)
+	}
+	for _, a := range f.Agents {
+		if (a.Host != "") != (a.Hooks == "") {
+			t.Errorf("%s (host %q) hooks %q", a.Name, a.Host, a.Hooks)
+		}
+	}
+}
+
+// TestConsoleUpFollowsTheProvedConnection: a dock that can call view.show is
+// connected only while a proved connection is open.
+func TestConsoleUpFollowsTheProvedConnection(t *testing.T) {
+	h := newHarness(t, 2)
+	plain := h.dial()
+	plain.hello()
+	if h.s.ConsoleUp() {
+		t.Fatal("a connection that proved nothing is a dock")
+	}
+	ctl, _, _ := paired(t, h)
+	if !h.s.ConsoleUp() {
+		t.Fatal("the proved connection is not a dock")
+	}
+	ctl.nc.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for h.s.ConsoleUp() {
+		if time.Now().After(deadline) {
+			t.Fatal("a closed connection still counts")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
