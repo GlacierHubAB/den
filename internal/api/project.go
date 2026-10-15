@@ -230,7 +230,9 @@ func projectCard(c Card) Card {
 		ID:          sanitize.Label(c.ID, labelMax),
 		Kind:        sanitize.Label(c.Kind, labelMax),
 		Agent:       sanitize.Label(c.Agent, labelMax),
+		Tool:        sanitize.Label(c.Tool, labelMax),
 		Title:       sanitize.Line(c.Title),
+		Note:        sanitize.Line(c.Note),
 		Truncated:   c.Truncated,
 		CutAt:       c.CutAt,
 		DockAnswers: c.DockAnswers,
@@ -246,7 +248,7 @@ func projectCard(c Card) Card {
 			out.Verbs = append(out.Verbs, v)
 		}
 	}
-	out.Hash = CardHash(out.Kind, out.Agent, out.Title, out.Body)
+	out.Hash = CardHash(out.Kind, out.Agent, out.Tool, out.Title, out.Note, out.Body)
 	return out
 }
 

@@ -62,7 +62,7 @@ func TestCardGetAndAnswer(t *testing.T) {
 		t.Fatalf("card event %+v", e)
 	}
 	g := getCard(t, c, "i-1")
-	if g.Hash != CardHash("permission", "Otter", "Bash", "line 0\nline 1") || ev.Hash != g.Hash || !isHex(g.Nonce, 64) {
+	if g.Hash != CardHash("permission", "Otter", "", "Bash", "", "line 0\nline 1") || ev.Hash != g.Hash || !isHex(g.Nonce, 64) {
 		t.Errorf("hash %s, event %s, nonce %q", g.Hash, ev.Hash, g.Nonce)
 	}
 	if len(g.Verbs) != 2 {

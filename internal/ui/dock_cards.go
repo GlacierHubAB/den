@@ -35,27 +35,38 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 	if it.Kind == inbox.Permission && inbox.AlwaysRefusal(it) == "" {
 		verbs = append(verbs, "always")
 	}
+	// What requestLines shows: the kind, the tool, the title, a twin's
+	// warning, the intent, then the body.
+	var body []string
+	if it.Intent != "" {
+		body = append(body, strings.Split(it.Intent, "\n")...)
+	}
+	body = append(body, it.Body...)
 	return api.Card{
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
 		Agent:       m.nameFor(itemKey(it)),
+		Tool:        it.Tool,
 		Title:       it.Title,
-		Body:        strings.Join(it.Body, "\n"),
+		Note:        m.twinNote(itemKey(it)),
+		Body:        strings.Join(body, "\n"),
 		Verbs:       verbs,
 		DockAnswers: dockMayAnswer(it),
 	}
 }
 
 // dockMayAnswer reports whether a console may answer it. Never: what makes
-// a console or an app pairing, what turns the API on, what loads guidance
-// or installs on a host (each stays a decision made in Den), a question
-// (it needs the human's words), and a remote host's request.
+// a console or an app pairing, what turns the API on, what loads guidance;
+// an app's grant (the console is an app itself) and skills (every later
+// agent loads them), until the dock confirms in its own native window; a
+// question (it needs the human's words); a remote host's request, and Den's
+// own cards about a host (installing there, a message to an agent there).
 func dockMayAnswer(it *inbox.Item) bool {
-	if hostOf(itemKey(it)) != "" {
+	if hostOf(itemKey(it)) != "" || strings.HasPrefix(it.SessionID, inbox.HostPrefix) {
 		return false
 	}
 	switch it.Kind {
-	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question:
+	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message:
 		return false
 	}
 	return true
@@ -89,8 +100,14 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 	}
 	mm, cmd := m.answerItem(it, a.Verb)
 	*m = mm.(Model)
-	if it.State != inbox.Resolved && m.flashErr {
-		return tea.Batch(cmd, reply(api.CardResult{Code: api.CodeUnavailable, Note: sanitize.Label(m.flash, 120)}))
+	if it.State != inbox.Resolved {
+		// Refused, or a step of several (a plan, a question): Den shows the
+		// rest, and the console is not told it is done.
+		why := "answered in part; Den shows the rest"
+		if m.flashErr {
+			why = sanitize.Label(m.flash, 120)
+		}
+		return tea.Batch(cmd, reply(api.CardResult{Code: api.CodeUnavailable, Note: why}))
 	}
 	result := map[string]string{"allow": "allowed", "deny": "denied", "always": "always"}[a.Verb]
 	word := map[string]string{"allow": "Allowed", "deny": "Denied", "always": "Allowed, and from now on,"}[a.Verb]

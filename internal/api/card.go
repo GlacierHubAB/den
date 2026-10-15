@@ -19,8 +19,9 @@ const (
 	cardNonceLife   = 10 * time.Minute
 	cardReadAtLeast = 300 * time.Millisecond // before answering a card of more than cardLongLines
 	cardLongLines   = 10
-	cardAnswersMax  = 20 // a minute, per console
-	cardBurst       = 5  // answers in a row faster than one a second unpair the console
+	cardAnswersMax  = 20  // a minute, per console
+	cardBurst       = 5   // answers in a row faster than one a second unpair the console
+	cardReadsMax    = 256 // nonces and first reads a connection keeps
 )
 
 // Card answer refusals.
@@ -34,10 +35,14 @@ const (
 // Card is one card as Den shows it, for a console. Den fills Snapshot.Cards
 // with what it would draw; the text is the lines it shows, sanitised.
 type Card struct {
-	ID          string   `json:"id"`
-	Kind        string   `json:"kind"`
-	Agent       string   `json:"agent"`
-	Title       string   `json:"title"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Agent string `json:"agent"`
+	Tool  string `json:"tool"` // the tool asked for, "" for none
+	Title string `json:"title"`
+	// Note is a warning Den shows with the card (two agents share the
+	// name), "" for none.
+	Note        string   `json:"note"`
 	Body        string   `json:"body"`
 	Hash        string   `json:"text_sha256"`
 	Truncated   bool     `json:"truncated"`
@@ -46,10 +51,11 @@ type Card struct {
 	DockAnswers bool     `json:"dock_answers"`
 }
 
-// CardHash is a card's text_sha256: over kind, agent, title and body, one
-// per line (none of the first three holds a newline).
-func CardHash(kind, agent, title, body string) string {
-	return sha256Hex([]byte(kind + "\n" + agent + "\n" + title + "\n" + body))
+// CardHash is a card's text_sha256: over kind, agent, tool, title, note
+// and body, in that order, one per line (none but the body holds a
+// newline).
+func CardHash(kind, agent, tool, title, note, body string) string {
+	return sha256Hex([]byte(kind + "\n" + agent + "\n" + tool + "\n" + title + "\n" + note + "\n" + body))
 }
 
 // CardEvent is a card event's data: a card came, changed or was settled.
@@ -181,6 +187,19 @@ func (s *Server) cardGet(c *conn, req Request) {
 	for n, cn := range c.reads.nonces {
 		if now.Sub(cn.issued) >= cardNonceLife {
 			delete(c.reads.nonces, n)
+		}
+	}
+	if len(c.reads.nonces) >= cardReadsMax {
+		c.reads.nonces = map[string]cardNonce{} // a fetch again is all it costs
+	}
+	if len(c.reads.first) >= cardReadsMax {
+		// Keep the first reads of cards still there: the others are done.
+		v := s.view.Load()
+		for k := range c.reads.first {
+			id, _, _ := strings.Cut(k, "\x00")
+			if _, live := v.Cards[id]; !live {
+				delete(c.reads.first, k)
+			}
 		}
 	}
 	c.reads.nonces[nonce] = cardNonce{id: card.ID, hash: card.Hash, issued: now}
