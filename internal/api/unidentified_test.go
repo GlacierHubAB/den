@@ -174,7 +174,7 @@ func TestReadableAndUnreadableNeverMatch(t *testing.T) {
 // The human never sees "." or the identity itself.
 func TestExeLabels(t *testing.T) {
 	for exe, want := range map[string]string{
-		"/usr/bin/drey-host":            "drey-host",
+		"/usr/bin/app-host":             "app-host",
 		"":                              "a program Den cannot identify",
 		"/":                             "a program Den cannot identify",
 		unreadableExe(4242, 99):         "a program Den cannot identify",
@@ -187,7 +187,7 @@ func TestExeLabels(t *testing.T) {
 			t.Errorf("%q shown as the identity", exe)
 		}
 	}
-	if Unidentified("/usr/bin/drey-host") || !Unidentified(unreadableExe(1, 1)) {
+	if Unidentified("/usr/bin/app-host") || !Unidentified(unreadableExe(1, 1)) {
 		t.Error("Unidentified")
 	}
 }
