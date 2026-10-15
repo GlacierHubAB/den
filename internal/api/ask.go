@@ -686,6 +686,22 @@ func (l *lane) serve(p *laneProc, j *askJob) (*laneProc, string) {
 	}
 }
 
+// stoppedAtStart is why a lane that exited before its checks were done
+// could not answer: a resumed session that could not be resumed starts
+// fresh, and the client is told; otherwise its stderr, if any.
+func (l *lane) stoppedAtStart(o orch.LaneOptions, e orch.Event) error {
+	if o.Resume != "" {
+		// No replay: a fresh session, and the client is told.
+		l.chat.Fresh()
+		return errors.New("the earlier conversation could not be resumed; ask again to start a new one")
+	}
+	msg := "the read-only orchestrator stopped at start"
+	if e.Stderr != "" {
+		msg += ": " + sanitize.Label(e.Stderr, 160)
+	}
+	return errors.New(msg)
+}
+
 // start launches the lane for a session and checks it before any turn:
 // a verified Claude Code release, then its answers to the initialize and
 // mcp_status control requests (no slash commands, dontAsk, no MCP
@@ -726,6 +742,22 @@ func (l *lane) start(j *askJob) (*laneProc, error) {
 	p := &laneProc{o: proc, session: j.session, l: l}
 	l.pid.Store(int64(proc.PID))
 	if proc.ControlRequest("den-initialize", "initialize") != nil || proc.ControlRequest("den-mcp-status", "mcp_status") != nil {
+		// A process that has already exited cannot be written to: say it
+		// stopped, with why, as when its exit comes first.
+		exit := time.NewTimer(2 * time.Second)
+		defer exit.Stop()
+		for {
+			select {
+			case e, ok := <-proc.Events():
+				if !ok || e.Kind == orch.Exited {
+					p.kill()
+					return nil, l.stoppedAtStart(o, e)
+				}
+				continue
+			case <-exit.C:
+			}
+			break
+		}
 		p.kill()
 		return nil, errors.New("Den could not talk to the read-only orchestrator")
 	}
@@ -743,16 +775,7 @@ func (l *lane) start(j *askJob) (*laneProc, error) {
 		case e, ok := <-proc.Events():
 			if !ok || e.Kind == orch.Exited {
 				p.kill()
-				if o.Resume != "" {
-					// No replay: a fresh session, and the client is told.
-					l.chat.Fresh()
-					return nil, errors.New("the earlier conversation could not be resumed; ask again to start a new one")
-				}
-				msg := "the read-only orchestrator stopped at start"
-				if e.Stderr != "" {
-					msg += ": " + sanitize.Label(e.Stderr, 160)
-				}
-				return nil, errors.New(msg)
+				return nil, l.stoppedAtStart(o, e)
 			}
 			if e.Kind != orch.Control {
 				continue

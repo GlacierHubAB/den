@@ -133,6 +133,9 @@ type Agent struct {
 	CostUSD  float64   `json:"costUsd"`
 	Turns    int       `json:"turns"`
 	LastSeen time.Time `json:"lastSeen"`
+	// Color is the colour Den draws this agent in (its critter, an @Name),
+	// as "#rrggbb"; only for agents on this machine.
+	Color string `json:"color,omitempty"`
 }
 
 // Window is a terminal window Den matched to an agent.

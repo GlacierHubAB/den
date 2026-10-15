@@ -414,6 +414,26 @@ func snapshot() Snapshot {
 	}
 }
 
+// An agent of this machine carries the colour Den draws it in, as
+// #rrggbb in lower case; one on another machine never does, and anything
+// that is not such a colour is left out.
+func TestFleetCarriesLocalColours(t *testing.T) {
+	s := snapshot()
+	s.Colors = map[string]string{"s-1": "#A0b1C2", "s-2": "red", "s-3": "#123456"}
+	v := Project(s)
+	got := map[string]string{}
+	for _, a := range v.Fleet.Agents {
+		got[a.ID] = a.Color
+	}
+	if got["s-1"] != "#a0b1c2" || got["s-2"] != "" || got["s-3"] != "" {
+		t.Errorf("colours %v", got)
+	}
+	raw, _ := json.Marshal(v.Fleet.Agents[1])
+	if strings.Contains(string(raw), `"color"`) {
+		t.Errorf("an agent with no colour carries the field: %s", raw)
+	}
+}
+
 func TestReadsAreMetadataOnly(t *testing.T) {
 	h := newHarness(t, 2)
 	h.s.Publish(Project(snapshot()))
