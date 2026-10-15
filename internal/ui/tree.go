@@ -193,7 +193,9 @@ func (m *Model) cardForSpawn(p pendingSpawn, name, sid string) {
 			continue
 		}
 		now := time.Now()
-		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: sanitize.Text(strings.TrimSpace(p.brief)), rawBrief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started", Thread: e.mission}
+		// App comes from the entry: the agent can register after the
+		// app's turn has ended.
+		d := &dispatch{ID: p.toolUseID, SessionID: sid, Agent: name, Brief: sanitize.Text(strings.TrimSpace(p.brief)), rawBrief: strings.TrimSpace(p.brief), SentAt: p.at, StartedAt: now, State: cardWorking, Reason: "started", Thread: e.mission, App: e.app}
 		if d.SentAt.IsZero() {
 			d.SentAt = now
 		}

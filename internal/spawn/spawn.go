@@ -147,7 +147,10 @@ type Result struct {
 var (
 	WindowWait  = 8 * time.Second
 	SessionWait = 45 * time.Second
-	pollEvery   = 300 * time.Millisecond
+	// HoldWait is how long, once a session with the agent's name shows,
+	// Den waits for one that runs in its marked window.
+	HoldWait  = 5 * time.Second
+	pollEvery = 300 * time.Millisecond
 )
 
 // Launch starts the terminal process; tests replace it. dir and title are
@@ -260,16 +263,45 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	}
 
 	deadline := time.Now().Add(SessionWait)
+	var seen time.Time // when a session with the name first showed
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		sessions, _ := discover.Scan()
-		for _, s := range sessions {
-			if s.Alive && s.Name == res.Name && !s.Started().Before(started.Add(-time.Second)) {
-				res.SessionID = s.SessionID
-				res.Critter = badge.Name(s.SessionID)
-				res.Registered = true
-				_ = winmark.Bind(res.Name, s.SessionID)
-				return res, nil
+		// Another session may have taken the name too. The one that runs
+		// in the marked window is the agent, and only it gets the marker.
+		// Den waits a little (HoldWait) for it, since a rival can register
+		// first; then, when it still cannot tell, the first is the agent,
+		// as before, and the marker stays unbound, so closing never
+		// touches the window.
+		var first *discover.Session
+		holds := false
+		for i, s := range sessions {
+			if !s.Alive || s.Name != res.Name || s.Started().Before(started.Add(-time.Second)) {
+				continue
 			}
+			if first == nil {
+				first = &sessions[i]
+			}
+			if marker == "" || !hyprOK {
+				break
+			}
+			pid := s.PID
+			if ok, _ := winmark.Bind(res.Name, s.SessionID, func(mk string) bool { return hypr.MarkerHolds(mk, pid) }); ok {
+				first, holds = &sessions[i], true
+				break
+			}
+		}
+		if first != nil && seen.IsZero() {
+			seen = time.Now()
+		}
+		if first != nil && !holds && marker != "" && hyprOK && time.Since(seen) < HoldWait && time.Now().Add(pollEvery).Before(deadline) {
+			sleep(ctx, pollEvery)
+			continue
+		}
+		if first != nil {
+			res.SessionID = first.SessionID
+			res.Critter = badge.Name(first.SessionID)
+			res.Registered = true
+			return res, nil
 		}
 		sleep(ctx, pollEvery)
 	}
@@ -327,10 +359,10 @@ func (r Result) Describe() string {
 		return fmt.Sprintf("Opened a terminal in %s%s.", where, ws)
 	}
 	if r.Untrusted {
-		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. Claude Code has never worked in that folder, so it is first asking the human, in that terminal, whether to trust it; nothing happens until they answer. Tell the human. Once they have, the agent appears in the roster and SendMessage to %q reaches it.", where, ws, r.Name, r.Name)
+		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. Claude Code has never worked in that folder, so it is first asking the human, in that terminal, whether to trust it; nothing happens until they answer. Tell the human. Once they have, the agent appears in the roster and your messages to %q reach it.", where, ws, r.Name, r.Name)
 	}
 	if !r.Registered {
-		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. The session has not registered yet; it will appear in the roster shortly, and SendMessage to %q reaches it once it has.", where, ws, r.Name, r.Name)
+		return fmt.Sprintf("Opened a terminal in %s%s and started Claude Code there as peer %q with the brief as its first prompt. The session has not registered yet; it will appear in the roster shortly, and your messages to %q reach it once it has.", where, ws, r.Name, r.Name)
 	}
 	model := ""
 	if r.Model != "" {
@@ -340,7 +372,7 @@ func (r Result) Describe() string {
 	if r.Worktree != "" {
 		tree = fmt.Sprintf(" It works in its own git worktree %s on branch %s; the human merges that branch in Den's Review.", shortDir(r.WorktreePath), r.WorktreeBranch)
 	}
-	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and SendMessage to %q reaches it.%s", r.Critter, r.Name, where, ws, model, r.Critter, r.Name, tree)
+	return fmt.Sprintf("Started %s (peer %q) in %s%s%s. It has the brief as its first prompt and is working on it now; it appears in the roster as %s, and your messages to %q reach it.%s", r.Critter, r.Name, where, ws, model, r.Critter, r.Name, tree)
 }
 
 // Command is the claude command line for an agent named name.

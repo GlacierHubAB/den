@@ -259,13 +259,14 @@ func ActiveWorkspace() (ws Workspace, ok bool) {
 }
 
 // MoveToWorkspace moves a window to a workspace (by id or name) without
-// changing which workspace is shown. Lua first (Hyprland 0.56+), then the
-// classic dispatcher.
+// changing which workspace is shown: the focus stays where it is, and a
+// special workspace stays hidden. Lua first (Hyprland 0.56+, whose move takes
+// follow = false for that), then the classic movetoworkspacesilent.
 func MoveToWorkspace(address, workspace string) error {
 	if address == "" {
 		return errors.New("no window address")
 	}
-	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", silent = true })`, workspace, address)
+	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", follow = false })`, workspace, address)
 	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err == nil && (msg == "ok" || msg == "") {
@@ -296,6 +297,45 @@ func NewTerminal(before, after []Client) (Client, bool) {
 		return found[0], true
 	}
 	return Client{}, false
+}
+
+// MarkerHolds reports whether pid runs in the one window that carries
+// marker (its initial class): exactly one window has it, its terminal
+// process has no other window, and pid descends from that process. When
+// any of that fails Den cannot tell whose window it is, and the answer is
+// false.
+func MarkerHolds(marker string, pid int) bool {
+	if marker == "" || pid <= 1 || !Available() {
+		return false
+	}
+	all, err := Clients()
+	if err != nil {
+		return false
+	}
+	return markerHolds(all, marker, procs.Ancestors(pid))
+}
+
+func markerHolds(all []Client, marker string, chain []procs.Proc) bool {
+	var found []Client
+	for _, c := range all {
+		if c.InitialClass == marker {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 || found[0].PID <= 1 {
+		return false
+	}
+	for _, c := range all {
+		if c.PID == found[0].PID && c.Address != found[0].Address {
+			return false
+		}
+	}
+	for _, p := range chain {
+		if p.PID == found[0].PID {
+			return true
+		}
+	}
+	return false
 }
 
 // ActiveHolds reports whether the focused window belongs to one of pid's

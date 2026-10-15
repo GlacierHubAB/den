@@ -190,6 +190,8 @@ den remote status devbox   the read-only checks again; also: install, remove, di
 den install-mods        put the bundled agent-badge mod into ~/.claude/skills
 den mods                what ships in this binary and where it is loaded from
 den uninstall-mods      undo
+den pair                pair your console app (Drey's dock): a code in Den's header, then your ^Y on its card
+den unpair [all]        end the console; all also ends every app pairing
 den config              the config file path and the settings in effect
 den config init         write a documented ~/.config/den/config.toml
 den version
@@ -432,6 +434,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `Shift+Enter`, `Alt+Enter`, `Ctrl+J` | newline |
 | `Ctrl+Y` / `Ctrl+N` | allow / deny the waiting prompt (Overview: start / drop the proposed mission) |
 | `Ctrl+T` | toggle the Fleet map |
+| `Ctrl+E` | on an open mission with an empty line: show or hide the full text of its actions (a click on one toggles just that one) |
 | `Ctrl+X` | close the selected agent (Fleet, map, Inbox): a question in the inbox lists what would close, `Ctrl+Y` does it |
 | `Ctrl+V` | paste an image from the clipboard |
 | `Esc` | clear the line; closes a proposal or an open mission; drops a review edit or range |
@@ -550,6 +553,70 @@ other users, not against your own processes.
 
 `den ask` from the command line starts a fresh orchestrator and doesn't load
 guidance.
+
+### Apps (den-api.sock)
+
+Den can serve a local API to apps on your machine: the
+fleet, inbox digests, missions, and questions to a read-only orchestrator
+that has no tools and cannot act. It is off until you type `/api on` and
+confirm with `Ctrl+Y`; `/api off` turns it off at once, and `/api` lists the
+apps connected. Agents' own processes are refused. See
+[docs/DREY-API.md](docs/DREY-API.md).
+
+While an app is connected, Den's header says so: `⇄ app-host connected`,
+named by the program Den read from the system, never by a name the app
+gives itself. An app that hides which program it is (it made itself
+non-dumpable) shows as `unidentified`, and its cards say "a program Den
+cannot identify" with its pid and start time: check those against what the
+app shows before you answer.
+
+**Control.** `/api pair` shows a code of eight words in Den's header for two
+minutes. Type it only into the app's own pairing window. Den then asks you on
+a card, naming the program, its path, pid and command line; only your
+`Ctrl+Y` pairs it. A paired app may send messages to the orchestrator. Den
+marks them as the app's, and anything the orchestrator would do for them
+waits for your `Ctrl+Y`: for an app pairing, everything that would change
+your fleet waits for you in Den. `/api control off` stops it, and `/api
+unpair` revokes every pairing, your console's too.
+
+**Your console.** `den pair` in a terminal (or `/api console` in Den) shows a
+console code the same way, for the one app you make your console (Drey's
+dock). After your `Ctrl+Y` on its card, the console may:
+
+- read the cards Den shows and answer most of them, as your `Ctrl+Y` would.
+  It never answers a console or app pairing, turning the API on, guidance,
+  installing on a host, a message to an agent on a host, an app's grant,
+  skills, an agent's question, or anything about a remote host: those wait
+  for you in Den. A long card must be read before it can be answered; more
+  than 20 answers a minute are refused; five answers in a row faster than
+  one a second unpair the console.
+- send Den's commands, one line at a time, checked by Den against a fixed
+  list. Commands that answer cards (`/allow`, `/deny`, `/always`,
+  `/answer`), `/quit`, `/unprotect`, `/send`, turning the API or control on,
+  pairing, `/view rescue`, mission proposals and template runs are refused.
+  Commands that act on Den's own screen (`/open`, `/dismiss` and the like)
+  stay in Den. `/close`, `/reopen`, `/merge`, `/cleanup`, `/mission move` and
+  `/usage resume`, `set` and `clear` raise a card (typed in Den, `/usage set`
+  and `clear` apply at once). The console can answer those cards too, so it
+  can lower the usage figure your usage stop is measured against. Den's chat
+  notes every command a console sent.
+
+The header shows your console while one is paired (`console: app-host pid
+N since 14:05`). `den unpair` ends it from any terminal; `den unpair all`
+ends it and every app pairing. A code an app sends, in a question, a
+message to the orchestrator or a console command, is refused and the code
+cancelled.
+
+After Den restarts, it restores your console and says so in its chat, with
+the program's pid and start time: if that is not your app, run `den unpair
+all`. When the app itself restarts, pair it again with `den pair`.
+
+What stays: any program running as you can type into Den's window, read its
+screen (and a code on it), or drive the app you paired. A paired console
+answers for you, within the limits above, so pair only an app you trust,
+and unpair it when you are not using it. On Hyprland, `permission` rules for
+keyboard access and screen capture can keep other programs from Den's
+window.
 
 ### Dispatch cards
 
@@ -1223,6 +1290,10 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
 
+[api]
+enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
+ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.
 # Kinds: session_start session_end turn_start done needs_you idle
@@ -1265,6 +1336,9 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 | `overview.json` | the picked and pinned projects, and whether the Fleet is grouped by project |
 | `reviews.json` | Review comments |
 | `guidance.json` | the SHA-256 of the orchestrator guidance you approved, nothing else |
+| `api-chat.jsonl` | apps' questions to the read-only orchestrator and its replies, by ask session (den-api.sock) |
+| `api-lane/` | the read-only orchestrator's own empty working folder |
+| `api-spend.json` | what apps' questions spent today, against `api.ask_budget_usd` |
 | `colors.json` | the colour of each session |
 | `remote/<label>.json` | per remote host: its state, the agents it last reported (metadata only) and where its event stream was read up to; readable only by you |
 | `remote/controller` | a random id that tells a host which Den is attached (an identity marker, not a secret) |

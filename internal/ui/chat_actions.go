@@ -196,7 +196,7 @@ func (m Model) missionSummary(raw string, whole bool, w int) []string {
 	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &v) != nil || v.Mission == nil && v.Update == nil {
 		msg := "◇ drafting a mission proposal…"
 		if whole {
-			msg = "◇ a mission block Den could not read · Enter shows it"
+			msg = "◇ this mission block has a mistake, so nothing changed · click to show it"
 		}
 		return []string{s.muted.Render(ansi.Truncate(msg, w, "…"))}
 	}
@@ -254,10 +254,23 @@ func (m *Model) toggleAction() bool {
 }
 
 // clickAction toggles the action drawn on screen row y of the
-// Orchestrator pane, and focuses it. It reports whether there was one.
+// Orchestrator pane, and focuses it, or the one in an open mission's
+// thread on Overview. It reports whether there was one.
 func (m *Model) clickAction(y int) bool {
 	pane, ok := m.copyPane()
-	if !ok || m.tab != tabOrch || len(m.orch.chat) == 0 {
+	if !ok || len(m.orch.chat) == 0 {
+		return false
+	}
+	if m.tab == tabOverview {
+		_, owners := m.missionsPaneOwned(pane.x1-pane.x0+1, pane.y1-pane.y0+1)
+		r := y - pane.y0
+		if m.ov.open == "" && m.ov.proposal == "" || r < 0 || r >= len(owners) || owners[r] < 0 || !m.orch.chat[owners[r]].collapsible() {
+			return false
+		}
+		m.orch.chat[owners[r]].expanded = !m.orch.chat[owners[r]].expanded
+		return true
+	}
+	if m.tab != tabOrch {
 		return false
 	}
 	_, paneH := m.paneArea()

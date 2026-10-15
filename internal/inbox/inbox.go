@@ -44,6 +44,13 @@ const (
 	Usage                     // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
 	UsageResume               // Den asks: let the fleet go on after a usage stop? y/n answer it
 	MissionMove               // Den asks: move this mission to another project, as you typed? y/n answer it
+	APIOn                     // Den asks: turn on den-api.sock for apps on this machine? y/n answer it
+	Grant                     // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
+	Pair                      // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
+	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
+	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
+	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
+	UsageSet                  // Den asks: take this usage figure, as the console sent it? y/n answer it
 )
 
 func (k Kind) String() string {
@@ -90,6 +97,20 @@ func (k Kind) String() string {
 		return "guidance"
 	case MissionMove:
 		return "move"
+	case APIOn:
+		return "api"
+	case Grant:
+		return "app grant"
+	case Pair:
+		return "pairing"
+	case ControlAsk:
+		return "app's turn"
+	case Console:
+		return "console"
+	case UsageSet:
+		return "usage figure"
+	case ConsoleNote:
+		return "console note"
 	}
 	return "?"
 }
@@ -117,10 +138,15 @@ type Item struct {
 	Body      []string // the thing being decided, in full: the command, the diff, the arguments
 	Options   []string // AskUserQuestion choices, numbered from 1 as Den shows them
 	Resolved  string   // how it was resolved, for the dim trailer
-	Role      string   // the agent's role when this happened
-	Task      string   // what the agent was working on when this happened
-	Seen      bool     // shown on the Inbox view at least once
-	Unread    bool     // kept unread by the human: counts as new until opened or dismissed
+	// Answer is the verb that settled it (allow, deny or always), "" when
+	// it settled otherwise; AnsweredBy is "den" for the human's answer in
+	// Den, "console" for the console's.
+	Answer     string
+	AnsweredBy string
+	Role       string // the agent's role when this happened
+	Task       string // what the agent was working on when this happened
+	Seen       bool   // shown on the Inbox view at least once
+	Unread     bool   // kept unread by the human: counts as new until opened or dismissed
 	// A question Den holds (hooks.answer_questions): all of the call's
 	// questions, the answers so far by question text, and the one asked now.
 	Questions []question.Question
@@ -148,7 +174,7 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -164,6 +190,10 @@ type Store struct {
 	history int            // see HistoryLimit
 	failing int            // see ToolFailureLimit
 	streak  map[string]int // agentKey(host, session) -> tool calls failed in a row
+	// heldQ is when a host's agent last had a question held for Den: the
+	// host's own "has a question" event for it, which can come late, says
+	// nothing more for a while (heldQuiet).
+	heldQ   map[string]time.Time
 	items   []*Item
 	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
@@ -393,6 +423,12 @@ func (s *Store) holdQuestion(r *bridge.Request) *Item {
 	}
 	it.State, it.Resolved, it.req = Waiting, "", r
 	it.Questions, it.Answers, it.Step = qs, map[string]string{}, 0
+	if r.Host != "" {
+		if s.heldQ == nil {
+			s.heldQ = map[string]time.Time{}
+		}
+		s.heldQ[agentKey(r.Host, in.SessionID)] = time.Now()
+	}
 	it.describeStep()
 	// Claude Code's "permission_prompt" notice is this dialog too, and an
 	// earlier question of the session is gone from its terminal by now.
@@ -744,11 +780,59 @@ func (s *Store) AddUsageResume(title string, body []string) *Item {
 	return s.add(&Item{SessionID: UsageSession, Kind: UsageResume, Tool: "usage_resume", Title: title, Body: body})
 }
 
+// AddUsageSet adds Den's question: take the usage figure the console
+// sent? One at a time; nil while one is open.
+func (s *Store) AddUsageSet(title string, body []string) *Item {
+	if s.hasOpen("", UsageSession, UsageSet) {
+		return nil
+	}
+	return s.add(&Item{SessionID: UsageSession, Kind: UsageSet, Tool: "usage_set", Title: title, Body: body})
+}
+
 // AddMissionMove adds Den's question: move this mission to another
 // project? sessionID is "mission:<id>". Only the human's /mission move
 // raises it, and only the human's ^Y answers it.
 func (s *Store) AddMissionMove(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: MissionMove, Tool: "mission_move", Title: title, Body: body})
+}
+
+// APISession is the SessionID of Den's question about turning on
+// den-api.sock.
+const APISession = "den:api"
+
+// AddAPIOn adds Den's question: turn on den-api.sock? Only the human's ^Y
+// answers it.
+func (s *Store) AddAPIOn(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: APIOn, Tool: "api_on", Title: title, Body: body})
+}
+
+// AddGrant adds an app's grant request. body is Den's frame around the
+// app's text, which is never cut or cleaned (den-api.sock refuses text it
+// could not show as it is). Only the human's ^Y or ^N answers it.
+func (s *Store) AddGrant(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Grant, Tool: "app_grant", Title: title, Body: body})
+}
+
+// AddPair adds Den's question: may the program that claimed the pairing
+// code control the orchestrator?
+func (s *Store) AddPair(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Pair, Tool: "app_pairing", Title: title, Body: body})
+}
+
+// AddConsole adds Den's question: make the program that claimed the
+// console code the human's console? Only the human's ^Y answers it.
+func (s *Store) AddConsole(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: Console, Tool: "console_pairing", Title: title, Body: body})
+}
+
+// AddConsoleNote adds Den's notice about the console.
+func (s *Store) AddConsoleNote(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: ConsoleNote, Title: title, Body: body})
+}
+
+// AddControlAsk adds a tool the orchestrator wants in a paired app's turn.
+func (s *Store) AddControlAsk(title string, body []string) *Item {
+	return s.add(&Item{SessionID: APISession, Kind: ControlAsk, Tool: "app_turn_tool", Title: title, Body: body})
 }
 
 // HostPrefix makes a remote host's label an item's SessionID, for Den's

@@ -2,11 +2,15 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
@@ -113,5 +117,83 @@ func TestChatLogRestoreSanitises(t *testing.T) {
 	raw, _ := json.Marshal(hostile)
 	if !strings.Contains(last, `"brief":`+string(raw)) {
 		t.Errorf("the brief should be logged as it came: %s", last)
+	}
+}
+
+// TestChatLogRestoreIsCapped: a log with huge records comes back cut to
+// size, a line too long to read is skipped without losing the lines after
+// it, and laying the restored chat out again on a resize stays quick.
+func TestChatLogRestoreIsCapped(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "orchestrator.jsonl")
+	at := time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)
+	appendChatRecord(log, chatRecord{Kind: "session", At: at, Session: "s1"})
+	appendChatRecord(log, chatRecord{Kind: "orchestrator", At: at, Text: strings.Repeat("x", maxChatLine)})
+	// More small records than are kept, read before the big ones.
+	for i := range 1100 {
+		appendChatRecord(log, chatRecord{Kind: "note", At: at.Add(-time.Hour), Text: fmt.Sprint("note ", i)})
+	}
+	// About 100 KB of markdown, and a text where the cut falls inside a character.
+	para := strings.Repeat("Some **bold** words, a `code` span and a [link](https://example.com).\n", 1500)
+	wide := "a" + strings.Repeat("é", 60000)
+	for i := range 40 {
+		text := para
+		if i%2 == 1 {
+			text = wide
+		}
+		appendChatRecord(log, chatRecord{Kind: "orchestrator", At: at.Add(time.Duration(i) * time.Minute), Text: text})
+	}
+	long := strings.Repeat("y", 100<<10)
+	appendChatRecord(log, chatRecord{Kind: "card", At: at.Add(time.Hour), Card: &cardRecord{ID: "t1", SessionID: "s", Agent: "Mossy Lemur", Brief: para, Result: para, Summary: long, Reason: long, Ticker: long, SentAt: at.Add(time.Hour), State: cardDone}})
+	appendChatRecord(log, chatRecord{Kind: "session", At: at, Session: "s2"})
+
+	chat, session := loadChatLog(log, maxChatLog)
+	if session != "s2" {
+		t.Errorf("session %q: the lines after the oversized one were not read", session)
+	}
+	total := 0
+	for _, e := range chat[1:] {
+		texts := []string{e.text}
+		if e.card != nil {
+			texts = []string{e.card.Brief, e.card.Result}
+		}
+		for _, s := range texts {
+			if len(s) > maxRestoredText+len(cutMark) || !strings.HasSuffix(s, cutMark) || !utf8.ValidString(s) {
+				t.Fatalf("a %s entry came back at %d bytes, not cut at %d", e.role, len(s), maxRestoredText)
+			}
+			total += len(s)
+		}
+	}
+	if total > restoreBudget+len(chat)*len(cutMark) {
+		t.Errorf("restored %d bytes of text, over the %d budget", total, restoreBudget)
+	}
+	if e := chat[len(chat)-1]; e.card == nil {
+		t.Error("the newest record, the card, was not restored")
+	}
+	var shown, older int
+	note := regexp.MustCompile(`^restored (\d+) entries .* · (\d+) older records stay in the log$`).FindStringSubmatch(chat[0].text)
+	if note == nil {
+		t.Fatalf("the note does not count the older records: %q", chat[0].text)
+	}
+	shown, _ = strconv.Atoi(note[1])
+	older, _ = strconv.Atoi(note[2])
+	if all := 1100 + 40 + 1; shown+older != all {
+		t.Errorf("note: %d restored and %d older, want %d in all: %q", shown, older, all, chat[0].text)
+	}
+	if d := chat[len(chat)-1].card; d != nil && (len(d.Summary) > maxRestoredWord || len(d.Reason) > maxRestoredWord || len(d.Ticker) > maxRestoredWord) {
+		t.Errorf("a card's short fields came back long: %d, %d, %d bytes", len(d.Summary), len(d.Reason), len(d.Ticker))
+	}
+
+	m := testModel(120, 40)
+	m.orch.chat = chat
+	budget := 2 * time.Second
+	if raceDetector {
+		budget = 30 * time.Second // only a hang fails here
+	}
+	for _, w := range []int{120, 80} { // the first layout, then a resize
+		start := time.Now()
+		m.chatLines(w, func(chatEntry) bool { return true })
+		if d := time.Since(start); d > budget {
+			t.Errorf("laying out the restored chat at width %d took %v", w, d)
+		}
 	}
 }

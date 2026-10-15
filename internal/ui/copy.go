@@ -240,7 +240,7 @@ func (m *Model) copyText(text, what string) tea.Cmd {
 	}
 	m.sel.copied = text
 	m.flash, m.flashErr = "Copied "+what, false
-	cmds := []tea.Cmd{tea.SetClipboard(text), tea.Tick(copyFlashFor, func(time.Time) tea.Msg { return flashClearMsg{} })}
+	cmds := []tea.Cmd{tea.SetClipboard(text), flashTick(copyFlashFor, m.flash)}
 	if copyViaWlCopy != nil {
 		cmds = append(cmds, func() tea.Msg { copyViaWlCopy(text); return nil })
 	}

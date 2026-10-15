@@ -29,6 +29,26 @@ func Compose(text string) string {
 	return Header + "\n\n" + strings.TrimSpace(text)
 }
 
+// Envelope is how Claude Code's SendMessage frames a message: the
+// receiving session shows it from the session at from (its inbox socket,
+// "uds:<path>"), named fromName, and a reply goes back there.
+func Envelope(from, fromName, body string) string {
+	return fmt.Sprintf("<cross-session-message from=%q from-name=%q from-mode=\"prompting\">\n%s\n</cross-session-message>", from, fromName, strings.TrimSpace(body))
+}
+
+// SendAs posts a message to the socket as SendMessage from another session
+// would: the envelope (Envelope) and that session's address, so that the
+// receiver sees it from that session and answers it there. Den uses it for
+// the orchestrator's send_message; the checks are Send's.
+func SendAs(socketPath, from, fromName, body string) error {
+	return post(socketPath, map[string]any{
+		"type":     "user",
+		"message":  map[string]any{"role": "user", "content": Envelope(from, fromName, body)},
+		"priority": "next",
+		"from":     from,
+	})
+}
+
 // Send posts text to the socket. It returns an error when the session has no
 // socket, the socket is gone, or the write fails.
 //
@@ -38,6 +58,14 @@ func Compose(text string) string {
 // service) owned by the caller, and the process that answers must run as the
 // caller too. The errors never carry the path.
 func Send(socketPath, text string) error {
+	return post(socketPath, map[string]any{
+		"type":    "user",
+		"message": map[string]any{"role": "user", "content": Compose(text)},
+	})
+}
+
+// post writes one line to a session's inbox socket, after Send's checks.
+func post(socketPath string, msg map[string]any) error {
 	if socketPath == "" {
 		return errors.New("this session has no inbox socket (Claude Code 2.1.224+ binds one)")
 	}
@@ -63,10 +91,7 @@ func Send(socketPath, text string) error {
 	if uid, err := bridge.PeerUID(conn); err != nil || uid != os.Getuid() {
 		return errors.New("inbox socket is served by another user; refusing")
 	}
-	line, err := json.Marshal(map[string]any{
-		"type":    "user",
-		"message": map[string]any{"role": "user", "content": Compose(text)},
-	})
+	line, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}

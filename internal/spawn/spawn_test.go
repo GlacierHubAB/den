@@ -335,7 +335,7 @@ func TestAgentWindowMarker(t *testing.T) {
 		t.Errorf("markers = %q", got)
 	}
 	// The spawn's marker is recorded, for its session to be bound to.
-	winmark.Bind("helper", "s-helper")
+	winmark.Bind("helper", "s-helper", func(string) bool { return true })
 	if got := winmark.For("s-helper"); got != "io.glacierhub.den.helper" {
 		t.Errorf("recorded marker = %q", got)
 	}

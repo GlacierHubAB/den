@@ -32,9 +32,10 @@ const (
 	refusalEvery = time.Minute     // one refusal note per sender this often
 )
 
-// D1LaneName is the session name of Den's read-only lane for apps; it
+// D1LaneName is the session name of Den's read-only lane for apps (one
+// name, orch.LaneName, so the gates that refuse the lane always match it); it
 // never reports.
-const D1LaneName = "den-drey-lane"
+const D1LaneName = orch.LaneName
 
 // peerState is the reports' bookkeeping.
 type peerState struct {
@@ -174,6 +175,15 @@ func (m *Model) noteRefusal(sender, why string) {
 func (m *Model) sendReport(a fleet.Agent, body string) tea.Cmd {
 	content := peermsg.Report(a.Name, body)
 	m.addChat(chatEntry{role: "fan", to: a.Name, sid: a.Session.SessionID, tool: "report to the orchestrator", text: actionSummary("", body), full: sanitize.Text(body), fromAgent: true, status: "passed on", at: time.Now()})
+	if m.holdReport(content) {
+		return nil // after the app's turn, as it is
+	}
+	return m.sendReportTurn(content)
+}
+
+// sendReportTurn writes a report Den composed (peermsg.Report) as a turn
+// of its own.
+func (m *Model) sendReportTurn(content string) tea.Cmd {
 	m.peers.inFlight++
 	m.orch.thinking = true
 	m.orch.status = "thinking…"
@@ -218,7 +228,7 @@ func (m Model) turnOrigin() string {
 // onBackstop handles the orchestrator's guard tripping: the process is
 // already killed. Its session is never resumed; a fresh one starts, which
 // runs the hook's self-test first.
-func (m *Model) onBackstop(why string) tea.Cmd {
+func (m *Model) onBackstop(why, kind string) tea.Cmd {
 	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
 		if m.orch.poisoned == nil {
 			m.orch.poisoned = map[string]bool{}
@@ -232,10 +242,22 @@ func (m *Model) onBackstop(why string) tea.Cmd {
 	m.orch.unanswered = nil
 	m.turn = missionTurn{}
 	m.logSession("")
-	m.logEntry(m.addChat(chatEntry{role: "note", text: "Den stopped the orchestrator: " + sanitize.Label(why, 120) + ". A message from another session may have reached it, so that conversation is closed for good; a fresh one starts now. Nothing it was asking was resent.", at: time.Now()}))
+	m.logEntry(m.addChat(chatEntry{role: "note", text: "Den stopped the orchestrator: " + sanitize.Label(why, 120) + ". " + backstopWhy(kind) + " Nothing it was asking was resent.", at: time.Now()}))
 	m.orch.starting = true
 	m.orch.status = "starting a fresh session…"
-	return startOrchestrator(m.cfg, "", m.guide.active)
+	return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
+}
+
+// backstopWhy says, by the backstop's kind (orch.Trip*), why the
+// conversation was closed for good.
+func backstopWhy(kind string) string {
+	switch kind {
+	case orch.TripTool:
+		return "It used a tool control does not allow, so Den closed that conversation for good and started a fresh one."
+	case orch.TripOutput:
+		return "Den could not read what it wrote, so that conversation is closed for good; a fresh one starts now."
+	}
+	return "A message from another session may have reached it, so that conversation is closed for good; a fresh one starts now."
 }
 
 // authTrouble reports whether a failed first turn looks like the

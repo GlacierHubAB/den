@@ -257,5 +257,5 @@ func (m *Model) finishAskedSend(msg askedSentMsg) tea.Cmd {
 	}
 	m.flash, m.flashErr = strings.ToUpper(outcome[:1])+outcome[1:], msg.err != nil
 	m.refresh()
-	return tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+	return flashTick(4*time.Second, m.flash)
 }

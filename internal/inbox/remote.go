@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -39,6 +40,13 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		case "plan":
 			kind, title = Plan, "Plan ready for review"+on
 		case "question":
+			// A question held for Den lately is this question; the event
+			// can come after it was answered, and says no more. One that
+			// comes later is another question, maybe one the host could
+			// not hold, and shows.
+			if at, ok := s.heldQ[agentKey(host, sid)]; ok && time.Since(at) < heldQuiet {
+				return nil
+			}
 			kind, title = Question, "Has a question for you"+on
 		default:
 			if ev.Tool != "" {
@@ -68,6 +76,7 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		return add(&Item{Kind: Failed, Tool: ev.Tool, Title: title})
 	case events.TurnFailed:
 		delete(s.streak, agentKey(host, sid))
+		delete(s.heldQ, agentKey(host, sid))
 		s.resolveSession(host, sid, "turn failed", func(it *Item) bool { return it.Kind != Done && it.Kind != Failed })
 		return add(&Item{Kind: Failed, Title: FailureTitle(ev.Error) + on})
 	case events.Idle:
@@ -77,22 +86,34 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		return add(&Item{Kind: Idle, Title: "Waiting for your input" + on})
 	case events.TurnStart:
 		delete(s.streak, agentKey(host, sid))
+		delete(s.heldQ, agentKey(host, sid))
 		s.resolveSession(host, sid, "a new turn started"+on, func(it *Item) bool { return it.Kind != Done })
 	case events.Done:
 		delete(s.streak, agentKey(host, sid))
+		delete(s.heldQ, agentKey(host, sid))
 		s.resolveSession(host, sid, "turn finished", func(it *Item) bool { return it.Kind != Done })
 		return add(&Item{Kind: Done, State: Resolved, Title: "Turn finished" + on + "."})
 	case events.SessionEnd:
 		delete(s.streak, agentKey(host, sid))
+		delete(s.heldQ, agentKey(host, sid))
 		s.cancelMessages(host, sid)
 		s.resolveSession(host, sid, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
 }
 
+// heldQuiet is how long after a question was held for Den the host's own
+// notice of a question from that agent is taken to be the same one.
+var heldQuiet = 30 * time.Second
+
 // ReleaseHost lets go of everything open for agents on a host whose link
 // is down: nothing from it may look answerable or still waiting here.
 func (s *Store) ReleaseHost(host, why string) bool {
+	for k := range s.heldQ {
+		if strings.HasPrefix(k, host+"\x00") {
+			delete(s.heldQ, k)
+		}
+	}
 	changed := false
 	for _, it := range s.items {
 		if it.Host != host || it.State == Resolved || it.Kind == Sent {

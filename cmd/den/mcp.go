@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -147,7 +148,12 @@ func runMCP() {
 	// Missions are the orchestrator's alone: an agent Den started (which
 	// runs this server too) never gets the tool, and one started with
 	// --missions-only gets nothing else.
-	s.Tools = mcpTools(s.Tools, os.Getenv("DEN_ORCHESTRATOR") == "1", len(os.Args) > 2 && os.Args[2] == orch.MissionsOnly)
+	missionsOnly, control := false, false
+	for _, a := range os.Args[2:] {
+		missionsOnly = missionsOnly || a == orch.MissionsOnly
+		control = control || a == orch.ControlFlag
+	}
+	s.Tools = mcpTools(s.Tools, os.Getenv("DEN_ORCHESTRATOR") == "1", missionsOnly, control)
 	if err := s.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
 		fail("den mcp: %v", err)
 	}
@@ -156,14 +162,56 @@ func runMCP() {
 // mcpTools is what `den mcp` offers: update_mission only to the
 // orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the agents it
 // starts), and with missionsOnly nothing else.
-func mcpTools(all []mcp.Tool, orchestrator, missionsOnly bool) []mcp.Tool {
+func mcpTools(all []mcp.Tool, orchestrator, missionsOnly, control bool) []mcp.Tool {
 	if !orchestrator {
 		return all
 	}
 	if missionsOnly {
 		all = nil
 	}
-	return append(all, missionTool())
+	all = append(all, missionTool())
+	if control {
+		all = append(all, sendMessageTool())
+	}
+	return all
+}
+
+// sendMessageTool is send_message, the orchestrator's SendMessage with
+// control on: Den delivers it, so that it can hold it for the human first.
+func sendMessageTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        strings.TrimPrefix(orch.SendMessageTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Send a message to another Claude Code session on this machine, by its peer name from the roster: what SendMessage does, which you do not have here. Den delivers it, and the session sees it from you, as with SendMessage; its report comes back to you the same way. Den may first ask the human.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"to":      map[string]any{"type": "string", "description": "The session's peer name, as the roster gives it."},
+				"message": map[string]any{"type": "string", "description": "The message, complete and self-contained."},
+				"summary": map[string]any{"type": "string", "description": "A few words on what it is, shown to the human."},
+			},
+			"required": []string{"to", "message"},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.OrchSendInput
+			if json.Unmarshal(args, &in) != nil || strings.TrimSpace(in.To) == "" || strings.TrimSpace(in.Message) == "" {
+				return "", errorString("give to (a peer name) and message")
+			}
+			payload, _ := json.Marshal(in)
+			env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.OrchSendEvent, Payload: payload}
+			d, err := bridge.Call(bridge.SocketPath(), env, 10*time.Second)
+			if errors.Is(err, bridge.ErrNoDen) {
+				return "", errorString("Not sent: Den is not running")
+			}
+			if err != nil {
+				// Den may have been writing it as the wait ran out.
+				return "", errorString("Den did not answer in time; the message may have been sent, so ask " + in.To + " before sending it again")
+			}
+			if d.Behavior != "allow" {
+				return "", errorString("Not sent: " + d.Message)
+			}
+			return d.Message, nil
+		},
+	}
 }
 
 // missionTool is update_mission: the orchestrator's word on a mission,

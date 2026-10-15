@@ -58,6 +58,8 @@ type dispatch struct {
 	// still at work; the card finishes once they are done.
 	Stopped  time.Time
 	Expanded bool
+	// App is set for a dispatch made in a paired app's turn.
+	App bool
 
 	// rawBrief is the brief as the orchestrator sent it, for the log;
 	// Brief is that text sanitised, for everything Den draws.

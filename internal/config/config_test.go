@@ -159,3 +159,42 @@ func TestAnswerQuestionsIsOptIn(t *testing.T) {
 		t.Error("hooks.answer_questions = true not read")
 	}
 }
+
+// The API is off by default; /api on writes the key and touches nothing
+// else in the file.
+func TestAPIKeysAndSetKey(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	if c := Load(); c.API.Enabled || c.API.AskBudgetUSD != 2 {
+		t.Errorf("defaults: %+v", c.API)
+	}
+	if err := SetKey("api", "enabled", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if c := Load(); !c.API.Enabled {
+		t.Error("a new file: enabled not written")
+	}
+	body := "# mine\n[orchestrator]\nmodel = \"opus\" # keep me\n\n[api]\nask_budget_usd = 0.5\nenabled = true   # was on\n\n[notify]\ndone = true\n"
+	os.WriteFile(p, []byte(body), 0o600)
+	os.Chmod(p, 0o600)
+	if err := SetKey("api", "enabled", "false"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(p)
+	want := "# mine\n[orchestrator]\nmodel = \"opus\" # keep me\n\n[api]\nask_budget_usd = 0.5\nenabled = false\n\n[notify]\ndone = true\n"
+	if string(got) != want {
+		t.Errorf("file:\n%s\nwant:\n%s", got, want)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v, want the file's own 0600", fi.Mode().Perm())
+	}
+	if c := Load(); c.API.Enabled || c.API.AskBudgetUSD != 0.5 || c.Orchestrator.Model != "opus" || !c.Notify.Done {
+		t.Errorf("after SetKey: %+v", c)
+	}
+	os.WriteFile(p, []byte("[notify]\ndone = true\n"), 0o644)
+	SetKey("api", "enabled", "true")
+	if got, _ := os.ReadFile(p); string(got) != "[notify]\ndone = true\n\n[api]\nenabled = true\n" {
+		t.Errorf("a missing section: %q", got)
+	}
+}

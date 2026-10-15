@@ -2,12 +2,15 @@ package ui
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -26,6 +29,7 @@ type chatRecord struct {
 	Session string      `json:"session,omitempty"` // kind "session": the orchestrator's session id
 	Mission string      `json:"mission,omitempty"` // the thread: the mission it was about
 	Card    *cardRecord `json:"card,omitempty"`
+	App     bool        `json:"app,omitempty"` // written in a paired app's turn
 }
 
 type cardRecord struct {
@@ -46,10 +50,99 @@ type cardRecord struct {
 	MissionID string    `json:"mission,omitempty"`
 	Thread    string    `json:"thread,omitempty"`
 	Stopped   time.Time `json:"stopped,omitempty"`
+	App       bool      `json:"app,omitempty"` // made in a paired app's turn
 }
 
 // maxChatLog is how many records come back on launch.
 const maxChatLog = 500
+
+// What comes back is capped too: the chat is laid out whole on the first
+// frame and on every resize, at about 0.45 µs a byte, and the log has no
+// limit of its own.
+const (
+	maxRestoredText = 32 << 10  // per text of a record; the rest stays in the log
+	restoreBudget   = 512 << 10 // all restored text, newest first; older records stay in the log
+	maxChatLine     = 4 << 20   // a longer line is skipped, and the lines after it still read
+	maxRestoredWord = 1 << 10   // the short fields (names, states, ids), which Den writes short
+)
+
+// cutMark ends a text that was cut on restore.
+const cutMark = "\n\n(cut: the rest is in the orchestrator log)"
+
+// cutText keeps at most max bytes of s, ending on a whole character.
+func cutText(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	i := max
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i] + cutMark
+}
+
+// cutShort cuts the record's short fields: only an edited log has long
+// ones, and they are drawn whole.
+func cutShort(r *chatRecord) {
+	for _, f := range []*string{&r.To, &r.Status, &r.Session, &r.Mission} {
+		*f = cutWord(*f)
+	}
+	if c := r.Card; c != nil {
+		for _, f := range []*string{&c.ID, &c.SessionID, &c.Agent, &c.Summary, &c.Reason, &c.Ticker, &c.MissionID, &c.Thread} {
+			*f = cutWord(*f)
+		}
+	}
+}
+
+// cutWord keeps at most maxRestoredWord bytes of s, ending on a whole
+// character.
+func cutWord(s string) string {
+	if len(s) <= maxRestoredWord {
+		return s
+	}
+	i := maxRestoredWord
+	for i > 0 && !utf8.RuneStart(s[i]) {
+		i--
+	}
+	return s[:i]
+}
+
+// recordText is how much text a record brings back.
+func recordText(r chatRecord) int {
+	n := len(r.Text)
+	if r.Card != nil {
+		n += len(r.Card.Brief) + len(r.Card.Result)
+	}
+	return n
+}
+
+// eachLine calls fn for each line of r, without its newline. A line longer
+// than max is skipped whole, so one oversized record does not end the read.
+func eachLine(r io.Reader, max int, fn func([]byte)) {
+	br := bufio.NewReaderSize(r, 64<<10)
+	var line []byte
+	skip := false
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if !skip {
+			if len(line)+len(chunk) > max {
+				line, skip = line[:0], true
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if !skip && len(line) > 0 {
+			fn(bytes.TrimSuffix(line, []byte("\n")))
+		}
+		line, skip = line[:0], false
+		if err != nil {
+			return
+		}
+	}
+}
 
 // ChatLogPath is the orchestrator log: one JSON record per line.
 func ChatLogPath() string {
@@ -90,7 +183,7 @@ func (m *Model) logEntry(e chatEntry) {
 		m.logCard(e.card)
 		return
 	}
-	appendChatRecord(m.chatLog, chatRecord{Kind: e.role, At: e.at, Text: e.text, To: e.to, Status: e.status, Mission: e.mission})
+	appendChatRecord(m.chatLog, chatRecord{Kind: e.role, At: e.at, Text: e.text, To: e.to, Status: e.status, Mission: e.mission, App: e.app})
 }
 
 // logCard persists the card's current state.
@@ -101,7 +194,7 @@ func (m *Model) logCard(d *dispatch) {
 	appendChatRecord(m.chatLog, chatRecord{Kind: "card", At: d.SentAt, Card: &cardRecord{
 		ID: d.ID, SessionID: d.SessionID, Agent: d.Agent, Brief: firstNonEmptyS(d.rawBrief, d.Brief), Summary: d.Summary,
 		SentAt: d.SentAt, StartedAt: d.StartedAt, EndedAt: d.EndedAt,
-		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped,
+		State: d.State, Reason: d.Reason, Calls: d.Calls, Ticker: d.Ticker, Result: d.Result, Files: d.Files, MissionID: d.MissionID, Thread: d.Thread, Stopped: d.Stopped, App: d.App,
 	}})
 }
 
@@ -119,21 +212,40 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 	}
 	defer f.Close()
 	var records []chatRecord
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
+	older := 0
+	eachLine(f, maxChatLine, func(line []byte) {
 		var r chatRecord
-		if json.Unmarshal(sc.Bytes(), &r) != nil {
-			continue
+		if json.Unmarshal(line, &r) != nil {
+			return
 		}
+		cutShort(&r)
 		if r.Kind == "session" {
 			session = r.Session
-			continue
+			return
+		}
+		r.Text = cutText(r.Text, maxRestoredText)
+		if r.Card != nil {
+			r.Card.Brief, r.Card.Result = cutText(r.Card.Brief, maxRestoredText), cutText(r.Card.Result, maxRestoredText)
 		}
 		records = append(records, r)
-	}
+		// Only the newest n are kept, so a long log holds no more than
+		// 2n records in memory while it is read.
+		if len(records) > 2*n {
+			older += len(records) - n
+			records = append(records[:0], records[len(records)-n:]...)
+		}
+	})
 	if len(records) > n {
+		older += len(records) - n
 		records = records[len(records)-n:]
+	}
+	// Newest first, until the budget is spent.
+	left := restoreBudget
+	for i := len(records) - 1; i >= 0; i-- {
+		if left -= recordText(records[i]); left < 0 {
+			older, records = older+i+1, records[i+1:]
+			break
+		}
 	}
 	cards := map[string]*dispatch{}
 	for _, r := range records {
@@ -148,17 +260,17 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 			// The log is Den's own, but a file can be edited: what comes
 			// back is sanitised like any outside text. The brief keeps its
 			// raw form for the log, so records written again are unchanged.
-			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: sanitize.Line(c.Agent), Brief: sanitize.Text(c.Brief), rawBrief: c.Brief, Summary: sanitize.Line(c.Summary), SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: sanitize.Line(c.Reason), Calls: c.Calls, Ticker: sanitize.Line(c.Ticker), Result: sanitize.Text(c.Result), Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped}
+			nd := dispatch{ID: c.ID, SessionID: c.SessionID, Agent: sanitize.Line(c.Agent), Brief: sanitize.Text(c.Brief), rawBrief: c.Brief, Summary: sanitize.Line(c.Summary), SentAt: c.SentAt, StartedAt: c.StartedAt, EndedAt: c.EndedAt, State: c.State, Reason: sanitize.Line(c.Reason), Calls: c.Calls, Ticker: sanitize.Line(c.Ticker), Result: sanitize.Text(c.Result), Files: c.Files, MissionID: c.MissionID, Thread: thread, Stopped: c.Stopped, App: c.App}
 			if d, ok := cards[c.ID]; ok {
 				*d = nd
 				continue
 			}
 			d := &nd
 			cards[c.ID] = d
-			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread})
+			chat = append(chat, chatEntry{role: "card", card: d, toolUseID: c.ID, at: r.At, mission: thread, app: c.App})
 			continue
 		}
-		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission, memo: &mdMemo{}})
+		chat = append(chat, chatEntry{role: r.Kind, text: sanitize.Text(r.Text), to: sanitize.Line(r.To), status: sanitize.Line(r.Status), at: r.At, mission: r.Mission, app: r.App || r.Kind == "app", memo: &mdMemo{}})
 	}
 	// Streamed text is logged when its final block lands, which can be after
 	// the card for a dispatch made in the same turn; the screen order is by
@@ -167,6 +279,9 @@ func loadChatLog(path string, n int) (chat []chatEntry, session string) {
 	if len(chat) > 0 {
 		first, last := chat[0].at, chat[len(chat)-1].at
 		note := fmt.Sprintf("restored %d entries · %s to %s", len(chat), first.Format("Jan 2 15:04"), last.Format("15:04"))
+		if older > 0 {
+			note += fmt.Sprintf(" · %d older records stay in the log", older)
+		}
 		chat = append([]chatEntry{{role: "note", text: note, at: time.Now()}}, chat...)
 	}
 	return chat, session

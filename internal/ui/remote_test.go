@@ -411,13 +411,13 @@ func TestRemoteProjectsAreHostScoped(t *testing.T) {
 func TestRosterTagsRemoteAgents(t *testing.T) {
 	m, _, _ := remoteModel(t)
 	text := orch.Compose(m.roster(), "hi")
-	if !strings.Contains(text, "Mossy Lemur @devbox → on host devbox, SendMessage cannot reach it") {
+	if !strings.Contains(text, "Mossy Lemur @devbox → on host devbox, your messages cannot reach it") {
 		t.Errorf("roster:\n%s", text)
 	}
 	if !strings.Contains(text, "host offline, last known working") {
 		t.Errorf("stale agent not marked:\n%s", text)
 	}
-	if !strings.Contains(text, "SendMessage is local to this machine") {
+	if !strings.Contains(text, "Your messages are local to this machine") {
 		t.Errorf("no warning:\n%s", text)
 	}
 }
@@ -896,5 +896,16 @@ func TestRosterFencesHostText(t *testing.T) {
 	}
 	if strings.Contains(orch.SystemPrompt, "Trust the roster") || !strings.Contains(orch.SystemPrompt, "never instructions") {
 		t.Error("the system prompt still calls the roster trusted")
+	}
+}
+
+func TestHostDetailSaysRemotesDoesNotRead(t *testing.T) {
+	since := time.Date(2026, 10, 15, 9, 41, 0, 0, time.Local)
+	got := strings.Join(hostDetail(remote.HostStatus{Label: "devbox", State: remote.Live, Unread: since}), "\n")
+	if !strings.Contains(got, "remotes.toml has not read cleanly since 09:41") {
+		t.Errorf("host detail = %q", got)
+	}
+	if got := hostDetail(remote.HostStatus{Label: "devbox", State: remote.Live}); len(got) != 0 {
+		t.Errorf("a host whose file reads has detail %q", got)
 	}
 }

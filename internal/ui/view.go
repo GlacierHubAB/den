@@ -157,16 +157,34 @@ func (m Model) header(w int) []string {
 	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
-	var sys []string
+	// Each part has a rank: when the line is too long, the highest ranks
+	// go first. The codes, the bridge's error, the API chip's first part
+	// and the console are never left out. The codes come first, so that
+	// when even those do not fit, the "…" falls on the others (shown
+	// whole in /api), never on a code, which Den shows nowhere else.
+	var sys []headerPart
+	codes := m.liveCodes()
+	for _, c := range codes {
+		sys = append(sys, headerPart{s.attn.Render(c.line), 0})
+	}
 	if m.hooksReady {
-		sys = append(sys, "hooks on")
+		sys = append(sys, headerPart{"hooks on", 2})
 	} else {
-		sys = append(sys, s.attn.Render("hooks off · den install-hooks"))
+		sys = append(sys, headerPart{s.attn.Render("hooks off · den install-hooks"), 1})
 	}
 	if m.srvErr != nil {
-		sys = append(sys, s.err.Render("bridge: "+m.srvErr.Error()))
+		sys = append(sys, headerPart{s.err.Render("bridge: " + m.srvErr.Error()), 0})
 	}
-	sysLine := s.muted.Render(strings.Join(sys, " · "))
+	for i, p := range m.apiChipParts() {
+		rank := 3
+		if i == 0 {
+			rank = 0
+		}
+		sys = append(sys, headerPart{p, rank})
+	}
+	if chip := m.consoleChip(); chip != "" {
+		sys = append(sys, headerPart{chip, 0})
+	}
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
 	flash := ""
@@ -178,22 +196,48 @@ func (m Model) header(w int) []string {
 		}
 	}
 	if w < 72 {
-		left := s.brand.Render("den") + "  " + fleetLine
+		brand := s.brand.Render("den") + "  "
 		right := clock
-		if flash != "" {
-			right = flash + "  " + clock
+		if len(codes) > 0 {
+			// A live code takes the line, whole or as its note, ahead of
+			// the fleet and the flash: the human always sees one is live.
+			parts := fitCodes(codes, headerRoom(brand, right, w))
+			return []string{headerRow(brand, s.attn.Render(strings.Join(parts, " · ")), right, w), ansi.Truncate(m.tabs(w), w, "…")}
 		}
-		return []string{justify(left, right, w), ansi.Truncate(m.tabs(w), w, "…")}
+		if flash != "" {
+			right = ansi.Truncate(flash, max(1, w-ansi.StringWidth(brand)-ansi.StringWidth(clock)-3), "…") + "  " + clock
+		}
+		return []string{headerRow(brand, fleetLine, right, w), ansi.Truncate(m.tabs(w), w, "…")}
 	}
 	logo := make([]string, len(wordmark))
 	for i, r := range m.logoRows() {
 		logo[i] = "  " + r + "    "
 	}
+	if flash != "" {
+		// The flash gives way to the parts never left out (the pairing
+		// code first): it is cut, or left out when no room is left.
+		room := w - ansi.StringWidth(logo[2]) - 3
+		if must := ansi.StringWidth(fitParts(sys, 0)); must > 0 {
+			room -= must + 1
+		}
+		if room > 0 {
+			flash = ansi.Truncate(flash, room, "…")
+		} else {
+			flash = ""
+		}
+	}
+	// A code that does not fit whole is never shown in part: its note
+	// says where it went instead (fitCodes).
+	for i, p := range fitCodes(codes, headerRoom(logo[2], flash+"  ", w)) {
+		sys[i].text = s.attn.Render(p)
+	}
 	rows := []string{
 		"",
-		justify(logo[0]+fleetLine, clock+"  ", w),
-		justify(logo[1]+linksLine, "", w),
-		justify(logo[2]+sysLine, flash+"  ", w),
+		headerRow(logo[0], fleetLine, clock+"  ", w),
+		headerRow(logo[1], linksLine, "", w),
+		// Whole parts that fit the room headerRow leaves beside the flash;
+		// headerRow cuts only when the parts never left out do not fit.
+		headerRow(logo[2], s.muted.Render(fitParts(sys, headerRoom(logo[2], flash+"  ", w))), flash+"  ", w),
 		"",
 		m.tabs(w),
 	}
@@ -227,6 +271,120 @@ func (m Model) logoRows() []string {
 		out[i] = b.String()
 	}
 	return out
+}
+
+// The notes that stand in for a code too wide for Den's header.
+const (
+	codeHidden        = "Pairing code live: widen Den to see it"
+	consoleCodeHidden = "Console code live: widen Den to see it"
+)
+
+// liveCode is a code Den shows in its header, and its note.
+type liveCode struct{ line, hidden string }
+
+// short is the note's short form, its first words: "Pairing code live".
+func (c liveCode) short() string {
+	short, _, _ := strings.Cut(c.hidden, ":")
+	return short
+}
+
+// fitCodes is what the header shows of each live code in room columns,
+// joined by " · ". First the codes, in order: a code is whole only when
+// it fits with the short notes of the codes after it ("Pairing code
+// live"), else it is its short note. Then each short note takes its full
+// form while the line still fits. So every live code shows at least as
+// its short note whenever those fit at all, and never in part.
+func fitCodes(codes []liveCode, room int) []string {
+	out := make([]string, len(codes))
+	// One column for the "…" headerRow puts where the parts after the
+	// codes are cut, so it never lands on a code's note.
+	room--
+	used := 0
+	for i, c := range codes {
+		after := 0
+		for _, later := range codes[i+1:] {
+			after += 3 + ansi.StringWidth(later.short())
+		}
+		out[i] = c.short()
+		if used+ansi.StringWidth(c.line)+after <= room {
+			out[i] = c.line
+		}
+		used += ansi.StringWidth(out[i]) + 3
+	}
+	used -= 3
+	for i, c := range codes {
+		if out[i] == c.short() {
+			if grow := ansi.StringWidth(c.hidden) - ansi.StringWidth(c.short()); used+grow <= room {
+				out[i], used = c.hidden, used+grow
+			}
+		}
+	}
+	return out
+}
+
+// liveCodes are the codes live now: the app pairing code, then the
+// console code.
+func (m Model) liveCodes() []liveCode {
+	var out []liveCode
+	if l := m.codeLine(); l != "" {
+		out = append(out, liveCode{l, codeHidden})
+	}
+	if l := m.consoleCodeLine(); l != "" {
+		out = append(out, liveCode{l, consoleCodeHidden})
+	}
+	return out
+}
+
+// headerRow is a header line: the logo, then text, then right at the end
+// of the row. When they do not all fit, the text gives way (cut with "…"),
+// so a flash or the clock is never pushed past the edge.
+func headerRow(logo, text, right string, w int) string {
+	room := headerRoom(logo, right, w)
+	if ansi.StringWidth(text) > room {
+		text = ansi.Truncate(text, max(0, room), "…")
+	}
+	return justify(logo+text, right, w)
+}
+
+// headerRoom is the width headerRow leaves for the text between logo and
+// right.
+func headerRoom(logo, right string, w int) int {
+	return w - ansi.StringWidth(logo) - ansi.StringWidth(right) - 1
+}
+
+// headerPart is one part of a header line and its rank: the higher, the
+// sooner it is left out when the line is too long; 0 never is.
+type headerPart struct {
+	text string
+	rank int
+}
+
+// fitParts joins parts with " · " in at most w columns, leaving out whole
+// parts, the highest rank first and then the last of a rank, until they
+// fit; nothing is cut inside a word. Parts of rank 0 always stay, even if
+// the line is then too long for w.
+func fitParts(parts []headerPart, w int) string {
+	keep := append([]headerPart(nil), parts...)
+	join := func() string {
+		out := make([]string, len(keep))
+		for i, p := range keep {
+			out[i] = p.text
+		}
+		return strings.Join(out, " · ")
+	}
+	for ansi.StringWidth(join()) > w {
+		drop := -1
+		for i, p := range keep {
+			if p.rank > 0 && (drop < 0 || p.rank >= keep[drop].rank) {
+				drop = i
+			}
+		}
+		if drop < 0 {
+			break
+		}
+		keep = append(keep[:drop], keep[drop+1:]...)
+	}
+	return join()
 }
 
 // justify spaces left and right apart to fill w.
@@ -648,6 +806,22 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "load it")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.UsageResume:
 		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
+	case it.Answerable() && it.Kind == inbox.UsageSet:
+		out = append(out, key("^Y", "take the figure")+"  "+key("^N", "keep yours"))
+	case it.Answerable() && it.Kind == inbox.APIOn:
+		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
+	case it.Answerable() && it.Kind == inbox.Grant:
+		out = append(out, key("^Y", "grant it")+"  "+key("^N", "deny"))
+	case it.Answerable() && it.Kind == inbox.Pair:
+		out = append(out, key("^Y", "pair it")+"  "+key("^N", "refuse"))
+	case it.Answerable() && it.Kind == inbox.Console:
+		out = append(out, key("^Y", "make it your console")+"  "+key("^N", "refuse"))
+	case it.Answerable() && it.Kind == inbox.ControlAsk:
+		line := key("^Y", "allow it once") + "  " + key("^N", "deny")
+		if _, ok := m.ctl.always[it]; ok {
+			line += "  " + key("/always", "and from now on (read the card)")
+		}
+		out = append(out, line)
 	case it.Answerable():
 		out = append(out, key("^Y", "allow")+"  "+key("/always", "this session")+"  "+key("^N", "deny")+"  "+key("/open", "terminal"))
 	case hostOf(itemKey(it)) != "":
@@ -753,7 +927,7 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
-	case it.Kind == inbox.Usage && it.State != inbox.Resolved:
+	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote) && it.State != inbox.Resolved:
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {
@@ -890,6 +1064,24 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.UsageResume {
 			acts = key("^Y", "let the fleet go on") + sp + sp + key("^N", "stay stopped")
+		}
+		if it.Kind == inbox.UsageSet {
+			acts = key("^Y", "take the figure") + sp + sp + key("^N", "keep yours")
+		}
+		if it.Kind == inbox.APIOn {
+			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")
+		}
+		if it.Kind == inbox.Grant {
+			acts = key("^Y", "grant it") + sp + sp + key("^N", "deny")
+		}
+		if it.Kind == inbox.Pair {
+			acts = key("^Y", "pair it") + sp + sp + key("^N", "refuse")
+		}
+		if it.Kind == inbox.Console {
+			acts = key("^Y", "make it your console") + sp + sp + key("^N", "refuse")
+		}
+		if it.Kind == inbox.ControlAsk {
+			acts = key("^Y", "allow it once") + sp + sp + key("^N", "deny")
 		}
 		if it.AsksInDen() {
 			acts = key(optionKeys(it), "or your own answer, Enter") + sp + sp + key("^N", "answer in the terminal") + sp + sp + key("/open", "terminal")
@@ -1209,9 +1401,9 @@ func (m Model) hints(w int) string {
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
-		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
+		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"^E click", "actions in full"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
 	case m.tab == tabOverview && m.ov.open != "":
-		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
+		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"^E click", "actions in full"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
 		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:

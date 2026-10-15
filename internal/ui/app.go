@@ -30,6 +30,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/tree"
@@ -93,7 +94,16 @@ type focusedMsg struct {
 	note string
 	err  error
 }
-type flashClearMsg struct{}
+
+// flashClearMsg ends the flash it was set for, if that flash still shows:
+// an older flash's timer must not take a newer one away.
+type flashClearMsg struct{ text string }
+
+// flashTick clears text from the top bar after d, unless another flash
+// took its place.
+func flashTick(d time.Duration, text string) tea.Cmd {
+	return tea.Tick(d, func(time.Time) tea.Msg { return flashClearMsg{text: text} })
+}
 
 // Model is the root bubbletea model.
 type Model struct {
@@ -104,6 +114,8 @@ type Model struct {
 	missionUpdates map[string]mission.Update
 	// use is the usage guard (usage.go).
 	use usageGuard
+	// dockFrom names the console while its command runs, "" otherwise.
+	dockFrom string
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
 	ments *mentionSet
@@ -183,6 +195,10 @@ type Model struct {
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
 
 	guide guidanceState // orchestrator guidance and its approval (guidance.go)
+
+	api apiState     // den-api.sock (api.go); zero while the API is off
+	ctl controlState // a paired app's control (control.go)
+	con consoleUI    // the console (console.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -223,6 +239,14 @@ func New(cfg config.Config) Model {
 	m.fitInput()
 	m.openRemote(cfg)
 	m.startGuidance(cfg.Orchestrator.Guidance)
+	if cfg.API.Enabled {
+		// Only the Den that holds den.sock serves the API too.
+		if m.srv != nil {
+			m.startAPI()
+		} else {
+			m.api.err = "another Den is running"
+		}
+	}
 	return m
 }
 
@@ -236,12 +260,16 @@ func (m Model) Close() {
 		m.remote.feed.Close()
 	}
 	m.closeOrchestrator()
+	m.closeAPI()
 }
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
+	}
+	if m.api.srv != nil {
+		cmds = append(cmds, waitAPINote(m.api.srv), waitAPIAct(m.api.srv))
 	}
 	if m.remote.feed != nil {
 		m.remote.pump.start(m.remote.feed)
@@ -442,6 +470,7 @@ func (m *Model) refresh() {
 			m.cursor = i
 		}
 	}
+	m.publishAPI()
 	m.followSelection()
 	if t := m.answerTarget(); t != nil && t.ID != m.shown.id {
 		m.shown = shownTarget{id: t.ID, since: answerNow()}
@@ -480,7 +509,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			m.flash, m.flashErr = "clipboard: "+msg.err.Error(), true
-			return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+			return m, flashTick(3*time.Second, m.flash)
 		case msg.path != "":
 			return m, m.attach(msg.path)
 		case msg.text != "":
@@ -493,9 +522,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, animTick()
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
+		m.checkAPISocket()
 		m.refresh()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance()}
+		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.controlTick(time.Now())}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -531,6 +561,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	case orchStartedMsg:
 		return m, m.handleOrchStarted(msg)
+	case appCancelMsg:
+		if y := m.ctl.turn; y != nil && y.Turn == msg.turn {
+			if !m.ctl.sent {
+				m.ctl.turn = nil
+			} else if !m.ctl.ended {
+				m.ctl.ended = true // the app was told "cancelled"
+				if m.orch.proc != nil {
+					m.orch.proc.Interrupt()
+				}
+			}
+		}
+		return m, nil
 	case orchEventMsg:
 		if msg.from != nil && msg.from != m.orch.proc {
 			return m, nil // a process that was restarted away; its tail is noise
@@ -543,6 +585,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
+	case apiActMsg:
+		if msg.from != m.api.srv {
+			return m, nil
+		}
+		cmd := m.applyAPIAct(msg.act)
+		return m, tea.Batch(cmd, waitAPIAct(msg.from))
+	case apiNoteMsg:
+		if msg.from != m.api.srv {
+			return m, nil
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: sanitize.Text(msg.text), at: time.Now()}))
+		return m, waitAPINote(msg.from)
 	case cliSentMsg:
 		m.applyCLISent(msg)
 		m.refresh()
@@ -550,7 +604,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
-		return m, tea.Tick(4*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		return m, flashTick(4*time.Second, m.flash)
 	case closeDoneMsg:
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
@@ -572,10 +626,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.flash, m.flashErr = "Focused "+msg.note, false
 		}
-		return m, tea.Tick(3*time.Second, func(time.Time) tea.Msg { return flashClearMsg{} })
+		return m, flashTick(3*time.Second, m.flash)
 	case flashClearMsg:
-		m.flash = ""
+		if msg.text == m.flash {
+			m.flash = ""
+		}
 	case tea.KeyPressMsg:
+		m.api.lastKey = time.Now()
 		return m.handleKey(msg)
 	case tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
 		if m.tab == tabReview {
@@ -605,6 +662,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return m.remoteHeld(r.Host, r)
 	}
+	m.noteMode(r)
 	if r.Event == bridge.CloseEvent {
 		m.handleCloseRequest(r)
 		return nil
@@ -619,7 +677,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent {
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -627,10 +685,19 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: only the orchestrator's own hook and tools may ask this"})
 			return nil
 		}
-		if r.Event == bridge.InboundEvent {
+		switch r.Event {
+		case bridge.InboundEvent:
 			return m.handleInbound(r)
+		case bridge.OrchSendEvent:
+			return m.handleOrchSend(r)
 		}
 		return m.handleMissionUpdate(r)
+	}
+	if r.Event == bridge.ConsolePairEvent {
+		return m.handleConsolePair(r)
+	}
+	if r.Event == bridge.ConsoleUnpairEvent {
+		return m.handleConsoleUnpair(r)
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
@@ -943,6 +1010,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.cycleTab(-1)
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
 		return m, cmd
+	case "ctrl+e":
+		// On an open mission with an empty line: show or hide the full
+		// text of its actions. Enter stays with the mission itself.
+		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" && m.toggleThreadActions() {
+			return m, nil
+		}
 	case "ctrl+o":
 		m.toggleOrchestrator()
 		cmd := tea.Batch(m.dropEdit(), m.enteredTab())
@@ -1266,6 +1339,28 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if m.unsettled(it) {
 		return m.say("A new request just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press again to answer it.", true)
 	}
+	return m.answerItem(it, verb)
+}
+
+// answerItem carries out an answer to it, once the gates of whoever
+// answers have passed: the human's in Den (answer: the selection, the
+// whole text shown, nothing new come up), or a console's (card.answer:
+// the card read whole, unchanged, from the console).
+func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	// Who settles it, for the console's settled event: set before the
+	// answer, since the view is published while it is carried out, and
+	// taken back if the item did not settle.
+	if it.Answer == "" {
+		it.Answer = verb
+		if it.AnsweredBy == "" {
+			it.AnsweredBy = "den"
+		}
+		defer func() {
+			if it.State != inbox.Resolved {
+				it.Answer, it.AnsweredBy = "", ""
+			}
+		}()
+	}
 	if it.Kind == inbox.Question {
 		if verb == "deny" {
 			m.store.Release(it, "you chose the terminal")
@@ -1304,6 +1399,21 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.APIOn {
+		return m.decideAPIOn(it, verb)
+	}
+	if it.Kind == inbox.Grant {
+		return m.decideGrant(it, verb)
+	}
+	if it.Kind == inbox.Console {
+		return m.decideConsole(it, verb)
+	}
+	if it.Kind == inbox.Pair {
+		return m.decidePair(it, verb)
+	}
+	if it.Kind == inbox.ControlAsk {
+		return m.decideControlTool(it, verb)
+	}
 	if it.Kind == inbox.Guidance {
 		return m.decideGuidance(it, verb)
 	}
@@ -1312,6 +1422,9 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.UsageResume {
 		return m.decideUsageResume(it, verb)
+	}
+	if it.Kind == inbox.UsageSet {
+		return m.decideUsageSet(it, verb)
 	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
@@ -1362,6 +1475,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 			return m.say(questionHint(it), true)
 		}
 		return m.answerQuestion(it, text)
+	case "/api":
+		return m.apiCommand(fields[1:])
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":
@@ -1520,7 +1635,7 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession {
 		return "Den"
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
