@@ -269,6 +269,7 @@ func TestCheckManagerImageOrCapability(t *testing.T) {
 	}{
 		{"the image reads", nil, 0, 0, nil, ""},
 		{"refused, the manager holds the capability", denied, capWakeAlarm, 0, nil, ""},
+		{"refused, the manager restarts as its capabilities are read", denied, capWakeAlarm, 0, nil, "cannot tell"},
 		{"refused, other capabilities only", denied, 1 << 3, 0, nil, "cannot tell"},
 		{"refused, Den holds the capability too", denied, capWakeAlarm, capWakeAlarm, nil, "cannot tell"},
 		{"refused, capabilities do not read", denied, 0, 0, errors.New("no status"), "cannot tell"},
@@ -291,6 +292,22 @@ func TestCheckManagerImageOrCapability(t *testing.T) {
 					return c.mgrCap, nil
 				}
 				return c.ownCap, nil
+			}
+			if c.name == "refused, the manager restarts as its capabilities are read" {
+				// Another process takes the pid once the capabilities
+				// were read: its start ticks differ.
+				starts := 0
+				inner := procStat
+				procStat = func(pid int) (int, uint64, error) {
+					pp, st, err := inner(pid)
+					if pid == os.Getpid() {
+						starts++
+						if starts > 1 {
+							st++
+						}
+					}
+					return pp, st, err
+				}
 			}
 			_, err := f.read(t)
 			switch {

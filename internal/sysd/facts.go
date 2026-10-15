@@ -367,6 +367,11 @@ func checkManager(p Peer) (ProcID, error) {
 		if err1 != nil || err2 != nil || mgr&capWakeAlarm == 0 || self&capWakeAlarm != 0 {
 			return id, errors.New("Den cannot tell this is your systemd user manager")
 		}
+		// Still the process Den read at first: a pid reused meanwhile
+		// lends it no capability.
+		if _, again, err := procStat(p.PID); err != nil || again != start {
+			return id, errors.New("Den cannot tell this is your systemd user manager")
+		}
 	case err != nil:
 		return id, fmt.Errorf("the manager's program does not read: %v", err)
 	case !fi.Mode().IsRegular() || !ownedBy(fi, rootUID) || fi.Mode().Perm()&0o022 != 0:
