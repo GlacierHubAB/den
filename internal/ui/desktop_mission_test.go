@@ -11,6 +11,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/spawn"
 )
 
@@ -256,5 +257,39 @@ func TestDesktopMissionTTYOnly(t *testing.T) {
 	}
 	if _, done := r.Decided(); done {
 		t.Fatal("the asker was answered")
+	}
+}
+
+// desktop_mission comes from the orchestrator's own den mcp, a process it
+// spawned: it is handled above the orchestrator's restriction, so the card
+// still comes up and the human's answer still reaches it. Den's global
+// mode, however loose, never reaches the desktop agent's launch line.
+func TestDesktopMissionFromOrchestratorsDenMCP(t *testing.T) {
+	m, spawned, _ := missionRig(t, false)
+	proc, _ := liveOrchestrator(t)
+	m.orch.proc = proc
+	m.mode.global = permmode.Bypass
+	r := missionReq("editor")
+	r.PeerPID = orchChildPID
+	if !m.fromOrchestratorSession(r) {
+		t.Fatal("the request is not taken for the orchestrator's")
+	}
+	runBatch(m.handleRequest(r))
+	if d, done := r.Decided(); done {
+		t.Fatalf("answered before the card: %+v", d)
+	}
+	if desktopCard(*m, inbox.DesktopMission) == nil {
+		t.Fatal("no mission card")
+	}
+	runMission(t, m, "allow")
+	if d, done := r.Decided(); !done || d.Behavior != "allow" {
+		t.Fatalf("asker got %+v %v", d, done)
+	}
+	if len(*spawned) != 1 || (*spawned)[0].PermissionMode != "" {
+		t.Fatalf("spawns %+v", *spawned)
+	}
+	joined := strings.Join((*spawned)[0].Custom("desktop"), " ")
+	if strings.Count(joined, "--permission-mode") != 1 || !strings.Contains(joined, "--permission-mode dontAsk") {
+		t.Errorf("argv: %s", joined)
 	}
 }
