@@ -30,8 +30,29 @@ import (
 // agents with control on, delivered by Den the way SendMessage would.
 const SendMessageTool = "mcp__" + MCPServer + "__send_message"
 
-// ControlPrompt follows the system prompt with control on.
-const ControlPrompt = "SendMessage is not available in this session: message sessions with send_message instead, wherever these instructions say SendMessage. It reaches them the same way, and their reports come back to you as before. Den may ask the human before any tool runs."
+// ControlPrompt follows the control rules (ControlSystemPrompt).
+const ControlPrompt = "Den may ask the human before any tool runs in this session. While it asks, wait for the answer; if the human declines, say so, and never try another way to do the same thing."
+
+// controlSends are the places SystemPrompt names SendMessage as a tool to
+// use, each with what ControlSystemPrompt says there instead. Every one
+// must be found in SystemPrompt (a test checks), so that an edit to it
+// cannot leave the control rules pointing at SendMessage.
+var controlSends = []string{
+	"(what ListAgents and SendMessage use)",
+	"(what ListAgents and send_message use)",
+	"You have exactly two tools, ListAgents and SendMessage, and need nothing else.",
+	"You have exactly two tools for the fleet, ListAgents and Den's send_message (" + SendMessageTool + "), and need nothing else. " + ControlNoSendMessage + " send_message is the only way to message an agent: it reaches the agent the same way, and its report comes back to you as before.",
+	"send it with SendMessage to that agent's peer name",
+	"send it with send_message (" + SendMessageTool + ") to that agent's peer name",
+}
+
+// ControlNoSendMessage is the one place the control rules name
+// SendMessage.
+const ControlNoSendMessage = "SendMessage is not available in this session: never call it."
+
+// ControlSystemPrompt is SystemPrompt with control on: send_message, by
+// its exact name, wherever SendMessage was the tool to use.
+var ControlSystemPrompt = strings.NewReplacer(controlSends...).Replace(SystemPrompt)
 
 // SendVerified are the Claude Code releases on which Den's send_message
 // was checked to reach a session exactly as SendMessage does: the inbox
@@ -66,6 +87,9 @@ type control struct {
 	// allowed the ones Den allowed.
 	uses    map[string]string
 	allowed map[string]bool
+	// sends are Claude Code's own SendMessage calls, in any turn, by
+	// tool_use id, until their result.
+	sends map[string]bool
 	// standing are the human's standing allowances for the app whose turn
 	// is open (AllowRule keys), set with SendApp and SetStanding;
 	// standingUsed counts the requests they answered in that turn.
@@ -307,36 +331,44 @@ func (o *Orchestrator) canUseTool(id, tool, toolUseID string, input json.RawMess
 	o.emit(Event{Kind: PermissionAsk, RequestID: id, Tool: tool, ToolUseID: toolUseID, Input: input, Turn: turn})
 }
 
-// controlToolUse notes a tool call; in an app's turn Claude Code's own
-// SendMessage (disallowed) trips the backstop.
+// controlToolUse notes a tool call: in an app's turn every one, and in any
+// turn Claude Code's own SendMessage, for controlToolResult to check.
 func (o *Orchestrator) controlToolUse(id, tool string) {
 	o.mu.Lock()
-	c := o.ctl
-	trip := c != nil && tool == "SendMessage"
-	if c != nil && c.app.open {
-		c.uses[id] = tool
-	}
-	o.mu.Unlock()
-	if trip {
-		o.trip("the orchestrator used SendMessage, which control disallows")
-	}
-}
-
-// controlToolResult checks, in an app's turn, that a tool that ran was one
-// Den allowed (ListAgents needs no asking); anything else trips the
-// backstop.
-func (o *Orchestrator) controlToolResult(id string, isError bool) {
-	o.mu.Lock()
-	c := o.ctl
-	bad := ""
-	if c != nil && c.app.open && !isError {
-		if tool, ok := c.uses[id]; ok && tool != "ListAgents" && !c.allowed[id] {
-			bad = tool
+	if c := o.ctl; c != nil {
+		if tool == "SendMessage" {
+			c.sends[id] = true
+		}
+		if c.app.open {
+			c.uses[id] = tool
 		}
 	}
 	o.mu.Unlock()
-	if bad != "" {
-		o.trip("in an app's turn " + bad + " ran without Den allowing it")
+}
+
+// controlToolResult checks that a tool that ran was one Den allowed: a
+// SendMessage, in any turn, trips the backstop; in an app's turn so does
+// any tool but ListAgents Den did not allow. A call Claude Code refused
+// (an error result; SendMessage is disallowed, so it answers "No such tool
+// available") ran nothing and trips nothing.
+func (o *Orchestrator) controlToolResult(id string, isError bool) {
+	o.mu.Lock()
+	c := o.ctl
+	why := ""
+	if c != nil {
+		if c.sends[id] && !isError {
+			why = "Claude Code's own SendMessage ran, which control disallows"
+		}
+		delete(c.sends, id)
+	}
+	if c != nil && why == "" && c.app.open && !isError {
+		if tool, ok := c.uses[id]; ok && tool != "ListAgents" && !c.allowed[id] {
+			why = "in an app's turn " + tool + " ran without Den allowing it"
+		}
+	}
+	o.mu.Unlock()
+	if why != "" {
+		o.trip(why, TripTool)
 	}
 }
 

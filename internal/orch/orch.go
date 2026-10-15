@@ -56,7 +56,18 @@ type Event struct {
 	// Turn is the app turn (SendApp) a PermissionAsk or
 	// PermissionExpired belongs to, and that a Result ends.
 	Turn string
+	// Trip is a Backstop's kind: TripPeer, TripTool or TripOutput.
+	Trip string
 }
+
+// The kinds of Backstop: a message from another session may have reached
+// the orchestrator; a tool control disallows ran; or Den could not read
+// what the orchestrator wrote.
+const (
+	TripPeer   = "peer"
+	TripTool   = "tool"
+	TripOutput = "output"
+)
 
 // maxStderrLine caps a line of the process's stderr in an event.
 const maxStderrLine = 200
@@ -254,9 +265,8 @@ func Argv(o Options) []string {
 	}
 	allowed := "ListAgents,SendMessage"
 	tools, mode := "ListAgents,SendMessage", "dontAsk"
-	prompt := Prompt(o.Guidance)
+	prompt := PromptFor(o.Guidance, o.Control)
 	if o.Control {
-		prompt += "\n\n" + ControlPrompt
 		// SendMessage never asks permission, so it could not be held for
 		// the human: Den's send_message takes its place.
 		allowed, tools, mode = "ListAgents", "ListAgents", "manual"
@@ -386,7 +396,7 @@ func start(ctx context.Context, cmd *exec.Cmd, o Options) (*Orchestrator, error)
 	}
 	var ctl *control
 	if o.Control {
-		ctl = &control{human: humanTools(o), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}}
+		ctl = &control{human: humanTools(o), perms: map[string]*permission{}, uses: map[string]string{}, allowed: map[string]bool{}, sends: map[string]bool{}}
 	}
 	return startCmd(ctx, cmd, o.SettingsFile, exe, ctl)
 }
@@ -419,7 +429,7 @@ func startCmd(ctx context.Context, cmd *exec.Cmd, settings, exe string, ctl *con
 		// it before Den's end closes, so the failure is never an open pipe
 		// nobody reads.
 		if err := orc.readStdout(stdout); err != nil {
-			orc.trip("unreadable orchestrator output")
+			orc.trip("unreadable orchestrator output", TripOutput)
 		}
 		stdout.Close() // a reader that stopped early never blocks the copy
 		close(read)
@@ -558,8 +568,9 @@ func (o *Orchestrator) Sent(hash string) bool {
 }
 
 // trip is the backstop: kill the process at once, before it can act on
-// what got through, and say why.
-func (o *Orchestrator) trip(why string) {
+// what got through, and say why and of which kind (TripPeer, TripTool,
+// TripOutput).
+func (o *Orchestrator) trip(why, kind string) {
 	o.mu.Lock()
 	if o.tripped {
 		o.mu.Unlock()
@@ -570,7 +581,7 @@ func (o *Orchestrator) trip(why string) {
 	if o.cmd != nil && o.cmd.Process != nil {
 		o.cmd.Process.Kill()
 	}
-	o.emitMust(Event{Kind: Backstop, Text: why})
+	o.emitMust(Event{Kind: Backstop, Text: why, Trip: kind})
 }
 
 // Tripped reports whether the backstop killed the process.
@@ -807,7 +818,7 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 					exit = *l.ExitCode
 				}
 				if !hookBlocked(exit, l.Stdout) && (exit != 0 || strings.TrimSpace(l.Stdout) != "") {
-					o.trip(fmt.Sprintf("the inbound hook answered exit %d (%s)", exit, sanitize.Label(l.Outcome, 40)))
+					o.trip(fmt.Sprintf("the inbound hook answered exit %d (%s)", exit, sanitize.Label(l.Outcome, 40)), TripPeer)
 				}
 			case "informational":
 				if strings.HasPrefix(l.Content, "UserPromptSubmit operation blocked by hook") {
@@ -843,7 +854,7 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 				case l.IsReplay && b.Type == "text" && peermsg.HasEnvelope(b.Text):
 					// A turn the model will see holds a peer's envelope:
 					// the hook was bypassed.
-					o.trip("a peer's message reached the orchestrator")
+					o.trip("a peer's message reached the orchestrator", TripPeer)
 				}
 			}
 		case "result":

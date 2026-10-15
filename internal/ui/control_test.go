@@ -379,7 +379,7 @@ func TestBackstopUnpairs(t *testing.T) {
 	c.call("orch.say", map[string]string{"text": "hold on SLOW-PLEASE"})
 	stream := chunks(c)
 	l.until("the app's turn to go out", func() bool { return l.m.ctl.sent }, nil)
-	l.feed(orchEventMsg{ev: orch.Event{Kind: orch.Backstop, Text: "in an app's turn x ran without Den allowing it"}, from: l.m.orch.proc})
+	l.feed(orchEventMsg{ev: orch.Event{Kind: orch.Backstop, Text: "in an app's turn x ran without Den allowing it", Trip: orch.TripTool}, from: l.m.orch.proc})
 	var got []map[string]any
 	l.until("the app's turn to end", func() bool {
 		select {

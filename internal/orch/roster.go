@@ -117,7 +117,7 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 		}
 		n++
 		remote++
-		fmt.Fprintf(&b, "- %s @%s → on host %s, SendMessage cannot reach it · %s\n", a.Critter, a.Host, a.Host, a.Status)
+		fmt.Fprintf(&b, "- %s @%s → on host %s, your messages cannot reach it · %s\n", a.Critter, a.Host, a.Host, a.Status)
 		var said []string
 		for _, f := range []struct{ name, v string }{{"session name", a.Peer}, {"role", a.Role}, {"task", a.Task}, {"in", a.Where}} {
 			if f.v != "" {
@@ -138,7 +138,7 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 		b.WriteString("(no other agents running)\n")
 	}
 	if remote > 0 {
-		b.WriteString("Agents marked @host run on another machine. SendMessage is local to this machine and cannot reach them, and Den cannot message them yet: do not try; tell the human instead.\n")
+		b.WriteString("Agents marked @host run on another machine. Your messages are local to this machine and cannot reach them, and Den cannot message them yet: do not try; tell the human instead.\n")
 	}
 	b.WriteString("</den_fleet>\n")
 	if len(templates) > 0 {

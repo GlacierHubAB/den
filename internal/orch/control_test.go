@@ -238,26 +238,77 @@ func TestControlUnansweredIsDenied(t *testing.T) {
 	}
 }
 
-// In an app's turn a tool that ran without Den allowing it, or Claude
-// Code's own SendMessage, trips the backstop; ListAgents and denied calls
-// do not.
+// In an app's turn a tool that ran without Den allowing it, and in any
+// turn Claude Code's own SendMessage that ran, trips the backstop;
+// ListAgents, denied calls and a SendMessage Claude Code refused do not.
 func TestControlBackstop(t *testing.T) {
-	for name, lines := range map[string][]string{
-		"unasked tool ran": {toolUse("u1", SpawnAgentTool), toolResult("u1", false)},
-		"SendMessage":      {toolUse("u1", "SendMessage")},
+	// What 2.1.289 and 2.1.296 answer a disallowed SendMessage with.
+	refused := `{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","is_error":true,"content":"<tool_use_error>Error: No such tool available: SendMessage</tool_use_error>"}]}}`
+	for _, c := range []struct {
+		name  string
+		app   bool
+		lines []string
+		trip  bool
+	}{
+		{"unasked tool ran", true, []string{toolUse("u1", SpawnAgentTool), toolResult("u1", false)}, true},
+		{"SendMessage ran in an app's turn", true, []string{toolUse("u1", "SendMessage"), toolResult("u1", false)}, true},
+		{"SendMessage ran in a human turn", false, []string{toolUse("u1", "SendMessage"), toolResult("u1", false)}, true},
+		{"SendMessage refused in an app's turn", true, []string{toolUse("u1", "SendMessage"), refused}, false},
+		{"SendMessage refused in a human turn", false, []string{toolUse("u1", "SendMessage"), refused}, false},
+		{"SendMessage asked for, no result yet", false, []string{toolUse("u1", "SendMessage")}, false},
+		{"ListAgents and a denied call", true, []string{toolUse("u1", "ListAgents"), toolResult("u1", false), toolUse("u2", CloseAgentTool), toolResult("u2", true)}, false},
 	} {
 		o, _ := controlOrch(true)
-		o.SendApp("t-1", "hello")
-		feed(o, append([]string{replayOf("hello")}, lines...)...)
-		if !o.Tripped() {
-			t.Errorf("%s: no trip", name)
+		lines := c.lines
+		if c.app {
+			o.SendApp("t-1", "hello")
+			lines = append([]string{replayOf("hello")}, lines...)
+		}
+		feed(o, lines...)
+		if o.Tripped() != c.trip {
+			t.Errorf("%s: tripped %v", c.name, o.Tripped())
+			continue
+		}
+		for _, e := range drain(o) {
+			if e.Kind == Backstop && e.Trip != TripTool {
+				t.Errorf("%s: trip kind %q", c.name, e.Trip)
+			}
 		}
 	}
-	o, _ := controlOrch(true)
-	o.SendApp("t-1", "hello")
-	feed(o, replayOf("hello"), toolUse("u1", "ListAgents"), toolResult("u1", false), toolUse("u2", CloseAgentTool), toolResult("u2", true))
-	if o.Tripped() {
-		t.Error("ListAgents or a denied call tripped the backstop")
+}
+
+// With control the rules name send_message, by its exact name, as the way
+// to message an agent, and SendMessage only to say it is not available;
+// the human's guidance still comes after every rule.
+func TestControlPrompt(t *testing.T) {
+	for i := 0; i < len(controlSends); i += 2 {
+		if !strings.Contains(SystemPrompt, controlSends[i]) {
+			t.Errorf("SystemPrompt no longer says %q: the control rules would miss it", controlSends[i])
+		}
+	}
+	rules := PromptFor("", true)
+	if strings.Count(rules, ControlNoSendMessage) != 1 {
+		t.Fatalf("the control rules do not say SendMessage is unavailable exactly once")
+	}
+	if left := strings.ReplaceAll(rules, ControlNoSendMessage, ""); strings.Contains(left, "SendMessage") {
+		i := strings.Index(left, "SendMessage")
+		t.Errorf("the control rules name SendMessage as usable: …%s…", left[max(0, i-80):min(len(left), i+40)])
+	}
+	if !strings.Contains(rules, "send it with send_message ("+SendMessageTool+")") || !strings.Contains(rules, "ListAgents and Den's send_message ("+SendMessageTool+")") {
+		t.Error("the control rules do not name send_message by its exact name")
+	}
+	if PromptFor("", false) != SystemPrompt || Prompt("") != SystemPrompt {
+		t.Error("without control the rules changed")
+	}
+	g := PromptFor("be brief", true)
+	if !strings.HasPrefix(g, ControlSystemPrompt+"\n\n"+ControlPrompt+"\n\n<human_guidance>\n") || !strings.HasSuffix(g, "be brief\n</human_guidance>") {
+		t.Errorf("guidance is not after the control rules: %q", g[len(g)-200:])
+	}
+	args := Argv(Options{Command: []string{"claude"}, Control: true, Guidance: "be brief", SettingsFile: "/x"})
+	for i, a := range args {
+		if a == "--append-system-prompt" && args[i+1] != g {
+			t.Error("Argv does not pass the control rules")
+		}
 	}
 }
 

@@ -245,8 +245,19 @@ func denStateDir() string {
 // Prompt is the system prompt Den appends: SystemPrompt, then, when the
 // human approved guidance, its text in a <human_guidance> block of its own.
 func Prompt(guidance string) string {
-	if guidance == "" {
-		return SystemPrompt
+	return PromptFor(guidance, false)
+}
+
+// PromptFor is Prompt, with control on the control rules
+// (ControlSystemPrompt and ControlPrompt) in place of SystemPrompt; the
+// guidance comes after either.
+func PromptFor(guidance string, control bool) string {
+	rules := SystemPrompt
+	if control {
+		rules = ControlSystemPrompt + "\n\n" + ControlPrompt
 	}
-	return SystemPrompt + "\n\n<human_guidance>\n" + guidance + "\n</human_guidance>"
+	if guidance == "" {
+		return rules
+	}
+	return rules + "\n\n<human_guidance>\n" + guidance + "\n</human_guidance>"
 }

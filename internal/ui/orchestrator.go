@@ -518,7 +518,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 		m.orch.mixed = true
 		m.addChat(chatEntry{role: "note", text: "The orchestrator's guard refused a prompt Den could not place; if you were waiting for an answer, send your message again.", at: now})
 	case orch.Backstop:
-		return m.onBackstop(ev.Text)
+		return m.onBackstop(ev.Text, ev.Trip)
 	case orch.Result:
 		m.turnDone()
 		if ev.IsError && !m.orch.said && authTrouble(ev.Text) {

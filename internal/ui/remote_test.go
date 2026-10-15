@@ -411,13 +411,13 @@ func TestRemoteProjectsAreHostScoped(t *testing.T) {
 func TestRosterTagsRemoteAgents(t *testing.T) {
 	m, _, _ := remoteModel(t)
 	text := orch.Compose(m.roster(), "hi")
-	if !strings.Contains(text, "Mossy Lemur @devbox → on host devbox, SendMessage cannot reach it") {
+	if !strings.Contains(text, "Mossy Lemur @devbox → on host devbox, your messages cannot reach it") {
 		t.Errorf("roster:\n%s", text)
 	}
 	if !strings.Contains(text, "host offline, last known working") {
 		t.Errorf("stale agent not marked:\n%s", text)
 	}
-	if !strings.Contains(text, "SendMessage is local to this machine") {
+	if !strings.Contains(text, "Your messages are local to this machine") {
 		t.Errorf("no warning:\n%s", text)
 	}
 }
