@@ -71,12 +71,14 @@ type Server struct {
 	stopWatch chan struct{}
 	// cardAnswers counts the console's card answers for their limits.
 	cardAnswers answers
-	closeOnce   sync.Once
-	bp          atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
-	view        atomic.Pointer[View]
-	chat        *chatStore
-	lane        *lane
-	notes       chan string
+	// cmdLimits counts the console's commands.
+	cmdLimits cmdLimits
+	closeOnce sync.Once
+	bp        atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
+	view      atomic.Pointer[View]
+	chat      *chatStore
+	lane      *lane
+	notes     chan string
 
 	paused atomic.Bool // /api off or /api disconnect: answer unavailable
 	// draining counts refused connections still reading out what their
@@ -595,7 +597,9 @@ type conn struct {
 	// cnonce and claimSalt are its live console challenge, cchallenged
 	// when it was given; console the console it proved, "" for none.
 	// reads are the cards it read, for card.answer (card.go).
-	reads       cardReads
+	reads cardReads
+	// completes are its cmd.complete calls in the last second.
+	completes   []time.Time
 	cnonce      string
 	claimSalt   string
 	cchallenged time.Time
@@ -976,6 +980,12 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.cardGet(c, req)
 	case "card.answer":
 		s.cardAnswer(c, req)
+	case "cmd.list":
+		s.cmdList(c, req)
+	case "cmd.complete":
+		s.cmdComplete(c, req)
+	case "cmd.run":
+		s.cmdRun(c, req)
 	case "focus":
 		s.focus(c, req)
 	case "ask.cancel":

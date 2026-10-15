@@ -68,6 +68,9 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	if act.CardAnswer != nil {
 		return m.answerFromDock(act.CardAnswer)
 	}
+	if act.Command != nil {
+		return m.runFromDock(act.Command)
+	}
 	if isConsoleAct(act) {
 		return m.applyConsoleAct(act)
 	}
@@ -295,6 +298,7 @@ func (m *Model) publishAPI() {
 	}
 	snap.AgentProcs = m.agentProcs()
 	snap.Cards = m.dockCards()
+	snap.Commands = dockCommands()
 	for _, h := range m.remote.hosts {
 		if string(h.Applied) == "full" {
 			snap.FullHosts[h.Label] = true

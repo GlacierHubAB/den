@@ -40,6 +40,8 @@ type Snapshot struct {
 	// Cards are the cards Den would show, as a console may read them
 	// (card.go); Project sanitises them and computes their hashes.
 	Cards []Card
+	// Commands are Den's commands with their dock flags (cmd.go).
+	Commands []CommandInfo
 }
 
 // View is what the server serves until the next one.
@@ -52,6 +54,7 @@ type View struct {
 	AgentProcs map[int]AgentProc
 	Guidance   string
 	Cards      map[string]Card // by id
+	Commands   []CommandInfo
 }
 
 // AgentProc is one agent's process: its pid, and its start time in clock
@@ -95,6 +98,7 @@ func Project(s Snapshot) *View {
 		AgentProcs: map[int]AgentProc{},
 		Guidance:   s.Guidance,
 		Cards:      map[string]Card{},
+		Commands:   projectCommands(s.Commands),
 	}
 	for _, p := range s.AgentProcs {
 		if p.PID > 1 {
@@ -240,7 +244,7 @@ func projectCard(c Card) Card {
 	}
 	lines := strings.Split(c.Body, "\n")
 	for i, l := range lines {
-		lines[i] = sanitize.Line(l)
+		lines[i] = sanitize.Code(l) // as Den draws it: spacing kept, controls and bidi gone
 	}
 	out.Body = strings.Join(lines, "\n")
 	for _, v := range c.Verbs {

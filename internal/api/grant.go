@@ -81,6 +81,8 @@ type Act struct {
 	ConsoleIntruder *ConsoleIntruder
 	// CardAnswer is a console's answer to a card, for Den to carry out.
 	CardAnswer *CardAnswer
+	// Command is a console's command line, for Den to decide.
+	Command *CommandRun
 }
 
 type grants struct {
