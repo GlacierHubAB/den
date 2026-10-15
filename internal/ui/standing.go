@@ -83,10 +83,16 @@ func (m Model) standingLines(app string, r api.Rule, why string) []string {
 			a = x
 		}
 	}
+	// The human knows the agent by its critter name: that first, the peer
+	// name (the rule's key) beside it once, then the short name.
+	full, short := m.peerWithCritter(r.Peer), sanitize.Label(r.Peer, 60)
+	if c := m.critterOf(r.Peer); c != "" {
+		short = c
+	}
 	return []string{
-		"/always: " + app + " may have the orchestrator message " + r.Peer + " in its turns without asking you: any message it writes.",
-		"That lets " + app + " give " + r.Peer + " any instruction: in effect " + app + " can make " + r.Peer + " do whatever " + r.Peer + " may do without asking you.",
-		r.Peer + " works in " + sanitize.Label(a.Session.CWD, 120) + ", permission mode " + sanitize.Label(m.modeOf(r.SessionID), 30) + " (as the session reports it, through its own hooks); the allowance is for this session only, never another that takes its name.",
+		"/always: " + app + " may have the orchestrator message " + full + " in its turns without asking you: any message it writes.",
+		"That lets " + app + " give " + short + " any instruction: in effect " + app + " can make " + short + " do whatever " + short + " may do without asking you.",
+		short + " works in " + sanitize.Label(a.Session.CWD, 120) + ", permission mode " + sanitize.Label(m.modeOf(r.SessionID), 30) + " (as the session reports it, through its own hooks); the allowance is for this session only, never another that takes its name.",
 	}
 }
 
@@ -190,7 +196,7 @@ func (m Model) standingReport() string {
 	for _, r := range m.api.srv.AllRules() {
 		what := "update_mission"
 		if r.Tool == orch.SendMessageTool {
-			what = "send_message to " + sanitize.Label(r.Peer, 60) + " (this session only)"
+			what = "send_message to " + sanitize.Label(m.peerWithCritter(r.Peer), 100) + " (this session only)"
 		}
 		b.WriteString("\nstanding " + strconv.Itoa(r.N) + ": " + appName(r.Exe) + " · " + what + " · since " + r.At.Format("15:04") + " · /api disallow " + strconv.Itoa(r.N))
 	}

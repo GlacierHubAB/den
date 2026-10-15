@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
 	"github.com/GlacierHubAB/den/internal/spawn"
 )
@@ -101,6 +102,9 @@ func (m *Model) handleSkillsRequest(r *bridge.Request) {
 	title := fmt.Sprintf("Install %s for a %s in %s?", n, in.Role, shortPath(tgt.Dir, ""))
 	if tgt.Scope == skills.Agent {
 		title = fmt.Sprintf("Start %s (%s) with %s?", in.Peer, in.Role, n)
+		if c := m.critterOf(in.Peer); c != "" {
+			title = fmt.Sprintf("Start %s (%s, %s) with %s?", c, sanitize.Label(in.Peer, 60), in.Role, n)
+		}
 	}
 	body := skills.Lines(ms, tgt)
 	asked := "asked by " + in.AskedBy

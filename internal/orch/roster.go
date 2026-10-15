@@ -79,7 +79,9 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 			continue
 		}
 		n++
-		fmt.Fprintf(&b, "- %s → peer %q", a.Critter, a.Peer)
+		// The critter name leads; the peer name closes the line, marked as
+		// a handle for tools, so it is not mistaken for the agent's name.
+		b.WriteString("- " + a.Critter)
 		if a.Role != "" {
 			b.WriteString(" · " + a.Role)
 		}
@@ -90,7 +92,7 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 		if a.Where != "" {
 			b.WriteString(" · in " + a.Where)
 		}
-		b.WriteString("\n")
+		fmt.Fprintf(&b, " [peer for tools: %q]\n", a.Peer)
 		if a.Title != "" {
 			b.WriteString("    title: " + a.Title + "\n")
 		}

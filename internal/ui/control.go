@@ -485,8 +485,11 @@ func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
 	body := []string{
 		"In a turn " + who + " sent, the orchestrator wants this tool. Nothing runs unless you allow it; it is denied in a minute without an answer.",
 		"tool: " + sanitize.Label(ev.Tool, 80),
-		"──── its input, in full ────",
 	}
+	if to := m.sendTargetLine(ev); to != "" {
+		body = append(body, to)
+	}
+	body = append(body, "──── its input, in full ────")
 	var pretty any
 	raw := []byte(ev.Input)
 	if json.Unmarshal(raw, &pretty) == nil {
