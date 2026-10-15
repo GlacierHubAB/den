@@ -135,7 +135,9 @@ const (
 	CauseIntruders = "intruders"
 	// CauseSelf: the console unpaired itself, with console.unpair.
 	CauseSelf = "self"
-	// CauseDen: the human unpaired it in Den (den unpair, /api unpair).
+	// CauseDen: unpaired in Den (/api unpair) or with den unpair in a
+	// terminal, which a program run on this machine can issue too: word it
+	// as "in Den", not as the human's act.
 	CauseDen = "den"
 	// CauseOther: another program on this machine unpaired every pairing
 	// with console.unpair {all: true}, from a connection that is not the

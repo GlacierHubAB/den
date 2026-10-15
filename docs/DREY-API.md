@@ -747,7 +747,7 @@ all` does in a terminal.
   | `proofs` | three proofs for it were wrong in ten minutes |
   | `intruders` | three other programs tried it in ten minutes |
   | `self` | the console asked, with `console.unpair` (or `{all: true}` on its own proved connection) |
-  | `den` | the human unpaired it in Den (`den unpair`, `/api unpair`) |
+  | `den` | unpaired in Den (`/api unpair`) or with `den unpair` in a terminal. Den's own unpair, which a program the human or a script runs on this machine can issue too, so word it as "unpaired in Den", never "you unpaired it" |
   | `other` | another program on this machine unpaired every pairing with `console.unpair {all: true}` from a connection that is not the console's own. Not the human's act: never say they did it |
   | `replaced` | another console was paired in its place |
   | `record` | Den found its record of the console changed outside Den, so the pairing cannot be trusted. Tell the human that, and do not tell them they unpaired |
