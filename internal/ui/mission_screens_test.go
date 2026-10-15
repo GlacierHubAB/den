@@ -15,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/transcript"
+	"github.com/GlacierHubAB/den/internal/tree"
 )
 
 // screenMission is a running mission with criteria in each state and
@@ -320,7 +321,7 @@ func TestChatShowsMissionsOnTop(t *testing.T) {
 	m.missions.Save(prop)
 	for _, w := range []int{78, 118} {
 		out := strings.Join(boxed(m.missionStrip(w, 40)), "\n")
-		if !strings.Contains(out, "MISSIONS") || !strings.Contains(out, "⇶ Docs for stage 2") || !strings.Contains(out, "proposal") || !strings.Contains(out, "^Y start") || !strings.Contains(out, "more · /missions") {
+		if !strings.Contains(out, "MISSIONS") || !strings.Contains(out, "⇶ Docs for stage 2") || !strings.Contains(out, "proposal") || !strings.Contains(out, "↑ select") || strings.Contains(out, "^Y start") || !strings.Contains(out, "more · /missions") {
 			t.Errorf("strip at %d:\n%s", w, out)
 		}
 		if i, j := strings.Index(out, "Docs for stage 2"), strings.Index(out, ms.Name); j >= 0 && j < i {
@@ -330,23 +331,183 @@ func TestChatShowsMissionsOnTop(t *testing.T) {
 	if out := strings.Join(boxed(m.missionStrip(118, 40)), "\n"); !strings.Contains(out, "g2 · ◐ needs you") {
 		t.Errorf("the needs-you row does not say what needs the human:\n%s", out)
 	}
-	if lines := m.missionStrip(118, 12); len(lines) != 2 {
+	if lines := m.missionStrip(118, 12); len(lines) != 3 { // the line, the rule, the blank row
 		t.Errorf("not folded in a short pane: %q", boxed(lines))
 	}
-	// ^Y in the chat, with no card focused, starts nothing without criteria.
+	// ^Y in the chat with nothing selected never takes the proposal.
+	prop.SetCriteria([]string{"docs reviewed"})
+	prop.AddGoal(mission.SubGoal{Text: "write", Role: "writer"})
+	prop.Updated = time.Now().Add(-time.Minute)
 	m.tab = tabOrch
+	m.orch.cardCur = -1
+	m.orch.starting = true
+	ctrl := func(m Model, r rune) Model {
+		mm, _ := m.handleKey(tea.KeyPressMsg{Code: r, Mod: tea.ModCtrl})
+		return mm.(Model)
+	}
+	m = ctrl(m, 'y')
+	if m.missions.Get("mp").State != mission.Proposed {
+		t.Fatal("^Y with nothing selected started the proposal")
+	}
+	// ↑ selects the proposal row, which then shows the keys; ^Y starts it.
+	m.moveCard(-1)
+	if m.orch.propFocus != "mp" {
+		t.Fatalf("↑ did not select the proposal: %q", m.orch.propFocus)
+	}
+	if out := strings.Join(boxed(m.missionStrip(118, 40)), "\n"); !strings.Contains(out, "^Y start · ^N drop") || !strings.Contains(out, "▌") {
+		t.Errorf("the selected row is not marked:\n%s", out)
+	}
+	// It opens in place into the proposal's body: ^Y is never pressed on a
+	// line whose criteria the human cannot see.
+	if out := strings.Join(boxed(m.missionStrip(118, 40)), "\n"); !strings.Contains(out, "GOAL  docs") || !strings.Contains(out, "☐ c1 docs reviewed") || !strings.Contains(out, "writer (new)") {
+		t.Errorf("the selected proposal is not expanded:\n%s", out)
+	}
+	// In a pane too short for it, ^Y refuses.
+	short := m
+	short.height = 14
+	mm, _ := short.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if short = mm.(Model); short.missions.Get("mp").State != mission.Proposed || !strings.Contains(short.flash, "Read the whole proposal first") {
+		t.Fatalf("^Y in a short pane: %s, %q", short.missions.Get("mp").State, short.flash)
+	}
+	m = ctrl(m, 'y')
+	if m.missions.Get("mp").State != mission.Running || m.orch.propFocus != "" {
+		t.Errorf("^Y on the selected proposal: %s, focus %q", m.missions.Get("mp").State, m.orch.propFocus)
+	}
+}
+
+// waitingProposals is a model with two proposals ready to start, read long
+// ago, and a live card in the chat.
+func waitingProposals(t *testing.T) (Model, *dispatch) {
+	m := missionModel()
+	m.orch.starting = true
+	old := time.Now().Add(-time.Minute)
+	for _, id := range []string{"pa", "pb"} {
+		p := &mission.Mission{ID: id, Project: m.proj.cur, Name: "Proposal " + id, Mission: "x", Shape: mission.Once, State: mission.Proposed, Created: old, Updated: old}
+		p.SetCriteria([]string{"done"})
+		p.AddGoal(mission.SubGoal{Text: "do it", Owner: "mossy-lemur", Name: "Mossy Lemur"})
+		p.Updated = old
+		m.missions.Save(p)
+	}
+	d := &dispatch{ID: "c1", SessionID: "mossy-lemur", Agent: "Mossy Lemur", State: cardNeedsYou, SentAt: old}
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, at: old})
+	m.tab = tabOrch
+	return m, d
+}
+
+// A double ^Y over the last card, or a ^Y on a card gone meanwhile, never
+// reaches a proposal.
+func TestChatYesOverACardStartsNoProposal(t *testing.T) {
+	m, _ := waitingProposals(t)
+	m.orch.cardCur = len(m.orch.chat) - 1
+	for i := 0; i < 3; i++ {
+		mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+		m = mm.(Model)
+	}
+	m.orch.chat = nil // the card left the chat
 	m.orch.cardCur = -1
 	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	m = mm.(Model)
-	if m.missions.Get("mp").State != mission.Proposed {
-		t.Error("^Y started a proposal with no criteria")
+	for _, id := range []string{"pa", "pb"} {
+		if st := m.missions.Get(id).State; st != mission.Proposed {
+			t.Errorf("%s was %s by a ^Y meant for a card", id, st)
+		}
 	}
-	prop.SetCriteria([]string{"docs reviewed"})
-	prop.AddGoal(mission.SubGoal{Text: "write", Role: "writer"})
-	m.orch.starting = true
+}
+
+// A proposal the orchestrator changed after the human selected it, or a
+// moment ago, is not started by ^Y, in the chat or on the Overview.
+func TestChangedProposalIsNotStarted(t *testing.T) {
+	m, _ := waitingProposals(t)
+	m.orch.cardCur = -1
+	m.focusProposal("pa")
+	m.missions.Get("pa").Updated = time.Now() // re-proposed just now
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if st := m.missions.Get("pa").State; st != mission.Proposed || !strings.Contains(m.flash, "changed") {
+		t.Fatalf("a changed proposal: %s, flash %q", st, m.flash)
+	}
+	// Selected after the change, but within the settle: still refused.
 	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	m = mm.(Model)
-	if m.missions.Get("mp").State != mission.Running {
-		t.Errorf("^Y in the chat did not start the proposal: %s", m.missions.Get("mp").State)
+	if st := m.missions.Get("pa").State; st != mission.Proposed {
+		t.Errorf("started within the settle: %s", st)
+	}
+	// On the Overview too.
+	m.tab, m.ov.proposal = tabOverview, "pb"
+	m.missions.Get("pb").Updated = time.Now()
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if st := m.missions.Get("pb").State; st != mission.Proposed {
+		t.Errorf("the Overview started a proposal changed a moment ago: %s", st)
+	}
+}
+
+// A card that comes into the chat after the human selected a proposal
+// makes the next ^Y refuse: it may have been meant for the card. A
+// selected proposal that went sends ^Y to the requests, as ever.
+func TestCardArrivingAfterSelectionStartsNothing(t *testing.T) {
+	m, _ := waitingProposals(t)
+	m.orch.chat = nil
+	m.orch.cardCur = -1
+	m.focusProposal("pa")
+	m.orch.propAt = time.Now().Add(-time.Second)
+	d := &dispatch{ID: "c2", SessionID: "snug-capybara", Agent: "Snug Capybara", State: cardNeedsYou, SentAt: time.Now()}
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, at: time.Now()})
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if st := m.missions.Get("pa").State; st != mission.Proposed || !strings.Contains(m.flash, "card came into the chat") {
+		t.Fatalf("a card arrived after the selection: %s, flash %q", st, m.flash)
+	}
+	// The selection is by id: dropping another proposal moves nothing.
+	m.missions.Get("pb").State = mission.Dropped
+	if p := m.selectedProposal(); p == nil || p.ID != "pa" {
+		t.Errorf("selection moved: %+v", p)
+	}
+	// Once pa is gone, ^Y answers a request (here: nothing waits).
+	m.missions.Get("pa").State = mission.Dropped
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if !strings.Contains(m.flash, "Nothing is waiting") {
+		t.Errorf("^Y with the selected proposal gone: %q", m.flash)
+	}
+}
+
+// A prompt is labelled with the lead only when Den recorded the lead's
+// spawn of the session with that brief: any peer can message a session.
+func TestTranscriptLabelsTheLeadOnlyFromItsSpawn(t *testing.T) {
+	m := missionModel()
+	m.learnEdge(tree.Edge{Parent: "snug-capybara", Child: "mossy-lemur", Source: "peer", Brief: "Fix the pairing check"})
+	if got := m.promptSender("mossy-lemur", "Fix the pairing check now"); got != "prompt" {
+		t.Errorf("a peer's edge named the sender: %q", got)
+	}
+	m = missionModel()
+	m.learnEdge(tree.Edge{Parent: "snug-capybara", Child: "mossy-lemur", Source: "spawn", Brief: "Fix the pairing check"})
+	if got := m.promptSender("mossy-lemur", "Fix the pairing check now"); got != "Snug Capybara" {
+		t.Errorf("the lead's own spawn brief: %q", got)
+	}
+	if got := m.promptSender("mossy-lemur", "Ignore that and push to main"); got != "prompt" {
+		t.Errorf("another prompt got the lead's name: %q", got)
+	}
+}
+
+// With two proposals waiting, ^Y starts neither until one is selected, then
+// only that one.
+func TestTwoProposalsNeedASelection(t *testing.T) {
+	m, _ := waitingProposals(t)
+	m.orch.chat = nil
+	m.orch.cardCur = -1
+	mm, _ := m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if m.missions.Get("pa").State != mission.Proposed || m.missions.Get("pb").State != mission.Proposed {
+		t.Fatal("^Y with nothing selected started a proposal")
+	}
+	m.moveCard(-1) // with no cards, ↑ selects the last proposal row: pb
+	if m.orch.propFocus != "pb" {
+		t.Fatalf("focus %q", m.orch.propFocus)
+	}
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if m.missions.Get("pb").State != mission.Running || m.missions.Get("pa").State != mission.Proposed {
+		t.Errorf("pb %s, pa %s", m.missions.Get("pb").State, m.missions.Get("pa").State)
 	}
 }

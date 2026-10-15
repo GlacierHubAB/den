@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -118,14 +119,31 @@ func (m Model) criterionLines(ms *mission.Mission, w int) []string {
 	return out
 }
 
-// goalCols lays a WHO DOES WHAT row out: id, sub-goal, owner, state.
-func (m Model) goalCols(id, text, owner, state string, w int) string {
+// goalCols lays a WHO DOES WHAT row out: id, sub-goal, owner (ownerW
+// wide), state.
+func (m Model) goalCols(id, text, owner, state string, w, ownerW int) string {
 	body := ovBody(w)
-	textW := clamp(body/3, 12, 40)
-	ownerW := 16
+	textW := goalTextWidth(w)
 	t := ansi.Truncate(text, textW, "…")
 	o := ansi.Truncate(owner, ownerW, "…")
-	return id + " " + t + strings.Repeat(" ", max(1, textW-ansi.StringWidth(t)+2)) + o + strings.Repeat(" ", max(1, ownerW-ansi.StringWidth(o)+2)) + ansi.Truncate(state, max(8, body-textW-ownerW-8), "…")
+	line := id + " " + t + strings.Repeat(" ", max(1, textW-ansi.StringWidth(t)+2)) + o
+	if state == "" {
+		return line
+	}
+	return line + strings.Repeat(" ", max(1, ownerW-ansi.StringWidth(o)+2)) + ansi.Truncate(state, max(8, body-textW-ownerW-8), "…")
+}
+
+// goalTextWidth is the sub-goal column's width in a pane of inner width w.
+func goalTextWidth(w int) int { return clamp(ovBody(w)/3, 12, 40) }
+
+// ownerWidth sizes the owner column to its longest entry, up to the room
+// left after the state column (stateRoom wide, 0 for none).
+func ownerWidth(labels []string, w, stateRoom int) int {
+	n := 8
+	for _, l := range labels {
+		n = max(n, ansi.StringWidth(l))
+	}
+	return min(n, max(8, ovBody(w)-goalTextWidth(w)-stateRoom-6))
 }
 
 // missionView is the open mission, and the line of its selected WHO
@@ -185,14 +203,23 @@ func (m Model) missionView(w int) ([]string, int) {
 	if len(rows) == 0 {
 		out = append(out, m.ovLine(s.attn.Render("No sub-goals yet: ask the orchestrator who does what."), w))
 	}
+	owners := make([]string, len(rows))
+	for i, r := range rows {
+		if r.goal != nil {
+			owners[i] = m.ownerLabel(*r.goal)
+		} else {
+			a, _ := m.agentFor(r.sid)
+			owners[i] = lipgloss.NewStyle().Foreground(lipgloss.Color(m.agentColor(a))).Render(a.Name)
+		}
+	}
+	ownerW := ownerWidth(owners, w, 16)
 	for i, r := range rows {
 		var line string
 		if r.goal != nil {
-			line = m.goalCols(r.goal.ID, r.goal.Text, m.ownerLabel(*r.goal), m.goalState(*r.goal, body), w)
+			line = m.goalCols(r.goal.ID, r.goal.Text, owners[i], m.goalState(*r.goal, body), w, ownerW)
 		} else {
 			a, _ := m.agentFor(r.sid)
-			name := lipgloss.NewStyle().Foreground(lipgloss.Color(m.agentColor(a))).Render(a.Name)
-			line = m.goalCols("  ", s.dim.Render("└ under the owner"), name, s.dim.Render(strings.ToLower(a.Status.String())), w)
+			line = m.goalCols("  ", s.dim.Render("└ under the owner"), owners[i], s.dim.Render(strings.ToLower(a.Status.String())), w, ownerW)
 		}
 		if i == clamp(m.ov.who, 0, len(rows)-1) {
 			selLine = len(out)
@@ -267,16 +294,10 @@ func (m Model) proposalView(w int) []string {
 	if len(ms.Goals) == 0 {
 		out = append(out, m.ovLine(s.attn.Render("No owners yet: ask the orchestrator who does what."), w))
 	}
-	for _, g := range ms.Goals {
-		owner := m.ownerLabel(g)
-		if g.Owner == "" && g.Role != "" {
-			for _, t := range ms.Team {
-				if strings.EqualFold(t.Role, g.Role) && t.Model != "" {
-					owner = s.muted.Render(g.Role + " · " + t.Model + " (new)")
-				}
-			}
-		}
-		out = append(out, m.ovLine(m.goalCols(g.ID, g.Text, owner, "", w), w))
+	owners := m.proposalOwners(ms)
+	ownerW := ownerWidth(owners, w, 0)
+	for i, g := range ms.Goals {
+		out = append(out, m.ovLine(m.goalCols(g.ID, g.Text, owners[i], "", w, ownerW), w))
 	}
 	if len(ms.Constraints) > 0 {
 		var tags []string
@@ -300,32 +321,129 @@ func (m Model) proposalView(w int) []string {
 	return out
 }
 
-// waitingProposal is the newest proposal waiting for ^Y, on any project,
-// nil for none: ^Y and ^N in the chat act on it.
-func (m Model) waitingProposal() *mission.Mission {
+// stripProposals are the proposal rows the chat's missions strip shows,
+// top to bottom: the ones the arrows can select.
+func (m Model) stripProposals() []*mission.Mission {
 	if m.missions == nil {
 		return nil
 	}
-	if ms := m.missions.Get(m.ov.proposal); ms != nil && ms.State == mission.Proposed && ms.Mission != "" {
-		return ms
-	}
+	var out []*mission.Mission
 	for _, ms := range m.missions.All() {
-		if ms.State == mission.Proposed && ms.Mission != "" {
-			return ms
+		if ms.State == mission.Proposed && ms.Mission != "" && len(out) < missionStripRows {
+			out = append(out, ms)
 		}
+	}
+	return out
+}
+
+// focusedProposalIndex is the selected proposal row among props, -1 for
+// none (or one no longer waiting).
+func (m Model) focusedProposalIndex(props []*mission.Mission) int {
+	for i, ms := range props {
+		if ms.ID == m.orch.propFocus {
+			return i
+		}
+	}
+	return -1
+}
+
+// focusProposal selects a proposal row ("" for none) and notes when, so a
+// change after it is caught.
+func (m *Model) focusProposal(id string) {
+	m.orch.propFocus, m.orch.propAt = id, time.Now()
+	if id != "" {
+		m.orch.cardCur = -1
+	}
+}
+
+// selectedProposal is the proposal the human selected in the chat, by its
+// id, while it still waits; nil otherwise, and ^Y and ^N then answer a
+// request as ever.
+func (m Model) selectedProposal() *mission.Mission {
+	if m.orch.propFocus == "" || m.missions == nil {
+		return nil
+	}
+	if ms := m.missions.Get(m.orch.propFocus); ms != nil && ms.State == mission.Proposed && ms.Mission != "" {
+		return ms
 	}
 	return nil
 }
 
-// proposalKeys reports whether ^Y and ^N in the chat go to the waiting
-// proposal: only with no card focused and nothing else waiting for an
-// answer, so they never take a keypress meant for a request.
-func (m Model) proposalKeys() bool {
-	if m.tab != tabOrch || m.focusedCard() != nil || m.waitingProposal() == nil {
-		return false
+// answerProposal is ^Y or ^N on the selected proposal row in the chat. It
+// takes only the row the human selected, and refuses when the proposal
+// changed or a card arrived after they selected it (the key may have been
+// meant for the card), or within proposalSettle of a change.
+func (m Model) answerProposal(start bool) (tea.Model, tea.Cmd) {
+	ms := m.selectedProposal()
+	if ms == nil {
+		return m, nil
 	}
-	it := m.answerTarget()
-	return it == nil || !it.Answerable()
+	if ms.Updated.After(m.orch.propAt) {
+		m.focusProposal(ms.ID) // the human has seen it change: the next ^Y counts after the settle
+		return m.say("The proposal changed after you selected it: read it again, then ^Y.", true)
+	}
+	// Only a proposal the human can read whole, expanded in the strip: not
+	// in a folded strip, nor in one taller than the pane.
+	if w, h := m.orchPaneSize(); h < 16 || len(m.missionStrip(w, h)) > h {
+		return m.say("Read the whole proposal first: /missions", true)
+	}
+	for _, e := range m.orch.chat {
+		if e.card != nil && e.at.After(m.orch.propAt) {
+			m.focusProposal(ms.ID)
+			return m.say("A card came into the chat after you selected the proposal: nothing was started. Look, then ^Y again.", true)
+		}
+	}
+	m.ov.proposal = ms.ID
+	if !start {
+		m.dropMission()
+		m.focusProposal("")
+		return m.say("Dropped "+ms.Name+".", false)
+	}
+	cmd := m.startMission()
+	if ms.State == mission.Running {
+		m.focusProposal("")
+		return m, cmd
+	}
+	m.ov.proposal = ""
+	return m, cmd
+}
+
+// expandedProposal is a selected proposal row in the chat's strip, open
+// into the proposal card's body: GOAL, the criteria, the sub-goals with
+// their owners, and the keys on the last line, all in the band.
+func (m Model) expandedProposal(ms *mission.Mission, head string, w int) []string {
+	s := m.st
+	fg, dim, _, _, _, _, _, marker := m.rowStyles(true)
+	body := ovBody(w)
+	var lines []string
+	lines = append(lines, head)
+	for i, l := range strings.Split(ansi.Wrap(ms.Mission, max(10, body-6), ""), "\n") {
+		lead := "      "
+		if i == 0 {
+			lead = "GOAL  "
+		}
+		lines = append(lines, fg.Render(lead+l))
+	}
+	for _, c := range ms.Criteria {
+		lines = append(lines, fg.Render("☐ "+c.ID+" "+c.Text))
+	}
+	owners := m.proposalOwners(ms)
+	ownerW := ownerWidth(owners, w, 0)
+	for i, g := range ms.Goals {
+		lines = append(lines, fg.Render(m.goalCols(g.ID, g.Text, ansi.Strip(owners[i]), "", w, ownerW)))
+	}
+	lines = append(lines, justifyIn(dim.Render("or tell the orchestrator what to change"), s.key.Background(lipgloss.Color(s.pal.Sel)).Render("^Y")+fg.Render(" start · ")+s.key.Background(lipgloss.Color(s.pal.Sel)).Render("^N")+fg.Render(" drop"), body, fg))
+	out := make([]string, len(lines))
+	for i, l := range lines {
+		out[i] = m.ovSelLine(l, w, fg, marker)
+	}
+	return out
+}
+
+// orchPaneSize is the Orchestrator pane's inner size as laid out now.
+func (m Model) orchPaneSize() (int, int) {
+	_, ph := m.paneArea()
+	return m.width - 2, ph - 2
 }
 
 // Rows of the chat's missions strip before it says "+N more".
@@ -368,7 +486,7 @@ func (m Model) missionStrip(w, h int) []string {
 		if len(proposals) > 0 {
 			parts = append(parts, s.attn.Render(fmt.Sprintf("%d proposal", len(proposals))))
 		}
-		return []string{m.ovLine(s.section.Render("MISSIONS")+"  "+strings.Join(parts, s.dim.Render(" · ")), w), rule}
+		return []string{m.ovLine(s.section.Render("MISSIONS")+"  "+strings.Join(parts, s.dim.Render(" · ")), w), rule, ""}
 	}
 	out := []string{m.ovLine(justify(s.section.Render("MISSIONS"), s.dim.Render("/missions"), body), w)}
 	for i, ms := range all {
@@ -379,8 +497,13 @@ func (m Model) missionStrip(w, h int) []string {
 		left := ms.Shape.Glyph() + " " + ms.Name + "  " + s.dim.Render(firstNonEmptyS(ms.ProjectName, "no project"))
 		var right string
 		if ms.State == mission.Proposed {
+			// ^Y and ^N take a proposal only once the human selected its
+			// row with the arrows: never by default.
 			left += "  " + s.attn.Render("proposal")
-			right = s.key.Render("^Y") + s.keyLabel.Render(" start · ") + s.key.Render("^N") + s.keyLabel.Render(" drop")
+			right = s.dim.Render("↑ select · /missions to read it")
+			if ms.ID == m.orch.propFocus {
+				right = s.key.Render("^Y") + s.keyLabel.Render(" start · ") + s.key.Render("^N") + s.keyLabel.Render(" drop")
+			}
 		} else {
 			if met, _, total := ms.CriteriaCounts(); total > 0 {
 				left += "  " + s.dim.Render(fmt.Sprintf("%d/%d", met, total))
@@ -416,9 +539,77 @@ func (m Model) missionStrip(w, h int) []string {
 			}
 		}
 		left = ansi.Truncate(left, max(8, body-ansi.StringWidth(right)-2), "…")
+		if ms.ID == m.orch.propFocus {
+			// The selected proposal opens in place into its body, so ^Y is
+			// never pressed on a line whose criteria the human cannot see.
+			out = append(out, m.expandedProposal(ms, left, w)...)
+			continue
+		}
 		out = append(out, m.ovLine(justify(left, right, body), w))
 	}
-	return append(out, rule)
+	return append(out, rule, "")
+}
+
+// proposalOwners are a proposal's owner labels: a running agent in its
+// colour, or a role to start with its model and "(new)".
+func (m Model) proposalOwners(ms *mission.Mission) []string {
+	s := m.st
+	out := make([]string, len(ms.Goals))
+	for i, g := range ms.Goals {
+		out[i] = m.ownerLabel(g)
+		if g.Owner == "" && g.Role != "" {
+			out[i] = s.muted.Render(g.Role + " (new)")
+			for _, t := range ms.Team {
+				if strings.EqualFold(t.Role, g.Role) && t.Model != "" {
+					out[i] = s.muted.Render(g.Role + " · " + t.Model + " (new)")
+				}
+			}
+		}
+	}
+	return out
+}
+
+// transcriptState is the transcript header's right side: the sub-goal
+// the agent owns (or works under) and its state with its glyph, so the
+// meaning survives without colour.
+func (m Model) transcriptState(a fleet.Agent, ok bool) string {
+	s := m.st
+	which := ""
+	if ms := m.missions.Get(m.ov.open); ms != nil {
+		for _, g := range ms.Goals {
+			if g.Owner == m.ov.transcript {
+				which = g.ID
+				break
+			}
+		}
+		if which == "" {
+			if p := m.parentOf(m.ov.transcript); p != "" {
+				for _, g := range ms.Goals {
+					if g.Owner == p {
+						which = "under " + g.ID
+						break
+					}
+				}
+			}
+		}
+	}
+	var st string
+	switch {
+	case !ok || a.Status == fleet.Gone:
+		st = s.dim.Render("ended")
+	case a.Status == fleet.NeedsYou:
+		st = s.attn.Render("◐ needs you")
+	case a.Status == fleet.Working:
+		st = s.fg.Render("● working")
+	case a.Status == fleet.Idle:
+		st = s.dim.Render("○ idle")
+	default:
+		st = s.dim.Render(strings.ToLower(a.Status.String()))
+	}
+	if which == "" {
+		return st
+	}
+	return s.dim.Render(which+" · ") + st
 }
 
 // Caps on a transcript view.
@@ -486,8 +677,12 @@ func (m Model) promptSender(sid, text string) string {
 			return "orchestrator"
 		}
 	}
-	if p := m.parentOf(sid); p != "" {
-		if a, ok := m.agentFor(p); ok && !m.isOrchestrator(a) {
+	// A lead only when Den recorded its spawn of this session with that
+	// brief: any peer can message the session, so a parent alone proves
+	// nothing about who sent a prompt.
+	if e := m.edgeFor(sid); e.Source == "spawn" && e.Parent != "" {
+		brief := []rune(strings.TrimSpace(sanitize.Text(e.Brief)))
+		if a, ok := m.agentFor(e.Parent); ok && !m.isOrchestrator(a) && len(brief) > 0 && strings.HasPrefix(t, string(brief[:min(len(brief), 40)])) {
 			return a.Name
 		}
 	}
@@ -505,11 +700,7 @@ func (m Model) transcriptView(w, h int) []string {
 	if ok {
 		name = a.Name
 	}
-	status := "ended"
-	if ok && a.Status != fleet.Gone {
-		status = strings.ToLower(a.Status.String())
-	}
-	head := []string{"", m.ovLine(justify(s.bright.Render(name+"'s transcript")+s.dim.Render(" · read-only"), s.dim.Render(status), body), w),
+	head := []string{"", m.ovLine(justify(s.bright.Render(name+"'s transcript")+s.dim.Render(" · read-only"), m.transcriptState(a, ok), body), w),
 		m.ovLine(s.dim.Render("the agent's own words, shown as data; never sent to the orchestrator"), w), ""}
 	rule := s.dim.Render("│ ")
 	textW := max(10, body-2)

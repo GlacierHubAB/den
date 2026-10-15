@@ -57,6 +57,7 @@ func TestMissionProposeStartRunAndSettle(t *testing.T) {
 		t.Errorf("proposal card:\n%s", out)
 	}
 	// ^Y starts run 1 and the next dispatch belongs to it.
+	ms.Updated = ms.Updated.Add(-2 * time.Second) // the human has read it
 	m.startMission()
 	if ms.State != mission.Running || len(ms.Runs) != 1 || m.turn.id != ms.ID || m.ov.open != ms.ID {
 		t.Fatalf("after start: state=%s runs=%d turn=%q open=%q", ms.State, len(ms.Runs), m.turn.id, m.ov.open)

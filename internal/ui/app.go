@@ -1181,12 +1181,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(-5)
 		return m, nil
 	case "ctrl+y":
-		if m.proposalKeys() {
-			m.ov.proposal = m.waitingProposal().ID
-			if cmd := m.startMission(); cmd != nil {
-				return m, cmd
-			}
-			return m, flashTick(4*time.Second, m.flash)
+		if m.tab == tabOrch && m.selectedProposal() != nil {
+			return m.answerProposal(true)
 		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			if cmd := m.startMission(); cmd != nil {
@@ -1196,10 +1192,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.answer("allow")
 	case "ctrl+n":
-		if m.proposalKeys() {
-			m.ov.proposal = m.waitingProposal().ID
-			m.dropMission()
-			return m.say("Dropped the proposal.", false)
+		if m.tab == tabOrch && m.selectedProposal() != nil {
+			return m.answerProposal(false)
 		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			m.dropMission()

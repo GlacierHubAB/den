@@ -315,14 +315,17 @@ func (m Model) missionsPaneOwned(w, h int) (lines []string, owners []int) {
 		var sel int
 		lines, sel = m.missionView(w)
 		if len(lines) > h {
-			// The top stays put unless the selected WHO DOES WHAT row
-			// would leave the view.
+			// The header (a blank line, the name and state, the meta line)
+			// stays put; the rest scrolls only as far as it must to keep
+			// the selected WHO DOES WHAT row in view.
+			const head = 3
+			rest, room := lines[head:], max(1, h-head)
 			start := 0
-			if sel >= h-3 {
-				start = sel - (h - 3)
+			if s := sel - head; s > room-2 {
+				start = s - (room - 2)
 			}
-			start = clamp(start, 0, len(lines)-h)
-			lines = lines[start : start+h]
+			start = clamp(start, 0, max(0, len(rest)-room))
+			lines = append(append([]string(nil), lines[:head]...), rest[start:min(len(rest), start+room)]...)
 		}
 	default:
 		lines = m.missionRows(w, h)

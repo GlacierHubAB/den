@@ -130,7 +130,27 @@ func (m Model) focusIndexes() []int {
 // clears and the chat follows its tail again.
 func (m *Model) moveCard(delta int) {
 	idx := m.focusIndexes()
+	props := m.stripProposals()
+	// A focused proposal row in the missions strip: ↑ and ↓ step through
+	// the proposal rows, then on to the cards.
+	if p := m.focusedProposalIndex(props); p >= 0 {
+		switch {
+		case p+delta < 0:
+		case p+delta < len(props):
+			m.focusProposal(props[p+delta].ID)
+		case len(idx) > 0:
+			m.focusProposal("")
+			m.orch.cardCur = idx[0]
+		default:
+			m.focusProposal("")
+		}
+		return
+	}
 	if len(idx) == 0 {
+		if delta < 0 && len(props) > 0 {
+			m.focusProposal(props[len(props)-1].ID)
+			return
+		}
 		m.orch.scroll = max(0, m.orch.scroll-delta)
 		return
 	}
@@ -145,6 +165,9 @@ func (m *Model) moveCard(delta int) {
 		m.orch.cardCur = idx[len(idx)-1]
 	case pos < 0:
 		return
+	case pos+delta < 0 && len(props) > 0:
+		m.orch.cardCur = -1
+		m.focusProposal(props[len(props)-1].ID)
 	case pos+delta < 0:
 		m.orch.cardCur = idx[0]
 	case pos+delta >= len(idx):

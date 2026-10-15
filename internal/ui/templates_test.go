@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -93,6 +94,11 @@ func TestTemplateSeedsAProposalAndStartsNothing(t *testing.T) {
 	if d.Behavior != "allow" || ms.Name != "Review demo" || len(ms.Team) != 1 || ms.Template != "code-review" {
 		t.Errorf("after the refinement %+v: %+v", d, ms)
 	}
+	m.startMission()
+	if ms.State != mission.Proposed {
+		t.Fatal("^Y right after a change started the proposal")
+	}
+	ms.Updated = ms.Updated.Add(-2 * time.Second) // the human has read it
 	m.startMission()
 	if ms.State != mission.Running || len(ms.Runs) != 1 {
 		t.Errorf("^Y did not start it: %+v", ms)

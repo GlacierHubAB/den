@@ -118,6 +118,11 @@ type orchState struct {
 	// mixed is set once a refused prompt could not be placed among the
 	// turns: from then on no turn counts as the human's alone.
 	mixed bool
+	// propFocus is the proposal row of the missions strip the human
+	// selected with the arrows, "" for none, and propAt when: ^Y and ^N
+	// act on it only, never on a proposal by default.
+	propFocus string
+	propAt    time.Time
 	// version is the Claude Code release the process reported at init.
 	version string
 	// control says the process runs in control mode (a paired app).

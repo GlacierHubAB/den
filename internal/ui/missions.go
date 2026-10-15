@@ -23,6 +23,10 @@ import (
 // maxRuns stops a loop that never says done.
 const maxRuns = 50
 
+// proposalSettle is how long a proposal must stay unchanged before ^Y
+// starts it.
+const proposalSettle = 1500 * time.Millisecond
+
 // missionTurn is which mission the orchestrator's current turn works for,
 // so the dispatch cards it creates are the mission's.
 type missionTurn struct {
@@ -137,6 +141,12 @@ func (m *Model) startMission() tea.Cmd {
 	}
 	if len(ms.Criteria) == 0 || len(ms.Goals) == 0 {
 		m.flash, m.flashErr = "The orchestrator has not set the done criteria and the owners yet: ask it to.", true
+		return flashTick(4*time.Second, m.flash)
+	}
+	// The orchestrator can change a proposal at any moment: a ^Y right
+	// after it did is not taken as a yes to what the human has not read.
+	if time.Since(ms.Updated) < proposalSettle {
+		m.flash, m.flashErr = "The proposal just changed: read it again, then ^Y.", true
 		return flashTick(4*time.Second, m.flash)
 	}
 	if why := m.usageStopped(); why != "" {
