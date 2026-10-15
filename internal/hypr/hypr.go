@@ -8,11 +8,13 @@
 package hypr
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -46,8 +48,11 @@ func Available() bool {
 }
 
 // Clients lists windows.
-func Clients() ([]Client, error) {
-	out, err := exec.Command("hyprctl", "clients", "-j").Output()
+func Clients() ([]Client, error) { return ClientsContext(context.Background()) }
+
+// ClientsContext is Clients that gives up when ctx ends.
+func ClientsContext(ctx context.Context) ([]Client, error) {
+	out, err := exec.CommandContext(ctx, "hyprctl", "clients", "-j").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +69,8 @@ func Clients() ([]Client, error) {
 // older releases take the classic `focuswindow address:…` form. Den tries
 // the Lua form first and falls back when the compositor does not speak it.
 func Focus(address string) error {
-	if address == "" {
-		return errors.New("no window address")
+	if err := checkAddress(address); err != nil {
+		return err
 	}
 	lua := fmt.Sprintf(`hl.dsp.focus({ window = "address:%s" })`, address)
 	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
@@ -89,8 +94,8 @@ func Focus(address string) error {
 // dispatcher first and the legacy one as the fallback, like Focus. A window
 // that is already gone is reported as not found.
 func CloseWindow(address string) error {
-	if address == "" {
-		return errors.New("no window address")
+	if err := checkAddress(address); err != nil {
+		return err
 	}
 	lua := fmt.Sprintf(`hl.dsp.window.close({ window = "address:%s" })`, address)
 	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
@@ -111,6 +116,21 @@ func CloseWindow(address string) error {
 	}
 	return nil
 }
+
+// checkAddress refuses anything but what Hyprland gives a window, "0x" and
+// up to 16 hex digits: an address is put into a dispatcher's text, and it
+// comes from a list the compositor wrote, so nothing else belongs there.
+func checkAddress(a string) error {
+	if a == "" {
+		return errors.New("no window address")
+	}
+	if !addressRE.MatchString(a) {
+		return errors.New("not a window address")
+	}
+	return nil
+}
+
+var addressRE = regexp.MustCompile(`^0x[0-9a-f]{1,16}$`)
 
 func firstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -248,14 +268,7 @@ type Workspace struct {
 // ActiveWorkspace returns the workspace the human is looking at, or ok false
 // when Hyprland cannot be asked.
 func ActiveWorkspace() (ws Workspace, ok bool) {
-	out, err := exec.Command("hyprctl", "activeworkspace", "-j").Output()
-	if err != nil {
-		return Workspace{}, false
-	}
-	if json.Unmarshal(out, &ws) != nil || ws.ID == 0 {
-		return Workspace{}, false
-	}
-	return ws, true
+	return ActiveWorkspaceContext(context.Background())
 }
 
 // MoveToWorkspace moves a window to a workspace (by id or name) without
@@ -263,16 +276,24 @@ func ActiveWorkspace() (ws Workspace, ok bool) {
 // special workspace stays hidden. Lua first (Hyprland 0.56+, whose move takes
 // follow = false for that), then the classic movetoworkspacesilent.
 func MoveToWorkspace(address, workspace string) error {
-	if address == "" {
-		return errors.New("no window address")
+	return MoveToWorkspaceContext(context.Background(), address, workspace)
+}
+
+// MoveToWorkspaceContext is MoveToWorkspace that gives up when ctx ends.
+func MoveToWorkspaceContext(ctx context.Context, address, workspace string) error {
+	if err := checkAddress(address); err != nil {
+		return err
 	}
 	lua := fmt.Sprintf(`hl.dsp.window.move({ workspace = %q, window = "address:%s", follow = false })`, workspace, address)
-	out, err := exec.Command("hyprctl", "dispatch", lua).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "hyprctl", "dispatch", lua).CombinedOutput()
 	msg := strings.TrimSpace(string(out))
 	if err == nil && (msg == "ok" || msg == "") {
 		return nil
 	}
-	out, err = exec.Command("hyprctl", "dispatch", "movetoworkspacesilent", workspace+",address:"+address).CombinedOutput()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	out, err = exec.CommandContext(ctx, "hyprctl", "dispatch", "movetoworkspacesilent", workspace+",address:"+address).CombinedOutput()
 	msg = strings.TrimSpace(string(out))
 	if err != nil || (msg != "ok" && msg != "") {
 		return fmt.Errorf("hyprctl movetoworkspacesilent: %s", firstLine(msg))
@@ -316,6 +337,19 @@ func MarkerHolds(marker string, pid int) bool {
 }
 
 func markerHolds(all []Client, marker string, chain []procs.Proc) bool {
+	_, ok := HeldWindow(all, marker, chain)
+	return ok
+}
+
+// HeldWindow is the window marker names when it is provably the agent's
+// own: it is the one window with that initial class, its terminal process
+// has no other window, and the agent's process (chain lists the processes
+// from it upwards) descends from that terminal. Anything else, such as
+// no window, two, or a marked window run by someone else, gives false.
+func HeldWindow(all []Client, marker string, chain []procs.Proc) (Client, bool) {
+	if marker == "" {
+		return Client{}, false
+	}
 	var found []Client
 	for _, c := range all {
 		if c.InitialClass == marker {
@@ -323,19 +357,68 @@ func markerHolds(all []Client, marker string, chain []procs.Proc) bool {
 		}
 	}
 	if len(found) != 1 || found[0].PID <= 1 {
-		return false
+		return Client{}, false
 	}
 	for _, c := range all {
 		if c.PID == found[0].PID && c.Address != found[0].Address {
-			return false
+			return Client{}, false
 		}
 	}
 	for _, p := range chain {
 		if p.PID == found[0].PID {
-			return true
+			return found[0], true
 		}
 	}
-	return false
+	return Client{}, false
+}
+
+// OwnWindow is the window Den itself runs in: the one window of a process
+// above Den's (chain lists them, nearest first), when that terminal
+// process has no other window. It is the rule the closer uses to never
+// close Den's own window. When no window, or more than one, qualifies, Den
+// cannot say which is its own, and the answer is false.
+func OwnWindow(all []Client, chain []procs.Proc) (Client, bool) {
+	var found []Client
+	for _, c := range all {
+		if c.PID <= 1 {
+			continue
+		}
+		above := false
+		for _, p := range chain {
+			if p.PID == c.PID {
+				above = true
+				break
+			}
+		}
+		if !above {
+			continue
+		}
+		n := 0
+		for _, o := range all {
+			if o.PID == c.PID {
+				n++
+			}
+		}
+		if n == 1 {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 {
+		return Client{}, false
+	}
+	return found[0], true
+}
+
+// ActiveWorkspaceContext is ActiveWorkspace that gives up when ctx ends.
+func ActiveWorkspaceContext(ctx context.Context) (ws Workspace, ok bool) {
+	out, err := exec.CommandContext(ctx, "hyprctl", "activeworkspace", "-j").Output()
+	if err != nil {
+		return Workspace{}, false
+	}
+	if json.Unmarshal(out, &ws) != nil || ws.ID == 0 {
+		return Workspace{}, false
+	}
+	return ws, true
 }
 
 // ActiveHolds reports whether the focused window belongs to one of pid's

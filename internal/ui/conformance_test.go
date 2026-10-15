@@ -95,6 +95,14 @@ func TestDreyInterface(t *testing.T) {
 	m := testModel(140, 40)
 	m.base = append([]fleet.Agent(nil), m.agents...)
 	m.cfg.API.AskBudgetUSD = 2
+	// The suite's view subtest really switches views: over a window manager
+	// that holds Den's own window and nothing else, never a real desktop.
+	wm := &viewWM{}
+	wm.cs = append(wm.cs, viewClient("0xden", "com.mitchellh.ghostty", 900, 1))
+	useViewWM(t, wm, nil)
+	// Console turns start the orchestrator: a fake one, held and checked
+	// as conformance_orch_test.go says, and never a real claude.
+	gate := stubOrchestrator(t)
 	apiOn(t, &m)
 	// A request with a body, so inbox.body has something to serve.
 	sid := m.agents[0].Session.SessionID
@@ -201,12 +209,18 @@ func TestDreyInterface(t *testing.T) {
 		LongCard:   func(ctx context.Context) (string, error) { return permissionCard(ctx, 12) },
 		ThiefTest:  "TestConsoleThief",
 		SocketPath: path,
+		View:       true,
 	}
+	var lastAnswer time.Time // when the last card answer is carried out
+	// The commands the model returns run on their own goroutines and what
+	// they return comes back to Update, as Bubble Tea does: a console's turn
+	// starts the orchestrator through one and hears it through more.
+	l := &loop{t: t, m: &m, msgs: make(chan tea.Msg, 64)}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		denconformance.Run(t, denconformance.Options{
-			Dial: func(ctx context.Context) (net.Conn, error) {
+			Dial: gate.tap(func(ctx context.Context) (net.Conn, error) {
 				// Each subtest dials afresh while Den may not yet have seen
 				// the last one's connections close: wait for room under the
 				// per-process cap, so the cap is not what the suite
@@ -228,53 +242,73 @@ func TestDreyInterface(t *testing.T) {
 				}
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", path)
-			},
+			}),
 			Focusable: sid,
 			Skip:      denconformance.D1Skip,
 			Console:   console,
 		})
 	}()
+	// handle carries out an act on the model, on this goroutine.
+	handle := func(act api.Act) {
+		if act.Focus != nil {
+			m.api.lastKey = time.Time{} // the human has not typed in Den
+		}
+		l.run(m.applyAPIAct(act))
+		if act.Grant == nil {
+			return
+		}
+		// The human answers the grant card: select it, read it to its
+		// end, ^Y. Only the app-3 request (grant.events) is answered;
+		// the others stay waiting, as a human might leave them.
+		var card *inbox.Item
+		for it, id := range m.api.grants {
+			if id == act.Grant.ID {
+				card = it
+			}
+		}
+		if card == nil || !strings.Contains(card.Title, "Stand-up board") {
+			return
+		}
+		m.tab = tabInbox
+		m.refresh()
+		m.selectItem(card)
+		for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
+			press(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		press(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+		if card.State != inbox.Resolved {
+			t.Errorf("^Y did not answer the grant card: %q", m.flash)
+		}
+	}
+	// Den unpairs a console that answers five cards in a row less than a
+	// second apart, and the suite answers faster than a person reads. Each
+	// card answer is therefore carried out a second after the last, as a
+	// reader would take: handed back to this loop when its turn comes, so
+	// that nothing waits inside it.
+	late := make(chan api.Act, 16)
 	for {
 		select {
 		case <-done:
 			return
 		case c := <-calls:
 			c.done <- c.f()
+		case msg := <-l.msgs:
+			l.feed(msg)
+		case act := <-late:
+			handle(act)
 		case act := <-m.api.srv.Acts():
-			if act.Focus != nil {
-				m.api.lastKey = time.Time{} // the human has not typed in Den
-			}
-			// As Bubble Tea does, a command runs on its own goroutine:
-			// some are timers (a flash that clears in 4 s), and run here
-			// they would hold this loop, and with it every hook below.
-			if cmd := m.applyAPIAct(act); cmd != nil {
-				go cmd()
-			}
-			if act.Grant == nil {
-				continue
-			}
-			// The human answers the grant card: select it, read it to its
-			// end, ^Y. Only the app-3 request (grant.events) is answered;
-			// the others stay waiting, as a human might leave them.
-			var card *inbox.Item
-			for it, id := range m.api.grants {
-				if id == act.Grant.ID {
-					card = it
+			if act.CardAnswer != nil {
+				at := time.Now()
+				if earliest := lastAnswer.Add(1100 * time.Millisecond); at.Before(earliest) {
+					at = earliest
+				}
+				lastAnswer = at
+				if d := time.Until(at); d > 0 {
+					time.AfterFunc(d, func() { late <- act })
+					continue
 				}
 			}
-			if card == nil || !strings.Contains(card.Title, "Stand-up board") {
-				continue
-			}
-			m.tab = tabInbox
-			m.refresh()
-			m.selectItem(card)
-			for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
-				press(tea.KeyPressMsg{Code: tea.KeyDown})
-			}
-			press(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
-			if card.State != inbox.Resolved {
-				t.Errorf("^Y did not answer the grant card: %q", m.flash)
-			}
+			handle(act)
 		case <-time.After(60 * time.Second):
 			t.Fatal("the conformance run did not finish")
 		}

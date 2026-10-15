@@ -94,7 +94,7 @@ child process or another program. Added fields never change
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?}` |
+| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?, view?, view_workspaces?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -144,11 +144,16 @@ exits.
 Metadata only: names, states, ids, times, counts and digests. No prompt text,
 no transcript, and no request body outside `inbox.body`.
 
-- **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?}`. An agent is
+- **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?, view?}`. An agent is
   `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
   remote?, costUsd, turns, lastSeen, color?, permission_mode?}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
-  `plan`. Agents on other machines carry `remote: true` and their host's
+  `plan`. `hooks` says whether Den can see the agent's prompts (see
+  "Switching views"): `on` when Den has had a hook event from the session since
+  Den started, `off` when Den's hooks are not installed, `unknown` when they are
+  but the session has not reported yet (new, or started before the hooks or
+  before this Den); an agent on another machine carries none. Treat `unknown`
+  like `off`. Agents on other machines carry `remote: true` and their host's
   label; what their hosts report is passed on as labels, never as Den's own
   words. Windows of agents on other machines are not listed. `color` is the
   colour Den draws an agent of this machine in, its critter and an `@Name`
@@ -314,6 +319,8 @@ afterwards, so no later message carries a MAC.
 | `pair.challenge` | | `{nonce, conn}` |
 | `pair.auth` | `{pairing, mac}` | `{paired, control, mac}` |
 | `orch.say` | `{text}` | `{turn}`, then `orch` events until a `done` or `error` chunk |
+| `view.show` | | `{view, shown, total, reason?}` |
+| `view.hide` | | `{view, shown, total, reason?}` |
 
 - Text: at most 16 KiB. Den applies Unicode NFKC, breaks lines at `\n`,
   `\r\n`, `\r`, U+0085, U+2028 and U+2029, removes every C0 and C1 control
@@ -352,6 +359,103 @@ afterwards, so no later message carries a MAC.
   Claude Code release Den has checked control on (2.1.289, 2.1.296); on any
   other release `orch.say` ends with an error that says so, and Den's own
   chat works as before.
+
+### Switching views
+
+Den shows each session, every agent and Den's own, in a terminal window of
+its own that the window manager tiles: **Agent view**, how Den always was.
+In **User view** those windows are hidden, and you work from the dock.
+Hiding moves a window to the Hyprland special workspace `special:den`; the
+window stays alive, and showing moves it back to the workspace it came from.
+There is never one terminal with panes: each session keeps a window of its
+own.
+
+- `hello` carries `view` (`agent` or `user`) and `view_workspaces`
+  (`["special:den"]`, the one workspace Den hides windows on: a launcher
+  that lists workspaces skips exactly that name), and so does every `fleet`.
+  A Den that cannot switch (no Hyprland to move windows with) carries
+  neither, and answers both verbs `unavailable`.
+- `view.show` and `view.hide` take no params, and only the console, proved on
+  the connection (`console.auth`), may send them: any other connection, an
+  app's D1 pairing (chat only) included, gets `forbidden` "prove first". They are
+  the same when asked again: asking for the view Den is in moves whatever
+  is out of place (an agent's window that came up since) and nothing else.
+  A call is never an approval of anything.
+- The result is `{view, shown, total, reason?}`. `view` is the view asked
+  for. `shown` counts Den's own windows still visible once the switch ended,
+  whichever verb it was: a show succeeded when `shown == total`, a hide when
+  `shown == 0`, and `total == 0` means Den has no windows of its own, which
+  is done. `reason` is one plain line of at most 40 characters, absent when
+  there is nothing to say ("1 of 4 not hidden", "2 not Den's").
+- After a switch, connections that follow `fleet.events` get a `view` event
+  `{view, shown, total}`, and so do the console's connections that took
+  `console.events`; a slow reader may miss it, and `hello`, `console.auth`
+  and the fleet carry the view too.
+- One switch at a time, and at most three a minute for the console. A call
+  while another switch, or the closing of an agent's window, is running
+  answers `busy` and does not count; past three a minute it answers
+  `unavailable` "too many view switches". A switch ends within about four
+  seconds: if Hyprland is slow, the reply says "ran out of time" and the
+  next call finishes the job.
+- Which windows: an agent's window is the one carrying the class Den chose
+  when it spawned the agent (`io.glacierhub.den.<name>`, kept in Den's state
+  with the agent's session), when that agent's own process runs in it.
+  Never one found by title, directory or any other guess. An agent Den did
+  not spawn has no such record: its window is not counted and never touched.
+  Two windows with one class, or a marked window run by someone else, are
+  left alone and counted in `reason` as "not Den's". Den's own window is
+  hidden only when it is the one window of a process above Den's; when Den
+  cannot tell, it stays and `reason` says so.
+- **What `view.hide` leaves visible.** It never takes anything out of sight
+  that waits on you at the moment it runs:
+  - Den's own window stays up while any card waits on you in Den, whatever
+    its kind: a tool permission, a plan or a question held in Den, and every
+    `Ctrl+Y` question (a close, a merge, a cleanup, a grant, a pairing, a
+    control ask, turning the API on, and the rest). No card, approval or
+    confirmation surface of Den's is ever hidden by it. When Den cannot tell
+    which window is its own, it hides none of its own, and `reason` says "Den's
+    own window not found".
+  - The window of an agent whose permission prompt, plan or question only its
+    own terminal can answer stays up too; it counts in `shown`, and `reason`
+    says "1 waits on a prompt". Ask `view.hide` again once it is answered.
+  - The guarantee covers what Den knows about: its own cards, and the
+    prompts its hooks have seen. A prompt in a Den-spawned agent whose hooks
+    are off (Den's header says so) is not known to Den, so that agent's window
+    is hidden like any other; a session started by hand is never touched.
+  - God mode's warning is never hidden: God mode (stage 2) is not in this
+    release, and when it lands it joins this same check, with its own tests.
+  - What a hide cannot do is bring something back: a card or a prompt that
+    appears after the hide stays out of sight until `view.show`. The fleet's
+    `waiting` tells the dock that an agent needs a person, and a dock can
+    offer `view.show` for it. A trust dialog is an
+    agent that has not registered yet: Den has not hidden its window (a new
+    agent comes up hidden only once Den has tied its window to it, which
+    happens after the dialog).
+  - With no dock connected: if Den is in User view, a card waits on you, and
+    no proved connection is open to call `view.show` (the dock died, unpaired
+    or lost its connection), Den brings back its own window, and only that
+    one, within about five seconds. The agents' windows stay hidden and the
+    view stays `user`; it does this once per spell of waiting, and a dock that
+    connects again can hide the window once more. A card that waits while a
+    dock is connected is the dock's to show.
+  - A new agent spawned in User view comes up hidden once Den has tied its
+    window to it; asking `view.hide` again hides any that came up otherwise.
+- Nothing is closed, signalled or typed into. Closing an agent works on a
+  hidden window as on any other, and a switch and a close never run at the
+  same time. Where each window came from is kept in `view.json` in Den's
+  state before it moves, so a restarted Den knows the view and can bring
+  every window back. If one is stranded on `special:den` (a window with the
+  same class as an agent's makes Den leave both alone), `/view rescue` in
+  Den's own terminal brings back every window there; no verb reaches it,
+  and Hyprland's own binding for the special workspace works too.
+- Hyprland: a window is moved with the Lua dispatcher
+  `hl.dsp.window.move({ workspace = …, window = "address:…", follow = false })`,
+  which keeps the focus and the special workspace where they are (checked on
+  Hyprland 0.56.2 in a throwaway nested session; `silent = true` is ignored
+  there). The classic `movetoworkspacesilent` stays as the fallback for older
+  Hyprland; on 0.56 it is parsed as Lua and fails, and on older releases it
+  is untested here. A Hyprland that ignored `follow = false` would show
+  `special:den` after a hide: a visible fault, not a silent one.
 
 ### What an app's turn may do
 
@@ -584,11 +688,11 @@ Each connection proves once, at its start:
   lines joined by `\n`: `den-console-v1`, `app-to-den`, `conn`, `pairing`,
   the app's public key, Den's public key, *nd*, *na*, and the app's
   identity.
-- It answers `{paired: true, sig, god: {on: false}, view: "agent"}`, `sig` Den's signature
+- It answers `{paired: true, sig, god: {on: false}, view?}`, `sig` Den's signature
   of the same lines with `den-to-app` and Den's identity as the last line.
-  Check it with the pinned `den_public_key`. `god` and `view` are fixed in
-  this release: God mode is off and every session shows in its own window
-  (`agent`); a later Den adds `user` and an event for each change.
+  Check it with the pinned `den_public_key`. `god` is fixed in this release:
+  God mode is off. `view` is the view Den is in (`agent` or `user`, see
+  "Switching views"), absent when this Den cannot switch views.
 - The identity is the process as Den reads it in this boot:
   `exe:<path as hex>:<boot_id>:<pid>:<start>`, or
   `unreadable:<boot_id>:<pid>:<start>` when the process is not dumpable;
@@ -608,8 +712,8 @@ Each connection proves once, at its start:
 | `console.claim` | `{public_key, proof, pages_sha256?}` | `{pairing, den_public_key, bind, console}`, once you `Ctrl+Y` in Den |
 | `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, once you `Ctrl+Y` in Den |
 | `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once or once you `Ctrl+Y` in Den |
-| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console` and `card` events as they come |
+| `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console`, `card` and `view` events as they come |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
@@ -634,6 +738,8 @@ all` does in a terminal.
   connection that subscribes, after the replay), `powers` (`on` says
   whether the console has them now), `refused` (another program tried
   this console) or `unpaired`. Ignore a kind you do not know.
+- `view {view, shown, total}`: how a `view.show` or `view.hide` ended, as in
+  "Switching views".
 - `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
   `new`, `changed` or `settled`. A new or changed card the console may
   not answer (`dock_answers` false) carries `needs_den_screen: true`: only

@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Exported at Drey commit `23cadb7ea889bb4bc4f2a7c3a9b06b66cb7ff4e0`, package SHA-256 `306277a50be22f84f92f15ced91dee83da25f731356329be26e1cfacadf45acc`.
+Exported at Drey commit `6fd0e85fd6dce9759b6fdb8eb4f2a2a631d7dba2`, package SHA-256 `c7eaf46d54b4131da35276ca9e8101ae9632c5768a670a384ec647210729a2b0`.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -54,6 +54,15 @@ over the pinned string, subscribes to `console.events`, fetches and
 answers a card, and fills the connection cap. It ends with
 `console.unpair {"all":true}`. Left nil, every console subtest is skipped.
 
+`console orch.say` speaks to the orchestrator from the proved console: it
+wants `forbidden` before any proof, a `{turn}` and that turn's `orch`
+events after `console.auth`, `unavailable` for a second turn while one
+runs, and a new turn possible soon after the asking connection closes. It
+starts three or four real turns, so run it against a test orchestrator; it
+is skipped when hello's `control` is not "on". A Den from before console
+turns (v0.5.2) refuses the proved console with `forbidden`: list
+`console orch.say` in `Skip` for it.
+
 What only the server's own test can do is passed in:
 - `Offer` starts a console pairing and returns its eight words. Required.
 - `Confirm` stands in for the human's ^Y on the console card. Left nil,
@@ -63,6 +72,13 @@ What only the server's own test can do is passed in:
   verbs. Left nil, `card.get` and `card.answer` are skipped.
 - `LongCard` raises one like it with more than ten body lines. Left nil,
   `card read timer` is skipped.
+- `View` says the server switches views and can identify its own window:
+  `view.hide keeps a waiting card` raises a card with `Card`, hides, and
+  wants Den's own window still counted in `shown`, with a `reason`. It
+  really hides the server's windows (and shows them again after), so set
+  it only for a test server on a test desktop. The reply does not name the
+  window kept; the server's own test pins that it is its own. Left false,
+  it is skipped.
 - `ThiefTest` and `SocketPath` turn on `console thief`. The suite runs the
   test binary again as `-test.run=^<ThiefTest>$`, and that copy proves with
   the console's own key from another process. The server must refuse it

@@ -87,6 +87,9 @@ type Act struct {
 	ModeSet *ModeSet
 	// ConsolePowers asks the human to give the console its powers again.
 	ConsolePowers *ConsolePowersAsk
+	// View is a view switch to carry out: only the UI knows the sessions
+	// and what is waiting on the human.
+	View *ViewReq
 }
 
 type grants struct {

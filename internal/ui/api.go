@@ -35,6 +35,8 @@ type apiState struct {
 	grants  map[*inbox.Item]string // open grant cards → grant id
 	lastKey time.Time              // the human's last key in Den: no focus from outside right after it
 	warned  bool                   // the second socket replacement was noted
+	view    string                 // the view Den is in (viewswitch.go), "" when it cannot switch
+	raised  bool                   // Den's own window was brought back for a card, with no dock to ask (viewswitch.go)
 }
 
 // focusQuiet is how long after the human's last key in Den an app may not
@@ -79,6 +81,9 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	}
 	if isConsoleAct(act) {
 		return m.applyConsoleAct(act)
+	}
+	if act.View != nil {
+		return m.applyView(act.View)
 	}
 	if act.Pair != nil || act.CodeGone || act.PairDone != "" || act.Paired || act.Say != nil {
 		return m.applyControlAct(act)
@@ -258,6 +263,7 @@ func (m *Model) startAPI() tea.Cmd {
 		return nil
 	}
 	m.api.srv, m.api.err = srv, ""
+	m.api.view = viewSwitcher().Current()
 	m.publishAPI()
 	return tea.Batch(waitAPINote(srv), waitAPIAct(srv))
 }
@@ -303,6 +309,15 @@ func (m *Model) publishAPI() {
 		FullHosts: map[string]bool{},
 		Roster:    m.laneRoster(),
 		Guidance:  m.guide.active,
+		View:      m.api.view,
+
+		HooksInstalled: m.hooksReady,
+		HookSeen:       map[string]bool{},
+	}
+	for sid := range m.att.lastHook {
+		if hostOf(sid) == "" {
+			snap.HookSeen[sid] = true
+		}
 	}
 	snap.Colors = map[string]string{}
 	snap.Modes = map[string]string{}

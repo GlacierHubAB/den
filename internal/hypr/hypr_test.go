@@ -1,10 +1,12 @@
 package hypr
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/procs"
 )
@@ -86,6 +88,49 @@ func TestMarkerHolds(t *testing.T) {
 	}
 }
 
+// TestHeldWindow: HeldWindow gives the window only when it is provably the
+// agent's: the single window with the marker, its terminal with no other
+// window, the agent's process under that terminal.
+func TestHeldWindow(t *testing.T) {
+	mark := "io.glacierhub.den.helper"
+	win := Client{Address: "0x1", PID: 100, InitialClass: mark}
+	under := []procs.Proc{{PID: 300, Comm: "claude"}, {PID: 100, Comm: "ghostty"}}
+	if c, ok := HeldWindow([]Client{win}, mark, under); !ok || c.Address != "0x1" {
+		t.Errorf("held = %+v %v", c, ok)
+	}
+	if _, ok := HeldWindow([]Client{win}, "", under); ok {
+		t.Error("an empty marker holds a window")
+	}
+	if _, ok := HeldWindow([]Client{win, {Address: "0x2", PID: 101, InitialClass: mark}}, mark, under); ok {
+		t.Error("two windows carry the marker")
+	}
+}
+
+// TestOwnWindow: Den's own window is the one window of a process above
+// Den's. Two such windows, a terminal process that holds several windows,
+// or no process above that has a window: Den cannot say.
+func TestOwnWindow(t *testing.T) {
+	chain := []procs.Proc{{PID: 300, Comm: "den"}, {PID: 250, Comm: "zsh"}, {PID: 100, Comm: "ghostty"}}
+	mine := Client{Address: "0x1", PID: 100}
+	other := Client{Address: "0x2", PID: 200}
+	for _, c := range []struct {
+		name string
+		all  []Client
+		want string
+	}{
+		{"its one window", []Client{mine, other}, "0x1"},
+		{"another process's windows only", []Client{other}, ""},
+		{"its terminal holds two windows", []Client{mine, {Address: "0x3", PID: 100}, other}, ""},
+		{"two terminals above it each with a window", []Client{mine, {Address: "0x4", PID: 250}}, ""},
+		{"a window with no pid", []Client{{Address: "0x5"}}, ""},
+	} {
+		got, ok := OwnWindow(c.all, chain)
+		if c.want == "" && ok || c.want != "" && (!ok || got.Address != c.want) {
+			t.Errorf("%s: %+v %v, want %q", c.name, got, ok, c.want)
+		}
+	}
+}
+
 // fakeHyprctl puts a hyprctl script first on PATH that logs its arguments
 // and answers per call; no real compositor is ever asked.
 func fakeHyprctl(t *testing.T, body string) (log string) {
@@ -135,5 +180,56 @@ func TestMoveToWorkspaceDispatch(t *testing.T) {
 	}
 	if err := MoveToWorkspace("", "3"); err == nil {
 		t.Error("a move with no address ran")
+	}
+}
+
+// TestHyprctlCallsEndWithTheirContext: a compositor that does not answer
+// cannot hold a caller past its deadline.
+func TestHyprctlCallsEndWithTheirContext(t *testing.T) {
+	fakeHyprctl(t, `exec sleep 5`)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := ClientsContext(ctx); err == nil {
+		t.Error("a list that never answered reported success")
+	}
+	if err := MoveToWorkspaceContext(ctx, "0x1", "special:den"); err == nil {
+		t.Error("a move that never answered reported success")
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("took %v", took)
+	}
+}
+
+// TestWindowsLock: one holder at a time, and the try never waits.
+func TestWindowsLock(t *testing.T) {
+	unlock := LockWindows()
+	if _, ok := TryLockWindows(); ok {
+		t.Error("the lock was taken twice")
+	}
+	unlock()
+	u, ok := TryLockWindows()
+	if !ok {
+		t.Fatal("the lock was not free")
+	}
+	u()
+}
+
+// TestOnlyHyprlandAddressesReachTheDispatcher: an address is "0x" and hex
+// digits; anything else is refused before hyprctl runs.
+func TestOnlyHyprlandAddressesReachTheDispatcher(t *testing.T) {
+	log := fakeHyprctl(t, `echo ok`)
+	for _, a := range []string{"", "0x", "1234", "0xZZ", `0x1"}) os.exit(`, "0x1 2", "address:0x1", "0X1", "0x12345678901234567", "0x1\n"} {
+		if MoveToWorkspace(a, "1") == nil || CloseWindow(a) == nil || Focus(a) == nil {
+			t.Errorf("%q reached the dispatcher", a)
+		}
+	}
+	if raw, _ := os.ReadFile(log); len(raw) != 0 {
+		t.Errorf("hyprctl ran: %s", raw)
+	}
+	for _, a := range []string{"0x1", "0x5581a4c0f2d0", "0xffffffffffffffff"} {
+		if err := MoveToWorkspace(a, "1"); err != nil {
+			t.Errorf("%q: %v", a, err)
+		}
 	}
 }

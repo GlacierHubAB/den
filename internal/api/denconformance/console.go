@@ -50,6 +50,16 @@ type ConsoleOptions struct {
 	// LongCard raises a pending card like Card's whose body has more than
 	// ten lines, for the read timer. Left nil, "card read timer" is skipped.
 	LongCard func(ctx context.Context) (id string, err error)
+	// View says the server switches views (view.show, view.hide) and can
+	// identify its own window, so "view.hide keeps a waiting card" runs:
+	// with a card from Card waiting, a hide leaves Den's own window up,
+	// counted in shown, with a reason. The subtest really hides the
+	// server's windows (and shows them again after): set it only for a
+	// test server on a test desktop, never for a Den someone works in.
+	// The reply does not name the window kept, so a window that would not
+	// move also satisfies shown; the server's own test pins which. Left
+	// false, it is skipped.
+	View bool
 	// ThiefTest and SocketPath turn on "console thief": the suite runs
 	// this test binary again (os.Args[0] -test.run=^ThiefTest$), and the
 	// copy proves with the console's own key from another process. The
@@ -73,7 +83,7 @@ type ConsoleOptions struct {
 var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
-	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console connections",
+	"console.events", "card.get", "card.answer", "card read timer", "card replay", "view.hide keeps a waiting card", "console orch.say", "console connections",
 	"console.auth refusals", "console thief", "console.unpair unproved", "console.unpair all", "console cooldown",
 }
 
@@ -89,6 +99,7 @@ var (
 	hex32Re  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	hex64Re  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	hex128Re = regexp.MustCompile(`^[0-9a-f]{128}$`)
+	turnRe   = regexp.MustCompile(`^t-[0-9a-f]{32}$`)
 )
 
 // consolePairing is what a confirmed claim leaves for later subtests.
@@ -642,6 +653,135 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			if rec, err := cardGet(ctx, c, id); err == nil {
 				_ = c.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
 			}
+		}
+	})
+
+	// view.hide never takes a waiting card out of sight: Den's own window
+	// stays up, counted in shown, and reason says why (Den's DREY-API.md,
+	// "What view.hide leaves visible").
+	run("view.hide keeps a waiting card", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, events != nil, co != nil && co.Card != nil, co != nil && co.View)
+		id, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if rec, err := cardGet(ctx, events, id); err == nil {
+				_ = events.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+			}
+		}()
+		type viewResult struct {
+			View   string `json:"view"`
+			Shown  int    `json:"shown"`
+			Total  int    `json:"total"`
+			Reason string `json:"reason"`
+		}
+		var res viewResult
+		if err := events.call(ctx, "view.hide", nil, &res); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = events.call(ctx, "view.show", nil, nil) }()
+		if res.View != "user" || res.Total < 1 || res.Shown < 1 || res.Shown > res.Total || res.Reason == "" {
+			t.Errorf("view.hide with a card waiting: %+v; want view user, Den's own window counted in shown, and a reason", res)
+		}
+	})
+
+	// A console speaks to the orchestrator as a paired app does
+	// (DREY-API.md, "Speaking to the orchestrator"): orch.say needs
+	// pair.auth or console.auth, one app turn runs on the machine at a
+	// time (else unavailable, not a queue), every chunk carries its turn,
+	// and closing the connection ends the turn. A Den from before console
+	// turns (forbidden on a proved console) lists it in Options.Skip.
+	run("console orch.say", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		bare, in, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bare.close()
+		if in.Control != "on" {
+			t.Skipf("hello's control is %q: orch.say is refused until control is on", in.Control)
+		}
+		const text = "Say hello to the console, in a few plain words, and name nothing that runs."
+		wantCode(t, "orch.say before any proof", bare.call(ctx, "orch.say", map[string]string{"text": text}, nil), codeForbidden)
+
+		proved := func() *conn {
+			t.Helper()
+			c, _, err := open(ctx, o.Dial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := co.prove(ctx, c, p); err != nil {
+				c.close()
+				t.Fatal(err)
+			}
+			return c
+		}
+		var turn struct {
+			Turn string `json:"turn"`
+		}
+		c := proved()
+		defer c.close()
+		if err := c.call(ctx, "orch.say", map[string]string{"text": text}, &turn); err != nil {
+			t.Fatalf("orch.say on a proved console: %v", err)
+		}
+		if !turnRe.MatchString(turn.Turn) {
+			t.Fatalf("orch.say's turn %q is not t- and 32 hex digits", turn.Turn)
+		}
+		// One app turn on the machine: a second, from another proved
+		// connection of the same console, is refused while it runs.
+		c2 := proved()
+		wantCode(t, "a second orch.say while a turn runs", c2.call(ctx, "orch.say", map[string]string{"text": text}, nil), codeUnavailable)
+		c2.close()
+		for {
+			raw, err := nextEvent(ctx, c, "orch")
+			if err != nil {
+				t.Fatalf("the turn's orch events: %v", err)
+			}
+			var ch struct {
+				Type string `json:"type"`
+				Turn string `json:"turn"`
+			}
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				t.Fatalf("an orch event: %s", raw)
+			}
+			if ch.Turn != turn.Turn {
+				t.Fatalf("an orch event for turn %q during turn %q: %s", ch.Turn, turn.Turn, raw)
+			}
+			if !slices.Contains([]string{"text", "status", "needs_approval", "done", "error"}, ch.Type) {
+				t.Fatalf("an orch event of type %q: %s", ch.Type, raw)
+			}
+			if ch.Type == "done" || ch.Type == "error" {
+				break
+			}
+		}
+		// Closing the connection ends the turn: soon after, another
+		// console connection may start one. Two tries at most, so the
+		// console's six a minute hold.
+		// Den up to v0.5.2 clears its running turn just after it sends
+		// that turn's done, so a say sent on done may meet unavailable
+		// once; it is retried once (den-lead's guidance).
+		c3 := proved()
+		err = c3.call(ctx, "orch.say", map[string]string{"text": text}, &turn)
+		if codeOf(err) == codeUnavailable {
+			time.Sleep(200 * time.Millisecond)
+			err = c3.call(ctx, "orch.say", map[string]string{"text": text}, &turn)
+		}
+		if err != nil {
+			t.Fatalf("orch.say after the first turn ended: %v", err)
+		}
+		c3.close()
+		c4 := proved()
+		defer c4.close()
+		var after error
+		for try := 0; try < 2; try++ {
+			time.Sleep(time.Duration(500+1500*try) * time.Millisecond)
+			if after = c4.call(ctx, "orch.say", map[string]string{"text": text}, &turn); codeOf(after) != codeUnavailable {
+				break
+			}
+		}
+		if after != nil {
+			t.Fatalf("orch.say after the asking connection closed: %v; closing it must end its turn", after)
 		}
 	})
 

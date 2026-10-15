@@ -66,6 +66,9 @@ const (
 	CodeForbidden   = "forbidden"
 	CodeUnavailable = "unavailable"
 	CodeInternal    = "internal"
+	// CodeBusy answers a view switch asked for while another switch, or a
+	// close of an agent's window, is running.
+	CodeBusy = "busy"
 )
 
 // Event names.
@@ -76,6 +79,8 @@ const (
 	EventGrant = "grant"
 	EventCard  = "card"
 	EventMode  = "mode"
+	// EventView carries a view switch's outcome (ViewChange).
+	EventView = "view"
 )
 
 // ModeInfo is the permission mode Den starts agents in (Global) and
@@ -103,6 +108,44 @@ type Info struct {
 	// ConsolePublicKey is Den's console key (64 hex), when it offers
 	// console pairing: public, for the dock to show its fingerprint.
 	ConsolePublicKey string `json:"console_public_key,omitempty"`
+	// View is the view Den is in, ViewAgent or ViewUser, and
+	// ViewWorkspaces the workspaces Den hides windows on in User view. A
+	// Den that cannot switch views (no Hyprland to move windows with)
+	// sends neither.
+	View           string   `json:"view,omitempty"`
+	ViewWorkspaces []string `json:"view_workspaces,omitempty"`
+}
+
+// The two views. In Agent view every session, each agent and Den's own,
+// shows in a terminal window of its own, tiled by the window manager as
+// always; in User view Den has moved those windows out of sight.
+const (
+	ViewAgent = "agent"
+	ViewUser  = "user"
+)
+
+// ViewWorkspace is the one workspace Den hides windows on, a fixed name so a
+// launcher can skip exactly it.
+const ViewWorkspace = "special:den"
+
+// ViewResult is view.show's and view.hide's result. View is the view asked
+// for. Shown counts Den's own windows still visible once the switch ended,
+// whichever verb it was: a show succeeded when Shown == Total, a hide when
+// Shown == 0, and Total 0 means Den has no windows of its own. Reason is
+// one plain line of at most 40 characters, absent when there is nothing to
+// say ("1 of 4 not hidden").
+type ViewResult struct {
+	View   string `json:"view"`
+	Shown  int    `json:"shown"`
+	Total  int    `json:"total"`
+	Reason string `json:"reason,omitempty"`
+}
+
+// ViewChange is a view event's data: ViewResult without the reason.
+type ViewChange struct {
+	View  string `json:"view"`
+	Shown int    `json:"shown"`
+	Total int    `json:"total"`
 }
 
 // FeatureConsole is Info.Features' entry for console pairing.
@@ -123,7 +166,16 @@ type Fleet struct {
 	Cost     Cost         `json:"cost"`
 	Asks     []AskStatus  `json:"asks,omitempty"`
 	Mode     *ModeInfo    `json:"mode,omitempty"`
+	// View is the view Den is in; absent when Den cannot switch views.
+	View string `json:"view,omitempty"`
 }
+
+// Agent.Hooks values.
+const (
+	HooksOn      = "on"
+	HooksOff     = "off"
+	HooksUnknown = "unknown"
+)
 
 // Agent states and waits.
 const (
@@ -152,6 +204,12 @@ type Agent struct {
 	Window   string    `json:"window,omitempty"`
 	Host     string    `json:"host,omitempty"`
 	Remote   bool      `json:"remote,omitempty"`
+	// Hooks says whether Den can see this agent's prompts: HooksOn when Den
+	// has had a hook event from the session since Den started, HooksOff
+	// when Den's hooks are not installed at all, HooksUnknown when they are
+	// but this session has not reported yet (new, or started before the hooks
+	// or before this Den). Agents on other machines carry none.
+	Hooks    string    `json:"hooks,omitempty"`
 	CostUSD  float64   `json:"costUsd"`
 	Turns    int       `json:"turns"`
 	LastSeen time.Time `json:"lastSeen"`
