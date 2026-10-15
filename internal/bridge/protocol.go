@@ -146,6 +146,20 @@ const ConsolePairEvent = "ConsolePair"
 // Its payload is {"all": bool}. It only lowers, so anyone may ask.
 const ConsoleUnpairEvent = "ConsoleUnpair"
 
+// DesktopInstallEvent is not a hook event: `den install-hypruse` sends it
+// to ask the human, in Den, to install hypruse into Den's own venv, and
+// waits for the outcome. Den makes the plan itself, checks the clone, and
+// installs only on ^Y. Refused from a process under Claude Code, an agent,
+// `den mcp` or `den hook`.
+const DesktopInstallEvent = "DesktopInstallRequest"
+
+// DesktopInstallInput is the payload of a DesktopInstallEvent.
+type DesktopInstallInput struct {
+	Clone   string `json:"clone"`            // the hypruse clone to copy from
+	Wheels  string `json:"wheels,omitempty"` // a folder of wheels for an offline install
+	AskedBy string `json:"asked_by"`
+}
+
 // OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.
 type OrchSendInput struct {
 	To      string `json:"to"`

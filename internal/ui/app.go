@@ -21,6 +21,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/critter"
+	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/hooks"
@@ -143,27 +144,28 @@ type Model struct {
 	watch     <-chan struct{}
 	lastScan  time.Time
 
-	srv        *bridge.Server
-	closing    map[string]closer.Plan     // close questions in the inbox, by item id
-	offers     map[string]skills.Approval // skills offers in the inbox, by item id
-	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
-	sends      map[string]askedSend       // den send questions in the inbox, by item id
-	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
-	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
-	guard      *closer.Guard              // agents a close must leave alone or only propose when named
-	guardPath  string
-	srvErr     error
-	store      *inbox.Store
-	inboxCur   int
-	inboxSel   string          // id of the selected inbox item: the selection follows the item, never its place in the list
-	inboxLost  bool            // the selected item left the list: nothing is selected until the human picks one
-	inboxAt    time.Time       // when the human last chose an item: requests after it are new to them
-	shown      shownTarget     // what ^Y and ^N act on now, and since when
-	bodyOff    int             // rows the selected inbox item is scrolled, when it is taller than the pane
-	bodyRead   map[string]bool // items whose whole body was scrolled through (inbox_body.go)
-	hooksReady bool
-	cfg        config.Config
-	chatLog    string // the orchestrator log on disk
+	srv             *bridge.Server
+	closing         map[string]closer.Plan     // close questions in the inbox, by item id
+	offers          map[string]skills.Approval // skills offers in the inbox, by item id
+	installs        map[string]remote.Plan     // remote install questions in the inbox, by item id
+	desktopInstalls map[string]desktop.Plan    // hypruse install questions in the inbox, by item id
+	sends           map[string]askedSend       // den send questions in the inbox, by item id
+	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
+	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
+	guard           *closer.Guard              // agents a close must leave alone or only propose when named
+	guardPath       string
+	srvErr          error
+	store           *inbox.Store
+	inboxCur        int
+	inboxSel        string          // id of the selected inbox item: the selection follows the item, never its place in the list
+	inboxLost       bool            // the selected item left the list: nothing is selected until the human picks one
+	inboxAt         time.Time       // when the human last chose an item: requests after it are new to them
+	shown           shownTarget     // what ^Y and ^N act on now, and since when
+	bodyOff         int             // rows the selected inbox item is scrolled, when it is taller than the pane
+	bodyRead        map[string]bool // items whose whole body was scrolled through (inbox_body.go)
+	hooksReady      bool
+	cfg             config.Config
+	chatLog         string // the orchestrator log on disk
 	// Images attached to the command line, and whether the terminal can
 	// draw them inline (kitty graphics, confirmed by a probe reply).
 	attachments []attachment
@@ -632,6 +634,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installDoneMsg:
 		return m, m.finishInstall(msg)
+	case desktopInstallDoneMsg:
+		return m, m.finishDesktopInstall(msg)
 	case askedSentMsg:
 		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
@@ -694,6 +698,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
+	}
+	if r.Event == bridge.DesktopInstallEvent {
+		return m.handleDesktopInstallRequest(r)
 	}
 	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
@@ -1420,6 +1427,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
+	}
+	if it.Kind == inbox.DesktopInstall {
+		return m.decideDesktopInstall(it, verb)
 	}
 	if it.Kind == inbox.APIOn {
 		return m.decideAPIOn(it, verb)

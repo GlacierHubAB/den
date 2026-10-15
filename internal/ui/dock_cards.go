@@ -79,6 +79,9 @@ func dockMayAnswer(it *inbox.Item) bool {
 	switch it.Kind {
 	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message:
 		return false
+	case inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn:
+		// Desktop control: the human's own window only.
+		return false
 	}
 	return true
 }

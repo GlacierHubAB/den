@@ -807,7 +807,7 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "merge it")+"  "+key("^N", "not now"))
 	case it.Answerable() && it.Kind == inbox.Cleanup:
 		out = append(out, key("^Y", "remove the worktree")+"  "+key("^N", "keep it"))
-	case it.Answerable() && it.Kind == inbox.Install:
+	case it.Answerable() && (it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall):
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.Message:
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
@@ -1064,7 +1064,7 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		if it.Kind == inbox.Cleanup {
 			acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
 		}
-		if it.Kind == inbox.Install {
+		if it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall {
 			acts = key("^Y", "install it") + sp + sp + key("^N", "decline")
 		}
 		if it.Kind == inbox.Message {

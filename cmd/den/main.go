@@ -13,6 +13,7 @@
 //	den install-hooks    wire Den into Claude Code's hooks (undo: uninstall-hooks)
 //	den events           headless: print hook events as they arrive; -json follows the event stream
 //	den remote ...       the remote hosts Den connects to over ssh; see den remote help
+//	den install-hypruse  install hypruse for desktop control into Den's own venv, after your ^Y in Den
 //	den hook             used by Claude Code's hooks; not for humans
 package main
 
@@ -106,6 +107,8 @@ func main() {
 		runEvents()
 	case "remote":
 		remoteCmd(os.Args[2:])
+	case "install-hypruse":
+		installHypruseCmd(os.Args[2:])
 	case "pair":
 		pairCmd()
 	case "unpair":
@@ -122,7 +125,7 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den pair | den unpair [all]\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den pair | den unpair [all] | den install-hypruse --from <clone> [--wheels <dir>]\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}

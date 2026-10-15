@@ -23,35 +23,39 @@ import (
 type Kind int
 
 const (
-	Permission    Kind = iota // a tool wants to run; y/n/a answer it
-	Plan                      // ExitPlanMode: approve or ask for changes
-	Question                  // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
-	Done                      // a turn finished while you were elsewhere
-	Idle                      // Claude Code's idle notice
-	Sent                      // a message you sent, with its delivery status
-	Close                     // Den asks: close these agents? y/n answer it
-	Skills                    // Den asks: install these catalogue skills? y/n answer it
-	Budget                    // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
-	Restore                   // Den asks: reopen these agents with claude --resume? y/n answer it
-	Stalled                   // working, but no hook event for a while; never "needs you"
-	Failed                    // a turn ended on an API error, or tool calls keep failing
-	Merge                     // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
-	Cleanup                   // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
-	Install                   // Den asks: copy this den to a remote host? y/n answer it
-	Message                   // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
-	Guidance                  // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
-	MissionUpdate             // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
-	Usage                     // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
-	UsageResume               // Den asks: let the fleet go on after a usage stop? y/n answer it
-	MissionMove               // Den asks: move this mission to another project, as you typed? y/n answer it
-	APIOn                     // Den asks: turn on den-api.sock for apps on this machine? y/n answer it
-	Grant                     // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
-	Pair                      // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
-	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
-	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
-	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
-	UsageSet                  // Den asks: take this usage figure, as the console sent it? y/n answer it
-	ModeSet                   // Den asks: start agents in a mode that asks less? y/n answer it
+	Permission     Kind = iota // a tool wants to run; y/n/a answer it
+	Plan                       // ExitPlanMode: approve or ask for changes
+	Question                   // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
+	Done                       // a turn finished while you were elsewhere
+	Idle                       // Claude Code's idle notice
+	Sent                       // a message you sent, with its delivery status
+	Close                      // Den asks: close these agents? y/n answer it
+	Skills                     // Den asks: install these catalogue skills? y/n answer it
+	Budget                     // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
+	Restore                    // Den asks: reopen these agents with claude --resume? y/n answer it
+	Stalled                    // working, but no hook event for a while; never "needs you"
+	Failed                     // a turn ended on an API error, or tool calls keep failing
+	Merge                      // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
+	Cleanup                    // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
+	Install                    // Den asks: copy this den to a remote host? y/n answer it
+	Message                    // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
+	Guidance                   // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
+	MissionUpdate              // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
+	Usage                      // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
+	UsageResume                // Den asks: let the fleet go on after a usage stop? y/n answer it
+	MissionMove                // Den asks: move this mission to another project, as you typed? y/n answer it
+	APIOn                      // Den asks: turn on den-api.sock for apps on this machine? y/n answer it
+	Grant                      // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
+	Pair                       // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
+	ControlAsk                 // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
+	Console                    // Den asks: make the program that claimed the console code your console? y/n answer it
+	ConsoleNote                // Den says: something happened to the console (another program tried it, it was restored)
+	UsageSet                   // Den asks: take this usage figure, as the console sent it? y/n answer it
+	ModeSet                    // Den asks: start agents in a mode that asks less? y/n answer it
+	DesktopInstall             // Den asks: install hypruse into Den's own venv, as planned? y/n answer it
+	DesktopMission             // Den asks: start this desktop mission, in this scope? y/n answer it
+	DesktopAct                 // a desktop agent's action needs you: allow this one call? y/n answer it
+	YourTurn                   // a desktop mission waits for a step only you do; y says it is done, n ends the mission
 )
 
 func (k Kind) String() string {
@@ -114,6 +118,14 @@ func (k Kind) String() string {
 		return "usage figure"
 	case ConsoleNote:
 		return "console note"
+	case DesktopInstall:
+		return "desktop install"
+	case DesktopMission:
+		return "desktop mission"
+	case DesktopAct:
+		return "desktop action"
+	case YourTurn:
+		return "your turn"
 	}
 	return "?"
 }
@@ -177,7 +189,8 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
+		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -759,6 +772,17 @@ func (s *Store) AddRestore(sessionID, title string, body []string) *Item {
 // its label; req is the request of the den remote command that asked.
 func (s *Store) AddInstall(host, title string, body []string, req *bridge.Request) *Item {
 	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
+}
+
+// DesktopSession is the SessionID of Den's questions about desktop control
+// that concern no one agent yet: the hypruse install, a mission's start.
+const DesktopSession = "den:desktop"
+
+// AddDesktopInstall adds Den's question: install hypruse as planned? req
+// is the request of the den install-hypruse that asked; it gets the
+// outcome. Only the human's ^Y answers it.
+func (s *Store) AddDesktopInstall(title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: DesktopSession, Kind: DesktopInstall, Tool: "install_hypruse", Title: title, Body: body, req: req})
 }
 
 // AddMessageOn adds Den's question: send this text to an agent on host?
