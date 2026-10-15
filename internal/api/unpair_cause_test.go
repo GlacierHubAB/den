@@ -272,9 +272,11 @@ func TestEveryUnpairPathNamesACause(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The paths there are today: the calls (burst, record, intruders, proofs,
-	// self, unpair all twice, den twice, guard) and the two events built by hand.
-	if calls < 10 || events < 2 {
+	// The paths there are today: the calls (burst, record, intruders twice,
+	// proofs, self, unpair all twice, den twice, guard) and the three events
+	// built by hand (UnpairConsole's, a replaced pairing's, and a silent
+	// reconnect's).
+	if calls < 11 || events < 3 {
 		t.Errorf("found %d UnpairConsole calls and %d unpaired events: has the source moved?", calls, events)
 	}
 }
