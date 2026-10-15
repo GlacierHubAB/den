@@ -776,7 +776,7 @@ func (l *lane) start(j *askJob) (*laneProc, error) {
 }
 
 // fence wraps a client's question as data: sanitised, < and > made
-// harmless (after NFKC, so a fullwidth ＜ is caught too), inside a block
+// harmless (after NFKC, so a fullwidth less-than, U+FF1C, is caught too), inside a block
 // Den writes.
 func fence(text string) string {
 	t := strings.Map(func(r rune) rune {

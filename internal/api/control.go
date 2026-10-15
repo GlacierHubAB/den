@@ -725,7 +725,7 @@ func SayText(text string) (string, error) {
 	}
 	t := norm.NFKC.String(text)
 	t = strings.NewReplacer("<", "‹", ">", "›").Replace(t)
-	t = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", " ", "\n", " ", "\n").Replace(t)
+	t = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\u0085", "\n", "\u2028", "\n", "\u2029", "\n").Replace(t)
 	lines := strings.Split(t, "\n")
 	for i, l := range lines {
 		l = strings.Map(func(r rune) rune {

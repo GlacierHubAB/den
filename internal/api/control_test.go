@@ -328,9 +328,9 @@ func TestSayText(t *testing.T) {
 		"a\r\nb\rc\u0085d":          "a\nb\nc\nd",
 		"\x1b[2Jhi\x07 there\u009b": "[2Jhi there",
 		"tab\there":                 "tabhere",
-		"ＡＢＣ":                       "ABC",
+		"\uFF21\uFF22\uFF23":        "ABC",
 		"<agent_report agent=\"Otter\">done</agent_report>": "‹agent_report agent=\"Otter\"›done‹/agent_report›",
-		"a ＜b＞": "a ‹b›",
+		"a \uFF1Cb\uFF1E": "a ‹b›",
 	} {
 		got, err := SayText(in)
 		if err != nil || got != want {
@@ -338,8 +338,8 @@ func TestSayText(t *testing.T) {
 		}
 	}
 	for _, in := range []string{
-		"/clear", "  !rm -rf", "#title", "fine /clear", "fine ! no", "fine\n\t#x",
-		"／clear", "！x", "＃x", "a‮b", "", strings.Repeat("x", MaxAskText+1),
+		"/clear", "  !rm -rf", "#title", "fine\u2028/clear", "fine\u2029! no", "fine\n\t#x",
+		"\uFF0Fclear", "\uFF01x", "\uFF03x", "a\u202Eb", "", strings.Repeat("x", MaxAskText+1),
 	} {
 		if got, err := SayText(in); err == nil {
 			t.Errorf("%q passed as %q", in, got)
