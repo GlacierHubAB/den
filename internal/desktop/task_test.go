@@ -223,3 +223,24 @@ func TestTaskToolLists(t *testing.T) {
 		}
 	}
 }
+
+// A task's pointer glides there, kept to the monitor that holds the
+// point: its steps never leave the screen, whichever monitor it starts on.
+func TestTaskPointerGlidesOnTheTargetsMonitor(t *testing.T) {
+	m, s := taskDesk()
+	s.Monitors = append(s.Monitors, Monitor{Name: "HDMI-A-1", X: 2000, Y: 0, W: 1280, H: 720, Workspace: 2})
+	for _, c := range []struct {
+		args map[string]any
+		want Rect
+	}{
+		{map[string]any{"action": "move", "x": 100, "y": 100}, Rect{X: 0, Y: 0, W: 2000, H: 1000}},
+		{map[string]any{"action": "click", "x": 1500, "y": 800}, Rect{X: 0, Y: 0, W: 2000, H: 1000}},
+		{map[string]any{"action": "scroll", "x": 2100, "y": 100, "scroll_dy": 3}, Rect{X: 2000, Y: 0, W: 1280, H: 720}},
+		{map[string]any{"action": "drag", "x": 2100, "y": 100, "to_x": 1500, "to_y": 800}, Rect{X: 2000, Y: 0, W: 1280, H: 720}},
+	} {
+		v := taskCall(t, "pointer", c.args, m, s)
+		if v.Kind != Allow || v.Bounds == nil || *v.Bounds != c.want {
+			t.Errorf("%v: %v %s, bounds %+v", c.args, v.Kind, v.Reason, v.Bounds)
+		}
+	}
+}
