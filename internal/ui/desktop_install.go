@@ -30,6 +30,10 @@ var (
 	}
 )
 
+// installingNote is what the install's card says while the approved
+// install runs, in place of its keys.
+const installingNote = "⟳ installing hypruse… Den settles this when it is done; nothing to press"
+
 // desktopInstallDoneMsg is the end of an approved install.
 type desktopInstallDoneMsg struct {
 	itemID string
@@ -85,6 +89,12 @@ func (m Model) decideDesktopInstall(it *inbox.Item, verb string) (tea.Model, tea
 	if why := deskTTYOnly(it, verb); why != "" {
 		return m.say(why, true)
 	}
+	// A second answer while the approved install runs changes nothing: the
+	// install's own result settles the question and answers the command,
+	// never this press.
+	if m.desk.installing == it.ID {
+		return m.say("hypruse is still installing; Den tells you when it is done.", false)
+	}
 	plan, ok := m.desktopInstalls[it.ID]
 	if !ok {
 		m.store.Settle(it, false, "the plan was lost; nothing installed")
@@ -98,6 +108,7 @@ func (m Model) decideDesktopInstall(it *inbox.Item, verb string) (tea.Model, tea
 	}
 	it.Resolved = "installing…"
 	id := it.ID
+	m.desk.installing = id
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
@@ -114,6 +125,9 @@ func (m *Model) finishDesktopInstall(msg desktopInstallDoneMsg) tea.Cmd {
 	outcome := "installed " + sanitize.Line(msg.got)
 	if msg.err != nil {
 		outcome = "approved, but the install failed: " + sanitize.Line(msg.err.Error())
+	}
+	if m.desk.installing == msg.itemID {
+		m.desk.installing = ""
 	}
 	for _, it := range m.store.Items() {
 		if it.ID == msg.itemID {
