@@ -11,7 +11,6 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
-	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
@@ -32,29 +31,33 @@ func missionModel() Model {
 func TestMissionProposeStartRunAndSettle(t *testing.T) {
 	m := missionModel()
 	m.orch.starting = true // no process: the prompt queues
-	m.proposeMission("keep the tests green")
-	if m.ov.proposal == "" || len(m.orch.pending) != 1 || !strings.Contains(m.orch.pending[0], "Propose a mission") || !strings.Contains(m.orch.pending[0], "fenced json block") {
-		t.Fatalf("proposal not sent: %q", m.orch.pending)
+	// /mission asks the orchestrator in the chat; nothing is made yet.
+	m.requestMission("keep the tests green")
+	if m.ov.proposal != "" || m.tab != tabOrch || len(m.orch.pending) != 1 || !strings.Contains(m.orch.pending[0], "propose_mission") || !strings.Contains(m.orch.pending[0], "keep the tests green") {
+		t.Fatalf("request not sent: tab %v, %q", m.tab, m.orch.pending)
 	}
-	out := ansi.Strip(m.View().Content)
-	if !strings.Contains(out, "keep the tests green") || !strings.Contains(out, "Mission proposal") {
-		t.Errorf("proposal view:\n%s", out)
+	// The orchestrator proposes through its tool.
+	proc0, _ := liveOrchestrator(t)
+	m.orch.proc, m.orch.origins = proc0, []string{originHuman}
+	pd := callDen(t, &m, bridge.ProposeEvent, bridge.ProposeInput{Project: "tasklog", Name: "Tests green", Goal: "Keep tasklog's tests green.",
+		Criteria: []string{"The suite passes three times in a row"}, Goals: []bridge.GoalInput{{Text: "Fix the flake", Owner: "Mossy Lemur"}},
+		Constraints: []string{"no skipped tests"}, Shape: "loop", Reason: "one agent keeps the context"}, orchChildPID)
+	m.orch.proc, m.orch.origins = nil, nil
+	ms := m.missions.Get(m.ov.proposal)
+	if pd.Behavior != "allow" || ms == nil || ms.Shape != mission.Loop || ms.Name != "Tests green" || len(ms.Constraints) != 1 {
+		t.Fatalf("proposal %+v: %+v", pd, ms)
 	}
-	// The orchestrator answers.
-	reply := "A loop fits.\n```json\n{\"mission\": {\"name\": \"Tests green\", \"mission\": \"Keep tasklog's tests green.\", \"done_when\": \"standing\", \"constraints\": [\"no skipped tests\"], \"shape\": \"loop\", \"reason\": \"one agent keeps the context\", \"agents\": [\"Mossy Lemur\"]}}\n```"
-	shown := m.missionReply(reply)
-	if shown != "A loop fits." {
+	// A reply's fenced mission block is only text now.
+	if shown := m.missionReply("A loop fits.\n```json\n{\"mission\": {\"name\": \"x\"}}\n```"); !strings.Contains(shown, `"mission"`) {
 		t.Errorf("chat text = %q", shown)
 	}
-	ms := m.missions.Get(m.ov.proposal)
-	if ms.Shape != mission.Loop || ms.Name != "Tests green" || len(ms.Constraints) != 1 {
-		t.Fatalf("mission = %+v", ms)
-	}
-	out = ansi.Strip(m.View().Content)
+	m.tab = tabOverview
+	out := ansi.Strip(m.View().Content)
 	if !strings.Contains(out, "Tests green") || !strings.Contains(out, "no skipped tests") || !strings.Contains(out, "↻ loop") {
 		t.Errorf("proposal card:\n%s", out)
 	}
 	// ^Y starts run 1 and the next dispatch belongs to it.
+	ms.Updated = ms.Updated.Add(-2 * time.Second) // the human has read it
 	m.startMission()
 	if ms.State != mission.Running || len(ms.Runs) != 1 || m.turn.id != ms.ID || m.ov.open != ms.ID {
 		t.Fatalf("after start: state=%s runs=%d turn=%q open=%q", ms.State, len(ms.Runs), m.turn.id, m.ov.open)
@@ -75,14 +78,15 @@ func TestMissionProposeStartRunAndSettle(t *testing.T) {
 	if ms.Runs[0].EndedAt.IsZero() || !strings.Contains(ms.Runs[0].Summary, "Pinned") || m.turn.id != ms.ID {
 		t.Fatalf("run not settled or not judged: %+v turn=%q", ms.Runs[0], m.turn.id)
 	}
-	if last := m.orch.pending[len(m.orch.pending)-1]; !strings.Contains(last, "Is the goal met?") {
+	if last := m.orch.pending[len(m.orch.pending)-1]; !strings.Contains(last, "Which done criteria") || !strings.Contains(last, "<agent_report agent=") {
 		t.Errorf("judge prompt = %q", last)
 	}
-	// The orchestrator says done, through update_mission, in the turn Den
-	// started to judge the run: the human confirms it.
+	// The orchestrator claims the criterion and says done, through
+	// update_mission, in the turn Den started to judge the run: the human
+	// confirms it.
 	proc, _ := liveOrchestrator(t)
 	m.orch.proc, m.orch.origins = proc, []string{originDen}
-	raw, _ := json.Marshal(bridge.MissionInput{ID: ms.ID, State: "done", Summary: "suite green"})
+	raw, _ := json.Marshal(bridge.MissionInput{ID: ms.ID, State: "done", Summary: "suite green", Claims: []bridge.ClaimInput{{ID: "c1", Evidence: "three green runs in Mossy Lemur's report"}}})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
 	r.PeerPID = orchChildPID
 	m.handleRequest(r)
@@ -205,43 +209,5 @@ func TestTeamLinesDrawLeadsAboveTheirPeople(t *testing.T) {
 	ms := &mission.Mission{Name: "Site", Mission: "Build it", Shape: mission.FanOut, Team: team}
 	if b := m.missionBrief(ms); !strings.Contains(b, "team of 4") {
 		t.Errorf("brief = %q", b)
-	}
-}
-
-// TestOpenMissionShowsEveryMessage types to an open mission twice, the
-// second time while the first answer is still streaming: both messages and
-// the streamed text show in the mission pane as they arrive.
-func TestOpenMissionShowsEveryMessage(t *testing.T) {
-	m := missionModel()
-	m.orch.starting = true
-	now := time.Now()
-	ms := &mission.Mission{ID: "m1", Project: m.proj.cur, Name: "Site", Mission: "Ship the site.", State: mission.Running, Created: now, Updated: now}
-	m.missions.Save(ms)
-	m.ov.open = ms.ID
-	m.missionText("cover the Review section too")
-	m.handleOrchEvent(orch.Event{Kind: orch.Delta, Text: "Sending that to "})
-	m.missionText("and the avatar badge")
-	out := ansi.Strip(m.missionsPane(80, 40))
-	for _, want := range []string{"cover the Review section too", "Sending that to", "and the avatar badge"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("mission pane lacks %q:\n%s", want, out)
-		}
-	}
-	m.handleOrchEvent(orch.Event{Kind: orch.Delta, Text: "Plucky Otter."})
-	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "Sending that to Plucky Otter."})
-	m.handleOrchEvent(orch.Event{Kind: orch.Text, Text: "The badge goes along too."})
-	out = ansi.Strip(m.missionsPane(80, 40))
-	for _, want := range []string{"cover the Review section too", "Sending that to Plucky Otter.", "and the avatar badge", "The badge goes along too."} {
-		if !strings.Contains(out, want) {
-			t.Errorf("mission pane lacks %q:\n%s", want, out)
-		}
-	}
-	if i := m.orch.streaming(); i >= 0 || strings.Count(out, "Sending that to") != 1 {
-		t.Errorf("streamed entry %d not finished in place:\n%s", i, out)
-	}
-	// The plain chat is its own thread.
-	m.askOrchestrator("what is everyone doing?")
-	if out := ansi.Strip(m.missionsPane(80, 40)); strings.Contains(out, "everyone doing") {
-		t.Errorf("plain chat leaked into the mission:\n%s", out)
 	}
 }

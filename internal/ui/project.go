@@ -132,7 +132,7 @@ func (m *Model) pinProject(dir string) (project, error) {
 		m.proj.pinned = append(m.proj.pinned, root)
 	}
 	m.proj.cur = root
-	m.ov.cur, m.ov.open, m.ov.scroll = 0, "", 0
+	m.ov.sel, m.ov.idx, m.ov.top, m.ov.open, m.ov.transcript, m.ov.scroll = "", 0, 0, "", "", 0
 	m.buildProjects()
 	m.saveProjectPick()
 	m.filterReview()
@@ -414,7 +414,7 @@ func (m *Model) switchProject(delta int) {
 		}
 	}
 	m.proj.cur = m.proj.list[(i+delta+n)%n].Root
-	m.ov.cur, m.ov.open, m.ov.scroll = 0, "", 0
+	m.ov.sel, m.ov.idx, m.ov.top, m.ov.open, m.ov.transcript, m.ov.scroll = "", 0, 0, "", "", 0
 	m.saveProjectPick()
 	m.filterReview()
 }
@@ -425,7 +425,7 @@ func (m *Model) pickProject(name string) bool {
 	for _, p := range m.proj.list {
 		if p.Name == name || p.Root == name || filepath.Base(p.Root) == name {
 			m.proj.cur = p.Root
-			m.ov.cur, m.ov.open, m.ov.scroll = 0, "", 0
+			m.ov.sel, m.ov.idx, m.ov.top, m.ov.open, m.ov.transcript, m.ov.scroll = "", 0, 0, "", "", 0
 			m.saveProjectPick()
 			m.filterReview()
 			return true

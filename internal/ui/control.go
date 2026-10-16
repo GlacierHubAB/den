@@ -321,7 +321,7 @@ func (m *Model) tryAppTurn() tea.Cmd {
 		return nil
 	}
 	prompt := sayPreface(y) + "\n\n" + y.Text
-	content := orch.ComposeWith(m.roster(), m.templateInfos(), prompt)
+	content := orch.ComposeAll(m.roster(), m.templateInfos(), m.missionInfos(), prompt)
 	if err := m.orch.proc.SendApp(y.Turn, content, m.standingFor(y.Pairing)...); err != nil {
 		m.endAppTurn("Den could not send it: " + sanitize.Label(err.Error(), 120))
 		return nil

@@ -78,10 +78,14 @@ func dockMayAnswer(it *inbox.Item) bool {
 		return false
 	}
 	switch it.Kind {
-	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message:
-		return false
-	case inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn:
-		// Desktop control: the human's own window only.
+	// Every kind the dock may never answer, in one case with one return,
+	// so no merge can leave a kind in a case of its own with no return:
+	// a Go case does not fall through. Desktop control is the human's own
+	// window only; a mission's done criteria decide when it is done, so
+	// they are the human's in Den.
+	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message,
+		inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn,
+		inbox.MissionCriteria, inbox.MissionDone:
 		return false
 	}
 	return true

@@ -333,3 +333,26 @@ func TestGodModeLeavesDesktopCardsToYou(t *testing.T) {
 		}
 	}
 }
+
+// In God mode a mission's done criteria and its done stay yours: Den never
+// answers either by rule, and only Den's window does, even for a card that
+// came after God mode went on.
+func TestGodModeLeavesMissionCriteriaAndDoneToYou(t *testing.T) {
+	for _, k := range []inbox.Kind{inbox.MissionCriteria, inbox.MissionDone} {
+		if !godTTYKinds[k] || godAutoKinds[k] {
+			t.Errorf("%v: tty only %v, answered by Den %v", k, godTTYKinds[k], godAutoKinds[k])
+		}
+	}
+	m := testModel(140, 40)
+	typeLine(&m, "/god on")
+	typeLine(&m, godPhrase)
+	if !m.godOn() {
+		t.Fatal("God mode is not on")
+	}
+	for _, k := range []inbox.Kind{inbox.MissionCriteria, inbox.MissionDone} {
+		it := &inbox.Item{ID: "x", Kind: k, SessionID: "s", At: time.Now()}
+		if card := m.dockCard(it); card.DockAnswers || !card.TTYOnly {
+			t.Errorf("%v from the dock: dock_answers %v, tty only %v", k, card.DockAnswers, card.TTYOnly)
+		}
+	}
+}

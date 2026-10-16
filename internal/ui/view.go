@@ -642,14 +642,14 @@ func (m Model) agentsPane(w, h int) string {
 		}
 		twin := m.twinNote(a.Session.SessionID)
 		role := ""
-		if a.Labels.Role != "" {
+		if a.Labels.Role != "" && !m.noRoles {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
 		}
 		last, stale := m.lastKnown(a)
 		if stale {
 			// Dimmed through and through: the host is not live.
 			glyph, name = muted.Render("·"), dim.Render(a.Name+hostChip(a))
-			if a.Labels.Role != "" {
+			if a.Labels.Role != "" && !m.noRoles {
 				role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
 			}
 		}
@@ -811,6 +811,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
 	case it.Answerable() && it.Kind == inbox.MissionUpdate:
 		out = append(out, key("^Y", "apply it")+"  "+key("^N", "leave it"))
+	case it.Answerable() && it.Kind == inbox.MissionCriteria:
+		out = append(out, key("^Y", "change the criteria")+"  "+key("^N", "keep them"))
+	case it.Answerable() && it.Kind == inbox.MissionDone:
+		out = append(out, key("^Y", "mission done")+"  "+key("^N", "not done yet"))
 	case it.Answerable() && it.Kind == inbox.MissionMove:
 		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
@@ -1074,6 +1078,12 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.MissionUpdate {
 			acts = key("^Y", "apply it") + sp + sp + key("^N", "leave it")
+		}
+		if it.Kind == inbox.MissionCriteria {
+			acts = key("^Y", "change the criteria") + sp + sp + key("^N", "keep them")
+		}
+		if it.Kind == inbox.MissionDone {
+			acts = key("^Y", "mission done") + sp + sp + key("^N", "not done yet")
 		}
 		if it.Kind == inbox.MissionMove {
 			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")
@@ -1447,11 +1457,13 @@ func (m Model) hints(w int) string {
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
-		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"^E click", "actions in full"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
+		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"↑ ↓", "scroll"}, {"type", "tell the orchestrator what to change"}, {"Esc", "keep for later"}, {"Tab", "view"}}
+	case m.tab == tabOverview && m.ov.transcript != "":
+		items = [][2]string{{"↑ ↓", "scroll"}, {"Esc", "back to the mission"}, {"drag", "select · click a block: copy"}, {"Tab", "view"}}
 	case m.tab == tabOverview && m.ov.open != "":
-		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"^E click", "actions in full"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
+		items = [][2]string{{"↑ ↓", "owner"}, {"Enter", "transcript"}, {"^Y ^N", "answer"}, {"/mission met c1", ""}, {"/pause /resume /stop /budget", ""}, {"type", "tell the orchestrator"}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
-		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
+		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "open"}, {"^Y ^N", "answer"}, {"type", "tell the orchestrator"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:

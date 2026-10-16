@@ -63,6 +63,10 @@ var godTTYKinds = map[inbox.Kind]bool{
 	// A desktop agent acts on your screen: its install, its mission, each
 	// action it asks for and each step only you do are yours alone.
 	inbox.DesktopInstall: true, inbox.DesktopMission: true, inbox.DesktopAct: true, inbox.YourTurn: true,
+	// A mission's done criteria decide when it is done: changing them, and
+	// saying it is done, are yours. Never Den's by rule: Den answers a
+	// MissionUpdate only because no update can meet or change a criterion.
+	inbox.MissionCriteria: true, inbox.MissionDone: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

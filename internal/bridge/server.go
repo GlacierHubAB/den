@@ -108,6 +108,7 @@ var held = map[string]bool{
 	SendEvent:           true,
 	InboundEvent:        true,
 	MissionEvent:        true,
+	ProposeEvent:        true,
 	UsageEvent:          true,
 	ModeEvent:           true,
 	OrchSendEvent:       true,

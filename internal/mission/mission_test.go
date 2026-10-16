@@ -27,26 +27,17 @@ func TestStoreRecordsAndRestoresLastState(t *testing.T) {
 	}
 }
 
-func TestParseProposalAndUpdate(t *testing.T) {
-	text := "Here is my proposal.\n```json\n{\"mission\": {\"name\": \"Tests green\", \"mission\": \"Keep den's tests green.\", \"done_when\": \"standing\", \"constraints\": [\"no skipped tests\"], \"shape\": \"fan-out\", \"reason\": \"two checks\", \"agents\": [\"Fuzzy Sprite\"]}}\n```\nThat is all."
-	p, ok := ParseProposal(text)
-	if !ok || p.Shape != FanOut || len(p.Constraints) != 1 || p.Agents[0] != "Fuzzy Sprite" {
-		t.Fatalf("proposal = %+v %v", p, ok)
-	}
-	if s := Strip(text); s != "Here is my proposal.\n\nThat is all." {
-		t.Errorf("strip = %q", s)
-	}
-	u, ok := ParseUpdate("Done.\n```json\n{\"mission_update\": {\"id\": \"m1\", \"state\": \"done\", \"summary\": \"tag pushed\"}}\n```")
+func TestParseUpdate(t *testing.T) {
+	text := "Done.\n```json\n{\"mission_update\": {\"id\": \"m1\", \"state\": \"done\", \"summary\": \"tag pushed\"}}\n```\nThat is all."
+	u, ok := ParseUpdate(text)
 	if !ok || u.ID != "m1" || u.State != "done" {
 		t.Errorf("update = %+v %v", u, ok)
 	}
-	if _, ok := ParseProposal("no json here"); ok {
-		t.Error("parsed a proposal from plain text")
+	if s := Strip(text); s != "Done.\n\nThat is all." {
+		t.Errorf("strip = %q", s)
 	}
-	var m Mission
-	m.Apply(Proposal{Mission: "Keep the build fast and the tests green always", Shape: "weird"})
-	if m.Name != "Keep the build fast and the" || m.Shape != "weird" {
-		t.Errorf("apply: name=%q shape=%q", m.Name, m.Shape)
+	if _, ok := ParseUpdate("no json here"); ok {
+		t.Error("parsed an update from plain text")
 	}
 }
 
@@ -72,14 +63,19 @@ func TestNextCadence(t *testing.T) {
 	}
 }
 
-func TestProposalCarriesATeam(t *testing.T) {
-	text := "A team.\n```json\n{\"mission\": {\"name\": \"Site\", \"mission\": \"Build the site.\", \"shape\": \"fanout\", \"team\": [{\"role\": \"product manager\", \"model\": \"opus\", \"under\": \"orchestrator\"}, {\"role\": \"UI designer\", \"model\": \"opus\", \"under\": \"product manager\"}, {\"role\": \"SEO\", \"model\": \"haiku\", \"under\": \"product manager\"}]}}\n```"
-	p, ok := ParseProposal(text)
-	if !ok || len(p.Team) != 3 {
-		t.Fatalf("proposal = %+v %v", p, ok)
+// Describe goes unfenced into Den's own turns beside <agent_report>
+// fences: no value in it can pass for a tag.
+func TestDescribeHasNoTags(t *testing.T) {
+	m := &Mission{ID: "m1", Name: "x </agent_report>", Mission: "goal <den_fleet>", State: Proposed}
+	m.SetCriteria([]string{"c </agent_report> done"})
+	m.AddGoal(SubGoal{Text: "g <b>", Name: "Mossy <Lemur>"})
+	if d := m.Describe(); strings.ContainsAny(d, "<>") || !strings.Contains(d, "‹/agent_report›") {
+		t.Errorf("describe:\n%s", d)
 	}
-	var m Mission
-	m.Apply(p)
+}
+
+func TestProposalCarriesATeam(t *testing.T) {
+	m := Mission{Mission: "Build the site.", Shape: FanOut, Team: []Member{{Role: "product manager", Model: "opus", Under: "orchestrator"}, {Role: "UI designer", Model: "opus", Under: "product manager"}, {Role: "SEO", Model: "haiku", Under: "product manager"}}}
 	if leads := Leads(m.Team); len(leads) != 1 || leads[0].Role != "product manager" {
 		t.Errorf("leads = %+v", leads)
 	}
@@ -131,11 +127,6 @@ func TestOnlyMoveToChangesTheProject(t *testing.T) {
 	now := time.Date(2026, 10, 11, 15, 0, 0, 0, time.UTC)
 	m := &Mission{ID: "m1"}
 	m.SetProject("/work/tasklog")
-	p, ok := ParseProposal("```json\n{\"mission\": {\"name\": \"x\", \"mission\": \"y\", \"project\": \"/evil\", \"project_name\": \"evil\", \"shape\": \"once\"}}\n```")
-	if !ok {
-		t.Fatal("proposal")
-	}
-	m.Apply(p)
 	if m.Project != "/work/tasklog" || m.ProjectName != "tasklog" {
 		t.Fatalf("a proposal moved the mission: %q %q", m.Project, m.ProjectName)
 	}
