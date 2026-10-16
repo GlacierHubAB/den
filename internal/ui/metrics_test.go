@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/metrics"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/orch"
 )
 
 // A live mission's figures are recorded once a local day and an ended
@@ -77,5 +79,16 @@ func TestMissionMetrics(t *testing.T) {
 	}
 	if len(m.takeMetrics()) != 0 {
 		t.Error("figures kept after the turn")
+	}
+	// Figures a failed turn took go back ahead of newer ones, within the
+	// cap.
+	m.metrics.unsent = []orch.MetricsInfo{{Mission: "new"}}
+	var failed []orch.MetricsInfo
+	for i := range maxUnsentMetrics {
+		failed = append(failed, orch.MetricsInfo{Mission: fmt.Sprint(i)})
+	}
+	m.requeueMetrics(failed)
+	if u := m.metrics.unsent; len(u) != maxUnsentMetrics || u[0].Mission != "1" || u[len(u)-1].Mission != "new" {
+		t.Errorf("requeued %d: first %q last %q", len(u), u[0].Mission, u[len(u)-1].Mission)
 	}
 }

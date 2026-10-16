@@ -95,6 +95,15 @@ func (m *Model) takeMetrics() []orch.MetricsInfo {
 	return out
 }
 
+// requeueMetrics puts back figures a turn failed to carry, ahead of newer
+// ones, within the cap.
+func (m *Model) requeueMetrics(figures []orch.MetricsInfo) {
+	m.metrics.unsent = append(append([]orch.MetricsInfo(nil), figures...), m.metrics.unsent...)
+	if n := len(m.metrics.unsent) - maxUnsentMetrics; n > 0 {
+		m.metrics.unsent = m.metrics.unsent[n:]
+	}
+}
+
 // missionRecord is a mission's figures now.
 func (m Model) missionRecord(ms *mission.Mission, kind string, now time.Time) metrics.Record {
 	s := m.missionSpent(ms)
