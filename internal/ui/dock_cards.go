@@ -85,7 +85,7 @@ func dockMayAnswer(it *inbox.Item) bool {
 	// they are the human's in Den.
 	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message,
 		inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn,
-		inbox.MissionCriteria, inbox.MissionDone, inbox.MirrorAsk:
+		inbox.MissionCriteria, inbox.MissionDone, inbox.MirrorAsk, inbox.ProcessTuned, inbox.PromptProposal:
 		return false
 	}
 	return true

@@ -184,7 +184,7 @@ func mcpTools(all []mcp.Tool, orchestrator, missionsOnly, control bool) []mcp.To
 	if missionsOnly {
 		all = nil
 	}
-	all = append(all, missionTool(), proposeTool())
+	all = append(all, missionTool(), proposeTool(), tuneTool())
 	if control {
 		all = append(all, sendMessageTool())
 	}
@@ -340,6 +340,41 @@ func proposeTool() mcp.Tool {
 				return "", errorString("give the sub-goals, each with its owner")
 			}
 			return askDen(bridge.ProposeEvent, in, "nothing was proposed")
+		},
+	}
+}
+
+// tuneTool is tune_process: the orchestrator's bounded say over the
+// project's process numbers and template defaults. Den checks every bound
+// and shows the human each change, which they can undo.
+func tuneTool() mcp.Tool {
+	return mcp.Tool{
+		Name: strings.TrimPrefix(orch.TuneTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Tune how one project runs, from what <den_metrics> shows, within bounds Den enforces. Keys: team.max_agents (1-6), team.branch_hours (4-72), team.behind_max (10-100), team.idle_minutes (15-240); " +
+			"template.<name>.add_criterion and .add_constraint (one line, only added, never removed or reworded), template.<name>.model.<role> (haiku, sonnet or opus), template.<name>.cadence (at least 30m apart), template.<name>.add_role (\"<role> on <model>\", optionally \" under <lead role>\"; never past max_agents); " +
+			"or prompt.proposal alone: a change to your own instructions, as text, which Den only shows the human (it applies nothing). A value the human set in Den's config always wins. At most 5 changes a day per project, one per key. Each change applies at once and Den shows it to the human, who can undo it. The answer says what changed.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"dir": map[string]any{"type": "string", "description": "The project's directory."},
+				"changes": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"key":   map[string]any{"type": "string"},
+						"value": map[string]any{"type": "string"},
+					},
+					"required": []string{"key", "value"},
+				}},
+				"reason": map[string]any{"type": "string", "description": "One line on why, from the metrics, shown to the human."},
+			},
+			"required": []string{"dir", "changes", "reason"},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.TuneInput
+			if json.Unmarshal(args, &in) != nil || strings.TrimSpace(in.Dir) == "" || len(in.Changes) == 0 {
+				return "", errorString("give dir, changes (key and value each) and reason")
+			}
+			return askDen(bridge.TuneEvent, in, "nothing was changed")
 		},
 	}
 }

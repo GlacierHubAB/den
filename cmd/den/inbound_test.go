@@ -176,20 +176,20 @@ func TestUpdateMissionIsTheOrchestratorsAlone(t *testing.T) {
 	if got := names(mcpTools(all, false, true, false)); got != "spawn_agent,open_terminal" {
 		t.Errorf("an agent cannot ask for missions only: %s", got)
 	}
-	if got := names(mcpTools(all, true, false, false)); got != "spawn_agent,open_terminal,update_mission,propose_mission" {
+	if got := names(mcpTools(all, true, false, false)); got != "spawn_agent,open_terminal,update_mission,propose_mission,tune_process" {
 		t.Errorf("the orchestrator's server: %s", got)
 	}
-	if got := names(mcpTools(all, true, true, false)); got != "update_mission,propose_mission" {
+	if got := names(mcpTools(all, true, true, false)); got != "update_mission,propose_mission,tune_process" {
 		t.Errorf("missions only: %s", got)
 	}
 	// send_message only for the orchestrator with control, never an agent.
 	if got := names(mcpTools(all, false, false, true)); got != "spawn_agent,open_terminal" {
 		t.Errorf("an agent cannot ask for send_message: %s", got)
 	}
-	if got := names(mcpTools(all, true, true, true)); got != "update_mission,propose_mission,send_message" {
+	if got := names(mcpTools(all, true, true, true)); got != "update_mission,propose_mission,tune_process,send_message" {
 		t.Errorf("control, missions only: %s", got)
 	}
-	if got := names(mcpTools(all, true, false, true)); got != "spawn_agent,open_terminal,update_mission,propose_mission,send_message" {
+	if got := names(mcpTools(all, true, false, true)); got != "spawn_agent,open_terminal,update_mission,propose_mission,tune_process,send_message" {
 		t.Errorf("control: %s", got)
 	}
 }

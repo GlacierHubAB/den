@@ -162,6 +162,7 @@ type Model struct {
 	team            teamState                  // the small-team process: overlapping branches
 	mirror          mirrorState                // the conversation mirror (conversation.go)
 	metrics         metricsState               // figures waiting for the next orchestrator turn
+	tune            tuneState                  // the orchestrator's tuning, by project
 	sends           map[string]askedSend       // den send questions in the inbox, by item id
 	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
@@ -660,6 +661,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case teamCapMsg:
 		m.applyTeamCap(msg, time.Now())
 		return m, nil
+	case tuneMsg:
+		m.applyTune(msg, time.Now())
+		return m, nil
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
@@ -781,7 +785,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == "Stop" {
 		deskCmd = m.deskAgentStopped(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.ProposeEvent || r.Event == bridge.OrchSendEvent {
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.ProposeEvent || r.Event == bridge.OrchSendEvent || r.Event == bridge.TuneEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -796,6 +800,8 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleOrchSend(r)
 		case bridge.ProposeEvent:
 			return m.handlePropose(r)
+		case bridge.TuneEvent:
+			return m.handleTune(r)
 		}
 		return m.handleMissionUpdate(r)
 	}
@@ -1555,6 +1561,12 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.MissionUpdate {
 		return m.decideMissionUpdate(it, verb)
+	}
+	if it.Kind == inbox.ProcessTuned {
+		return m.decideTune(it, verb)
+	}
+	if it.Kind == inbox.PromptProposal {
+		return m.decideProposal(it, verb)
 	}
 	if it.Kind == inbox.MissionCriteria {
 		return m.decideMissionCriteria(it, verb)

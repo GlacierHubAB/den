@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 	"github.com/GlacierHubAB/den/internal/templates"
 )
@@ -89,6 +92,22 @@ func (m Model) templateCommand(args []string, text string) (tea.Model, tea.Cmd) 
 func (m *Model) proposeFromTemplate(t templates.Template, target string) tea.Cmd {
 	p, _ := m.curProject()
 	now := time.Now()
+	// The project's tuning: what the orchestrator added, marked as its, and
+	// added roles only within the team cap in force now.
+	var tuned []string
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	repo, _, err := teamRepo(ctx, p.Root)
+	cancel()
+	if err == nil && repo != "" {
+		f := m.tuneFile(repo)
+		max, _, _, _ := m.teamFor(repo)
+		var left []string
+		t, left = f.Seed(t, max)
+		tuned = f.Criteria(t.Name)
+		for _, role := range left {
+			m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: "Den left the tuned role " + strconv.Quote(sanitize.Label(role, 60)) + " out of the proposal: it would pass the team cap of " + strconv.Itoa(max) + "."}))
+		}
+	}
 	words := strings.TrimSpace("template " + t.Name + " " + target)
 	ms := &mission.Mission{ID: mission.NewID(now), Project: p.Root, ProjectName: mission.ProjectLabel(p.Root), Text: words, State: mission.Proposed, Template: t.Name, Created: now, Updated: now,
 		Name: templateMissionName(t.Name, target), Mission: t.Fill(target), DoneWhen: t.DoneWhen, Constraints: t.Constraints,
@@ -100,7 +119,9 @@ func (m *Model) proposeFromTemplate(t templates.Template, target string) tea.Cmd
 	// The template's done-when is the first criterion and each role's part
 	// a sub-goal; the orchestrator adapts both to the target.
 	if dw := strings.ToLower(strings.TrimSpace(t.DoneWhen)); dw != "" && dw != "standing" && !strings.HasPrefix(dw, "never") {
-		ms.SetCriteria([]string{t.DoneWhen})
+		ms.SetCriteria(append([]string{t.DoneWhen}, tuned...))
+	} else if len(tuned) > 0 {
+		ms.SetCriteria(tuned)
 	}
 	for _, r := range t.Team {
 		ms.AddGoal(mission.SubGoal{Text: r.Role + "'s part", Role: r.Role, State: mission.GoalTodo})

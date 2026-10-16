@@ -834,6 +834,30 @@ long the merged branches lived, and the overlaps and nudges Den sent. Den
 can't see CI, so CI failures are left out. The orchestrator gets them with the
 next turn it is sent anyway; Den never starts a turn for them.
 
+### The orchestrator's tuning
+
+The orchestrator may tune a project with its `tune_process` tool, within bounds
+Den enforces:
+
+- `[team]` numbers: `max_agents` 1 to 6, `branch_hours` 4 to 72, `behind_max`
+  10 to 100, `idle_minutes` 15 to 240.
+- A template's defaults: it may add a done criterion or a constraint (never
+  remove or reword one), pick a role's model, set a cadence at least 30 minutes
+  apart, or add a role while the team stays within `max_agents`.
+
+A value you set in `config.toml` always wins, and Den never writes your config
+or your templates. The tuning lives in
+`~/.local/state/den/projects/<repo-id>/tuning.json` (yours alone to read). Den
+reads it once per run, and at that point ignores anything out of bounds, or the
+whole file if it doesn't parse. At most 5 changes a day per project, one per
+key. Each change applies at once and comes to you as a card naming the old and
+new value (and for a model, whether it costs more). `Ctrl+Y` keeps it, `Ctrl+N`
+undoes it exactly; only Den's own window answers, never the dock. A criterion
+or constraint tuning added shows "(added by the orchestrator, tuning)" on the
+proposals it seeds. The orchestrator may also send a proposed change to its own
+instructions. Den only shows it to you, whole, on a card; nothing applies it,
+and it reaches no prompt.
+
 ### When you are asked
 
 Once you start a mission, the orchestrator keeps it moving without asking you.
