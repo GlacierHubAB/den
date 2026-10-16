@@ -24,12 +24,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
@@ -147,7 +149,25 @@ func main() {
 	}
 }
 
+// alreadyRunning is why Den does not start when another Den of the user
+// holds its socket at path, naming its pid and terminal; "" when none
+// does. A second Den would have no hooks, no API and no console.
+func alreadyRunning(path string) string {
+	pid, ok := bridge.Running(path)
+	if !ok {
+		return ""
+	}
+	where := ""
+	if tty, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/fd/0"); err == nil && strings.HasPrefix(tty, "/dev/") {
+		where = ", on " + sanitize.Label(tty, 40)
+	}
+	return "den: Den is already running (pid " + strconv.Itoa(pid) + where + "): switch to it, or quit it first"
+}
+
 func runTUI() {
+	if why := alreadyRunning(bridge.SocketPath()); why != "" {
+		fail("%s", why)
+	}
 	ui.Version = version
 	m := ui.New(config.Load())
 	defer m.Close()
