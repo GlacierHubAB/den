@@ -182,7 +182,10 @@ func TestDesktopTaskCardAndStart(t *testing.T) {
 	}
 	// The whole task shows on an open card, wrapped, even when narrow.
 	card := strings.Join(m.inboxBlock(it, true, 50), "\n")
-	if !strings.Contains(strings.Join(strings.Fields(ansi.Strip(card)), " "), "three biggest changes for me in a new note") {
+	// The card's margin glyph starts every wrapped line: drop it to read
+	// the text across the breaks.
+	words := strings.Fields(strings.ReplaceAll(ansi.Strip(card), "▌", " "))
+	if !strings.Contains(strings.Join(words, " "), "three biggest changes for me in a new note") {
 		t.Errorf("the open card cut the task:\n%s", ansi.Strip(card))
 	}
 
