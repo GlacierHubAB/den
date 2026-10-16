@@ -40,6 +40,16 @@ func installHypruseCmd(args []string) {
 		return p
 	}
 	cwd, _ := os.Getwd()
+	if *from == "" {
+		// No --from: the folder this is run in, when it is a clone of the
+		// pinned hypruse commit (checked file by file, as Den checks it).
+		if cwd != "" && desktop.VerifyClone(desktop.Pinned, cwd) == nil {
+			*from = cwd
+			fmt.Printf("Using the hypruse clone in %s.\n", cwd)
+		} else {
+			fail("den install-hypruse: name the hypruse clone with --from, or run this inside one. To get it:\n  git clone %s hypruse && cd hypruse && git checkout %s\n  den install-hypruse --from .", desktop.Pinned.URL, desktop.Pinned.Commit)
+		}
+	}
 	payload, _ := json.Marshal(bridge.DesktopInstallInput{Clone: abs(*from), Wheels: abs(*wheels), AskedBy: fmt.Sprintf("den install-hypruse, pid %d in %s", os.Getpid(), cwd)})
 	conn, err := bridge.Connect(bridge.SocketPath())
 	if errors.Is(err, bridge.ErrNoDen) {

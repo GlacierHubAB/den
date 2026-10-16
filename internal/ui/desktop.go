@@ -81,6 +81,10 @@ type deskState struct {
 	pending  map[string]deskPending // card item id -> its call
 	offers   map[string]deskOffer   // mission card item id -> its request
 	chip     string                 // the header chip while a mission is live
+	// installing is the install question's item id while its approved
+	// install runs: the question stays open until the install's own result
+	// settles it, which is what answers `den install-hypruse`.
+	installing string
 }
 
 // Seams for tests.

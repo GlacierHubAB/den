@@ -819,6 +819,9 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "merge it")+"  "+key("^N", "not now"))
 	case it.Answerable() && it.Kind == inbox.Cleanup:
 		out = append(out, key("^Y", "remove the worktree")+"  "+key("^N", "keep it"))
+	case it.Kind == inbox.DesktopInstall && m.desk.installing == it.ID:
+		// The approved install runs: no keys, so nobody presses ^Y again.
+		out = append(out, m.st.attn.Render(installingNote))
 	case it.Answerable() && (it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall):
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
 	case it.Answerable() && it.Kind == inbox.DesktopAct:
@@ -1047,6 +1050,8 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	switch {
 	case it.Kind == inbox.Sent:
 		text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
+	case it.Kind == inbox.DesktopInstall && m.desk.installing == it.ID:
+		text = append(text, attn.Render(installingNote))
 	case it.Answerable() && !selected:
 		why := "waiting"
 		if it.At.After(m.inboxAt) {

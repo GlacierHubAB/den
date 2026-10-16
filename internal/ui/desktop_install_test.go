@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -81,6 +83,70 @@ func TestDesktopInstallWaitsForYes(t *testing.T) {
 	d, done := req.Decided()
 	if !done || d.Behavior != "allow" || !strings.Contains(d.Message, "hypruse 0.12.1") {
 		t.Fatalf("asker got %+v (done %v)", d, done)
+	}
+}
+
+// The install takes minutes and its question stays open until it ends: a
+// second ^Y meanwhile (the human sees nothing happen yet) must not settle
+// it. The command that asked gets exactly what Den did: the install's own
+// result. Driven through the real ^Y path, both presses.
+func TestDesktopInstallSecondYesWhileInstalling(t *testing.T) {
+	ran := fakeDesktopInstall(t, nil, nil)
+	m := closeModel(t)
+	req := desktopInstallRequest()
+	runBatch(m.handleRequest(req))
+	it := desktopInstallItem(m)
+	m.tab = tabInbox
+	m.selectItem(it)
+	mm, cmd := m.answer("allow")
+	m = mm.(Model)
+	// Again, before the install has finished.
+	mm, _ = m.answer("allow")
+	m = mm.(Model)
+	if _, done := req.Decided(); done {
+		d, _ := req.Decided()
+		t.Fatalf("a second ^Y answered the command before the install ended: %+v", d)
+	}
+	if !strings.Contains(m.flash, "still installing") {
+		t.Errorf("flash after the second ^Y: %q", m.flash)
+	}
+	// While it runs, the card says so and offers no keys to press again.
+	for _, lines := range [][]string{m.inboxBlock(it, true, 120), m.requestLines(it, m.agentOrStub(it.SessionID), 120)} {
+		card := ansi.Strip(strings.Join(lines, "\n"))
+		if !strings.Contains(card, "installing hypruse") || strings.Contains(card, "install it") {
+			t.Errorf("the card during the install:\n%s", card)
+		}
+	}
+	for _, msg := range runBatch(cmd) {
+		if d, ok := msg.(desktopInstallDoneMsg); ok {
+			m.finishDesktopInstall(d)
+		}
+	}
+	d, done := req.Decided()
+	if !done || d.Behavior != "allow" || !strings.Contains(d.Message, "installed hypruse 0.12.1") || len(*ran) != 1 {
+		t.Fatalf("asker got %+v (done %v), %d installs", d, done, len(*ran))
+	}
+	if it.Resolved != d.Message {
+		t.Errorf("the inbox says %q, the command was told %q", it.Resolved, d.Message)
+	}
+	// A failed install reaches the command as a failure, with its reason.
+	ran2 := fakeDesktopInstall(t, nil, errors.New("pip: hash mismatch"))
+	m2 := closeModel(t)
+	req2 := desktopInstallRequest()
+	runBatch(m2.handleRequest(req2))
+	m2.tab = tabInbox
+	m2.selectItem(desktopInstallItem(m2))
+	mm, cmd = m2.answer("allow")
+	m2 = mm.(Model)
+	mm, _ = m2.answer("allow")
+	m2 = mm.(Model)
+	for _, msg := range runBatch(cmd) {
+		if d, ok := msg.(desktopInstallDoneMsg); ok {
+			m2.finishDesktopInstall(d)
+		}
+	}
+	if d, _ := req2.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "hash mismatch") || len(*ran2) != 1 {
+		t.Errorf("a failed install reached the command as %+v", d)
 	}
 }
 
