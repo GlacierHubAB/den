@@ -893,6 +893,47 @@ only the desktop tools: no shell, files, web, messages, app launching,
 keybinds or clipboard. Its terminal shows what it says and does; `Ctrl+C`
 there stops it.
 
+**A task: the whole desktop.** The orchestrator can instead call
+`desktop_mission` with one task and no apps. The card reads "Control your
+mouse and keyboard to: …" with the whole task (a task too long to show whole
+is refused, and so is one holding hidden characters). On `Ctrl+Y` the agent
+may use your whole desktop for that task: the pointer and keyboard in any
+window, your Hyprland binds, and launching apps, with no app config. No step
+asks you except the agent's own `request_approval` and `your_turn`.
+
+Read this before you say yes: **while a task runs, the agent can do anything
+you can at the keyboard.** That includes running commands as you in a
+terminal, typing into other agents' terminals (their permission prompts
+too), the clipboard, everything on the screen, and every app you are signed
+in to. Den refuses only a short fixed list: anything on Den's own window or
+the agent's view; exiting or reloading Hyprland, or running `hyprctl` or
+`den` through a bind or a launch; closing or killing Den's window; binds
+that send keys to another window by name; and `ctrl+alt+Delete`,
+`Backspace` and `F1`–`F12`. Your levers are these:
+
+- **The panic stop.** `/desktop stop` or `den desktop stop` (bind it to a
+  key, below). The agent also stops when Den quits: its terminal watches Den,
+  and `den desktop stop` still works from Den's records if that fails.
+- **The per-task limit.** Den stops the task after `task_minutes` of wall
+  time or `task_actions` desktop calls, whichever comes first. Den counts
+  them itself, and only your config sets them:
+
+  ```toml
+  [desktop]
+  task_minutes = 20   # the default
+  task_actions = 300  # the default; every forwarded call counts, each typed piece too
+  ```
+
+- **One task per card.** A task never widens. Another task is another
+  card, answered only in Den's own window.
+
+Den finds its own window by briefly setting its terminal title to a one-off
+token, so it starts only when it can see that title. Run Den in its own
+terminal window, with its tab in front, not inside tmux or screen; otherwise
+the start is refused and says so. In a window with several tabs, the whole
+window is off limits to the agent, other tabs too. `/desktop` shows how many
+actions and minutes a running task has left.
+
 **While it runs.** Den reads each call before hypruse gets it. Reading its
 own windows, and clicking and typing in them, goes ahead, unless a
 notification or other overlay covers the point, or the keys are one of your
