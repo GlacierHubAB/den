@@ -28,7 +28,8 @@ func provedConsole(t *testing.T) (*harness, *client) {
 
 // skipSnapshot reads what Den says first on console.events, where each
 // stateful kind stands (the console, each waiting card, its powers, God
-// mode, then the mode and the view while Den has published them), checks
+// mode, then the mode and the view while Den has published them, and the
+// desktop), checks
 // its order, and returns the first, console event and the cards.
 func skipSnapshot(t *testing.T, s *Server, c *client) (ConsoleEvent, []CardEvent) {
 	t.Helper()
@@ -45,6 +46,7 @@ func skipSnapshot(t *testing.T, s *Server, c *client) (ConsoleEvent, []CardEvent
 	if _, ok := s.viewNow(); ok {
 		want = append(want, EventView)
 	}
+	want = append(want, EventDesktop)
 	var first ConsoleEvent
 	var cards []CardEvent
 	for i, kind := range want {

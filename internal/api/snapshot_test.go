@@ -8,8 +8,8 @@ import (
 
 // On console.events, Den first says where every stateful kind stands, in
 // a fixed order, before any change: the console, each waiting card as
-// new, its powers, God mode, the permission mode, the view; only then what
-// changes. No client has to infer a state from the order of changes.
+// new, its powers, God mode, the permission mode, the view, the desktop;
+// only then what changes. No client has to infer a state from the order of changes.
 func TestConsoleEventsSnapshotFirst(t *testing.T) {
 	for _, locked := range []bool{false, true} {
 		h, _ := consoleHarness(t)
@@ -33,11 +33,12 @@ func TestConsoleEventsSnapshotFirst(t *testing.T) {
 		var mode ModeInfo
 		var view ViewChange
 		var cd CardEvent
+		var desk Desktop
 		for i, want := range []struct {
 			event string
 			into  any
 		}{
-			{EventConsole, &con}, {EventCard, &cd}, {EventConsole, &pw}, {EventGod, &god}, {EventMode, &mode}, {EventView, &view},
+			{EventConsole, &con}, {EventCard, &cd}, {EventConsole, &pw}, {EventGod, &god}, {EventMode, &mode}, {EventView, &view}, {EventDesktop, &desk},
 		} {
 			l := c.next()
 			if l.Event != want.event || json.Unmarshal(l.Data, want.into) != nil {
@@ -47,8 +48,8 @@ func TestConsoleEventsSnapshotFirst(t *testing.T) {
 		if con.Kind != "connected" || pw.Kind != "powers" || pw.On == nil || *pw.On == locked {
 			t.Errorf("locked %v: console %+v, powers %+v", locked, con, pw)
 		}
-		if !god.On || god.Since != "2026-10-16T09:00:00Z" || mode.Global != "plan" || view != (ViewChange{View: ViewAgent, Shown: 3, Total: 4}) || cd.ID != "w-1" || cd.Change != "new" {
-			t.Errorf("locked %v: god %+v, mode %+v, view %+v, card %+v", locked, god, mode, view, cd)
+		if !god.On || god.Since != "2026-10-16T09:00:00Z" || mode.Global != "plan" || view != (ViewChange{View: ViewAgent, Shown: 3, Total: 4}) || cd.ID != "w-1" || cd.Change != "new" || desk != (Desktop{State: DesktopIdle}) {
+			t.Errorf("locked %v: god %+v, mode %+v, view %+v, card %+v, desktop %+v", locked, god, mode, view, cd, desk)
 		}
 		// Then changes only.
 		h.s.SetGod(false, time.Time{})
