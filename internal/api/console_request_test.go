@@ -171,6 +171,45 @@ func TestConsoleRestoredGetsItsPowersOnACleanRead(t *testing.T) {
 	}
 }
 
+// The powers came back before the dock reconnected, with no one to hear
+// them: its first subscribed connection hears "restored", then where its
+// powers stand, so a dock never reads "restored" as without them.
+func TestRestoredConsoleHearsItsPowers(t *testing.T) {
+	for _, always := range []bool{true, false} {
+		store := filepath.Join(t.TempDir(), "consoles.json")
+		_, priv, _ := ed25519.GenerateKey(rand.Reader)
+		harness := storeHarness
+		if always {
+			harness = alwaysStore
+		}
+		h := harness(t, store, priv)
+		fakeUnit(t, testVerifier(), nil)
+		d := newDock(t, h)
+		p := requestPaired(t, h, d, "")
+		cleanExit(h.s)
+		h2 := harness(t, store, priv)
+		if always {
+			noteWith(t, h2.s, "read clean now")
+		} else {
+			ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil })
+		}
+		d.h = h2
+		c := h2.dial()
+		c.hello()
+		if l, _, _, _ := d.auth(c, p); !l.OK {
+			t.Fatalf("auth %+v", l.Error)
+		}
+		c.call("console.events", nil)
+		var ev ConsoleEvent
+		if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "restored" {
+			t.Fatalf("first event %+v", ev)
+		}
+		if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "powers" || ev.On == nil || *ev.On != always {
+			t.Errorf("always %v: then %+v", always, ev)
+		}
+	}
+}
+
 // A restored console that does not read clean now asks on Den's powers
 // card, and has none meanwhile.
 func TestConsoleRestoredNotCleanAsks(t *testing.T) {
