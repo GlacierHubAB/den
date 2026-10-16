@@ -16,6 +16,35 @@ type Layer struct {
 	X, Y      int
 	W, H      int
 	Namespace string
+	PID       int // the client's process, as Hyprland has it from the kernel
+}
+
+// OverlayLevel is the overlay layer, above the top layer.
+const OverlayLevel = 3
+
+// PointerNamespace is the layer namespace of the console's pointer
+// outline (Drey's, one full-monitor surface per monitor with an empty
+// input region): the one surface ExemptConsole lets through.
+const PointerNamespace = "drey-agent-pointer"
+
+// ExemptConsole drops from the snapshot the console's pointer outline: a
+// surface on the overlay level, named PointerNamespace, whose process is
+// one in console (the processes of the console's proved den-api.sock
+// connections, still the processes that connected). Its input region is
+// empty, so a click goes to what is beneath it. Any other surface of the
+// console's, or a pointer outline from another process, still refuses.
+func (s *Snapshot) ExemptConsole(console map[int]bool) {
+	if len(console) == 0 {
+		return
+	}
+	kept := s.Layers[:0:0]
+	for _, l := range s.Layers {
+		if l.Level == OverlayLevel && l.Namespace == PointerNamespace && l.PID > 1 && console[l.PID] {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	s.Layers = kept
 }
 
 // Covers reports whether a top or overlay layer surface holds the point.
@@ -61,6 +90,7 @@ func readLayers(raw []byte) ([]Layer, error) {
 			W         int    `json:"w"`
 			H         int    `json:"h"`
 			Namespace string `json:"namespace"`
+			PID       int    `json:"pid"`
 		} `json:"levels"`
 	}
 	if err := json.Unmarshal(raw, &mons); err != nil {
@@ -74,7 +104,7 @@ func readLayers(raw []byte) ([]Layer, error) {
 				return nil, fmt.Errorf("layer level %q", lvl)
 			}
 			for _, s := range surfaces {
-				out = append(out, Layer{Monitor: mon, Level: level, X: s.X, Y: s.Y, W: s.W, H: s.H, Namespace: s.Namespace})
+				out = append(out, Layer{Monitor: mon, Level: level, X: s.X, Y: s.Y, W: s.W, H: s.H, Namespace: s.Namespace, PID: s.PID})
 			}
 		}
 	}

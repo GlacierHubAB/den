@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,6 +120,19 @@ var (
 	deskExeOf   = procs.Exe
 	// deskCardWait is how long a desktop card waits before it denies.
 	deskCardWait = 5 * time.Minute
+	// deskConsole is the console's proved processes, pid to start, from
+	// den-api.sock; deskSetDesktop tells the console the running mission.
+	deskConsole = func(m *Model) map[int]uint64 {
+		if m.api.srv == nil {
+			return nil
+		}
+		return m.api.srv.ConsoleProcs()
+	}
+	deskSetDesktop = func(m *Model, mission string) {
+		if m.api.srv != nil {
+			m.api.srv.SetDesktop(mission)
+		}
+	}
 )
 
 // deskSnapMsg is the desktop as read for one call.
@@ -149,6 +163,44 @@ func (m *Model) addDeskMission(dm *deskMission) {
 		dm.tokens = map[string]deskToken{}
 	}
 	m.desk.missions[dm.ID] = dm
+	m.publishDesktop()
+}
+
+// liveDeskMission is the mission that has not ended, nil for none.
+func (m *Model) liveDeskMission() *deskMission {
+	for _, dm := range m.desk.missions {
+		if dm.Ended == "" {
+			return dm
+		}
+	}
+	return nil
+}
+
+// publishDesktop tells den-api.sock's console whether a desktop mission
+// runs, for its overlay (api.Server.SetDesktop).
+func (m *Model) publishDesktop() {
+	id := ""
+	if dm := m.liveDeskMission(); dm != nil {
+		id = dm.ID
+	}
+	deskSetDesktop(m, id)
+}
+
+// consoleProcs are the console's proved processes that are still the ones
+// that connected (pid and start), for the gate's pointer-outline
+// exemption (desktop.Snapshot.ExemptConsole).
+func (m *Model) consoleProcs() map[int]bool {
+	var out map[int]bool
+	for pid, start := range deskConsole(m) {
+		if start == 0 || deskStart(pid) != strconv.FormatUint(start, 10) {
+			continue
+		}
+		if out == nil {
+			out = map[int]bool{}
+		}
+		out[pid] = true
+	}
+	return out
 }
 
 // deskGuard says why Den will not answer for a mission now, "" when it
@@ -282,6 +334,10 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 		deny(why + "; the task has ended")
 		return m.finishDeskMission(dm, why)
 	}
+	// The console's pointer outline lies over the whole monitor and takes
+	// no input: it never blocks a click, and nothing else of the console's
+	// is let through.
+	msg.snap.ExemptConsole(m.consoleProcs())
 	v := desktop.Decide(in.Tool, in.Args, dm.Mission, msg.snap)
 	// spend counts a call Den forwards to hypruse against a task's limits.
 	spend := func() (bool, tea.Cmd) {
@@ -574,6 +630,11 @@ func (m *Model) endDeskMission(dm *deskMission, why string) {
 	dm.Ended = why
 	dm.endedAt = time.Now()
 	deskNoFocus("") // never outlives a mission
+	// Nor does the overlay: its pointer goes, and the console hears idle.
+	if m.liveDeskMission() == nil {
+		os.Remove(desktop.PointerPath())
+	}
+	m.publishDesktop()
 	m.forgetGuard(dm.SessionID)
 	for id, p := range m.desk.pending {
 		if p.mission != dm.ID {

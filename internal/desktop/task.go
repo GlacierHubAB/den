@@ -111,12 +111,20 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 
 // onScreen reports whether a point lies on a monitor.
 func onScreen(x, y float64, s Snapshot) bool {
+	_, ok := monitorAt(x, y, s)
+	return ok
+}
+
+// monitorAt is the monitor holding the point, as a glide's bounds: a
+// task's pointer may go anywhere on a monitor, and a glide kept to the
+// target's monitor never leaves the screen.
+func monitorAt(x, y float64, s Snapshot) (*Rect, bool) {
 	for _, mon := range s.Monitors {
 		if mon.Contains(x, y) {
-			return true
+			return &Rect{X: mon.X, Y: mon.Y, W: mon.W, H: mon.H}, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 // protectedAt says why a point is off limits: one of Den's windows is
@@ -143,10 +151,11 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 	}
 	switch act := str(args, "action"); act {
 	case "move":
-		if !onScreen(x, y, s) {
+		bounds, ok := monitorAt(x, y, s)
+		if !ok {
 			return deny("pointer move: the point is on no monitor")
 		}
-		return Verdict{Kind: Allow, Args: args}
+		return Verdict{Kind: Allow, Args: args, Bounds: bounds}
 	case "click", "scroll", "drag":
 		if why := protectedAt(x, y, m, s); why != "" {
 			return deny("pointer %s: %s", act, why)
@@ -161,7 +170,9 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 				return deny("pointer drag: the end %s", why)
 			}
 		}
-		return Verdict{Kind: Allow, Args: args}
+		// protectedAt has checked that the point is on a monitor.
+		bounds, _ := monitorAt(x, y, s)
+		return Verdict{Kind: Allow, Args: args, Bounds: bounds}
 	}
 	return deny("pointer: unknown action")
 }
