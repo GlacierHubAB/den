@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Exported at Drey commit `6fd0e85fd6dce9759b6fdb8eb4f2a2a631d7dba2`, package SHA-256 `c7eaf46d54b4131da35276ca9e8101ae9632c5768a670a384ec647210729a2b0`.
+Exported at Drey commit `aef816a6f8e8c9c5f2ee27151cb4e703e11416f4`, package SHA-256 `87482e68ea37b1dfc80a71da37af4008247e766a7c32d53524368cefb5ba7a4a`.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -79,6 +79,46 @@ What only the server's own test can do is passed in:
   it only for a test server on a test desktop. The reply does not name the
   window kept; the server's own test pins that it is its own. Left false,
   it is skipped.
+- `Request` says the server pairs a console by `console.request` for this
+  test process (its unit check stood in for, as Den's harness does):
+  `console.request` sends a fresh key and a pages hash, `Confirm` answers
+  the code-less card, and the reply `{pairing, den_public_key, console:
+  true, powers}` must name hello's `console_public_key`; the pairing then
+  proves. `console.reconnect` rejoins that pairing with the same pages
+  hash (a server records the unit only for a request). Left false,
+  `console.request` is skipped and `console.reconnect` uses the console
+  paired by code.
+- `Reconnect` says the server answers `console.reconnect` at once (a
+  silent reconnect) for this test process. `console.reconnect` then sends
+  it before `hello` from a fresh key: a missing or malformed `nonce` must
+  be `bad_request`, and `den_sig` must verify under hello's
+  `console_public_key` (the key pinned at pairing) and fail for another
+  nonce; the new pairing must then prove with `console.auth`. Den checks
+  the dock's systemd unit first, which a test process is not: a refusal
+  `not drey-host.service` or `pair again` skips the rest. Left false, only
+  the subtest's known answer for its own verify (DREY-API.md's) runs.
+- The `unpaired cause …` subtests pair a fresh console each and watch it
+  on one proved connection subscribed to `console.events`: the `unpaired`
+  event must carry exactly the cause, with a `reason` of at most 40
+  characters. `self` (`console.unpair` from the console's own connection),
+  `replaced` (a second console paired), `proofs` (three wrong proofs),
+  `intruders` (`console thief`'s process run three times; needs `ThiefTest`)
+  and `other` (`console.unpair {all: true}` from a connection that is not
+  the console's, after `console.unpair all`'s 10 s, which also checks
+  `other`) run over the wire. `guard` and `record` come from inside the
+  server and are not in the suite.
+- `Unpair` has the server unpair its own console (Den's `/api unpair`, or
+  `den unpair` in a terminal): `unpaired cause den` wants cause `den`.
+  Left nil, it is skipped.
+- `Burst` (a server's test build or test hooks only, never a switch in a
+  running server: it turns a safety guard's pacing off) turns the
+  server's pacing of card answers off for
+  `unpaired cause burst` (five answers from `Card` less than a second
+  apart, cause `burst`) and returns the function that turns it back on.
+  Left nil, it is skipped.
+- `Disconnect` ends every connection as `/api disconnect` does:
+  `unpaired: not at end of file` wants no `unpaired` event and the pairing
+  to prove again. Left nil, it is skipped.
 - `ThiefTest` and `SocketPath` turn on `console thief`. The suite runs the
   test binary again as `-test.run=^<ThiefTest>$`, and that copy proves with
   the console's own key from another process. The server must refuse it
