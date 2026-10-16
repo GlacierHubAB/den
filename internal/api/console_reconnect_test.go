@@ -101,7 +101,7 @@ func TestReconnectAtOnce(t *testing.T) {
 	}
 	nc.call("console.events", nil)
 	var ev ConsoleEvent
-	nc.next() // connected
+	skipSnapshot(t, h.s, nc)
 	if e := nc.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "reconnected" || ev.Reason != "paired automatically" || ev.Unit != ConsoleUnit || ev.ProgramSHA != testVerifier().Exe.SHA256 || len(ev.Changes) != 0 {
 		t.Errorf("event %+v", ev)
 	}

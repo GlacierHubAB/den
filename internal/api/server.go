@@ -87,6 +87,7 @@ type Server struct {
 	closeOnce sync.Once
 	bp        atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
 	view      atomic.Pointer[View]
+	lastView  atomic.Pointer[ViewChange] // how the last view switch ended, for a subscriber's snapshot
 	chat      *chatStore
 	lane      *lane
 	notes     chan string

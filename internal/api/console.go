@@ -904,7 +904,6 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	auto := rec.auto
 	rec.auto = nil
 	ev := ConsoleEvent{Kind: kind, PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started)}
-	powers := rec.powers
 	st.mu.Unlock()
 	c.mu.Lock()
 	c.subs[EventConsole] = true
@@ -925,22 +924,35 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 		ids = append(ids, card.ID)
 	}
 	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
+	// First where every stateful kind stands now, before any change, so
+	// that no client infers state from the order of events: who the
+	// console is (connected, or restored), each waiting card as new (the
+	// cards listed in the reply, right after), its powers, God mode, the
+	// permission mode, the view. A state may have changed while no
+	// connection was there to hear it (a restored console's powers come
+	// back before it reconnects).
 	c.push(Event{Event: EventConsole, Data: ev}, true)
-	// A restored console's powers may have come back before any of its
-	// connections subscribed, with no one to hear the powers event then:
-	// say where they stand now, so "restored" is never read as without.
-	if kind == "restored" {
-		c.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "powers", On: &powers, PID: ev.PID, StartTicks: ev.StartTicks}}, true)
-	}
 	for _, card := range waiting {
 		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}
-	// The mode in force, after the replay, which ends at the listed cards.
+	// Each pushed under the lock its changers take, with the connection
+	// subscribed: a change after it reaches the connection after it, never
+	// before. push only queues, and closes on a full queue, with no lock.
+	st.mu.Lock()
+	powers := rec.powers
+	c.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "powers", On: &powers, PID: ev.PID, StartTicks: ev.StartTicks}}, true)
+	st.mu.Unlock()
+	s.god.mu.Lock()
+	c.push(Event{Event: EventGod, Data: s.god.valueLocked()}, true)
+	s.god.mu.Unlock()
 	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
 		c.push(Event{Event: EventMode, Data: v.Mode}, true)
 	}
-	// Then an automatic pairing, told to the connection that subscribes
-	// first.
+	if vc, ok := s.viewNow(); ok {
+		c.push(Event{Event: EventView, Data: vc}, true)
+	}
+	// Then what happened: an automatic pairing, told to the connection
+	// that subscribes first.
 	if auto != nil {
 		c.push(Event{Event: EventConsole, Data: *auto}, true)
 	}

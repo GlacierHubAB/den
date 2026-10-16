@@ -33,6 +33,11 @@ type godState struct {
 func (g *godState) get() God {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.valueLocked()
+}
+
+// valueLocked is God mode's state; called with g.mu held.
+func (g *godState) valueLocked() God {
 	if !g.on {
 		return God{}
 	}

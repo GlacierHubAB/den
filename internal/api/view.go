@@ -142,6 +142,7 @@ func (s *Server) PushView(ch ViewChange) { s.pushView(ch) }
 // console.events, and to the connections that follow the fleet. A slow
 // reader may miss it: hello, console.auth and the fleet carry the view too.
 func (s *Server) pushView(ch ViewChange) {
+	s.lastView.Store(&ch)
 	s.mu.Lock()
 	conns := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
@@ -165,6 +166,20 @@ func (s *Server) ConsoleUp() bool {
 
 // currentView is the view Den is in as the last snapshot said, "" when Den
 // cannot switch views.
+// viewNow is the view as a subscriber's snapshot says it: the last
+// switch's outcome while it is still the view, else the view alone; ok is
+// false while Den has said none.
+func (s *Server) viewNow() (ViewChange, bool) {
+	cur := s.currentView()
+	if cur == "" {
+		return ViewChange{}, false
+	}
+	if last := s.lastView.Load(); last != nil && last.View == cur {
+		return *last, true
+	}
+	return ViewChange{View: cur}, true
+}
+
 func (s *Server) currentView() string {
 	if v := s.view.Load(); v != nil {
 		return v.Fleet.View
