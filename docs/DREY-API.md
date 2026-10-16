@@ -978,7 +978,9 @@ where the pointer is.
   `drey-agent-pointer`, whose process is that of one of the console's
   proved connections (`console.auth`), still the process that connected
   (pid and start time). That surface must take no input (an empty input
-  region), so a click lands on the window beneath it. No other surface of
+  region), so a click lands on the window beneath it. Den cannot read a
+  surface's input region from Hyprland, so it relies on you for this:
+  never give an input-taking surface that namespace. No other surface of
   the console's is ever let through: a click under the dock or any other
   window of yours is refused. Draw the glow on the bottom layer, which
   never blocks a click.
