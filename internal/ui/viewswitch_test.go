@@ -544,3 +544,40 @@ func TestViewKeepsDensWindowForDesktopCards(t *testing.T) {
 		}
 	}
 }
+
+// TestGodModeKeepsDensWindow: while God mode is on, a hide leaves Den's
+// own window up (its TTY-only cards are answered there), and /god on in
+// User view first brings Den's window back.
+func TestGodModeKeepsDensWindow(t *testing.T) {
+	m, wm := viewRig(t)
+	_, done := switchView(t, m, api.ViewUser)
+	m.api.view = done.view
+	if wm.where("0xden") != api.ViewWorkspace {
+		t.Fatal("Den's window was not hidden")
+	}
+	mm, cmd := m.godCommand([]string{"on"})
+	*m = mm.(Model)
+	if cmd == nil {
+		t.Fatal("/god on in User view did nothing to Den's window")
+	}
+	runAll(cmd)
+	if wm.where("0xden") != "1" {
+		t.Errorf("after /god on Den's window is on %q, want its workspace 1", wm.where("0xden"))
+	}
+	typeLine(m, godPhrase)
+	if !m.godOn() {
+		t.Fatal("God mode is not on")
+	}
+	rep, _ := switchView(t, m, api.ViewUser)
+	if wm.where("0xden") == api.ViewWorkspace {
+		t.Error("a hide in God mode hid Den's window")
+	}
+	// Why is viewKeep's: the reply's one line keeps what fits in 40
+	// characters, the count first.
+	if m.viewKeep() != "God mode is on" || !strings.HasPrefix(rep.Result.Reason, "1 of 3 not hidden") {
+		t.Errorf("keep %q, the hide's reason %q", m.viewKeep(), rep.Result.Reason)
+	}
+	if wm.where("0xa") != api.ViewWorkspace || wm.where("0xb") != api.ViewWorkspace {
+		t.Error("the agents' windows were not hidden")
+	}
+}

@@ -176,6 +176,15 @@ func (m Model) header(w int) []string {
 	for _, c := range codes {
 		sys = append(sys, headerPart{s.attn.Render(c.line), 0})
 	}
+	// Unguarded agents, then God mode, are never left out, right after
+	// the codes.
+	if names := m.unguardedAgents(); len(names) > 0 {
+		sys = append(sys, headerPart{s.err.Render("UNGUARDED: " + strings.Join(names, ", ")), 0})
+	}
+	if m.god.on {
+		sys = append(sys, headerPart{s.err.Render(godChip(m.god.since)), 0})
+		fleetLine = s.err.Render("GOD MODE") + s.dim.Render(" · ") + fleetLine
+	}
 	if m.hooksReady {
 		sys = append(sys, headerPart{"hooks on", 2})
 	} else {
@@ -947,7 +956,7 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
-	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote) && it.State != inbox.Resolved:
+	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote || it.Kind == inbox.GuardNote) && it.State != inbox.Resolved:
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {

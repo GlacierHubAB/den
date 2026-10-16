@@ -699,10 +699,10 @@ Each connection proves once, at its start:
   lines joined by `\n`: `den-console-v1`, `app-to-den`, `conn`, `pairing`,
   the app's public key, Den's public key, *nd*, *na*, and the app's
   identity.
-- It answers `{paired: true, sig, god: {on: false}, view?}`, `sig` Den's signature
+- It answers `{paired: true, sig, god, view?}`, `sig` Den's signature
   of the same lines with `den-to-app` and Den's identity as the last line.
-  Check it with the pinned `den_public_key`. `god` is fixed in this release:
-  God mode is off. `view` is the view Den is in (`agent` or `user`, see
+  Check it with the pinned `den_public_key`. `god` is God mode as it stands
+  (see God mode). `view` is the view Den is in (`agent` or `user`, see
   "Switching views"), absent when this Den cannot switch views.
 - The identity is the process as Den reads it in this boot:
   `exe:<path as hex>:<boot_id>:<pid>:<start>`, or
@@ -732,6 +732,7 @@ Each connection proves once, at its start:
 | `cmd.complete` | `{prefix}` | the commands that start with it, at most 64 |
 | `cmd.run` | `{text}` | `{ok, note}` |
 | `mode.set` | `{mode}` | `{ok, applied, note}` for a lowering, or `{ok, card, note}` for a raise that waits on that card |
+| `god.off` | | `{ok, was_on}`: Den turns God mode off |
 
 All but `console.challenge`, `console.claim`, `console.auth` and
 `console.unpair {all: true}` need a proved connection, else `forbidden`
@@ -783,10 +784,11 @@ all` does in a terminal.
   your answer on Den's own screen settles it. A settled card has no
   `text_sha256`;
   `result` is `allowed`, `denied`, `always` or `gone` (it settled without
-  an answer), and `by` is `den` or `console`, absent for `gone`. `rule`
-  is reserved for a later Den that answers by a rule of its own. Take any
-  `by` you do not know as Den's own answer, never the console's or yours,
-  and never drop the event for it.
+  an answer), and `by` is `den`, `console` or `rule` (God mode answered
+  it), absent for `gone`. Take any `by` you do not know as Den's own
+  answer, never the console's or yours, and never drop the event for it.
+- `god {on, since?}`: God mode went on or off (see God mode), on the
+  console's `console.events` connections.
 - `mode {global, mixed}`: the permission mode changed (see Permission
   mode). One follows the replay of `console.events`, once Den has a mode.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
@@ -873,6 +875,27 @@ other. `bypassPermissions` is never the global mode.
   `gone` and raises its own. Send a `mode.set` that is not a lowering only
   from a fresh press in the dock's own window.
 - `cmd.run` takes `/mode <mode>` the same way, and a bare `/mode`.
+
+### God mode
+
+God mode is turned on only in Den's own window: `/god on`, then a phrase
+typed there within a minute. No app, command, config key, environment
+variable or socket verb turns it on, and every Den start begins with it
+off. While it is on:
+
+- `hello` and `console.auth` carry `god: {on: true, since}` (RFC 3339,
+  UTC), and Den's header shows it in red. Off, they carry `{on: false}`.
+- Den answers its own close, cleanup, restore, mission-update and
+  mission-move cards that came after God mode went on; their settled
+  events say `by: "rule"`.
+- The cards that stay yours (pairings, grants, turning the API on,
+  installs, guidance, skills, budgets and usage, messages to hosts, an
+  app's turn, merges, the console) go out with `dock_answers` false and
+  `needs_den_screen`, and `card.answer` on them answers `tty_only`, as
+  does `always` on any card. Answer them in Den's own window.
+- `god.off` (from a proved console connection), `/god off` from the dock,
+  `den god off` in a terminal and any unpair turn it off; they only lower,
+  so they are never refused for who asks.
 
 ### Console limits
 

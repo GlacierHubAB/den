@@ -178,12 +178,12 @@ func (m Model) usageCommand(args []string) (tea.Model, tea.Cmd) {
 		if err != nil || p < 0 || p > 100 {
 			return m.say("A share of the weekly limit, 0 to 100.", true)
 		}
-		if m.dockFrom != "" {
+		if m.fromDock {
 			return m.askUsageFigure(&p)
 		}
 		return m.setUsageFigure(&p)
 	case "clear":
-		if m.dockFrom != "" {
+		if m.fromDock {
 			return m.askUsageFigure(nil)
 		}
 		return m.setUsageFigure(nil)

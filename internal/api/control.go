@@ -387,7 +387,8 @@ func (s *Server) Unpair(id, why string) {
 	if why != "" {
 		s.note(why)
 	}
-	s.act(Act{Paired: true})
+	// An unpair also ends God mode: both are lowerings.
+	s.act(Act{Paired: true, GodOff: "an app pairing was revoked"})
 }
 
 // act hands Den an Act, dropping it when Den is too busy to take it.

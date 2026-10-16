@@ -517,6 +517,7 @@ func (m *Model) endDeskMission(dm *deskMission, why string) {
 	dm.Ended = why
 	dm.endedAt = time.Now()
 	deskNoFocus("") // never outlives a mission
+	m.forgetGuard(dm.SessionID)
 	for id, p := range m.desk.pending {
 		if p.mission != dm.ID {
 			continue

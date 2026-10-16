@@ -323,6 +323,21 @@ func (m Model) modeKnownDiffers() int {
 
 // modeQuery answers den mcp's question: which mode does a new agent start
 // in?
-func (m Model) modeQuery(r *bridge.Request) {
+func (m *Model) modeQuery(r *bridge.Request) {
+	// God mode's bypass, and the guard it writes, only for the
+	// orchestrator's own den mcp, by its process: never on the caller's
+	// word. Anyone else gets the global mode, read-only, as before.
+	if m.god.on && fromOrchestrator(m, r.PeerPID) {
+		if d, ok := m.godSpawn(); ok {
+			r.Reply(d)
+			return
+		}
+	}
 	r.Reply(bridge.Decision{Behavior: "allow", Message: m.agentMode()})
+}
+
+// fromOrchestrator reports whether pid runs under Den's orchestrator (its
+// den mcp); tests replace it.
+var fromOrchestrator = func(m *Model, pid int) bool {
+	return m.orch.proc != nil && m.orch.proc.Spawned(pid)
 }

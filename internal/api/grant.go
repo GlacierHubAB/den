@@ -90,6 +90,9 @@ type Act struct {
 	// View is a view switch to carry out: only the UI knows the sessions
 	// and what is waiting on the human.
 	View *ViewReq
+	// GodOff asks Den to turn God mode off, and says why: god.off, or an
+	// unpair. It only lowers; nothing here turns God mode on.
+	GodOff string
 }
 
 type grants struct {

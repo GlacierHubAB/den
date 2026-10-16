@@ -62,7 +62,8 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		Note:        m.twinNote(itemKey(it)),
 		Body:        strings.Join(body, "\n"),
 		Verbs:       verbs,
-		DockAnswers: dockMayAnswer(it),
+		DockAnswers: dockMayAnswer(it) && !m.godTTYOnly(it),
+		TTYOnly:     m.godTTYOnly(it),
 	}
 }
 
@@ -105,6 +106,10 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 	switch {
 	case card.Hash != a.Hash:
 		return reply(api.CardResult{Code: api.CodeCardChanged, Note: "the card changed: fetch it again"})
+	case m.godTTYOnly(it) || m.god.on && a.Verb == "always":
+		// A standing allowance outlives the turn: in God mode, Den's
+		// window only.
+		return reply(api.CardResult{Code: api.CodeTTYOnly, Note: "while God mode is on, only Den's own window answers this"})
 	case !card.DockAnswers || !containsVerb(card.Verbs, a.Verb):
 		return reply(api.CardResult{Code: api.CodeRefusedFromDock, Note: "the console may not answer this card that way"})
 	case m.tab == tabInbox && m.inboxSel == it.ID:

@@ -74,7 +74,17 @@ type Request struct {
 	// NoSessionWait returns once the window is up, without waiting for a
 	// session to register: a print-mode agent may never write one.
 	NoSessionWait bool
+
+	// SessionID is the session id a new agent starts with (claude
+	// --session-id), "" for Claude Code's own; never with Resume. Settings
+	// is a --settings file Den wrote for it (an absolute path), "" for
+	// none. God mode gives both to an agent it guards.
+	SessionID string
+	Settings  string
 }
+
+// uuidRe is a session id as Claude Code takes one.
+var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Worktree is spawn_agent's worktree input: true (a worktree named after
 // the agent), false, or the name to give it.
@@ -193,6 +203,12 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		}
 		if req.PermissionMode != "" && !permmode.Valid(req.PermissionMode) && req.PermissionMode != permmode.Bypass {
 			return res, fmt.Errorf("unknown permission mode %q", req.PermissionMode)
+		}
+		if req.Settings != "" && !filepath.IsAbs(req.Settings) {
+			return res, fmt.Errorf("the settings file must be an absolute path")
+		}
+		if req.SessionID != "" && (req.Resume != "" || !uuidRe.MatchString(req.SessionID)) {
+			return res, fmt.Errorf("a session id is a UUID, for a new agent only")
 		}
 		sessions, _ = discover.Scan()
 		res.Name = PeerName(req.Name, dir, sessions)
@@ -441,6 +457,12 @@ func Command(req Request, name string) []string {
 		mode = permmode.Default
 	}
 	command = append(command, "--permission-mode", mode)
+	if req.Settings != "" {
+		command = append(command, "--settings", req.Settings)
+	}
+	if req.SessionID != "" && req.Resume == "" {
+		command = append(command, "--session-id", req.SessionID)
+	}
 	if req.Spawner != "" {
 		// Den's server beside the user's own: the agent keeps its usual
 		// tools and gains spawn_agent, pre-approved so a lead can staff its

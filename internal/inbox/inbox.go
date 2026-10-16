@@ -56,6 +56,7 @@ const (
 	DesktopMission             // Den asks: start this desktop mission, in this scope? y/n answer it
 	DesktopAct                 // a desktop agent's action needs you: allow this one call? y/n answer it
 	YourTurn                   // a desktop mission waits for a step only you do; y says it is done, n ends the mission
+	GuardNote                  // Den says: it blocked a message to a guarded agent that Den did not deliver
 )
 
 func (k Kind) String() string {
@@ -116,6 +117,8 @@ func (k Kind) String() string {
 		return "mode raise"
 	case UsageSet:
 		return "usage figure"
+	case GuardNote:
+		return "blocked message"
 	case ConsoleNote:
 		return "console note"
 	case DesktopInstall:
@@ -893,6 +896,12 @@ func (s *Store) AddPair(title string, body []string) *Item {
 // console code the human's console? Only the human's ^Y answers it.
 func (s *Store) AddConsole(title string, body []string) *Item {
 	return s.add(&Item{SessionID: APISession, Kind: Console, Tool: "console_pairing", Title: title, Body: body})
+}
+
+// AddGuardNote adds Den's notice that it blocked a message to the guarded
+// session sessionID that Den did not deliver.
+func (s *Store) AddGuardNote(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: GuardNote, Title: title, Body: body})
 }
 
 // AddConsoleNote adds Den's notice about the console.
