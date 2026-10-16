@@ -135,7 +135,7 @@ type ConsoleOptions struct {
 var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
-	"console.events", "card.get", "card.answer", "card read timer", "card replay", "view.hide keeps a waiting card", "console orch.say", "console connections",
+	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console.events snapshot", "view.hide keeps a waiting card", "console orch.say", "console connections",
 	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.request after an unpairing", "console.unpair unproved", "console.unpair all",
 	"unpaired cause self", "unpaired cause replaced", "unpaired cause proofs", "unpaired cause intruders",
 	"unpaired cause burst", "unpaired cause den", "unpaired: not at end of file", "unpaired cause other", "console cooldown",
@@ -298,31 +298,38 @@ func getChallenge(ctx context.Context, c *conn) (challenge, error) {
 type authReply struct {
 	Paired bool   `json:"paired"`
 	Sig    string `json:"sig"`
+	Powers *bool  `json:"powers"` // the console's powers now, when the server says
 }
 
 // prove proves p on c and checks the server's signature; it returns the
 // error of console.auth as is.
 func (o *ConsoleOptions) prove(ctx context.Context, c *conn, p *consolePairing) error {
+	_, err := o.proveReply(ctx, c, p)
+	return err
+}
+
+// proveReply is prove, returning console.auth's reply.
+func (o *ConsoleOptions) proveReply(ctx context.Context, c *conn, p *consolePairing) (authReply, error) {
 	ch, err := getChallenge(ctx, c)
 	if err != nil {
-		return err
+		return authReply{}, err
 	}
 	self, denID, err := o.identities(c)
 	if err != nil {
-		return err
+		return authReply{}, err
 	}
 	na := randHex(32)
 	sig := ed25519.Sign(p.priv, signedText("app-to-den", ch.Conn, p.pairing, p.pubHex(), p.denPubHex(), ch.Nonce, na, self))
 	var rep authReply
 	if err := c.call(ctx, "console.auth", map[string]string{"pairing": p.pairing, "nonce": na, "sig": hex.EncodeToString(sig)}, &rep); err != nil {
-		return err
+		return authReply{}, err
 	}
 	den, derr := hex.DecodeString(rep.Sig)
 	if !rep.Paired || !hex128Re.MatchString(rep.Sig) || derr != nil ||
 		!ed25519.Verify(p.denPub, signedText("den-to-app", ch.Conn, p.pairing, p.pubHex(), p.denPubHex(), ch.Nonce, na, denID), den) {
-		return fmt.Errorf("console.auth: the server's signature does not verify over the pinned string (signer %q)", denID)
+		return authReply{}, fmt.Errorf("console.auth: the server's signature does not verify over the pinned string (signer %q)", denID)
 	}
-	return nil
+	return rep, nil
 }
 
 func (o *ConsoleOptions) identities(c *conn) (self, den string, err error) {
@@ -736,6 +743,189 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 	// view.hide never takes a waiting card out of sight: Den's own window
 	// stays up, counted in shown, and reason says why (Den's DREY-API.md,
 	// "What view.hide leaves visible").
+	// On subscribe the server sends the current value of each stateful
+	// kind before any change (DREY-API.md, Events): console (connected or
+	// restored), console powers with on, god, mode (once known), view
+	// (once there is one), a card new for each waiting card. Everything
+	// after is a change. fleet.events starts with the whole fleet.
+	run("console.events snapshot", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil, co != nil && co.Card != nil)
+		// A card waits before the subscription, so the snapshot ends with
+		// at least one card new and its order can be read to the end.
+		before, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		auth, err := co.proveReply(ctx, c, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rep struct {
+			Cards []string `json:"cards"`
+		}
+		if err := c.call(ctx, "console.events", struct{}{}, &rep); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		kindOf := func(data json.RawMessage) string {
+			var d struct {
+				Kind string `json:"kind"`
+			}
+			_ = json.Unmarshal(data, &d)
+			return d.Kind
+		}
+		// next is the next event line. A console event of another kind
+		// than connected, restored or powers passes: Den's one-shot
+		// paired or reconnected may reach the first subscriber.
+		next := func() (string, json.RawMessage) {
+			t.Helper()
+			for {
+				l, err := c.read()
+				if err != nil {
+					t.Fatalf("reading the snapshot: %v", err)
+				}
+				if l.Event == "" {
+					continue
+				}
+				if k := kindOf(l.Data); l.Event == "console" && k != "connected" && k != "restored" && k != "powers" {
+					continue
+				}
+				return l.Event, l.Data
+			}
+		}
+		// The snapshot, in order: the console (connected or restored), a
+		// card new for each card the reply listed, the console's powers
+		// with on, god with on, then mode and view, each once the server
+		// has one. A kind the suite does not know may join it later (a
+		// desktop state); it is let pass.
+		name, data := next()
+		if name != "console" || (kindOf(data) != "connected" && kindOf(data) != "restored") {
+			t.Fatalf("the snapshot's first event: %s %s, want console connected or restored", name, data)
+		}
+		waiting := map[string]bool{}
+		for _, id := range rep.Cards {
+			waiting[id] = true
+		}
+		if !waiting[before] {
+			t.Fatalf("console.events' cards %v do not list the card waiting, %s", rep.Cards, before)
+		}
+		for len(waiting) > 0 {
+			name, data = next()
+			var cd struct {
+				ID     string `json:"id"`
+				Change string `json:"change"`
+			}
+			_ = json.Unmarshal(data, &cd)
+			if name != "card" || cd.Change != "new" || !waiting[cd.ID] {
+				t.Fatalf("before the listed cards' new %v ended: %s %s", waiting, name, data)
+			}
+			delete(waiting, cd.ID)
+		}
+		name, data = next()
+		var pw struct {
+			Kind string `json:"kind"`
+			On   *bool  `json:"on"`
+		}
+		_ = json.Unmarshal(data, &pw)
+		if name != "console" || pw.Kind != "powers" || pw.On == nil {
+			t.Fatalf("the snapshot after its cards: %s %s, want console powers with on", name, data)
+		}
+		if auth.Powers != nil && *auth.Powers != *pw.On {
+			t.Errorf("the snapshot says powers %v, console.auth on the same connection said %v", *pw.On, *auth.Powers)
+		}
+		name, data = next()
+		var gd struct {
+			On *bool `json:"on"`
+		}
+		if _ = json.Unmarshal(data, &gd); name != "god" || gd.On == nil {
+			t.Fatalf("the snapshot after powers: %s %s, want god with on", name, data)
+		}
+
+		// mode and view may follow, in that order; then the changes. A
+		// change now (a new card) must come after them.
+		id, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			for _, cid := range []string{before, id} {
+				if rec, err := cardGet(ctx, c, cid); err == nil {
+					_ = c.call(ctx, "card.answer", map[string]string{"id": cid, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+				}
+			}
+		}()
+		sawView := false
+	changes:
+		for {
+			name, data = next()
+			switch name {
+			case "mode":
+				if sawView {
+					t.Fatalf("a mode event after the view: %s", data)
+				}
+			case "view":
+				var v struct {
+					View  string `json:"view"`
+					Shown *int   `json:"shown"`
+					Total *int   `json:"total"`
+				}
+				if _ = json.Unmarshal(data, &v); !sawView && ((v.View != "agent" && v.View != "user") || v.Shown == nil || v.Total == nil) {
+					t.Fatalf("the snapshot's view: %s", data)
+				}
+				sawView = true
+			case "card":
+				var cd struct {
+					ID     string `json:"id"`
+					Change string `json:"change"`
+				}
+				_ = json.Unmarshal(data, &cd)
+				if cd.Change == "new" && cd.ID != id {
+					t.Fatalf("a card new for %s after the snapshot, before the new card %s", cd.ID, id)
+				}
+				if cd.ID == id && cd.Change == "new" {
+					break changes
+				}
+			}
+		}
+
+		// fleet.events starts with the whole fleet.
+		f, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.close()
+		if err := f.call(ctx, "fleet.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = f.nc.SetDeadline(dl)
+		}
+		for {
+			l, err := f.read()
+			if err != nil {
+				t.Fatalf("fleet.events' first event: %v", err)
+			}
+			if l.Event == "" {
+				continue
+			}
+			var fl struct {
+				Agents []json.RawMessage `json:"agents"`
+				Taken  string            `json:"taken"`
+			}
+			if l.Event != "fleet" || json.Unmarshal(l.Data, &fl) != nil || fl.Agents == nil || fl.Taken == "" {
+				t.Fatalf("fleet.events' first event: %s %s, want the whole fleet", l.Event, l.Data)
+			}
+			break
+		}
+	})
+
 	run("view.hide keeps a waiting card", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t, events != nil, co != nil && co.Card != nil, co != nil && co.View)
 		id, err := co.Card(ctx)
