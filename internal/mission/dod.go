@@ -84,24 +84,42 @@ func (g SubGoal) Assigned() bool { return g.Owner != "" }
 // start on.
 func (m *Mission) Frozen() bool { return m.State != Proposed && m.State != Dropped }
 
+// RealFlow is the criterion every mission that ends carries, Den's own:
+// the work shown on the human's real setup, not only in tests. Den adds it
+// to every proposal and template; only the human's own paths change it.
+const RealFlow = "Shown working on the human's real setup: what was run, and what the human saw"
+
 // SetCriteria sets the definition of done from texts, for a proposal only.
+// A mission that ends (not a schedule) also gets RealFlow, last, unless the
+// texts already hold it, so its texts may be at most MaxCriteria-1.
 func (m *Mission) SetCriteria(texts []string) error {
 	if m.Frozen() {
 		return errors.New("the done criteria are fixed once the mission has started")
 	}
+	realFlow := m.Shape != Schedule
+	limit := MaxCriteria
 	var out []Criterion
 	for _, t := range texts {
 		t = sanitize.Label(t, maxCritText)
 		if t == "" {
 			continue
 		}
-		if len(out) == MaxCriteria {
-			return fmt.Errorf("at most %d done criteria", MaxCriteria)
+		if strings.EqualFold(t, RealFlow) {
+			realFlow = false // already there
+			limit = MaxCriteria
+		} else if realFlow {
+			limit = MaxCriteria - 1
+		}
+		if len(out) == limit {
+			return fmt.Errorf("at most %d done criteria (Den adds its own: shown working on the human's real setup)", MaxCriteria-1)
 		}
 		out = append(out, Criterion{ID: "c" + strconv.Itoa(len(out)+1), Text: t, State: CritOpen})
 	}
 	if len(out) == 0 {
 		return errors.New("set at least one done criterion")
+	}
+	if realFlow {
+		out = append(out, Criterion{ID: "c" + strconv.Itoa(len(out)+1), Text: RealFlow, State: CritOpen})
 	}
 	m.Criteria = out
 	m.syncDoneWhen()

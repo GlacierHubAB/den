@@ -57,7 +57,7 @@ func TestProposeMissionMakesAProposalOnly(t *testing.T) {
 	if ms == nil || ms.State != mission.Proposed || ms.Project != "/home/x/tasklog" || ms.ProjectName != "tasklog" {
 		t.Fatalf("proposal %+v", ms)
 	}
-	if len(ms.Criteria) != 2 || len(ms.Goals) != 2 || ms.Goals[0].Owner != "mossy-lemur" || ms.Goals[0].Name != "Mossy Lemur" || ms.Goals[1].Role != "reviewer" || ms.Goals[1].Owner != "" {
+	if len(ms.Criteria) != 3 || ms.Criteria[2].Text != mission.RealFlow || len(ms.Goals) != 2 || ms.Goals[0].Owner != "mossy-lemur" || ms.Goals[0].Name != "Mossy Lemur" || ms.Goals[1].Role != "reviewer" || ms.Goals[1].Owner != "" {
 		t.Errorf("criteria %+v goals %+v", ms.Criteria, ms.Goals)
 	}
 	if len(ms.Runs) != 0 || len(m.orch.pending) != 0 {
@@ -66,7 +66,7 @@ func TestProposeMissionMakesAProposalOnly(t *testing.T) {
 	// Refining keeps the id and the project.
 	p := goodProposal()
 	p.ID, p.Criteria = ms.ID, []string{"Only this"}
-	if d := callDen(t, &m, bridge.ProposeEvent, p, orchChildPID); d.Behavior != "allow" || len(m.missions.Get(ms.ID).Criteria) != 1 {
+	if d := callDen(t, &m, bridge.ProposeEvent, p, orchChildPID); d.Behavior != "allow" || len(m.missions.Get(ms.ID).Criteria) != 2 {
 		t.Errorf("refine: %+v %+v", d, m.missions.Get(ms.ID).Criteria)
 	}
 }
@@ -174,6 +174,7 @@ func TestDoneIsTheHumansAlone(t *testing.T) {
 	// Claiming the last criterion asks the human once.
 	callDen(t, &m, bridge.MissionEvent, bridge.MissionInput{ID: ms.ID, Claims: []bridge.ClaimInput{{ID: "c1", Evidence: "report"}}}, orchChildPID)
 	callDen(t, &m, bridge.MissionEvent, bridge.MissionInput{ID: ms.ID, Claims: []bridge.ClaimInput{{ID: "c2", Evidence: "PR #97 merged"}}}, orchChildPID)
+	callDen(t, &m, bridge.MissionEvent, bridge.MissionInput{ID: ms.ID, Claims: []bridge.ClaimInput{{ID: "c3", Evidence: "ran it; the human saw the card"}}}, orchChildPID)
 	callDen(t, &m, bridge.MissionEvent, bridge.MissionInput{ID: ms.ID, State: "done", Summary: "all good"}, orchChildPID)
 	items := kindItems(m, inbox.MissionDone)
 	got := m.missions.Get(ms.ID)
@@ -190,7 +191,7 @@ func TestDoneIsTheHumansAlone(t *testing.T) {
 	nm, _ := m.answer("allow")
 	m = nm.(Model)
 	got = m.missions.Get(ms.ID)
-	if met, _, _ := got.CriteriaCounts(); got.State != mission.Done || met != 2 {
+	if met, _, _ := got.CriteriaCounts(); got.State != mission.Done || met != 3 {
 		t.Errorf("after ^Y: state %s, %d met", got.State, met)
 	}
 }
@@ -302,6 +303,48 @@ func TestPromptsQuoteTheProject(t *testing.T) {
 		if strings.Contains(p, "</den_fleet>") || strings.Contains(p, "\nDen:") || strings.Contains(p, "<x>") || strings.Contains(p, "task<log>") {
 			t.Errorf("the project's values reached the prompt raw:\n%s", p)
 		}
+	}
+}
+
+// No code here assigns a mission's criteria: they are set only through the
+// mission package, whose SetCriteria adds Den's own real-setup criterion
+// to every proposal and template, and changed only on the human's paths
+// (below). So no tool can drop that criterion.
+func TestNoCodeSetsCriteriaDirectly(t *testing.T) {
+	names, _ := filepath.Glob("*.go")
+	fset := token.NewFileSet()
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for _, lhs := range as.Lhs {
+				for e := lhs; e != nil; {
+					switch x := e.(type) {
+					case *ast.SelectorExpr:
+						// info is the orchestrator's view (orch.MissionInfo),
+						// built from a mission's criteria, never one.
+						if id, _ := x.X.(*ast.Ident); x.Sel.Name == "Criteria" && (id == nil || id.Name != "info") {
+							t.Errorf("%s assigns Criteria", fset.Position(x.Pos()))
+						}
+						e = nil
+					case *ast.IndexExpr:
+						e = x.X // m.Criteria[i] = …
+					default:
+						e = nil
+					}
+				}
+			}
+			return true
+		})
 	}
 }
 

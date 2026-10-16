@@ -32,6 +32,7 @@ func screenMission(m *Model) *mission.Mission {
 	ms.MeetAll(now)
 	ms.SetMet("c2", false, now)
 	ms.SetMet("c3", false, now)
+	ms.SetMet("c4", false, now)
 	ms.Claim("c2", "PR #97 merged", now)
 	ms.StartRun(now)
 	m.missions.Save(ms)
@@ -196,7 +197,7 @@ func TestOpenMissionShowsWhoDoesWhat(t *testing.T) {
 	view, _ := m.missionView(100)
 	out := strings.Join(boxed(view), "\n")
 	for _, want := range []string{
-		"GOAL", "DONE WHEN", "WHO DOES WHAT", "1 of 3 met · 1 claimed",
+		"GOAL", "DONE WHEN", "WHO DOES WHAT", "1 of 4 met · 1 claimed", "☐ c4 Shown working on the human's real setup",
 		"☑ c1 The cause is explained", "☐ c2 A fix is merged on dev · claimed: PR #97 merged", "☐ c3 The human pairs Drey",
 		"✓ done", "◐ needs you", "■ blocked · waits for #97", "unassigned", "○ todo",
 		"type to tell the orchestrator",

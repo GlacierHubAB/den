@@ -86,7 +86,7 @@ func TestMissionProposeStartRunAndSettle(t *testing.T) {
 	// confirms it.
 	proc, _ := liveOrchestrator(t)
 	m.orch.proc, m.orch.origins = proc, []string{originDen}
-	raw, _ := json.Marshal(bridge.MissionInput{ID: ms.ID, State: "done", Summary: "suite green", Claims: []bridge.ClaimInput{{ID: "c1", Evidence: "three green runs in Mossy Lemur's report"}}})
+	raw, _ := json.Marshal(bridge.MissionInput{ID: ms.ID, State: "done", Summary: "suite green", Claims: []bridge.ClaimInput{{ID: "c1", Evidence: "three green runs in Mossy Lemur's report"}, {ID: "c2", Evidence: "the human ran the suite on their machine"}}})
 	r := bridge.TestRequest(bridge.Envelope{Event: bridge.MissionEvent, Payload: raw})
 	r.PeerPID = orchChildPID
 	m.handleRequest(r)
