@@ -11,14 +11,36 @@ import (
 )
 
 // The suite's console.request, console.reconnect and request refusals end
-// to end against this server, as with api.console_powers = "always": the
-// dock pairs with no code and no card, rejoins after a restart, is refused
-// after it unpaired itself until a pairing starts in Den. A test process
-// is no systemd unit, so the read of the console's service is stood in for
-// (fakeUnit); internal/ui's run of the suite keeps them off, since it
-// cannot stand in for it.
+// to end against this server: the dock pairs with no code and no card,
+// rejoins after a restart, is refused after it unpaired itself until a
+// pairing starts in Den. A test process is no systemd unit, so the read of
+// the console's service is stood in for (fakeUnit); internal/ui's run of
+// the suite keeps them off, since it cannot stand in for it.
+//
+// As with api.console_powers = "always", the console ends with its powers.
 func TestConformanceRequestAndReconnect(t *testing.T) {
-	h := alwaysHarness(t)
+	if cur := runConsoleSuite(t, alwaysHarness(t), false); !cur.Powers {
+		t.Errorf("at the end: %+v", cur)
+	}
+}
+
+// With the default ("unchanged"), the same pairings through the suite's
+// path never come with their powers: the suite wants powers false from
+// every request and reconnect (PowersLocked), as no build was given them
+// in this run.
+func TestConformanceRequestAndReconnectUnchanged(t *testing.T) {
+	h, _ := consoleHarness(t)
+	if cur := runConsoleSuite(t, h, true); cur.Powers {
+		t.Errorf("at the end: %+v", cur)
+	}
+}
+
+// runConsoleSuite runs the suite's console.request, console.reconnect and
+// "console.request after an unpairing" against h, and checks that each
+// ran: no card, and the unit read for each pairing. It returns the console
+// at the end.
+func runConsoleSuite(t *testing.T, h *harness, powersLocked bool) Console {
+	t.Helper()
 	asked := fakeUnit(t, testVerifier(), nil)
 	// A view, as Den publishes one: a reconnect before hello needs it.
 	h.s.Publish(Project(Snapshot{Taken: time.Now()}))
@@ -73,6 +95,7 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 			Request:         true,
 			Reconnect:       true,
 			RequestRefusals: true,
+			PowersLocked:    powersLocked,
 		},
 	})
 	// They ran, not skipped: no card, and the unit read for each pairing:
@@ -84,7 +107,9 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 	if len(*asked) != 4 {
 		t.Errorf("unit read %d times, want 4", len(*asked))
 	}
-	if cur, ok := h.s.CurrentConsole(); !ok || !cur.Powers {
-		t.Errorf("at the end: %+v %v", cur, ok)
+	cur, ok := h.s.CurrentConsole()
+	if !ok {
+		t.Fatal("no console at the end")
 	}
+	return cur
 }
