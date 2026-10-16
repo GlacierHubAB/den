@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/gitenvtest"
 )
@@ -162,6 +163,39 @@ func TestReadOverlap(t *testing.T) {
 	got := Overlaps(works)
 	if len(got) != 1 || got[0].A != "s1" || got[0].B != "s2" || !reflect.DeepEqual(got[0].Files, []string{"shared.go"}) {
 		t.Errorf("overlaps %+v", got)
+	}
+}
+
+// A branch's name, base, age (its oldest commit since leaving the base)
+// and how far behind the base it is.
+func TestReadBranchAge(t *testing.T) {
+	main, one, two := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "a.go"), "x")
+	sh(t, one, "add", ".")
+	cmd := exec.Command("git", "-C", one, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "old")
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE=2026-10-10T08:00:00Z", "GIT_AUTHOR_DATE=2026-10-10T08:00:00Z")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	write(t, filepath.Join(one, "b.go"), "x")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "new")
+	for i := 0; i < 3; i++ {
+		write(t, filepath.Join(main, "dev.go"), strings.Repeat("x", i+1))
+		sh(t, main, "add", ".")
+		sh(t, main, "commit", "-q", "-m", "dev")
+	}
+	w, err := Read(ctx, "s1", one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Branch != "a" || w.Base != "refs/heads/dev" || w.Behind != 3 || !w.Since.Equal(time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)) {
+		t.Errorf("work %+v", w)
+	}
+	// A branch with no commits of its own has no age.
+	if w, err := Read(ctx, "s2", two); err != nil || !w.Since.IsZero() || w.Behind != 3 {
+		t.Errorf("an empty branch: %+v %v", w, err)
 	}
 }
 
