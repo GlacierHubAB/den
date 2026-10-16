@@ -7,8 +7,8 @@ import (
 )
 
 // On console.events, Den first says where every stateful kind stands, in
-// a fixed order, before any change: the console, its powers, God mode, the
-// permission mode, the view, and each waiting card as new; only then what
+// a fixed order, before any change: the console, each waiting card as
+// new, its powers, God mode, the permission mode, the view; only then what
 // changes. No client has to infer a state from the order of changes.
 func TestConsoleEventsSnapshotFirst(t *testing.T) {
 	for _, locked := range []bool{false, true} {
@@ -37,7 +37,7 @@ func TestConsoleEventsSnapshotFirst(t *testing.T) {
 			event string
 			into  any
 		}{
-			{EventConsole, &con}, {EventConsole, &pw}, {EventGod, &god}, {EventMode, &mode}, {EventView, &view}, {EventCard, &cd},
+			{EventConsole, &con}, {EventCard, &cd}, {EventConsole, &pw}, {EventGod, &god}, {EventMode, &mode}, {EventView, &view},
 		} {
 			l := c.next()
 			if l.Event != want.event || json.Unmarshal(l.Data, want.into) != nil {

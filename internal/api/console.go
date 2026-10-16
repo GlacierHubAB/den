@@ -926,11 +926,15 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
 	// First where every stateful kind stands now, before any change, so
 	// that no client infers state from the order of events: who the
-	// console is (connected, or restored), its powers, God mode, the
-	// permission mode, the view, then each waiting card as new. A state
-	// may have changed while no connection was there to hear it (a
-	// restored console's powers come back before it reconnects).
+	// console is (connected, or restored), each waiting card as new (the
+	// cards listed in the reply, right after), its powers, God mode, the
+	// permission mode, the view. A state may have changed while no
+	// connection was there to hear it (a restored console's powers come
+	// back before it reconnects).
 	c.push(Event{Event: EventConsole, Data: ev}, true)
+	for _, card := range waiting {
+		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
+	}
 	// Read now, with the connection subscribed: a lock from here on also
 	// reaches it as its own powers event, after this one.
 	st.mu.Lock()
@@ -943,9 +947,6 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	}
 	if vc, ok := s.viewNow(); ok {
 		c.push(Event{Event: EventView, Data: vc}, true)
-	}
-	for _, card := range waiting {
-		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}
 	// Then what happened: an automatic pairing, told to the connection
 	// that subscribes first.

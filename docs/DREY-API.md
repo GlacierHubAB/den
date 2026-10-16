@@ -764,7 +764,7 @@ Each connection proves once, at its start:
 | `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, at once |
 | `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once |
 | `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, its powers, God mode, the mode, the view, a `card` event for each waiting card), then `console`, `god`, `mode`, `card` and `view` events as they change |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view), then `console`, `god`, `mode`, `card` and `view` events as they change |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
@@ -787,10 +787,10 @@ On subscribe, Den sends the current value of each stateful kind before
 any change events, so that no client ever has to infer a state from the
 order of events. `console.events` starts with this snapshot, in this
 order: a `console` event (`connected`, or `restored` after Den
-restarted), a `console` event of kind `powers` with `on`, a `god` event,
-a `mode` event (once Den knows the mode), a `view` event (once Den has
-a view), and a `card` event, `new`, for each card waiting. Everything
-after it is a change. `fleet.events` starts with the whole fleet in the
+restarted), a `card` event, `new`, for each card waiting (the ones the
+reply lists), a `console` event of kind `powers` with `on`, a `god`
+event, a `mode` event (once Den knows the mode), and a `view` event
+(once Den has a view). Everything after it is a change. `fleet.events` starts with the whole fleet in the
 same way. A later kind that carries state joins the snapshot.
 
 - `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?, unit?, program_sha256?, changes?}`: `kind`
