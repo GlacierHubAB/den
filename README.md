@@ -936,6 +936,10 @@ pinned by hash, wheels only. `--wheels <dir>` installs them from a folder
 instead, offline. Den records a hash of every installed file and checks them
 before every desktop agent starts. The venv is
 `~/.local/share/den/hypruse/venv`; nothing runs `uvx` or the network later.
+`--from` takes a local clone, never a URL. Without it, the command uses the
+folder it runs in, or else a folder named `hypruse` up to four levels under
+your home, but only a clone whose every file matches the pin. When the venv
+already holds the pinned hypruse, it says so and changes nothing.
 
 **Allow apps.** A desktop agent uses only the apps you list in Den's config:
 
