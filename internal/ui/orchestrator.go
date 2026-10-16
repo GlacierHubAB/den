@@ -282,6 +282,8 @@ func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 		}
 		if lane {
 			r.Recent, r.Earlier = nil, nil
+		} else if a.Host == "" {
+			r.Overlaps = m.overlapLines(a.Session.SessionID)
 		}
 		out = append(out, r)
 	}

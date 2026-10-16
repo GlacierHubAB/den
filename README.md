@@ -760,6 +760,19 @@ it in that terminal first; nothing happens until you answer. Set `spawn =
 false` under `[orchestrator]`, or `DEN_ORCHESTRATOR_SPAWN=off`, to take the two
 tools away.
 
+### Overlapping work
+
+Once a minute Den reads, from git, the files each local agent's branch changes
+against the repository's integration branch (`origin/dev`, `origin/main` or
+`origin/master`, else a local `dev`, `main` or `master`): committed, staged,
+unstaged and untracked. When two agents in different checkouts of one
+repository change the same files, Den tells both, once, which files and with
+whom, so they agree who goes first or how to split the work, and the
+orchestrator, which sees the overlap in its view of the fleet, decides. Den
+notes it in its chat and never stops anyone over it. An agent hears it at most
+once every ten minutes. Den runs nothing the checkout's own git config names
+while it reads.
+
 ### Permission mode
 
 Every agent Den starts or reopens runs in one permission mode, passed as
