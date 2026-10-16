@@ -134,8 +134,10 @@ func (m *Model) selfTest(sid string, g *agentGuard) {
 	}
 	w.selfTest = peermsg.Hash(peer.Envelope(selfTestFrom, "den-self-test", selfTestBody))
 	w.selfSent = time.Now()
-	sock := w.socket
-	go func() { _ = sendAs(sock, selfTestFrom, "den-self-test", selfTestBody) }()
+	// sendAs is read here, on the model's goroutine; only the write, which
+	// may block, runs off it.
+	sock, as := w.socket, sendAs
+	go func() { _ = as(sock, selfTestFrom, "den-self-test", selfTestBody) }()
 }
 
 // markUnguarded marks a guarded agent unguarded, loudly, once.

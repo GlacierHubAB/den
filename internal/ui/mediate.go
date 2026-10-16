@@ -270,7 +270,8 @@ func (m *Model) deliverTo(sessionID, sock, from, fromName, body string) (send fu
 	// The hook hashes the prompt Claude Code hands it, which is the
 	// content SendAs writes, byte for byte: the same function both ways.
 	m.med.sent[sessionID][peermsg.Hash(peer.Envelope(from, fromName, body))] = time.Now()
-	return func() error { return sendAs(sock, from, fromName, body) }, nil
+	as := sendAs // read on the model's goroutine, called off it
+	return func() error { return as(sock, from, fromName, body) }, nil
 }
 
 // handleAgentInbound answers a guarded agent's hook: may this envelope
