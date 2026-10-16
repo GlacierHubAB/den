@@ -400,12 +400,21 @@ own.
 - Which windows: an agent's window is the one carrying the class Den chose
   when it spawned the agent (`io.glacierhub.den.<name>`, kept in Den's state
   with the agent's session), when that agent's own process runs in it.
-  Never one found by title, directory or any other guess. An agent Den did
-  not spawn has no such record: its window is not counted and never touched.
-  Two windows with one class, or a marked window run by someone else, are
-  left alone and counted in `reason` as "not Den's". Den's own window is
-  hidden only when it is the one window of a process above Den's; when Den
-  cannot tell, it stays and `reason` says so.
+  For a hide only, an agent with no such record (one Den's older spawn path
+  started, with no class) is found by the exact title Den gave its terminal,
+  `den · <name>`, when exactly one window has it, its terminal process has
+  no other window and the agent's process runs under that terminal. A hide
+  is undone by a show, and a show moves back only the windows Den recorded
+  hiding, never one found by title or any other guess. Directory and every
+  other guess find nothing. An agent Den cannot tie to a window either way
+  is not touched, and counts in `reason` as "not Den's". Two windows with
+  one class or title, or a marked window run by someone else, are left
+  alone and counted the same way. When agents run but none has a window
+  Den can tie, `view.hide` answers `unavailable` ("no agent window is Den's
+  to hide: …") and moves nothing, Den's own window included, and the view is
+  what it was: Den never says User view with every agent still on screen.
+  Den's own window is hidden only when it is the one window of a process
+  above Den's; when Den cannot tell, it stays and `reason` says so.
 - **What `view.hide` leaves visible.** It never takes anything out of sight
   that waits on you at the moment it runs:
   - Den's own window stays up while any card waits on you in Den, whatever

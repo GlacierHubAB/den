@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"github.com/GlacierHubAB/den/internal/procs"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Client is one Hyprland window.
@@ -339,6 +340,45 @@ func MarkerHolds(marker string, pid int) bool {
 func markerHolds(all []Client, marker string, chain []procs.Proc) bool {
 	_, ok := HeldWindow(all, marker, chain)
 	return ok
+}
+
+// AgentTitle is the window title Den gives the terminal of the agent named
+// peer when it spawns one.
+func AgentTitle(peer string) string { return sanitize.Line("den · " + peer) }
+
+// TitledWindow finds the window of an agent that has no marker, by the
+// title Den gave it at spawn (AgentTitle): the one window with exactly that
+// title, whose terminal process has no other window and is one the agent's
+// process (chain lists the processes from it upwards) descends from. It is
+// for a window that is only to be hidden and shown again, never for
+// anything that cannot be undone: a program can set its window's title, so
+// the title alone proves nothing, and that the agent runs under the
+// terminal is what ties the two. No window, two, or one run by someone
+// else gives false.
+func TitledWindow(all []Client, title string, chain []procs.Proc) (Client, bool) {
+	if title == "" {
+		return Client{}, false
+	}
+	var found []Client
+	for _, c := range all {
+		if c.Title == title {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 || found[0].PID <= 1 {
+		return Client{}, false
+	}
+	for _, c := range all {
+		if c.PID == found[0].PID && c.Address != found[0].Address {
+			return Client{}, false
+		}
+	}
+	for _, p := range chain {
+		if p.PID == found[0].PID {
+			return found[0], true
+		}
+	}
+	return Client{}, false
 }
 
 // HeldWindow is the window marker names when it is provably the agent's

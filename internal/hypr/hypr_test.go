@@ -233,3 +233,39 @@ func TestOnlyHyprlandAddressesReachTheDispatcher(t *testing.T) {
 		}
 	}
 }
+
+// TestTitledWindow: a window is found by the title Den gave its terminal
+// only when exactly one window has it, its terminal process has no other
+// window, and the agent's process runs under that terminal.
+func TestTitledWindow(t *testing.T) {
+	title := AgentTitle("old-agent")
+	if title != "den · old-agent" {
+		t.Fatalf("title %q", title)
+	}
+	if got := AgentTitle("a\x1b[2Jb"); strings.ContainsRune(got, 0x1b) {
+		t.Errorf("a peer name keeps a control byte: %q", got)
+	}
+	win := Client{Address: "0x1", PID: 100, Title: title}
+	under := []procs.Proc{{PID: 300, Comm: "claude"}, {PID: 250, Comm: "sh"}, {PID: 100, Comm: "ghostty"}}
+	elsewhere := []procs.Proc{{PID: 400, Comm: "claude"}, {PID: 200, Comm: "kitty"}}
+	for _, c := range []struct {
+		name  string
+		all   []Client
+		title string
+		chain []procs.Proc
+		want  bool
+	}{
+		{"the agent in its window", []Client{win}, title, under, true},
+		{"an impostor in another terminal", []Client{win}, title, elsewhere, false},
+		{"no window has the title", []Client{{Address: "0x2", PID: 100, Title: "~"}}, title, under, false},
+		{"two windows have it", []Client{win, {Address: "0x3", PID: 500, Title: title}}, title, under, false},
+		{"its terminal has another window", []Client{win, {Address: "0x4", PID: 100, Title: "~"}}, title, under, false},
+		{"a window with no pid", []Client{{Address: "0x1", Title: title}}, title, under, false},
+		{"an empty title", []Client{{Address: "0x1", PID: 100}}, "", under, false},
+		{"a title that is only a prefix", []Client{{Address: "0x1", PID: 100, Title: title + " (2)"}}, title, under, false},
+	} {
+		if got, ok := TitledWindow(c.all, c.title, c.chain); ok != c.want || (ok && got.Address != "0x1") {
+			t.Errorf("%s: %+v %v, want %v", c.name, got, ok, c.want)
+		}
+	}
+}

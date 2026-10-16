@@ -60,7 +60,7 @@ func (m *Model) applyView(r *api.ViewReq) tea.Cmd {
 		if a.Host != "" || a.Status == fleet.Gone || a.Session.PID <= 1 {
 			continue
 		}
-		rq.Sessions = append(rq.Sessions, view.Session{ID: a.Session.SessionID, PID: a.Session.PID})
+		rq.Sessions = append(rq.Sessions, view.Session{ID: a.Session.SessionID, PID: a.Session.PID, Peer: a.Session.Name})
 		if m.store.WaitingInTerminal(a.Session.SessionID) {
 			rq.Hold = append(rq.Hold, a.Session.SessionID)
 		}
