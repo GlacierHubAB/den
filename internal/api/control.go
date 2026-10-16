@@ -292,6 +292,12 @@ func (s *Server) StartPairing() []string {
 	s.ctl.mu.Lock()
 	s.ctl.code = &pairCode{words: words, until: time.Now().Add(pairCodeLife)}
 	s.ctl.mu.Unlock()
+	s.con.mu.Lock()
+	if s.con.autoOff {
+		s.con.autoOff = false // the human acts in Den: the dock may pair by itself again
+		s.saveConsoleLocked()
+	}
+	s.con.mu.Unlock()
 	return append([]string(nil), words...)
 }
 
@@ -387,7 +393,8 @@ func (s *Server) Unpair(id, why string) {
 	if why != "" {
 		s.note(why)
 	}
-	s.act(Act{Paired: true})
+	// An unpair also ends God mode: both are lowerings.
+	s.act(Act{Paired: true, GodOff: "an app pairing was revoked"})
 }
 
 // act hands Den an Act, dropping it when Den is too busy to take it.
@@ -778,6 +785,9 @@ type Say struct {
 }
 
 func (y *Say) push(ch Chunk) bool {
+	if y.c == nil {
+		return false // a turn no connection asked for (tests make them)
+	}
 	ch.Turn = y.Turn
 	return y.c.push(Event{Event: EventOrch, Data: ch}, true)
 }

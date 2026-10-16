@@ -54,10 +54,10 @@ func (m Model) copyPane() (rect, bool) {
 		if bh < 4 {
 			return rect{}, false
 		}
-		if w < 72 {
+		if w < 72 || m.overviewFull() {
 			return rect{x0: 1, y0: y0 + 1, x1: w - 2, y1: y0 + bh - 2}, true
 		}
-		lw := clamp(w*42/100, 36, 64)
+		lw := agentsWidth(w)
 		return rect{x0: lw + 1, y0: y0 + 1, x1: w - 2, y1: y0 + bh - 2}, true
 	}
 	return rect{}, false

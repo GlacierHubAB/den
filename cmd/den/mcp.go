@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -66,7 +68,7 @@ func runMCP() {
 				}
 				// Asked last: the skills card may have waited on the human,
 				// and the mode is the one in force as the agent starts.
-				req.PermissionMode = agentMode()
+				startMode(&req, lead)
 				res, err := spawn.Run(ctx, req)
 				if err != nil {
 					return "", err
@@ -178,7 +180,7 @@ func mcpTools(all []mcp.Tool, orchestrator, missionsOnly, control bool) []mcp.To
 	if missionsOnly {
 		all = nil
 	}
-	all = append(all, missionTool())
+	all = append(all, missionTool(), proposeTool())
 	if control {
 		all = append(all, sendMessageTool())
 	}
@@ -226,37 +228,130 @@ func sendMessageTool() mcp.Tool {
 // missionTool is update_mission: the orchestrator's word on a mission,
 // applied by Den or put to the human there.
 func missionTool() mcp.Tool {
+	goal := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id":    map[string]any{"type": "string", "description": "The sub-goal's id (g1, g2...). Leave it out to add a sub-goal."},
+			"text":  map[string]any{"type": "string", "description": "What the sub-goal is, in a few words."},
+			"owner": map[string]any{"type": "string", "description": "Who owns it: a running agent's critter name from the roster, or a team role to start."},
+			"state": map[string]any{"type": "string", "enum": []string{"todo", "doing", "blocked", "done"}},
+			"note":  map[string]any{"type": "string", "description": "One line: what it is blocked on, or what it produced."},
+		},
+	}
 	return mcp.Tool{
 		Name:        strings.TrimPrefix(orch.MissionTool, "mcp__"+orch.MCPServer+"__"),
-		Description: "Tell Den where a mission stands after its run: done (the goal is met), continue (another pass is needed; dispatch it in the same reply), waiting (on something outside the agents) or failed. Den applies continue and waiting at once when the human asked you about the mission; anything else, and done or failed always, it puts to the human to confirm. The answer says which.",
+		Description: "Tell Den about a mission: where it stands (state), its sub-goals (add, re-own, move them), and which done criteria are met (claims, each with the evidence you saw: a report, a merged PR, a test result). A claim is your word, not a decision: when every criterion is claimed, Den asks the human, and only the human marks the mission done. state done needs every criterion claimed first. criteria_text asks the human to change a criterion's text; it never changes on your word. Den applies continue, waiting, sub-goals and claims at once in the human's turns and its own; in a paired app's turn it asks the human first. The answer says what happened.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"id":      map[string]any{"type": "string", "description": "The mission's id, as Den gave it."},
 				"state":   map[string]any{"type": "string", "enum": []string{"done", "continue", "waiting", "failed"}},
 				"summary": map[string]any{"type": "string", "description": "One line on where it stands, shown to the human."},
+				"goals":   map[string]any{"type": "array", "items": goal},
+				"claims": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":       map[string]any{"type": "string", "description": "The criterion's id (c1, c2...)."},
+						"evidence": map[string]any{"type": "string", "description": "One line on what shows it is met, and where it came from."},
+					},
+					"required": []string{"id", "evidence"},
+				}},
+				"criteria_text": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id":   map[string]any{"type": "string"},
+						"text": map[string]any{"type": "string"},
+					},
+					"required": []string{"id", "text"},
+				}},
 			},
-			"required": []string{"id", "state", "summary"},
+			"required": []string{"id"},
 		},
 		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
 			var in bridge.MissionInput
 			if json.Unmarshal(args, &in) != nil || strings.TrimSpace(in.ID) == "" {
-				return "", errorString("give id, state and summary")
+				return "", errorString("give the mission's id, and a state, goals, claims or criteria_text")
 			}
 			switch in.State {
-			case "done", "continue", "waiting", "failed":
+			case "", "done", "continue", "waiting", "failed":
 			default:
 				return "", errorString("state is done, continue, waiting or failed")
 			}
-			payload, _ := json.Marshal(in)
-			env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.MissionEvent, Payload: payload}
-			d, ok := bridge.Ask(bridge.SocketPath(), env, 10*time.Second)
-			if !ok {
-				return "", errorString("Den is not running or did not answer; the mission was not updated")
+			if in.State == "" && len(in.Goals) == 0 && len(in.Claims) == 0 && len(in.CriteriaText) == 0 {
+				return "", errorString("nothing to tell Den: give a state, goals, claims or criteria_text")
 			}
-			return d.Message, nil
+			return askDen(bridge.MissionEvent, in, "the mission was not updated")
 		},
 	}
+}
+
+// proposeTool is propose_mission: the orchestrator's proposal, which Den
+// checks and shows the human; nothing starts until their ^Y.
+func proposeTool() mcp.Tool {
+	goal := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"text":  map[string]any{"type": "string", "description": "The sub-goal in a few words."},
+			"owner": map[string]any{"type": "string", "description": "A running agent's critter name from the roster, or a role from team."},
+		},
+		"required": []string{"text", "owner"},
+	}
+	return mcp.Tool{
+		Name:        strings.TrimPrefix(orch.ProposeTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":          map[string]any{"type": "string", "description": "Only to change a proposal you made: its id."},
+				"project":     map[string]any{"type": "string", "description": "The project: its name as Den lists it, or its directory."},
+				"name":        map[string]any{"type": "string", "description": "A few words for the mission's row."},
+				"goal":        map[string]any{"type": "string", "description": "The top-level goal in one sentence."},
+				"criteria":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The done criteria, 1 to 8."},
+				"goals":       map[string]any{"type": "array", "items": goal, "description": "The sub-goals, 1 to 12."},
+				"shape":       map[string]any{"type": "string", "enum": []string{"once", "loop", "fanout", "schedule"}},
+				"cadence":     map[string]any{"type": "string", "description": "For schedule: \"every 30m\", \"daily 08:30\", \"weekly mon 09:00\" or a cron line."},
+				"reason":      map[string]any{"type": "string", "description": "One line on why this shape."},
+				"constraints": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"team": map[string]any{"type": "array", "items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"role":  map[string]any{"type": "string"},
+						"model": map[string]any{"type": "string", "enum": spawn.ModelNames()},
+						"under": map[string]any{"type": "string", "description": "The role it reports to, or orchestrator."},
+					},
+					"required": []string{"role"},
+				}},
+			},
+			"required": []string{"project", "goal", "criteria", "goals", "shape"},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.ProposeInput
+			if json.Unmarshal(args, &in) != nil || strings.TrimSpace(in.Goal) == "" {
+				return "", errorString("give project, goal, criteria, goals and shape")
+			}
+			if len(in.Criteria) == 0 {
+				return "", errorString("set the done criteria: at least one")
+			}
+			if len(in.Goals) == 0 {
+				return "", errorString("give the sub-goals, each with its owner")
+			}
+			return askDen(bridge.ProposeEvent, in, "nothing was proposed")
+		},
+	}
+}
+
+// askDen sends a mission call to Den and returns its answer.
+func askDen(event string, in any, failed string) (string, error) {
+	payload, _ := json.Marshal(in)
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: event, Payload: payload}
+	d, ok := bridge.Ask(bridge.SocketPath(), env, 10*time.Second)
+	if !ok {
+		return "", errorString("Den is not running or did not answer; " + failed)
+	}
+	if d.Behavior == "deny" {
+		return "", errorString(d.Message)
+	}
+	return d.Message, nil
 }
 
 // usageStop refuses to start anything while Den has the fleet stopped for
@@ -285,17 +380,40 @@ func spawnRequest(in orch.SpawnInput, orcName, lead, exe string) spawn.Request {
 	return spawn.Request{Dir: in.Dir, Agent: true, Brief: in.Brief, Name: in.Name, Model: in.Model, Orchestrator: orcName, Lead: lead, Worktree: in.Worktree, Spawner: exe}
 }
 
-// agentMode is the permission mode a new agent starts in: the running
-// Den's global mode. With no answer from Den, or one that is not a ranked
-// mode, it is config's mode at most permmode.Shipped, as Den itself would
-// start: never bypassPermissions, whatever answers on den.sock.
-func agentMode() string {
-	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.ModeEvent}
-	if d, err := askMode(bridge.SocketPath(), env, 3*time.Second); err == nil && d.Behavior == "allow" && permmode.Valid(d.Message) {
-		return d.Message
+// startMode sets the permission mode a new agent starts in: the running
+// Den's answer, for an agent started by lead ("" for the orchestrator).
+// With no answer from Den, or one that is not a ranked mode, it is
+// config's mode at most permmode.Shipped, as Den itself would start. Den
+// answers bypassPermissions only in God mode, and then with the session id
+// and --settings file of the guard it wrote; without both it is the
+// fallback, never bypass. A bypass agent gets no spawn tool: it leads no
+// team.
+func startMode(req *spawn.Request, lead string) {
+	payload, _ := json.Marshal(map[string]string{"lead": lead})
+	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.ModeEvent, Payload: payload}
+	d, err := askMode(bridge.SocketPath(), env, 3*time.Second)
+	switch {
+	case err != nil || d.Behavior != "allow":
+	case permmode.Valid(d.Message):
+		req.PermissionMode = d.Message
+		return
+	case d.Message == permmode.Bypass && lead == "" && filepath.IsAbs(d.Answers["settings"]) && sessionIDRe.MatchString(d.Answers["session_id"]):
+		req.PermissionMode, req.SessionID, req.Settings, req.Spawner = permmode.Bypass, d.Answers["session_id"], d.Answers["settings"], ""
+		return
 	}
-	return permmode.Lower(config.Load().Agents.PermissionMode, permmode.Shipped)
+	req.PermissionMode = permmode.Lower(config.Load().Agents.PermissionMode, permmode.Shipped)
 }
+
+// agentMode is the mode startMode picks for an agent the orchestrator
+// starts.
+func agentMode() string {
+	var req spawn.Request
+	startMode(&req, "")
+	return req.PermissionMode
+}
+
+// sessionIDRe is a session id Den drew for a guarded agent.
+var sessionIDRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // askMode reaches Den; tests replace it.
 var askMode = bridge.Call

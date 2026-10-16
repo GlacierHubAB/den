@@ -26,7 +26,7 @@ func (d *dock) claimAsk(words []string) (*client, int64, *ConsoleAsk) {
 
 // A claim by code whose process reads clean as the console's service
 // keeps that read: the card says the dock may rejoin, and after a restart
-// it re-pairs with no code and no powers, as one paired with none.
+// it re-pairs by itself, with its powers, as one paired with none.
 func TestClaimReadCleanMayRejoin(t *testing.T) {
 	h, _ := consoleHarness(t)
 	asked := fakeUnit(t, testVerifier(), nil)
@@ -47,14 +47,14 @@ func TestClaimReadCleanMayRejoin(t *testing.T) {
 	rc, rid := reconnect(t, h, d2, "")
 	l := rc.replyTo(rid)
 	var r reconnectReply
-	if !l.OK || json.Unmarshal(l.Result, &r) != nil || !r.verified(h, d2) || r.Powers {
+	if !l.OK || json.Unmarshal(l.Result, &r) != nil || !r.verified(h, d2) || !r.Powers {
 		t.Fatalf("reconnect %+v %s", l.Error, l.Result)
 	}
-	ctlAct(t, h.s, func(a Act) bool { return a.ConsolePowers != nil })
 }
 
 // A claim whose process does not read clean pairs as a code always did:
-// no word of it on the card, no strike, and a restart pairs again.
+// no word of it on the card and no strike; a restart that still does not
+// read clean is refused.
 func TestClaimNotCleanPairsAsBefore(t *testing.T) {
 	h, _ := consoleHarness(t)
 	fakeUnit(t, testVerifier(), sysd.Problems{`its Type is "forking", not simple or exec`})
@@ -74,7 +74,7 @@ func TestClaimNotCleanPairsAsBefore(t *testing.T) {
 		t.Errorf("strikes %d, verifier %v", strikes, verifier)
 	}
 	rc, rid := reconnect(t, h, d.restarted(), "")
-	if l := rc.replyTo(rid); code(l) != CodeForbidden || l.Error.Message != "pair again: there is no pairing to reconnect to" {
+	if l := rc.replyTo(rid); code(l) != CodeForbidden || !strings.HasPrefix(l.Error.Message, "pair again: not "+ConsoleUnit) {
 		t.Errorf("reconnect %+v", l.Error)
 	}
 }

@@ -292,6 +292,9 @@ type info struct {
 	Versions []int    `json:"versions"`
 	Features []string `json:"features"`
 	Control  string   `json:"control"` // "on" when an app's or a console's turn may run
+	// ConsolePublicKey is Den's console key (hex), which signs a
+	// console.reconnect's den_sig.
+	ConsolePublicKey string `json:"console_public_key"`
 }
 
 func (i info) supports(v int) bool {

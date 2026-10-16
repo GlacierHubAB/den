@@ -190,7 +190,7 @@ den remote status devbox   the read-only checks again; also: install, remove, di
 den install-mods        put the bundled agent-badge mod into ~/.claude/skills
 den mods                what ships in this binary and where it is loaded from
 den uninstall-mods      undo
-den pair                pair your console app (Drey's dock): a code in Den's header, then your ^Y on its card
+den pair                pair a console app by hand: a code in Den's header, then your ^Y on its card
 den unpair [all]        end the console; all also ends every app pairing
 den config              the config file path and the settings in effect
 den config init         write a documented ~/.config/den/config.toml
@@ -557,6 +557,54 @@ other users, not against your own processes.
 `den ask` from the command line starts a fresh orchestrator and doesn't load
 guidance.
 
+### God mode
+
+God mode lets the agents you start act without asking, and lets Den answer
+some of its own cards. It is turned on only in Den's own window: type
+`/god on`, read the warning, then type `let agents act without asking`
+within a minute. Nothing else turns it on (no config key, environment
+variable, command from an app or socket verb), and every Den start begins
+with it off. `/god off`, `den god off` in a terminal, your console and any
+unpair end it.
+
+While it is on, Den's header says so in red, and:
+
+- agents the orchestrator starts on this machine run in
+  `bypassPermissions`: Claude Code never asks them, so Den shows no
+  permission cards for them at all. Remote hosts keep their own policy;
+  agents a lead starts, and agents Den reopens, start in the global mode,
+  and a bypass agent cannot start agents of its own;
+- Den answers, yes, its own close, cleanup, restore, mission-update and
+  mission-move cards that came after God mode went on, with a line in its
+  chat for each;
+- pairings, app grants, turning the API on, installs, guidance, skills,
+  budgets and usage, messages to hosts, an app's turn, merges and your
+  console stay yours, and only Den's own window answers them, as it alone
+  gives an "always" answer to any card. That includes each tool in a turn
+  your console's chat started: from the dock alone you cannot approve it
+  while God mode is on, so answer it in Den's window;
+- every message to an agent that runs without asking goes through Den: a
+  hook Den gives that agent lets a peer message in only if Den delivered
+  it, and Den shows a red notice for any it blocked. Den tests that hook
+  when the agent starts, and reads the agent's transcript for any peer
+  message Den did not deliver. If the test fails, such a message shows
+  up, or that agent's Den settings file or the den binary changes, Den
+  marks it unguarded in red, delivers nothing more to it and offers to
+  close it. An agent in `bypassPermissions` that Den did not start this
+  way is listed unguarded too;
+- the orchestrator runs on Den's own `send_message`, never Claude Code's
+  `SendMessage`, while God mode is on and while any guarded agent still
+  runs.
+
+What stays open: an agent that runs without asking can do anything you
+can, including changing Den itself. What it reads is not fenced: files,
+cloned repositories (their CLAUDE.md too), web pages and MCP output, which
+is how an injection most often reaches it. Any program or agent that can run
+commands as you without asking (including agents in auto, plan or God
+mode) can type into a God-mode agent's terminal, or write to its inbox
+socket, and is not stopped. Den lowers the chance that an injection
+reaches such an agent; it cannot contain one that has.
+
 ### Apps (den-api.sock)
 
 Den can serve a local API to apps on your machine: the
@@ -582,9 +630,17 @@ waits for your `Ctrl+Y`: for an app pairing, everything that would change
 your fleet waits for you in Den. `/api control off` stops it, and `/api
 unpair` revokes every pairing, your console's too.
 
-**Your console.** `den pair` in a terminal (or `/api console` in Den) shows a
-console code the same way, for the one app you make your console (Drey's
-dock). After your `Ctrl+Y` on its card, the console may:
+**Your console.** Drey's dock pairs as your console by itself, with no code
+and no card, whenever Den and the dock both run: Den checks through your
+systemd user manager that it is `drey-host.service`'s main process, and says
+in its chat what it paired (the program and its SHA-256, and what changed
+since last time). It pairs again by itself after either restarts. Its powers
+(answering cards, running commands) come with it when the program, unit and
+pins are what you last gave them to since Den started; the first pairing
+after Den starts, and one after a new Drey build, wait for one `Ctrl+Y` on
+Den's powers card (`api.console_powers = "always"` skips that). `den pair`
+in a terminal (or `/api console` in Den) shows a console code the same way
+as above, for pairing by hand. The console may:
 
 - read the cards Den shows and answer most of them, as your `Ctrl+Y` would.
   It never answers a console or app pairing, turning the API on, guidance,
@@ -617,9 +673,19 @@ cancelled.
 
 After Den restarts, it restores your console and says so in its chat, with
 the program's pid and start time: if that is not your app, run `den unpair
-all`. When the app itself restarts, pair it again with `den pair`.
+all`. `/api unpair` or `den unpair` stops the dock pairing by itself until
+you start a pairing in Den again (`/api console` or `den pair`); `/api lock`
+takes the console's powers, for every pairing after too, until your `Ctrl+Y`
+on Den's powers card.
 
-What stays: any program running as you can type into Den's window, read its
+What stays: anything running as you that can change drey-host.service's
+unit or program (both in your home dir) gets the dock's reading and chat
+with no question in Den, and its full powers once you press `Ctrl+Y` on the
+powers card after a change; with `api.console_powers = "always"` it gets
+them with no question at all. Your levers are `/api lock`, `/api unpair`, and
+God mode staying off.
+
+Any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
 answers for you, within the limits above, so pair only an app you trust,
 and unpair it when you are not using it. Anything that can type into the
@@ -1478,6 +1544,7 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

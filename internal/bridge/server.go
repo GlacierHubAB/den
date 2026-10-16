@@ -108,6 +108,7 @@ var held = map[string]bool{
 	SendEvent:           true,
 	InboundEvent:        true,
 	MissionEvent:        true,
+	ProposeEvent:        true,
 	UsageEvent:          true,
 	ModeEvent:           true,
 	OrchSendEvent:       true,
@@ -118,6 +119,8 @@ var held = map[string]bool{
 	DesktopGateEvent:    true,
 	DesktopMissionEvent: true,
 	DesktopStopEvent:    true,
+	GodOffEvent:         true,
+	AgentInboundEvent:   true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

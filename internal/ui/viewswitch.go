@@ -22,9 +22,13 @@ var viewSwitcher = view.New
 // it cannot switch.
 type viewDoneMsg struct{ view string }
 
-// viewKeep says why Den's own window must stay up, "" when it need not: a
-// card waits on the human. It is the one place that decides it, for a hide.
+// viewKeep says why Den's own window must stay up, "" when it need not:
+// God mode is on (its cards are answered only there), or a card waits on
+// the human. It is the one place that decides it, for a hide.
 func (m *Model) viewKeep() string {
+	if m.godOn() {
+		return "God mode is on"
+	}
 	if m.store.Waiting() > 0 {
 		return "a card waits"
 	}

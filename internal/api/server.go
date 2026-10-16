@@ -46,6 +46,11 @@ type Options struct {
 	// ConsoleStore is where Den keeps its side of the console across
 	// restarts (console_store.go); "" keeps it in memory only.
 	ConsoleStore string
+	// ConsolePowersAlways gives the console's service its powers whenever
+	// it pairs by itself (api.console_powers = "always"). Left false, only
+	// a program, unit and pins this Den run already gave them to come with
+	// them; anything else asks for one Ctrl+Y.
+	ConsolePowersAlways bool
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -75,6 +80,8 @@ type Server struct {
 	stopWatch chan struct{}
 	// cardAnswers counts the console's card answers for their limits.
 	cardAnswers answers
+	// god is God mode's state as Den last set it (god.go).
+	god godState
 	// cmdLimits counts the console's commands.
 	cmdLimits cmdLimits
 	closeOnce sync.Once
@@ -918,7 +925,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		} else if first {
 			s.note("an app connected to den-api.sock: " + sanitize.Label(ExeShownShort(c.peer.Exe), 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
 		}
-		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()}
+		g := s.god.get()
+		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState(), God: &g}
 		if s.ckey != nil {
 			info.Features = []string{FeatureConsole}
 			// Public: the dock shows its fingerprint while the human
@@ -1041,6 +1049,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.cmdList(c, req)
 	case "cmd.complete":
 		s.cmdComplete(c, req)
+	case "god.off":
+		s.godOff(c, req)
 	case "cmd.run":
 		s.cmdRun(c, req)
 	case "mode.set":

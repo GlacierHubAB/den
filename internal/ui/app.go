@@ -110,14 +110,23 @@ func flashTick(d time.Duration, text string) tea.Cmd {
 type Model struct {
 	// peers is the bookkeeping of messages other sessions send the
 	// orchestrator (inbound.go); missionUpdates are the updates waiting on
-	// the human's ^Y, by inbox item (mission_update.go).
+	// the human's ^Y, by inbox item, and missionAsks the criteria and done
+	// questions (mission_update.go).
 	peers          peerState
-	missionUpdates map[string]mission.Update
+	missionUpdates map[string]bridge.MissionInput
+	missionAsks    map[string]missionAsk
 	// use is the usage guard (usage.go).
 	use usageGuard
 	// mode is the global permission mode agents start in (mode.go).
 	mode modeState
-	// dockFrom names the console while its command runs, "" otherwise.
+	// god is God mode (god.go): in memory only, off at every start.
+	god godUI
+	// med is the mediation of messages to guarded agents (mediate.go).
+	med mediationUI
+	// fromDock is set while a console's command runs, and dockFrom names
+	// that console; what the dock may not do is decided on fromDock, never
+	// on the name, which may be empty.
+	fromDock bool
 	dockFrom string
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
@@ -185,11 +194,11 @@ type Model struct {
 	detailScroll int       // lines scrolled in the detail pane
 	tree         treeState // who directs whom, and the map
 
-	proj           projectState   // the projects and the pick
-	ov             overviewState  // the Overview tab
-	missions       *mission.Store // standing goals, by project
-	turn           missionTurn    // which mission the orchestrator's turn serves
-	missionDirSent bool           // the orchestrator has had the mission vocabulary
+	proj     projectState   // the projects and the pick
+	ov       overviewState  // the Overview tab
+	missions *mission.Store // standing goals, by project
+	turn     missionTurn    // which mission the orchestrator's turn serves
+	noRoles  bool           // the agents pane is too narrow for role tags
 
 	rev reviewState // the Review view
 
@@ -252,6 +261,9 @@ func New(cfg config.Config) Model {
 		} else {
 			m.api.err = "another Den is running"
 		}
+	}
+	if keys := config.GodKeys(); len(keys) > 0 {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config: " + strings.Join(keys, ", ") + " ignored: God mode has no setting; it is turned on only in Den's own window, with /god on and its phrase, and is off at every start.", at: time.Now()}))
 	}
 	return m
 }
@@ -529,9 +541,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
+		m.checkGuards()
+		m.pruneDeliveries()
+		m.dropStaleGuards()
+		m.watchGuards(time.Now())
 		m.refresh()
+		m.refreshTranscript()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
+		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -737,7 +754,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == "Stop" {
 		deskCmd = m.deskAgentStopped(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.ProposeEvent || r.Event == bridge.OrchSendEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -750,6 +767,8 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleInbound(r)
 		case bridge.OrchSendEvent:
 			return m.handleOrchSend(r)
+		case bridge.ProposeEvent:
+			return m.handlePropose(r)
 		}
 		return m.handleMissionUpdate(r)
 	}
@@ -762,6 +781,12 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.ModeEvent {
 		m.modeQuery(r)
 		return nil
+	}
+	if r.Event == bridge.GodOffEvent {
+		return m.handleGodOff(r)
+	}
+	if r.Event == bridge.AgentInboundEvent {
+		return m.handleAgentInbound(r)
 	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
@@ -1025,14 +1050,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
-			switch {
-			case m.ov.listing:
-				m.ov.listing = false
-			case m.ov.proposal != "":
-				m.ov.proposal = "" // the proposal stays in the list
-			case m.ov.open != "":
-				m.ov.open, m.ov.scroll = "", 0
-			}
+			m.backOverview()
 			return m, nil
 		}
 		if m.tab == tabReview {
@@ -1167,6 +1185,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.move(-5)
 		return m, nil
 	case "ctrl+y":
+		if m.tab == tabOrch && m.selectedProposal() != nil {
+			return m.answerProposal(true)
+		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			if cmd := m.startMission(); cmd != nil {
 				return m, cmd
@@ -1175,6 +1196,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.answer("allow")
 	case "ctrl+n":
+		if m.tab == tabOrch && m.selectedProposal() != nil {
+			return m.answerProposal(false)
+		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			m.dropMission()
 			return m, nil
@@ -1217,7 +1241,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
 			if m.tab == tabOverview {
-				m.toggleMission()
+				if note := m.toggleMission(); note != "" {
+					return m.say(note, true)
+				}
 				return m, nil
 			}
 			if m.tab == tabOrch && m.toggleAction() {
@@ -1265,10 +1291,17 @@ func (m *Model) move(delta int) {
 		}
 		m.selectInbox(clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1)))
 	case tabOverview:
-		if m.ov.open != "" || m.ov.proposal != "" {
-			m.ov.scroll = max(0, m.ov.scroll-delta)
-		} else {
-			m.ov.cur = clamp(m.ov.cur+delta, 0, max(0, len(m.missions.ForProject(m.proj.cur))-1))
+		switch {
+		case m.ov.transcript != "":
+			m.ov.scroll = max(0, m.ov.scroll-delta) // from the bottom: it follows the tail
+		case m.ov.open != "":
+			if ms := m.missions.Get(m.ov.open); ms != nil {
+				m.ov.who = clamp(m.ov.who+delta, 0, max(0, len(m.whoRows(ms))-1))
+			}
+		case m.ov.proposal != "":
+			m.ov.scroll = max(0, m.ov.scroll+delta)
+		default:
+			m.moveMission(delta)
 		}
 	case tabOrch:
 		m.moveCard(delta)
@@ -1493,6 +1526,12 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.MissionUpdate {
 		return m.decideMissionUpdate(it, verb)
 	}
+	if it.Kind == inbox.MissionCriteria {
+		return m.decideMissionCriteria(it, verb)
+	}
+	if it.Kind == inbox.MissionDone {
+		return m.decideMissionDone(it, verb)
+	}
 	if it.Kind == inbox.UsageResume {
 		return m.decideUsageResume(it, verb)
 	}
@@ -1678,14 +1717,22 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		if len(fields) > 2 && strings.EqualFold(fields[1], "move") && m.listsProject(strings.Join(fields[2:], " ")) {
 			return m.askMove(strings.Join(fields[2:], " "))
 		}
-		m.tab = tabOverview
-		return m, m.proposeMission(strings.Join(fields[1:], " "))
+		// "/mission met c2" and "/mission unmet c2": the human's own word on
+		// a criterion, typed in Den only (the dock refuses them).
+		if len(fields) == 3 && (strings.EqualFold(fields[1], "met") || strings.EqualFold(fields[1], "unmet")) && criterionID.MatchString(strings.ToLower(fields[2])) {
+			note, isErr := m.missionMetCommand(strings.EqualFold(fields[1], "met"), fields[2])
+			return m.say(note, isErr)
+		}
+		cmd := m.requestMission(strings.Join(fields[1:], " "))
+		return m, cmd
 	case "/template", "/templates":
 		return m.templateCommand(fields[1:], text)
 	case "/pause", "/resume", "/stop":
 		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
 			return m.say(note, isErr)
 		}
+	case "/god":
+		return m.godCommand(fields[1:])
 	case "/usage":
 		return m.usageCommand(fields[1:])
 	case "/mode":

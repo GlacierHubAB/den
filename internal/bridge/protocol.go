@@ -117,11 +117,68 @@ type InboundInput struct {
 // final; otherwise it asks the human (^Y). Its answer is immediate.
 const MissionEvent = "MissionUpdate"
 
-// MissionInput is the payload of a MissionEvent.
+// MissionInput is the payload of a MissionEvent. State is optional when
+// the call changes sub-goals, claims criteria or asks to change their text.
 type MissionInput struct {
 	ID      string `json:"id"`
-	State   string `json:"state"` // done, continue, waiting, failed
-	Summary string `json:"summary"`
+	State   string `json:"state,omitempty"` // done, continue, waiting, failed
+	Summary string `json:"summary,omitempty"`
+	// Goals adds a sub-goal (no id) or changes one; Claims says criteria
+	// are met, with evidence; CriteriaText asks the human to change a
+	// criterion's text.
+	Goals        []GoalInput     `json:"goals,omitempty"`
+	Claims       []ClaimInput    `json:"claims,omitempty"`
+	CriteriaText []CriterionText `json:"criteria_text,omitempty"`
+}
+
+// GoalInput is one sub-goal in a mission call: owner is a critter name
+// from the roster or a team role.
+type GoalInput struct {
+	ID    string `json:"id,omitempty"`
+	Text  string `json:"text,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	State string `json:"state,omitempty"` // todo, doing, blocked, done
+	Note  string `json:"note,omitempty"`
+}
+
+// ClaimInput says a criterion is met, with what shows it.
+type ClaimInput struct {
+	ID       string `json:"id"`
+	Evidence string `json:"evidence"`
+}
+
+// CriterionText is a criterion's new text, for the human to approve.
+type CriterionText struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// ProposeEvent is not a hook event: `den mcp` sends it for the
+// orchestrator's propose_mission call. Den checks it and shows the
+// proposal; nothing starts until the human's ^Y. Its answer is immediate.
+const ProposeEvent = "MissionPropose"
+
+// ProposeInput is the payload of a ProposeEvent. With ID it refines that
+// proposal.
+type ProposeInput struct {
+	ID          string      `json:"id,omitempty"`
+	Project     string      `json:"project"`
+	Name        string      `json:"name"`
+	Goal        string      `json:"goal"`
+	Criteria    []string    `json:"criteria"`
+	Goals       []GoalInput `json:"goals"`
+	Shape       string      `json:"shape"`
+	Cadence     string      `json:"cadence,omitempty"`
+	Reason      string      `json:"reason,omitempty"`
+	Constraints []string    `json:"constraints,omitempty"`
+	Team        []TeamInput `json:"team,omitempty"`
+}
+
+// TeamInput is a role to start for a mission.
+type TeamInput struct {
+	Role  string `json:"role"`
+	Model string `json:"model,omitempty"`
+	Under string `json:"under,omitempty"`
 }
 
 // UsageEvent is not a hook event: `den mcp` sends it before it starts an
@@ -216,6 +273,17 @@ type DesktopInput struct {
 	ChildPID   int    `json:"child_pid,omitempty"`
 	ChildStart string `json:"child_start,omitempty"`
 }
+
+// AgentInboundEvent is not a hook event either: a guarded agent's own
+// UserPromptSubmit hook (`den hook agent-inbound`) sends it for a prompt
+// that holds a peer envelope, with the SHA-256 of the prompt as Payload
+// {"sha256"}. Den allows it only if Den delivered exactly that to the
+// session; anything else, and no answer, blocks it.
+const AgentInboundEvent = "AgentInbound"
+
+// GodOffEvent is not a hook event: `den god off` sends it. It only
+// lowers, so anyone may ask; nothing on den.sock turns God mode on.
+const GodOffEvent = "GodOff"
 
 // OrchSendInput is the payload of an OrchSendEvent: SendMessage's input.
 type OrchSendInput struct {

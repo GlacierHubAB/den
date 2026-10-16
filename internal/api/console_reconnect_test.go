@@ -14,13 +14,17 @@ import (
 	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
-// requestPaired pairs the dock by console.request, as the human's ^Y
-// would, and returns the pairing.
+// requestPaired pairs the dock by console.request, at once, and returns
+// the pairing.
 func requestPaired(t *testing.T, h *harness, d *dock, pages string) consolePaired {
 	t.Helper()
-	c, id, ask := d.request(pages)
-	h.s.ConsoleAnswered(ask.ID, true)
-	l := c.replyTo(id)
+	c := h.dial()
+	c.hello()
+	p := map[string]string{"public_key": d.pub}
+	if pages != "" {
+		p["pages_sha256"] = pages
+	}
+	l := c.call("console.request", p)
 	var r struct {
 		Pairing string `json:"pairing"`
 		DenKey  string `json:"den_public_key"`
@@ -65,10 +69,12 @@ func reconnect(t *testing.T, h *harness, d *dock, pages string) (*client, int64)
 	return c, c.send("console.reconnect", p)
 }
 
-// The same service on the same build restarts while Den runs: it re-pairs
-// with no card, says so, and has no powers until the human's ^Y.
-func TestReconnectSilent(t *testing.T) {
-	h, _ := consoleHarness(t)
+// The service restarts while Den runs: it re-pairs at once, with its
+// powers and no card, signed under Den's key; Den names the program in
+// its chat, and the console's first subscribed connection hears it
+// reconnected, automatically.
+func TestReconnectAtOnce(t *testing.T) {
+	h := alwaysHarness(t)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	old := requestPaired(t, h, d, "")
@@ -76,14 +82,11 @@ func TestReconnectSilent(t *testing.T) {
 	c, id := reconnect(t, h, d2, "")
 	l := c.replyTo(id)
 	var r reconnectReply
-	if !l.OK || json.Unmarshal(l.Result, &r) != nil || r.Pairing == old.ID || !r.verified(h, d2) || r.Powers {
+	if !l.OK || json.Unmarshal(l.Result, &r) != nil || r.Pairing == old.ID || !r.verified(h, d2) || !r.Powers {
 		t.Fatalf("reply %+v %s", l.Error, l.Result)
 	}
-	noteWith(t, h.s, "console reconnected: "+ConsoleUnit)
-	powers := ctlAct(t, h.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
-	if powers.ID != r.Pairing {
-		t.Errorf("powers card for %q", powers.ID)
-	}
+	noteWith(t, h.s, "console paired automatically: "+ConsoleUnit)
+	noCard(t, h.s)
 	// The old pairing is gone; the new one proves, and hears it reconnected.
 	pc := h.dial()
 	pc.hello()
@@ -93,92 +96,82 @@ func TestReconnectSilent(t *testing.T) {
 	nc := h.dial()
 	nc.hello()
 	p := consolePaired{ID: r.Pairing, DenKey: h.s.ckey.pubHex}
-	if l, _, _, _ := d2.auth(nc, p); !l.OK || !strings.Contains(string(l.Result), `"powers":false`) {
+	if l, _, _, _ := d2.auth(nc, p); !l.OK || !strings.Contains(string(l.Result), `"powers":true`) {
 		t.Fatalf("auth %+v %s", l.Error, l.Result)
 	}
 	nc.call("console.events", nil)
 	var ev ConsoleEvent
 	nc.next() // connected
-	if e := nc.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "reconnected" {
-		t.Errorf("event %+v", e)
-	}
-	// No powers: card answers and commands wait for the ^Y.
-	for _, op := range []string{"card.answer", "cmd.run", "mode.set"} {
-		if l := nc.call(op, map[string]string{"id": "x", "text_sha256": strings.Repeat("0", 64), "nonce": strings.Repeat("0", 64), "verb": "allow", "text": "/fleet", "mode": "plan"}); code(l) != CodePowersLocked {
-			t.Errorf("%s without powers: %+v", op, l.Error)
-		}
-	}
-	h.s.ConsolePowersAnswered(r.Pairing, true)
-	if e := nc.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "powers" || ev.On == nil || !*ev.On {
-		t.Errorf("powers event %+v", e)
+	if e := nc.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "reconnected" || ev.Reason != "paired automatically" || ev.Unit != ConsoleUnit || ev.ProgramSHA != testVerifier().Exe.SHA256 || len(ev.Changes) != 0 {
+		t.Errorf("event %+v", ev)
 	}
 	nc.send("cmd.run", map[string]string{"text": "/fleet flat"})
 	ctlAct(t, h.s, func(a Act) bool { return a.Command != nil })
 }
 
-// What asks on a card instead: a change Den read, the dock's pages, a Den
-// start, God mode. The card names why; its ^Y re-pairs with the powers.
-func TestReconnectCard(t *testing.T) {
+// What changed since Den last read the service is named, in Den's chat
+// and in the event, and re-pairs all the same: a new build, the dock's
+// pages. God mode re-pairs without the powers.
+func TestReconnectNamesWhatChanged(t *testing.T) {
 	changed := testVerifier()
 	changed.Exe.SHA256 = strings.Repeat("99", 32)
 	for _, c := range []struct {
-		name  string
-		setup func(t *testing.T, h *harness)
-		v     sysd.Verifier
-		pages string
-		want  string
+		name   string
+		setup  func(t *testing.T, h *harness)
+		v      sysd.Verifier
+		pages  string
+		want   string
+		powers bool
 	}{
-		{"new build", nil, changed, "", "program changed"},
-		{"pages", nil, testVerifier(), strings.Repeat("12", 32), "dock's pages changed"},
-		{"god mode", func(t *testing.T, h *harness) { h.s.SetGodMode(func() bool { return true }) }, testVerifier(), "", "God mode is on"},
+		{"new build", nil, changed, "", "the program changed", true},
+		{"pages", nil, testVerifier(), strings.Repeat("12", 32), "the dock's pages changed", true},
+		{"god mode", func(t *testing.T, h *harness) { h.s.SetGodMode(func() bool { return true }) }, testVerifier(), "", "God mode is on", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			h, _ := consoleHarness(t)
+			h := alwaysHarness(t)
 			fakeUnit(t, testVerifier(), nil)
 			d := newDock(t, h)
 			requestPaired(t, h, d, "")
+			drainNotes(h.s)
 			if c.setup != nil {
 				c.setup(t, h)
 			}
 			fakeUnit(t, c.v, nil)
 			conn, id := reconnect(t, h, d.restarted(), c.pages)
-			ask := ctlAct(t, h.s, func(a Act) bool { return a.Console != nil }).Console
-			if !ask.Reconnect || !strings.Contains(strings.Join(ask.Changes, "\n"), c.want) || ask.Replaces == nil {
-				t.Fatalf("card %+v", ask)
-			}
-			h.s.ConsoleAnswered(ask.ID, true)
 			var r reconnectReply
-			if l := conn.replyTo(id); !l.OK || json.Unmarshal(l.Result, &r) != nil || !r.Powers || r.DenSig == "" {
-				t.Errorf("reply %+v %s", l.Error, l.Result)
+			if l := conn.replyTo(id); !l.OK || json.Unmarshal(l.Result, &r) != nil || r.Powers != c.powers || r.DenSig == "" {
+				t.Fatalf("reply %+v %s", l.Error, l.Result)
+			}
+			noteWith(t, h.s, c.want)
+			if !c.powers {
+				if pw := ctlAct(t, h.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers; pw.ID != r.Pairing || pw.Why != "God mode is on" {
+					t.Errorf("powers card %+v", pw)
+				}
 			}
 		})
 	}
 }
 
 // After a Den start the record is read back from disk: a restart of the
-// service asks, never re-pairs silently; a deny keeps the record.
-func TestReconnectAfterDenRestartAsks(t *testing.T) {
+// service re-pairs at once all the same, with its powers.
+func TestReconnectAfterDenRestart(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	h := storeHarness(t, store, priv)
+	h := alwaysStore(t, store, priv)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
-	h2 := storeHarness(t, store, priv)
-	ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil }) // a restore has no powers
+	h2 := alwaysStore(t, store, priv)
 	d.h = h2
-	conn, id := reconnect(t, h2, d.restarted(), "")
-	ask := ctlAct(t, h2.s, func(a Act) bool { return a.Console != nil }).Console
-	if !strings.Contains(strings.Join(ask.Changes, "\n"), "Den has restarted") {
-		t.Fatalf("card %+v", ask)
+	d2 := d.restarted()
+	conn, id := reconnect(t, h2, d2, "")
+	var r reconnectReply
+	if l := conn.replyTo(id); !l.OK || json.Unmarshal(l.Result, &r) != nil || !r.Powers || !r.verified(h2, d2) {
+		t.Fatalf("reply %+v %s", l.Error, l.Result)
 	}
-	h2.s.ConsoleAnswered(ask.ID, false)
-	if l := conn.replyTo(id); code(l) != CodeForbidden || l.Error.Message != ClaimDenied {
-		t.Errorf("deny %+v", l.Error)
-	}
-	if cur, ok := h2.s.CurrentConsole(); !ok || cur.PID == 0 {
-		t.Error("a denied reconnect dropped the pairing")
+	if cur, ok := h2.s.CurrentConsole(); !ok || cur.ID != r.Pairing || !cur.Powers {
+		t.Errorf("after the reconnect: %+v %v", cur, ok)
 	}
 }
 

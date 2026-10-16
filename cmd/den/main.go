@@ -23,13 +23,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/events"
@@ -92,6 +96,10 @@ func main() {
 		if len(args) > 0 && args[0] == "desktop-gate" {
 			runDesktopGate(args[1:])
 		}
+		if len(args) > 0 && args[0] == "agent-inbound" {
+			runAgentInbound(args[1:])
+			return
+		}
 		if len(args) > 0 && args[0] == "orchestrator-inbound" {
 			runInbound(args[1:])
 		}
@@ -123,6 +131,8 @@ func main() {
 		pairCmd()
 	case "unpair":
 		unpairCmd(os.Args[2:])
+	case "god":
+		godCmd(os.Args[2:])
 	case "lane-argv":
 		// For scripts/lane-spike.sh: the read-only lane's arguments as Den
 		// passes them, NUL-separated, for a fresh session with a budget.
@@ -135,17 +145,54 @@ func main() {
 	case "uninstall-mods":
 		uninstallMods()
 	case "-h", "--help", "help":
-		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den pair | den unpair [all] | den install-hypruse --from <clone> [--wheels <dir>] | den desktop stop\n       den config [init] | den version")
+		fmt.Println("usage: den | den list [-json] | den focus <who> | den explain <who> | den send [--wait] <who> <msg> | den ask <text>\n       den wait <who> --until idle|needs-you|done [--timeout d] | den events [-json]\n       den install-hooks | den uninstall-hooks | den mods | den install-mods | den uninstall-mods\n       den skills [list | catalogue | match <role> | remove <skill> [where]]\n       den remote add|list|status|install|remove|disable|enable ...\n       den pair | den unpair [all] | den god off | den install-hypruse --from <clone> [--wheels <dir>] | den desktop stop\n       den config [init] | den version")
 	default:
 		fail("den: unknown command %q", os.Args[1])
 	}
 }
 
+// alreadyRunning is why Den does not start when another Den of the user
+// holds its socket at path, naming its pid and terminal; "" when none
+// does. A second Den would have no hooks, no API and no console.
+func alreadyRunning(path string) string {
+	pid, ok := bridge.Running(path)
+	if !ok {
+		return ""
+	}
+	where := ""
+	if tty, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/fd/0"); err == nil && strings.HasPrefix(tty, "/dev/") {
+		where = ", on " + sanitize.Label(tty, 40)
+	}
+	return "den: Den is already running (pid " + strconv.Itoa(pid) + where + "): switch to it, or quit it first"
+}
+
 func runTUI() {
+	if why := alreadyRunning(bridge.SocketPath()); why != "" {
+		fail("%s", why)
+	}
 	ui.Version = version
 	m := ui.New(config.Load())
-	defer m.Close()
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	p := tea.NewProgram(m)
+	// A closed terminal (SIGHUP) ends Den as a quit does, so it exits
+	// cleanly: its console record is marked clean, and the dock pairs by
+	// itself after Den starts again. Bubble Tea quits on SIGTERM itself.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		if _, ok := <-hup; ok {
+			p.Quit()
+		}
+	}()
+	final, err := p.Run()
+	signal.Stop(hup)
+	// The model as it ended holds what started after Den did (the API
+	// turned on in Den, say); close it before any exit.
+	if fm, ok := final.(ui.Model); ok {
+		fm.Close()
+	} else {
+		m.Close()
+	}
+	if err != nil {
 		fail("den: %v", err)
 	}
 }

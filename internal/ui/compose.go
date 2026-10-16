@@ -134,10 +134,16 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
+	// The line after /god on is the phrase or nothing: it goes nowhere else.
+	if m.godPhraseTyped(text) {
+		cleared := m.clear()
+		return m, tea.Batch(cleared, m.godSweep())
+	}
 	if strings.HasPrefix(text, "/") {
 		cleared := m.clear()
 		mm, cmd := m.command(text)
-		return mm, tea.Batch(cleared, cmd)
+		next := mm.(Model)
+		return next, tea.Batch(cleared, cmd, next.godSweep())
 	}
 	// Chips become "[Image #1: /path]" so the receiver can open the file.
 	text = m.expandChips(text)
@@ -147,9 +153,6 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m.say(fmt.Sprintf("Which one: %s?", strings.Join(mt.ambiguous, ", ")), true)
 	case mt.target == nil && (mt.missing != "" || strings.HasPrefix(text, "@")):
 		return m.say(fmt.Sprintf("No agent called %q", mt.missing), true)
-	case mt.target == nil && m.tab == tabOverview:
-		cleared := m.clear()
-		return m, tea.Batch(cleared, m.missionText(mt.body))
 	case mt.target == nil:
 		cleared := m.clear()
 		return m, tea.Batch(cleared, m.askOrchestrator(mt.body))

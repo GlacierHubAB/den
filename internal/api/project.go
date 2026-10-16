@@ -256,7 +256,7 @@ func Project(s Snapshot) *View {
 		v.Cards[c.ID] = c
 	}
 	for _, st := range s.Settled {
-		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console") {
+		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console" || st.By == "rule") {
 			v.Settled[st.ID] = st
 		}
 	}
@@ -290,6 +290,7 @@ func projectCard(c Card) Card {
 		Truncated:   c.Truncated,
 		CutAt:       c.CutAt,
 		DockAnswers: c.DockAnswers,
+		TTYOnly:     c.TTYOnly,
 		Verbs:       []string{},
 	}
 	lines := strings.Split(c.Body, "\n")

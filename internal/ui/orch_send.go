@@ -12,7 +12,6 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/orch"
-	"github.com/GlacierHubAB/den/internal/peer"
 	"github.com/GlacierHubAB/den/internal/peermsg"
 )
 
@@ -30,7 +29,7 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 	if !m.orch.control {
 		// send_message exists only with control on; one from anywhere
 		// else is refused whoever asks.
-		r.Reply(bridge.Decision{Behavior: "deny", Message: "send_message works only while a paired app has control; use SendMessage"})
+		r.Reply(bridge.Decision{Behavior: "deny", Message: "send_message works only while Den runs the orchestrator on it (a paired app, or God mode); use SendMessage"})
 		return nil
 	}
 	if !orch.SendVerifiedVersion(m.orch.version) {
@@ -66,13 +65,18 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 	}
 	from, name, sock, peerName := "uds:"+self.Session.Socket, self.Session.Name, to.Session.Socket, to.Session.Name
 	body := peermsg.Defuse(in.Message)
+	send, err := m.deliverTo(to.Session.SessionID, sock, from, name, body)
+	if err != nil {
+		r.Reply(bridge.Decision{Behavior: "deny", Message: peerName + ": " + err.Error()})
+		return nil
+	}
 	return func() tea.Msg {
 		if r.HungUp() {
 			// send_message gave up waiting and told the orchestrator so:
 			// delivering now could make its retry a second copy.
 			return nil
 		}
-		if err := peer.SendAs(sock, from, name, body); err != nil {
+		if err := send(); err != nil {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: peerName + ": " + err.Error()})
 			return nil
 		}

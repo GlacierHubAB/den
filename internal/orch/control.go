@@ -44,6 +44,8 @@ var controlSends = []string{
 	"You have exactly two tools for the fleet, ListAgents and Den's send_message (" + SendMessageTool + "), and need nothing else. " + ControlNoSendMessage + " send_message is the only way to message an agent: it reaches the agent the same way, and its report comes back to you as before.",
 	"send it with SendMessage to that agent's peer name",
 	"send it with send_message (" + SendMessageTool + ") to that agent's peer name",
+	"dispatch per its shape: SendMessage to the running agents that own sub-goals",
+	"dispatch per its shape: send_message to the running agents that own sub-goals",
 }
 
 // ControlNoSendMessage is the one place the control rules name
@@ -182,7 +184,7 @@ type permission struct {
 // allows without control (Argv's allow-list), with send_message for
 // SendMessage.
 func humanTools(o Options) map[string]bool {
-	set := map[string]bool{SendMessageTool: true, MissionTool: true}
+	set := map[string]bool{SendMessageTool: true, MissionTool: true, ProposeTool: true}
 	if o.Spawn {
 		for _, t := range []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool, DesktopMissionTool} {
 			set[t] = true

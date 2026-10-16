@@ -68,6 +68,9 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 // applyAPIAct puts an app's grant card in the inbox, or settles the cards
 // of grants whose app is gone.
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if act.GodOff != "" {
+		m.godOff(act.GodOff)
+	}
 	if act.CardAnswer != nil {
 		return m.answerFromDock(act.CardAnswer)
 	}
@@ -246,10 +249,11 @@ func (m *Model) startAPI() tea.Cmd {
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den made a new console key (" + consoleKeyFile + "): a dock paired with an earlier one sees Den's key changed and must pair again.", at: time.Now()}))
 	}
 	srv, err := api.Listen(api.Options{
-		Version:      Version,
-		ConsoleKey:   key,
-		ConsoleStore: filepath.Join(state, "consoles.json"),
-		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
+		Version:             Version,
+		ConsoleKey:          key,
+		ConsoleStore:        filepath.Join(state, "consoles.json"),
+		ConsolePowersAlways: cfg.API.ConsolePowers == "always",
+		ChatLog:             filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,
@@ -264,6 +268,13 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	m.api.srv, m.api.err = srv, ""
 	m.api.view = viewSwitcher().Current()
+	// God mode as it is now, and how the server asks later: from its own
+	// record (SetGod), under its own lock, never from the model.
+	if m.god.on {
+		srv.SetGod(true, m.god.since)
+		lockConsolePowers(m, "God mode is on")
+	}
+	srv.SetGodMode(func() bool { return srv.GodNow().On })
 	m.publishAPI()
 	return tea.Batch(waitAPINote(srv), waitAPIAct(srv))
 }

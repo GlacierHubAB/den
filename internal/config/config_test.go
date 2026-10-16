@@ -160,6 +160,24 @@ func TestAnswerQuestionsIsOptIn(t *testing.T) {
 	}
 }
 
+// The dock's powers come only as Den gave them in this run unless the
+// human writes "always"; any other value keeps the default.
+func TestConsolePowers(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	for body, want := range map[string]string{
+		"":                                     "unchanged",
+		"[api]\nconsole_powers = \"always\"\n": "always",
+		"[api]\nconsole_powers = \"unchanged\"\n": "unchanged",
+		"[api]\nconsole_powers = \"yes\"\n":       "unchanged",
+	} {
+		os.WriteFile(p, []byte(body), 0o600)
+		if got := Load().API.ConsolePowers; got != want {
+			t.Errorf("%q: %q, want %q", body, got, want)
+		}
+	}
+}
+
 // The API is off by default; /api on writes the key and touches nothing
 // else in the file.
 func TestAPIKeysAndSetKey(t *testing.T) {

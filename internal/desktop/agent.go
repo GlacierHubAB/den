@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -161,96 +160,6 @@ func DeniedTools(task bool) []string {
 	out := []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
 		"Task", "Agent", "SendMessage", "ListAgents", "Skill", "SlashCommand", "KillShell", "BashOutput", "ToolSearch"}
 	return append(out, ClosedToolNames(task)...)
-}
-
-// shellQuote quotes s for a POSIX shell.
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
-// SettingsJSON is the desktop agent's --settings file: hooks can never be
-// switched off by another settings file; peers' messages are refused (the
-// agent reads the screen and must take no one's word as the human's); and
-// every tool call passes Den's gate hook first.
-func SettingsJSON(den, socket string, task bool) ([]byte, error) {
-	if !filepath.IsAbs(den) || !filepath.IsAbs(socket) {
-		return nil, errors.New("den and its socket must be absolute paths")
-	}
-	entry := func(matcher, args string, timeout int) []any {
-		return []any{map[string]any{
-			"matcher": matcher,
-			"hooks": []any{map[string]any{
-				"type":    "command",
-				"command": shellQuote(den) + " hook " + args + "--socket " + shellQuote(socket),
-				"timeout": timeout,
-			}},
-		}}
-	}
-	hooks := map[string]any{"PreToolUse": entry(".*", "desktop-gate ", 10)}
-	// Only Den's settings load for this agent, so Den's usual hooks never
-	// reach it: these let Den follow it (its turns, its report, its end).
-	// Status only, none decides anything. No PostToolUse: its tool_response
-	// is screen content (screenshots, accessibility trees), which must not
-	// reach Den's event log or activity lines.
-	for _, ev := range []string{"SessionStart", "SessionEnd", "Stop", "StopFailure", "Notification"} {
-		hooks[ev] = entry("", "", 10)
-	}
-	return json.MarshalIndent(map[string]any{
-		"disableAllHooks":     false,
-		"crossSessionInbound": "refuse",
-		// Tool search would defer MCP tools behind the built-in ToolSearch,
-		// which --tools leaves out: all of them load upfront instead.
-		"env": map[string]string{"ENABLE_TOOL_SEARCH": "false"},
-		// Deny rules hold even when a hook fails (a failed PreToolUse hook
-		// lets the tool run) and beat a hook's allow: every tool the agent
-		// must never have is denied here as well as left out of --tools.
-		"permissions": map[string]any{"deny": DeniedTools(task)},
-		"hooks":       hooks,
-	}, "", "  ")
-}
-
-// Guard is the tamper check on a desktop agent: the hashes of its settings
-// file and of Den's binary when it was launched.
-type Guard struct {
-	Settings, Den       string
-	settingsSum, denSum string
-}
-
-// WriteSettings writes the settings file at 0600 in a 0700 folder and
-// records the hashes Check compares.
-func WriteSettings(path, den, socket string, task bool) (Guard, error) {
-	data, err := SettingsJSON(den, socket, task)
-	if err != nil {
-		return Guard{}, err
-	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return Guard{}, err
-	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return Guard{}, err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return Guard{}, err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return Guard{}, err
-	}
-	g := Guard{Settings: path, Den: den, settingsSum: sum(data)}
-	if g.denSum, err = fileSHA256(den); err != nil {
-		return Guard{}, fmt.Errorf("hash den: %v", err)
-	}
-	return g, nil
-}
-
-// Check says why the guard no longer holds, "" while it does.
-func (g Guard) Check() string {
-	if got, err := fileSHA256(g.Settings); err != nil || got != g.settingsSum {
-		return "its settings file changed"
-	}
-	if got, err := fileSHA256(g.Den); err != nil || got != g.denSum {
-		return "Den's binary changed"
-	}
-	return ""
 }
 
 // Brief is the desktop agent's first prompt.

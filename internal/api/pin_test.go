@@ -19,11 +19,11 @@ import (
 // README included.
 func TestConformanceCopyIsPinned(t *testing.T) {
 	want := map[string]string{
-		"client.go":         "5187a75a26c52242dad23f2e310bb3d1add6c1296cc0a6b00f9444e8ed98a574",
-		"console.go":        "f61155da0378696237a36db2eac62a77d1036d733eda8e076e068d2d38c35944",
+		"client.go":         "803916dc11644943879be59917f21133f5fa7ef0163430361a770181d792aa40",
+		"console.go":        "da21dd2b626ca53befcd455095cd7b5749a0ea09b4fcf4f3de927be197463fa8",
 		"d1.go":             "e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416",
 		"denconformance.go": "a3baeeca05197103feece0a158320f489aa925e5bfbc45eefb958c6c85c61ccf",
-		"README.md":         "725be8d4898d0cf49582ae14337074897b427d505955b596870ea53065dfbdd2",
+		"README.md":         "3fda140315d2dea3f95355a7421ed7ca27567e4070b4ff0f0f3fa0106a6b3133",
 	}
 	var sums strings.Builder
 	var goFiles []string
@@ -50,7 +50,7 @@ func TestConformanceCopyIsPinned(t *testing.T) {
 		fmt.Fprintf(&sums, "%s  %s\n", want[name], name)
 	}
 	h := sha256.Sum256([]byte(sums.String()))
-	if got := hex.EncodeToString(h[:]); got != "c7eaf46d54b4131da35276ca9e8101ae9632c5768a670a384ec647210729a2b0" {
+	if got := hex.EncodeToString(h[:]); got != "87482e68ea37b1dfc80a71da37af4008247e766a7c32d53524368cefb5ba7a4a" {
 		t.Errorf("package hash %s", got)
 	}
 }

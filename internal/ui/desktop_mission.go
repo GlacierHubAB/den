@@ -329,16 +329,21 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	if err != nil {
 		return fail(err.Error())
 	}
+	// The agent's one --settings file, written and checked by Den as every
+	// guarded agent's is (guardAgent): no peer messages, Den's gate before
+	// every tool, status hooks so Den can follow it, and deny rules for
+	// every tool it must never have (a task mission's, for a task).
 	task := p.offer.task != ""
-	guard, err := desktop.WriteSettings(filepath.Join(p.dir, "settings.json"), den, sock, task)
+	sid := newSessionID()
+	settings, err := m.guardAgent(sid, den, sock, deskHooks(task))
 	if err != nil {
 		return fail("settings: " + err.Error())
 	}
 	dm := &deskMission{
 		Mission:   desktop.Mission{ID: p.id, Workspace: p.workspace, Apps: p.offer.apps, Windows: map[string]bool{}, PIDs: map[int]bool{}},
-		SessionID: newSessionID(),
+		SessionID: sid,
 		Dir:       p.dir,
-		Guard:     guard.Check,
+		Guard:     m.med.guards[sid].check,
 		AskedBy:   p.offer.in.AskedBy,
 	}
 	if task {
@@ -375,7 +380,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	}
 	dm.Claude = claude
 	missionID := dm.ID
-	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: guard.Settings, Model: p.offer.in.Model, Prompt: prompt, Claude: claude, Task: task}
+	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: settings, Model: p.offer.in.Model, Prompt: prompt, Claude: claude, Task: task}
 	// The agent's view stops it when this Den ends (P4).
 	owner := ""
 	if start := deskStart(os.Getpid()); start != "" {
@@ -542,6 +547,26 @@ func newMissionID() string {
 	b := make([]byte, 4)
 	rand.Read(b)
 	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+}
+
+// deskHooks is a desktop agent's part of its --settings file. Only Den's
+// settings load for it, so Den's usual hooks never reach it: the status
+// hooks let Den follow it (its turns, its report, its end); none decides
+// anything. No PostToolUse: its tool_response is screen content, which
+// must not reach Den's event log. Tool search would defer MCP tools
+// behind ToolSearch, which --tools leaves out, so all load upfront. A task
+// mission (task) denies the same, less the tools a task has (launch,
+// binds, use_bind).
+func deskHooks(task bool) agentHooks {
+	h := agentHooks{
+		Extra: []agentHook{{Event: "PreToolUse", Matcher: ".*", Args: []string{"desktop-gate"}, Timeout: 10}},
+		Deny:  desktop.DeniedTools(task),
+		Env:   map[string]string{"ENABLE_TOOL_SEARCH": "false"},
+	}
+	for _, ev := range []string{"SessionStart", "SessionEnd", "Stop", "StopFailure", "Notification"} {
+		h.Extra = append(h.Extra, agentHook{Event: ev, Timeout: 10})
+	}
+	return h
 }
 
 // newSessionID is a random (version 4) UUID for claude --session-id.
