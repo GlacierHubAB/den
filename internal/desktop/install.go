@@ -78,25 +78,14 @@ type Plan struct {
 // python3 on PATH, a clone whose package files are exactly the pinned ones,
 // and a wheels folder when one is named.
 func MakePlan(paths Paths, clone, wheels string) (Plan, error) {
-	p := Plan{Paths: paths, Packages: LockPackages(Lock), Pin: Pinned}
-	// The system's own interpreter first: one earlier on PATH (a
-	// ~/.local/bin, a pyenv shim) is the human's to vouch for, and the card
-	// says so.
-	py := systemPython
-	if _, err := os.Stat(py); err != nil {
-		if py, err = exec.LookPath("python3"); err != nil {
-			return p, errors.New("no python3 found; hypruse needs Python 3.11 or later")
-		}
-	}
+	return makePlan(paths, clone, wheels, Pinned)
+}
+
+func makePlan(paths Paths, clone, wheels string, pin Pin) (Plan, error) {
+	p := Plan{Paths: paths, Packages: LockPackages(Lock), Pin: pin}
 	var err error
-	if py, err = filepath.EvalSymlinks(py); err != nil {
-		return p, fmt.Errorf("python3: %v", err)
-	}
-	if p.Python, err = filepath.Abs(py); err != nil {
+	if p.Python, p.PythonNote, err = FindPython(); err != nil {
 		return p, err
-	}
-	if !strings.HasPrefix(p.Python, "/usr/") {
-		p.PythonNote = "it is not under /usr: it comes from your PATH, not the system"
 	}
 	if clone == "" {
 		return p, errors.New("name the hypruse clone with --from (a clone of " + Pinned.URL + " at " + short(Pinned.Commit) + ")")
@@ -121,6 +110,29 @@ func MakePlan(paths Paths, clone, wheels string) (Plan, error) {
 	return p, nil
 }
 
+// FindPython is the interpreter a venv is made from, absolute and
+// resolved: the system's own first, since one earlier on PATH (a
+// ~/.local/bin, a pyenv shim) is the human's to vouch for, and note says
+// so when it is not under /usr.
+func FindPython() (python, note string, err error) {
+	py := systemPython
+	if _, err := os.Stat(py); err != nil {
+		if py, err = exec.LookPath("python3"); err != nil {
+			return "", "", errors.New("no python3 found; hypruse needs Python 3.11 or later")
+		}
+	}
+	if py, err = filepath.EvalSymlinks(py); err != nil {
+		return "", "", fmt.Errorf("python3: %v", err)
+	}
+	if python, err = filepath.Abs(py); err != nil {
+		return "", "", err
+	}
+	if !strings.HasPrefix(python, "/usr/") {
+		note = "it is not under /usr: it comes from your PATH, not the system"
+	}
+	return python, note, nil
+}
+
 // Text is the plan as the install card shows it.
 func (p Plan) Text() string {
 	var b strings.Builder
@@ -138,6 +150,7 @@ func (p Plan) Text() string {
 	} else {
 		fmt.Fprintf(&b, "Download %d packages from PyPI (mcp and its dependencies), pinned by hash; wheels only, no build code runs.\n", p.Packages)
 	}
+	b.WriteString("Compile the Python files to bytecode now, so nothing is written into the venv later.\n")
 	fmt.Fprintf(&b, "Record a hash of every installed file in %s; Den checks them before every desktop agent starts.", p.Manifest)
 	return b.String()
 }
@@ -284,6 +297,13 @@ func Install(ctx context.Context, p Plan, run Runner) (string, error) {
 		if err := copyChecked(filepath.Join(p.Clone, rel), filepath.Join(dst, name), want); err != nil {
 			return "", err
 		}
+	}
+	// Bytecode now, recorded in the manifest with everything else: the
+	// server runs with -B and never writes any, so a .pyc that appears
+	// later is not Den's (it is code, and Verify counts it as added).
+	// checked-hash: a .pyc is used only while its source's hash matches.
+	if out, err := run(ctx, env, p.Paths.Python(), "-I", "-m", "compileall", "-q", "--invalidation-mode", "checked-hash", site); err != nil {
+		return "", fmt.Errorf("compileall: %v: %s", err, lastLine(out))
 	}
 	m, err := Scan(p.Venv)
 	if err != nil {

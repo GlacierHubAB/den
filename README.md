@@ -928,18 +928,26 @@ gate. It is built on [hypruse](https://github.com/IlyasKhallouki/hypruse)
 (MIT), pinned at commit 0035d86 and installed unmodified into Den's own
 venv.
 
-**Install.** `den install-hypruse --from <clone of hypruse at 0035d86>`
-asks Den on a card. Den checks every file of the clone against hashes it was
-built with, and installs only on `Ctrl+Y`: the package files are copied (none
-of them runs) and its dependencies (`mcp` and 28 more) come from PyPI, each
-pinned by hash, wheels only. `--wheels <dir>` installs them from a folder
-instead, offline. Den records a hash of every installed file and checks them
-before every desktop agent starts. The venv is
-`~/.local/share/den/hypruse/venv`; nothing runs `uvx` or the network later.
-`--from` takes a local clone, never a URL. Without it, the command uses the
-folder it runs in, or else a folder named `hypruse` up to four levels under
-your home, but only a clone whose every file matches the pin. When the venv
-already holds the pinned hypruse, it says so and changes nothing.
+**Install.** Nothing to do by hand. When hypruse is missing, the first
+desktop card says "Den installs hypruse first", and `Ctrl+Y` installs it,
+then starts. Den downloads GitHub's archive of the pinned commit (HTTPS to
+github.com only) and keeps only the files the pin names, each checked
+against the SHA-256 Den was built with. Any mismatch stops the install. It
+makes a venv from the system's `python3`, and installs the dependencies
+(`mcp` and 28 more) from PyPI, each pinned by hash, wheels only. None of
+hypruse runs while it installs. It compiles the bytecode once, then records a
+hash of every installed file. Den checks them all before every desktop agent
+starts, and runs hypruse so that it never writes bytecode. If the venv is no
+longer as recorded (a file added or changed), the next card says what is wrong
+and `Ctrl+Y` reinstalls it. The venv is `~/.local/share/den/hypruse/venv`;
+nothing runs `uvx` later.
+
+To install from a clone you made yourself instead, run `den install-hypruse`.
+It asks on a card too. It uses `--from <folder>` (a local clone, never a URL),
+or the folder it runs in, or else a folder named `hypruse` up to four levels
+under your home, but only a clone whose every file matches the pin.
+`--wheels <dir>` installs the dependencies from a folder, offline. When the
+venv already holds the pinned hypruse, it says so and changes nothing.
 
 **Allow apps.** A desktop agent uses only the apps you list in Den's config:
 

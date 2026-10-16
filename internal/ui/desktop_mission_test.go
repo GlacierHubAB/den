@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,11 +188,15 @@ func TestDesktopMissionRefusals(t *testing.T) {
 	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "editor, browser") {
 		t.Fatalf("unknown app: %+v", d)
 	}
-	deskVerify = func() error { return os.ErrNotExist }
+	// Not installed, and Den cannot install it (no python3): refused.
+	deskVerify = func() error { return desktop.ErrNotInstalled }
+	oldPy := deskFindPython
+	t.Cleanup(func() { deskFindPython = oldPy })
+	deskFindPython = func() (string, string, error) { return "", "", errors.New("no python3 found") }
 	r = missionReq("editor")
 	runBatch(m.handleRequest(r))
-	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "not ready") {
-		t.Fatalf("not installed: %+v", d)
+	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "cannot install it: no python3") {
+		t.Fatalf("not installable: %+v", d)
 	}
 }
 

@@ -43,6 +43,9 @@ type deskOffer struct {
 	// and apps), and minutes and actions the limits the card states.
 	task             string
 	minutes, actions int
+	// setup is the hypruse install ^Y does first, nil when it is installed
+	// and checks out.
+	setup *deskSetup
 }
 
 // deskLaunched is one app window Den opened for a mission.
@@ -131,8 +134,17 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 	if _, err := spawn.ExpandDir(in.Dir); err != nil {
 		return deny(err.Error())
 	}
+	if m.desk.installing != "" {
+		return deny("hypruse is installing now; ask again when it is done")
+	}
+	// Not installed, or not as installed: the card offers to install it,
+	// or reinstall it, before it starts.
+	var setup *deskSetup
 	if err := deskVerify(); err != nil {
-		return deny("desktop control is not ready: " + sanitize.Line(err.Error()))
+		var why string
+		if setup, why = setupFor(err); why != "" {
+			return deny(why)
+		}
 	}
 	for _, it := range m.store.Items() {
 		if it.Kind == inbox.DesktopMission && it.State == inbox.Waiting {
@@ -145,7 +157,7 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 		}
 	}
 	if task {
-		return m.offerTask(r, in)
+		return m.offerTask(r, in, setup)
 	}
 	all, problems := deskApps()
 	var names []string
@@ -206,11 +218,14 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 		"The agent never types credentials. It has only the desktop tools: no shell, files, web, messages, app launching, keybinds or clipboard.",
 		"Model: "+in.Model+". Stop it any time: /desktop stop, or den desktop stop.",
 	)
+	if setup != nil {
+		body = append(body, setup.lines()...)
+	}
 	it := m.store.AddDesktopMission("Start a desktop mission for "+sanitize.Label(in.AskedBy, 40)+"?", body, r)
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	m.desk.offers[it.ID] = deskOffer{in: in, apps: apps}
+	m.desk.offers[it.ID] = deskOffer{in: in, apps: apps, setup: setup}
 	m.flash, m.flashErr = it.Title+" ^Y starts it, ^N declines.", false
 	m.refresh()
 	return nil
@@ -220,6 +235,14 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if why := deskTTYOnly(it, verb); why != "" {
 		return m.say(why, true)
+	}
+	// While its install runs, the card's question stays open: another
+	// press changes nothing.
+	if m.desk.installing == it.ID {
+		return m.say("hypruse is still installing; Den starts the mission when it is done.", false)
+	}
+	if it.Resolved == "starting…" {
+		return m.say("The desktop mission is already starting.", false)
 	}
 	offer, ok := m.desk.offers[it.ID]
 	delete(m.desk.offers, it.ID)
@@ -231,6 +254,9 @@ func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea
 		m.store.Settle(it, false, "declined in Den; nothing started")
 		m.refresh()
 		return m.say("Declined the desktop mission.", false)
+	}
+	if offer.setup != nil {
+		return m.installThenStart(it, offer)
 	}
 	it.Resolved = "starting…"
 	id := it.ID
