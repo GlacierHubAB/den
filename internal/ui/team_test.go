@@ -1,10 +1,16 @@
 package ui
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/process"
@@ -95,6 +101,124 @@ func TestOverlapWarnings(t *testing.T) {
 	scan(now.Add(teamWarnEvery + time.Second))
 	if len(peer.got["/sock/s1"]) != 2 || len(peer.got["/sock/s2"]) != 2 {
 		t.Errorf("not told again after the wait: %v", peer.got)
+	}
+}
+
+// A God-mode guarded agent's hook blocks what Den does not mediate: it is
+// not sent the overlap message, the other agent is, and Den's note says the
+// orchestrator tells the guarded one.
+func TestOverlapSkipsGuardedAgents(t *testing.T) {
+	peer := useFakePeer(t)
+	m := testModel(120, 40)
+	m.agents = []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), teamAgent("Snug Capybara", "s2", "den-b", "/w/two")}
+	m.med.guards = map[string]*agentGuard{"s2": {}}
+	works := []process.Work{
+		{Key: "s1", Repo: "r", Tree: "/w/one", Files: []string{"a.go"}},
+		{Key: "s2", Repo: "r", Tree: "/w/two", Files: []string{"a.go"}},
+	}
+	runCmds(m.applyTeamScan(teamScanMsg{works: works}, time.Now()))
+	if len(peer.got["/sock/s1"]) != 1 || len(peer.got["/sock/s2"]) != 0 {
+		t.Errorf("messages %v", peer.got)
+	}
+	if last := m.orch.chat[len(m.orch.chat)-1].text; !strings.Contains(last, "Snug Capybara runs guarded in God mode, so the orchestrator tells it instead") {
+		t.Errorf("note %q", last)
+	}
+}
+
+// The team cap: under it a spawn goes on; at it, only with a reason,
+// which Den notes in its chat, quoted, with who gave it. Worktrees of one
+// repository count together, other repositories and the orchestrator not
+// at all, and a lead's spawn counts as the orchestrator's does.
+func TestTeamCap(t *testing.T) {
+	m := testModel(120, 40)
+	m.cfg.Team.MaxAgents = 3
+	base := t.TempDir()
+	dir := func(name string) string {
+		d := filepath.Join(base, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	proj, wt1, wt2, other := dir("proj"), dir("proj-wt1"), dir("proj-wt2"), dir("other")
+	repoOf := map[string]string{proj: "proj-aaaaaaaaaaaa", wt1: "proj-aaaaaaaaaaaa", wt2: "proj-aaaaaaaaaaaa", other: "other-bbbbbbbbbbbb"}
+	old := teamRepo
+	teamRepo = func(_ context.Context, dir string) (string, string, error) {
+		id, ok := repoOf[dir]
+		if !ok {
+			return "", "", errors.New("not a repository")
+		}
+		return id, id[:len(id)-13], nil
+	}
+	t.Cleanup(func() { teamRepo = old })
+	m.agents = []fleet.Agent{
+		teamAgent("Mossy Lemur", "s1", "den-a", proj),
+		teamAgent("Snug Capybara", "s2", "den-b", wt1),
+		teamAgent("Fuzzy Sprite", "s3", "den-c", other),
+		teamAgent("Den Orchestrator", "s0", OrchestratorName, proj), // never counted
+	}
+	m.base = m.agents
+	// The asking processes: 555 under Mossy Lemur's (pid 100), 777 under
+	// nothing Den knows, 999 the orchestrator's den mcp.
+	m.agents[0].Session.PID = 100
+	oldAnc, oldOrc := teamAncestors, fromOrchestrator
+	teamAncestors = func(pid int) []int { return map[int][]int{555: {555, 100, 1}, 777: {777, 1}}[pid] }
+	fromOrchestrator = func(_ *Model, pid int) bool { return pid == 999 }
+	t.Cleanup(func() { teamAncestors, fromOrchestrator = oldAnc, oldOrc })
+	askFrom := func(pid int, dir, reason, lead string) bridge.Decision {
+		t.Helper()
+		payload, _ := json.Marshal(bridge.TeamQueryInput{Dir: dir, Reason: reason, Lead: lead})
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.TeamEvent, Payload: payload})
+		r.PeerPID = pid
+		if cmd := m.handleTeamQuery(r); cmd != nil {
+			m.applyTeamCap(cmd().(teamCapMsg), time.Now())
+		}
+		d, ok := r.Decided()
+		if !ok {
+			t.Fatal("no answer")
+		}
+		return d
+	}
+	ask := func(dir, reason, lead string) bridge.Decision { t.Helper(); return askFrom(999, dir, reason, lead) }
+	// Not a repository, another repository, and proj with two agents (the
+	// orchestrator not counted): room for one more.
+	for _, d := range []string{base, other, proj} {
+		if got := ask(d, "", ""); got.Behavior != "allow" {
+			t.Errorf("%s: %+v", d, got)
+		}
+	}
+	// A third in another worktree of proj: at the cap.
+	m.agents = append(m.agents, teamAgent("Maple Owl", "s4", "den-d", wt2))
+	m.base = m.agents
+	d := ask(proj, "", "")
+	if d.Behavior != "deny" || !strings.Contains(d.Message, `"proj" has 3 agents, Den's cap of 3 (Maple Owl, Mossy Lemur, Snug Capybara)`) || !strings.Contains(d.Message, "give reason") {
+		t.Fatalf("at the cap: %+v", d)
+	}
+	if d := ask(proj, "   ", ""); d.Behavior != "deny" {
+		t.Errorf("a blank reason: %+v", d)
+	}
+	// A lead's spawn with a reason: allowed, and noted, quoted, with whose.
+	// An agent's den mcp, by its process: allowed, and noted, quoted, with
+	// the name Den read, whatever lead the payload claims.
+	if d := askFrom(555, wt1, "two reviews \x1b[31min parallel", "den-b"); d.Behavior != "allow" {
+		t.Fatalf("with a reason: %+v", d)
+	}
+	last := m.orch.chat[len(m.orch.chat)-1].text
+	if !strings.Contains(last, `Mossy Lemur starts one more agent in "proj", over the team cap of 3, saying: "two reviews in parallel"`) {
+		t.Errorf("note %q", last)
+	}
+	if d := ask(proj, "a third reviewer", ""); d.Behavior != "allow" || !strings.HasPrefix(m.orch.chat[len(m.orch.chat)-1].text, "The orchestrator starts one more agent") {
+		t.Errorf("the orchestrator's: %+v %q", d, m.orch.chat[len(m.orch.chat)-1].text)
+	}
+	// Any other process: its answer, and nothing in Den's chat.
+	n := len(m.orch.chat)
+	if d := askFrom(777, proj, "trust me", "den-a"); d.Behavior != "allow" || len(m.orch.chat) != n {
+		t.Errorf("a stranger: %+v, %d notes added", d, len(m.orch.chat)-n)
+	}
+	// God mode does not lift it.
+	m.god.on = true
+	if d := ask(proj, "", ""); d.Behavior != "deny" {
+		t.Errorf("God mode lifted the cap: %+v", d)
 	}
 }
 

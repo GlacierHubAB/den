@@ -2,15 +2,20 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/process"
+	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/spawn"
 )
 
 // The small-team process, as Den keeps it: Den reads each local agent's
@@ -109,15 +114,31 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 		m.team.warned[key] = true
 		m.team.lastWarn[o.A], m.team.lastWarn[o.B] = now, now
+		// A God-mode guarded agent takes messages only as Den mediates
+		// them, and its hook would block this one: the orchestrator, which
+		// sees the overlap in its roster, tells it instead.
 		send := m.sender()
-		toA, toB := overlapMessage(b, o.Files), overlapMessage(a, o.Files)
+		var to []fleet.Agent
+		var guarded []string
+		for _, x := range []fleet.Agent{a, b} {
+			if m.med.guards[x.Session.SessionID] != nil {
+				guarded = append(guarded, x.Name)
+			} else {
+				to = append(to, x)
+			}
+		}
+		texts := map[string]string{a.Session.SessionID: overlapMessage(b, o.Files), b.Session.SessionID: overlapMessage(a, o.Files)}
 		cmds = append(cmds, func() tea.Msg {
-			send(a, toA)
-			send(b, toB)
+			for _, x := range to {
+				send(x, texts[x.Session.SessionID])
+			}
 			return nil
 		})
-		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now,
-			text: "Den told " + a.Name + " and " + b.Name + " that their branches both change " + fileCount(len(o.Files)) + ": they agree who goes first or how to split, and the orchestrator decides."}))
+		note := "Den told " + a.Name + " and " + b.Name + " that their branches both change " + fileCount(len(o.Files)) + ": they agree who goes first or how to split, and the orchestrator decides."
+		if len(guarded) > 0 {
+			note += " " + strings.Join(guarded, " and ") + " runs guarded in God mode, so the orchestrator tells it instead."
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: note}))
 	}
 	for key := range m.team.warned {
 		if !current[key] {
@@ -174,4 +195,135 @@ func (m Model) overlapLines(sessionID string) []string {
 		out = append(out, "with "+name+", files as git lists them: "+quotedFiles(o.Files))
 	}
 	return out
+}
+
+// teamReasonMax caps a reason for going over the team cap.
+const teamReasonMax = 200
+
+// teamCapMsg is a team query read off the loop: the repository the new
+// agent goes into, and the live agents already in it.
+type teamCapMsg struct {
+	r       *bridge.Request
+	in      bridge.TeamQueryInput
+	repo    string // RepoID, "" when dir is not in a repository
+	name    string // the repository's name, for the human
+	members []string
+}
+
+// teamRepo reads a directory's repository id and name; tests replace it.
+var teamRepo = func(ctx context.Context, dir string) (id, name string, err error) {
+	id, err = process.RepoID(ctx, dir)
+	if err != nil {
+		return "", "", err
+	}
+	return id, id[:max(0, len(id)-13)], nil
+}
+
+// handleTeamQuery answers spawn_agent's question before it starts an
+// agent: may the repository's team grow? It reads the repositories off the
+// loop and answers there (applyTeamCap).
+func (m *Model) handleTeamQuery(r *bridge.Request) tea.Cmd {
+	var in bridge.TeamQueryInput
+	if json.Unmarshal(r.Envelope.Payload, &in) != nil {
+		r.Reply(bridge.Decision{Behavior: "allow"}) // spawn_agent refuses a bad input itself
+		return nil
+	}
+	dir, err := spawn.ExpandDir(in.Dir)
+	if err != nil {
+		r.Reply(bridge.Decision{Behavior: "allow"}) // and a directory that is not there
+		return nil
+	}
+	type member struct{ name, dir string }
+	var live []member
+	for _, a := range m.agents {
+		if a.Status == fleet.Gone || !a.Session.Alive || a.Host != "" || a.Session.CWD == "" || m.isOrchestrator(a) {
+			continue
+		}
+		live = append(live, member{a.Name, a.Session.CWD})
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), teamScanTimeout)
+		defer cancel()
+		msg := teamCapMsg{r: r, in: in}
+		repo, name, err := teamRepo(ctx, dir)
+		if err != nil {
+			return msg // not a repository: no team to count
+		}
+		msg.repo, msg.name = repo, name
+		for _, a := range live {
+			if id, _, err := teamRepo(ctx, a.dir); err == nil && id == repo {
+				msg.members = append(msg.members, a.name)
+			}
+		}
+		return msg
+	}
+}
+
+// applyTeamCap answers a team query: at the cap, only with a reason, which
+// Den shows the human in its chat, quoted, with who gave it. Leads' spawns
+// count as the orchestrator's do, and God mode does not lift the cap.
+func (m *Model) applyTeamCap(msg teamCapMsg, now time.Time) {
+	limit := m.cfg.Team.MaxAgents
+	if limit <= 0 {
+		limit = 3
+	}
+	if msg.repo == "" || len(msg.members) < limit {
+		msg.r.Reply(bridge.Decision{Behavior: "allow"})
+		return
+	}
+	repo := sanitize.Label(msg.name, 40)
+	sort.Strings(msg.members)
+	reason := sanitize.Label(strings.TrimSpace(msg.in.Reason), teamReasonMax)
+	if reason == "" {
+		msg.r.Reply(bridge.Decision{Behavior: "deny", Message: "the team in " + strconv.Quote(repo) + " has " + strconv.Itoa(len(msg.members)) +
+			" agents, Den's cap of " + strconv.Itoa(limit) + " (" + strings.Join(msg.members, ", ") + "): give reason, one line on why one more agent is needed, or close one first"})
+		return
+	}
+	// Who asks, Den reads from the asking process, never from the payload;
+	// a caller that is neither the orchestrator's den mcp nor an agent's
+	// gets its answer and no note in Den's chat.
+	if who, agent, ok := m.teamCaller(msg.r.PeerPID); ok {
+		line := who + " starts one more agent in " + strconv.Quote(repo) + ", over the team cap of " + strconv.Itoa(limit) + ", saying: " + strconv.Quote(reason)
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: line}))
+		if agent != "" && m.missions != nil {
+			if ms := m.missions.Get(m.missionOf(agent)); ms != nil {
+				ms.Note(now, line)
+				m.missions.Save(ms)
+			}
+		}
+	}
+	msg.r.Reply(bridge.Decision{Behavior: "allow"})
+}
+
+// teamAncestors is a process's ancestors, itself first; tests replace it.
+var teamAncestors = func(pid int) []int {
+	var out []int
+	for _, p := range procs.Ancestors(pid) {
+		out = append(out, p.PID)
+	}
+	return out
+}
+
+// teamCaller names who asks, by its process: the orchestrator's den mcp,
+// or a live local agent's (its process an ancestor of pid), with that
+// agent's session id; ok is false for any other process.
+func (m Model) teamCaller(pid int) (who, session string, ok bool) {
+	if pid <= 1 {
+		return "", "", false
+	}
+	if fromOrchestrator(&m, pid) {
+		return "The orchestrator", "", true
+	}
+	by := map[int]fleet.Agent{}
+	for _, a := range m.agents {
+		if a.Status != fleet.Gone && a.Session.Alive && a.Host == "" && a.Session.PID > 1 && !m.isOrchestrator(a) {
+			by[a.Session.PID] = a
+		}
+	}
+	for _, p := range teamAncestors(pid) {
+		if a, found := by[p]; found {
+			return a.Name, a.Session.SessionID, true
+		}
+	}
+	return "", "", false
 }

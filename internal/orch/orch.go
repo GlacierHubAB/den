@@ -1011,6 +1011,9 @@ type SpawnInput struct {
 	Skills []string `json:"skills"`
 	// Worktree gives the agent a git worktree of its own: true, or a name.
 	Worktree spawn.Worktree `json:"worktree"`
+	// Reason says why the team in the repository needs one more agent
+	// than Den's cap: without it, Den refuses a spawn over the cap.
+	Reason string `json:"reason"`
 }
 
 // SkillsInput is the shape of the propose_skills tool's input.

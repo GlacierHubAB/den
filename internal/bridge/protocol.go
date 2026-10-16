@@ -191,6 +191,21 @@ const UsageEvent = "UsageQuery"
 // allow with the mode as the message. Read-only.
 const ModeEvent = "ModeQuery"
 
+// TeamEvent is not a hook event: `den mcp` sends it before it starts an
+// agent, with TeamQueryInput, to ask whether the repository's team may
+// grow. Den answers deny, with why, when the team is at its cap and no
+// reason was given; else allow. Read-only.
+const TeamEvent = "TeamQuery"
+
+// TeamQueryInput is a TeamEvent's payload: the new agent's directory, the
+// reason for going over the cap (may be empty), and the lead starting it
+// ("" for the orchestrator).
+type TeamQueryInput struct {
+	Dir    string `json:"dir"`
+	Reason string `json:"reason,omitempty"`
+	Lead   string `json:"lead,omitempty"`
+}
+
 // OrchSendEvent is not a hook event: `den mcp --control` sends it for the
 // orchestrator's send_message call, which control gives it in place of
 // SendMessage. Den delivers the message the way SendMessage would and
