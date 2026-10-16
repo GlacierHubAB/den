@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -60,6 +61,82 @@ func TestAutoPairOffAfterAnUnpair(t *testing.T) {
 			})
 		}
 	}
+}
+
+// The switch and the hold outlast Den's restarts: an unpair, then a
+// restart, still refuses; strikes, then a restart within the hold, still
+// hold.
+func TestAutoPairStopsOutlastARestart(t *testing.T) {
+	for _, c := range []struct {
+		cause, code, msg string
+	}{
+		{CauseDen, CodeForbidden, AutoPairOff},
+		{CauseIntruders, CodeUnavailable, AutoPairHeld},
+	} {
+		t.Run(c.cause, func(t *testing.T) {
+			store := filepath.Join(t.TempDir(), "consoles.json")
+			_, priv, _ := ed25519.GenerateKey(rand.Reader)
+			h := storeHarness(t, store, priv)
+			fakeUnit(t, testVerifier(), nil)
+			d := newDock(t, h)
+			requestPaired(t, h, d, "")
+			h.s.UnpairConsole(c.cause, "")
+			cleanExit(h.s)
+			d.h = storeHarness(t, store, priv)
+			if l := d.requestLine(); code(l) != c.code || l.Error.Message != c.msg {
+				t.Errorf("request after the restart: %+v", l.Error)
+			}
+		})
+	}
+}
+
+// A record Den cannot trust at its start, after a clean exit or not, stops
+// automatic pairing, as it may have held the human's unpair: changed,
+// damaged, removed, or no clean exit. A start that never paired does not.
+func TestAutoPairOffForARecordDenCannotTrust(t *testing.T) {
+	for name, spoil := range map[string]func(store string){
+		"changed":   func(store string) { os.WriteFile(store, []byte(`{"consoles":[]}`), 0o600) },
+		"damaged":   func(store string) { os.WriteFile(store, []byte(`{`), 0o600) },
+		"removed":   func(store string) { os.Remove(store) },
+		"no mark":   func(store string) { os.Remove(store + ".clean") },
+		"untouched": func(string) {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := filepath.Join(t.TempDir(), "consoles.json")
+			_, priv, _ := ed25519.GenerateKey(rand.Reader)
+			h := storeHarness(t, store, priv)
+			fakeUnit(t, testVerifier(), nil)
+			d := newDock(t, h)
+			requestPaired(t, h, d, "")
+			cleanExit(h.s)
+			spoil(store)
+			d.h = storeHarness(t, store, priv)
+			l := d.requestLine()
+			if name == "untouched" {
+				if !l.OK {
+					t.Errorf("request after a clean restart: %+v", l.Error)
+				}
+				return
+			}
+			if code(l) != CodeForbidden || l.Error.Message != AutoPairOff {
+				t.Errorf("request after the restart: %+v", l.Error)
+			}
+		})
+	}
+	// Never paired: no record, no mark.
+	h := storeHarness(t, filepath.Join(t.TempDir(), "consoles.json"), mustKey(t))
+	fakeUnit(t, testVerifier(), nil)
+	if l := newDock(t, h).requestLine(); !l.OK {
+		t.Errorf("a first start: %+v", l.Error)
+	}
+}
+
+func mustKey(t *testing.T) ed25519.PrivateKey {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return priv
 }
 
 // A replaced console does not stop automatic pairing.

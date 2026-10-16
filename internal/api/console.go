@@ -347,7 +347,10 @@ func (s *Server) StartConsoleCode() []string {
 	}
 	s.con.mu.Lock()
 	s.con.code = &consoleCode{words: words, until: time.Now().Add(pairCodeLife)}
-	s.con.autoOff = false // the human acts in Den: the dock may pair by itself again
+	if s.con.autoOff {
+		s.con.autoOff = false // the human acts in Den: the dock may pair by itself again
+		s.saveConsoleLocked()
+	}
 	s.con.mu.Unlock()
 	return append([]string(nil), words...)
 }
@@ -404,9 +407,7 @@ func (s *Server) UnpairConsole(cause, why string) int {
 	default:
 		s.con.autoOff = true
 	}
-	if rec != nil {
-		s.saveConsoleLocked()
-	}
+	s.saveConsoleLocked() // the switch and the hold are kept across Den's restarts too
 	if pending != nil && pending.confirm != nil {
 		close(pending.confirm)
 		pending.confirm = nil

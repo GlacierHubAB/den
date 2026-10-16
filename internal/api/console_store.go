@@ -57,8 +57,11 @@ type storedConsole struct {
 
 type storedConsoles struct {
 	Consoles []storedConsole `json:"consoles"`
-	// Locked is the human's /api lock, kept across Den's restarts.
-	Locked bool `json:"locked,omitempty"`
+	// Locked is the human's /api lock, AutoOff and AutoHold (unix seconds)
+	// automatic pairing stopped, each kept across Den's restarts.
+	Locked   bool  `json:"locked,omitempty"`
+	AutoOff  bool  `json:"auto_off,omitempty"`
+	AutoHold int64 `json:"auto_hold,omitempty"`
 }
 
 // cleanMark is what a clean exit leaves.
@@ -109,7 +112,10 @@ func (s *Server) saveConsoleLocked() {
 	if s.consolePath() == "" {
 		return
 	}
-	rec := storedConsoles{Locked: s.con.locked}
+	rec := storedConsoles{Locked: s.con.locked, AutoOff: s.con.autoOff}
+	if time.Now().Before(s.con.autoHold) {
+		rec.AutoHold = s.con.autoHold.Unix()
+	}
 	if c := s.con.cur; c != nil {
 		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier}}
 	}
@@ -130,57 +136,78 @@ func (s *Server) loadConsole() string {
 	raw, err := os.ReadFile(path)
 	markRaw, markErr := os.ReadFile(s.markPath())
 	os.Remove(s.markPath()) // a crash from here on leaves no mark
-	if errors.Is(err, os.ErrNotExist) {
-		return ""
-	}
-	drop := func(why string) string {
+	// drop restores no console. closed also stops automatic pairing, as
+	// an unpair does, for a record Den cannot trust: it may have held the
+	// human's unpair.
+	drop := func(why string, closed bool) string {
 		s.con.mu.Lock()
 		s.con.cur = nil
+		if closed {
+			s.con.autoOff = true
+		}
 		s.saveConsoleLocked()
 		s.con.mu.Unlock()
+		if closed {
+			why += "; the dock does not pair by itself until you start a pairing in Den (/api console or den pair)"
+		}
 		return why
 	}
+	if errors.Is(err, os.ErrNotExist) {
+		if markErr == nil {
+			// Den exited cleanly with a record that is gone now.
+			return drop("Den's console record was removed while Den was stopped", true)
+		}
+		return "" // never paired
+	}
 	if err != nil {
-		return drop("Den could not read its console record, so no console was restored")
+		return drop("Den could not read its console record, so no console was restored", true)
 	}
 	var rec storedConsoles
 	if json.Unmarshal(raw, &rec) != nil {
-		return drop("Den's console record was damaged, so no console was restored")
+		return drop("Den's console record was damaged, so no console was restored", true)
 	}
 	// The lock is kept whatever else is restored: a record that cannot be
 	// trusted below drops the console, never the lock.
 	s.con.mu.Lock()
 	s.con.locked = rec.Locked
 	s.con.mu.Unlock()
+	var mark cleanMark
+	switch {
+	case len(rec.Consoles) > 1:
+		return drop("Den's console record holds more than one console: it was changed by another program, and every console was dropped", true)
+	case markErr != nil || json.Unmarshal(markRaw, &mark) != nil:
+		return drop("Den did not exit cleanly last time, so no console was restored", true)
+	case mark.Record != sha256Hex(raw) || mark.Consoles < len(rec.Consoles):
+		return drop("Den's console record was changed while Den was stopped: every console was dropped", true)
+	}
+	// A record Den wrote: automatic pairing as Den left it.
+	s.con.mu.Lock()
+	s.con.autoOff = rec.AutoOff
+	if rec.AutoHold > 0 {
+		s.con.autoHold = time.Unix(rec.AutoHold, 0)
+	}
+	s.con.mu.Unlock()
 	if len(rec.Consoles) == 0 {
 		s.con.recordHash = sha256Hex(raw)
 		return ""
 	}
-	var mark cleanMark
-	switch {
-	case len(rec.Consoles) > 1:
-		return drop("Den's console record holds more than one console: it was changed by another program, and every console was dropped")
-	case markErr != nil || json.Unmarshal(markRaw, &mark) != nil:
-		return drop("Den did not exit cleanly last time, so its console was not restored; pair again with den pair")
-	case mark.Record != sha256Hex(raw) || mark.Consoles < len(rec.Consoles):
-		return drop("Den's console record was changed while Den was stopped: every console was dropped")
-	case mark.Key != sha256Hex([]byte(s.ckey.pubHex)):
-		return drop("Den's key changed since it last exited, so its console was not restored")
+	if mark.Key != sha256Hex([]byte(s.ckey.pubHex)) {
+		return drop("Den's key changed since it last exited, so its console was not restored", false)
 	}
 	c := rec.Consoles[0]
 	pub, err := hex.DecodeString(c.Key)
 	if err != nil || len(pub) != ed25519.PublicKeySize || !isHex(c.ID, 32) {
-		return drop("Den's console record was damaged, so no console was restored")
+		return drop("Den's console record was damaged, so no console was restored", true)
 	}
 	boot, pid, start, ok := identityParts(c.Identity)
 	if !ok || pid != c.PID || start != c.Start {
-		return drop("Den's console record was damaged, so no console was restored")
+		return drop("Den's console record was damaged, so no console was restored", true)
 	}
 	if boot == "unknown" || boot != bootID() {
-		return drop("the console was paired before this boot: pair again with den pair")
+		return drop("the console was paired before this boot, so it was not restored", false)
 	}
 	if start, _, err := procStatFn(c.PID); err != nil || start != c.Start {
-		return drop("the console's process is gone or was started again: pair again with den pair")
+		return drop("the console's process is gone or was started again, so it was not restored", false)
 	}
 	s.con.mu.Lock()
 	restored := &consoleRec{
