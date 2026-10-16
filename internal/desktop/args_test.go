@@ -77,6 +77,47 @@ func TestLayersOverThePointDeny(t *testing.T) {
 	}
 }
 
+// The console's pointer outline, over the whole monitor, no longer takes
+// the click once exempted: only on the overlay level, by its namespace and
+// the console's own process. Its other surfaces, an outline on the top
+// level, or one from another process still refuse.
+func TestConsolePointerOutlineIsExempt(t *testing.T) {
+	m, s := fixture()
+	outline := Layer{Monitor: "DP-1", Level: OverlayLevel, X: 0, Y: 0, W: 1920, H: 1080, Namespace: PointerNamespace, PID: 777}
+	click := func(s Snapshot) Verdict {
+		return Decide("pointer", json.RawMessage(`{"action":"click","x":1000,"y":300}`), m, s)
+	}
+	exempt := func(ls ...Layer) Snapshot {
+		c := s
+		c.Layers = append([]Layer(nil), ls...)
+		c.ExemptConsole(map[int]bool{777: true})
+		return c
+	}
+	if v := click(exempt(outline)); v.Kind != Allow {
+		t.Fatalf("click through the console's outline: %s (%s)", v.Kind, v.Reason)
+	}
+	if v := Decide("click_ui", json.RawMessage(`{"name":"Bold","window":"0xe"}`), m, exempt(outline)); v.Kind != Allow {
+		t.Fatalf("click_ui under the console's outline: %s (%s)", v.Kind, v.Reason)
+	}
+	c := s
+	c.Layers = []Layer{outline}
+	c.ExemptConsole(nil)
+	if v := click(c); v.Kind != Deny {
+		t.Fatal("the outline was let through with no console")
+	}
+	dock := outline
+	dock.Namespace = "drey-dock"
+	top := outline
+	top.Level = 2
+	other := outline
+	other.PID = 778
+	for name, l := range map[string]Layer{"another surface of the console": dock, "the outline on the top level": top, "an outline of another process": other} {
+		if v := click(exempt(outline, l)); v.Kind != Deny {
+			t.Errorf("%s was let through", name)
+		}
+	}
+}
+
 // Keys and characters the human bound in Hyprland are refused, mod-less
 // binds included.
 func TestBindsDeny(t *testing.T) {
@@ -101,7 +142,7 @@ func TestBindsDeny(t *testing.T) {
 }
 
 func TestReadLayersAndBinds(t *testing.T) {
-	ls, err := readLayers([]byte(`{"DP-1":{"levels":{"0":[{"x":0,"y":0,"w":1920,"h":1080,"namespace":"wallpaper"}],"3":[{"x":1,"y":2,"w":3,"h":4,"namespace":"mako"}]}}}`))
+	ls, err := readLayers([]byte(`{"DP-1":{"levels":{"0":[{"x":0,"y":0,"w":1920,"h":1080,"namespace":"wallpaper"}],"3":[{"x":1,"y":2,"w":3,"h":4,"namespace":"mako","pid":4242}]}}}`))
 	if err != nil || len(ls) != 2 {
 		t.Fatalf("%v %+v", err, ls)
 	}
@@ -111,7 +152,7 @@ func TestReadLayersAndBinds(t *testing.T) {
 			top = l
 		}
 	}
-	if top.Namespace != "mako" || top.Monitor != "DP-1" || top.W != 3 {
+	if top.Namespace != "mako" || top.Monitor != "DP-1" || top.W != 3 || top.PID != 4242 {
 		t.Fatalf("%+v", top)
 	}
 	bs, err := readBinds([]byte(`[{"modmask":72,"key":"Return"},{"modmask":0,"key":"mouse:272","mouse":true},{"modmask":24,"key":"Tab"}]`))

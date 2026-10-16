@@ -268,6 +268,7 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	m.api.srv, m.api.err = srv, ""
 	m.api.view = viewSwitcher().Current()
+	m.publishDesktop() // a mission that started before the API did
 	// God mode as it is now, and how the server asks later: from its own
 	// record (SetGod), under its own lock, never from the model.
 	if m.god.on {

@@ -764,7 +764,7 @@ Each connection proves once, at its start:
 | `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, at once |
 | `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once |
 | `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view), then `console`, `god`, `mode`, `card` and `view` events as they change |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view, the desktop), then `console`, `god`, `mode`, `card`, `view` and `desktop` events as they change |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
@@ -789,8 +789,8 @@ order of events. `console.events` starts with this snapshot, in this
 order: a `console` event (`connected`, or `restored` after Den
 restarted), a `card` event, `new`, for each card waiting (the ones the
 reply lists), a `console` event of kind `powers` with `on`, a `god`
-event, a `mode` event (once Den knows the mode), and a `view` event
-(once Den has a view). Everything after it is a change. `fleet.events` starts with the whole fleet in the
+event, a `mode` event (once Den knows the mode), a `view` event (once
+Den has a view), and a `desktop` event. Everything after it is a change. `fleet.events` starts with the whole fleet in the
 same way. A later kind that carries state joins the snapshot.
 
 - `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?, unit?, program_sha256?, changes?}`: `kind`
@@ -845,6 +845,8 @@ same way. A later kind that carries state joins the snapshot.
   console's `console.events` connections; in the snapshot, where it is.
 - `mode {global, mixed}`: the permission mode changed (see Permission
   mode); in the snapshot, the mode in force, once Den has one.
+- `desktop {state, mission}`: a desktop agent's mission started or ended
+  (see Desktop overlay); in the snapshot, whether one runs now.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
   of cards waiting: one you knew that is not in it is gone. The `new`
   events that follow are those cards.
@@ -950,6 +952,36 @@ off. While it is on:
 - `god.off` (from a proved console connection), `/god off` from the dock,
   `den god off` in a terminal and any unpair turn it off; they only lower,
   so they are never refused for who asks.
+
+### Desktop overlay
+
+While a desktop agent controls the desktop, the console may draw that on
+screen: an outline at the agent's pointer, a glow. Den tells it when, and
+where the pointer is.
+
+- `desktop {state, mission}`, on the console's `console.events`
+  connections: `state` is `active` when a desktop mission starts and
+  `idle` when it ends, however it ends. `mission` is Den's id for it, an
+  opaque string. The snapshot of `console.events` ends with one, `active`
+  or `idle`, where it stands. A Den from before this event sends none, which
+  means idle; ignore a `state` you do not know.
+- The pointer: `$XDG_RUNTIME_DIR/den-agent-pointer`, mode 0600, one line,
+  `x y` or `x y hidden`, in global logical pixels (the space of `hyprctl
+  cursorpos` and the clients' `at`). Den replaces it by an atomic rename
+  after each pointer step, each step of a glide too. `hidden` comes about
+  550 ms before Den presses keys, which hide the real pointer: fade the
+  outline out. The file is removed when the mission ends. Read it only
+  while `desktop` is `active`; a missing file means no pointer.
+- In a mission with apps, Den refuses a click under any surface on the
+  top or overlay layer, since the click would go to that surface. It lets
+  one through: a surface on the overlay level (3), with layer namespace
+  `drey-agent-pointer`, whose process is that of one of the console's
+  proved connections (`console.auth`), still the process that connected
+  (pid and start time). That surface must take no input (an empty input
+  region), so a click lands on the window beneath it. No other surface of
+  the console's is ever let through: a click under the dock or any other
+  window of yours is refused. Draw the glow on the bottom layer, which
+  never blocks a click.
 
 ### Console limits
 

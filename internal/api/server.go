@@ -82,6 +82,8 @@ type Server struct {
 	cardAnswers answers
 	// god is God mode's state as Den last set it (god.go).
 	god godState
+	// desk is the running desktop mission as Den last set it (desktop.go).
+	desk desktopState
 	// cmdLimits counts the console's commands.
 	cmdLimits cmdLimits
 	closeOnce sync.Once

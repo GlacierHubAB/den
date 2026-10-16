@@ -951,6 +951,8 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	if vc, ok := s.viewNow(); ok {
 		c.push(Event{Event: EventView, Data: vc}, true)
 	}
+	// Whether a desktop mission runs, and which.
+	s.replayDesktop(c)
 	// Then what happened: an automatic pairing, told to the connection
 	// that subscribes first.
 	if auto != nil {
