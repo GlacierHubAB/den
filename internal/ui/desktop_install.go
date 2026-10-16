@@ -64,6 +64,12 @@ func (m *Model) handleDesktopInstallRequest(r *bridge.Request) tea.Cmd {
 			return nil
 		}
 	}
+	// An approved install still running, even if the command that asked for
+	// it stopped waiting: a second one must not write into the same venv.
+	if m.desk.installing != "" {
+		deny("hypruse is installing now; ask again when it is done")
+		return nil
+	}
 	plan, err := desktopPlan(in)
 	if err != nil {
 		deny(sanitize.Line(err.Error()))
