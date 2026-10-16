@@ -161,6 +161,7 @@ type Model struct {
 	desk            deskState                  // desktop missions
 	team            teamState                  // the small-team process: overlapping branches
 	mirror          mirrorState                // the conversation mirror (conversation.go)
+	metrics         metricsState               // figures waiting for the next orchestrator turn
 	sends           map[string]askedSend       // den send questions in the inbox, by item id
 	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views

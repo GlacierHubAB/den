@@ -115,6 +115,16 @@ type Mission struct {
 	// Merges are the mission's branches Den saw land on the integration
 	// branch, oldest first: Den reads them from git, never an agent's word.
 	Merges []Merge `json:"merges,omitempty"`
+	// Stats count what Den told the mission's agents about the process;
+	// MetricsAt is when Den recorded the mission's figures as it ended.
+	Stats     Stats     `json:"stats,omitzero"`
+	MetricsAt time.Time `json:"metrics_at,omitzero"`
+}
+
+// Stats are Den's counts of its own process messages to a mission's agents.
+type Stats struct {
+	Overlaps int `json:"overlaps,omitempty"` // overlap pairs told
+	Nudges   int `json:"nudges,omitempty"`   // branch nudges
 }
 
 // Merge is one branch Den saw land: its tip when Den last saw it ahead,
@@ -124,6 +134,9 @@ type Merge struct {
 	Branch  string    `json:"branch,omitempty"`
 	Session string    `json:"session,omitempty"`
 	At      time.Time `json:"at"`
+	// Since is the branch's oldest commit of its own, by commit time: how
+	// long the branch lived is At less Since.
+	Since time.Time `json:"since,omitzero"`
 }
 
 // AddMerge records a landed tip once; it reports whether it was new.

@@ -77,12 +77,12 @@ func Compose(agents []RosterAgent, text string) string {
 // ComposeWith is Compose with the names of the mission templates, so a
 // request like "start a code review of ~/code/x" can use one.
 func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) string {
-	return ComposeAll(agents, templates, nil, text)
+	return ComposeAll(agents, templates, nil, nil, text)
 }
 
 // ComposeAll is ComposeWith with the <den_missions> block: the missions Den
 // tracks, so the orchestrator can carry out what the human asks of them.
-func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []MissionInfo, text string) string {
+func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []MissionInfo, metrics []MetricsInfo, text string) string {
 	var b strings.Builder
 	b.WriteString("<den_fleet>\n")
 	n, remote := 0, 0
@@ -173,6 +173,7 @@ func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []Missi
 		b.WriteString("</den_templates>\n")
 	}
 	b.WriteString(missionsBlock(missions))
+	b.WriteString(metricsBlock(metrics))
 	b.WriteString("\n")
 	b.WriteString(strings.TrimSpace(text))
 	return b.String()
