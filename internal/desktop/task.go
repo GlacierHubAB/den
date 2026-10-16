@@ -139,6 +139,15 @@ func protectedAt(x, y float64, m Mission, s Snapshot) string {
 			return "the point is on one of Den's own windows"
 		}
 	}
+	// The console's own surfaces (Drey's dock bar) answer Den's cards and
+	// reach the orchestrator: off limits like Den's windows. Its pointer
+	// outline, which takes no input, is gone from the snapshot already
+	// (ExemptConsole), and Covers counts only the top and overlay levels.
+	for _, l := range s.Layers {
+		if l.PID > 1 && m.Console[l.PID] && l.Covers(x, y) {
+			return "the point is on the console's dock"
+		}
+	}
 	return ""
 }
 

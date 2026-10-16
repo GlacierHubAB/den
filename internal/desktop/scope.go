@@ -224,6 +224,10 @@ type Mission struct {
 	// view) off limits, and no per-app rules. See task.go.
 	Task      bool
 	Protected map[string]bool
+	// Console is the console's proved processes (Drey's dock), for one
+	// call: a task treats their windows as Den's own (the caller adds them
+	// to Protected) and their top or overlay surfaces as off limits.
+	Console map[int]bool
 }
 
 // InScope reports whether a window is the mission's: on its workspace, and
