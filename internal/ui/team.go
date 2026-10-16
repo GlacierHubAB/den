@@ -187,9 +187,11 @@ func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
 		}
 		m.team.nudged[key] = now
 		branch := strconv.Quote(sanitize.Label(w.Branch, 80))
-		note := "Den nudged " + a.Name + ": its branch " + branch + " " + why + "."
+		// What the human can do about it from here, in Den or the dock.
+		act := " You can tell it yourself (@" + a.Name + " merge or rebase now), or ask the orchestrator to split the work."
+		note := "Den nudged " + a.Name + ": its branch " + branch + " " + why + "." + act
 		if m.med.guards[w.Key] != nil {
-			note = "Den did not message " + a.Name + ", which runs guarded in God mode: its branch " + branch + " " + why + ". The orchestrator tells it."
+			note = "Den did not message " + a.Name + ", which runs guarded in God mode: its branch " + branch + " " + why + ". The orchestrator tells it; or ask the orchestrator to split the work."
 		} else {
 			out = append(out, nudge{a, "Den, an automatic check (not the human): your branch " + branch + " " + why +
 				". Short branches merge cleanly: merge it, or rebase it onto " + shortRef(w.Base) + ", soon, and tell the orchestrator if something holds it up."})

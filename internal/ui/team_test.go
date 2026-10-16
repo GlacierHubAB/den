@@ -296,7 +296,7 @@ func TestBranchNudges(t *testing.T) {
 		notes = append(notes, e.text)
 	}
 	all := strings.Join(notes, "\n")
-	for _, want := range []string{`Den nudged Mossy Lemur: its branch "old-one" is 2 days old.`, `Den did not message Fuzzy Sprite, which runs guarded in God mode: its branch "guarded" is 30 hours old.`} {
+	for _, want := range []string{`Den nudged Mossy Lemur: its branch "old-one" is 2 days old. You can tell it yourself (@Mossy Lemur merge or rebase now), or ask the orchestrator to split the work.`, `Den did not message Fuzzy Sprite, which runs guarded in God mode: its branch "guarded" is 30 hours old.`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("notes lack %q:\n%s", want, all)
 		}
