@@ -1008,8 +1008,8 @@ Read this before you say yes: **while a task runs, the agent can do anything
 you can at the keyboard.** That includes running commands as you in a
 terminal, typing into other agents' terminals (their permission prompts
 too), the clipboard, everything on the screen, and every app you are signed
-in to. Den refuses only a short fixed list: anything on Den's own window or
-the agent's view; exiting or reloading Hyprland, or running `hyprctl` or
+in to. Den refuses only a short fixed list: anything on Den's own window,
+the agent's view or a paired console's dock (Drey's); exiting or reloading Hyprland, or running `hyprctl` or
 `den` through a bind or a launch; closing or killing Den's window; binds
 that send keys to another window by name; and `ctrl+alt+Delete`,
 `Backspace` and `F1`–`F12`. Your levers are these:
@@ -1035,7 +1035,9 @@ token, so it starts only when it can see that title. Run Den in its own
 terminal window, with its tab in front, not inside tmux or screen; otherwise
 the start is refused and says so. In a window with several tabs, the whole
 window is off limits to the agent, other tabs too. `/desktop` shows how many
-actions and minutes a running task has left.
+actions and minutes a running task has left. One gap: if the dock's command
+bar takes the keyboard (through one of your binds, say), Den cannot see it,
+and the agent's typing may reach the bar; clicking into it is refused.
 
 **While it runs.** Den reads each call before hypruse gets it. Reading its
 own windows, and clicking and typing in them, goes ahead, unless a

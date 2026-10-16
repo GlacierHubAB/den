@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -338,7 +339,21 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	// no input: it never blocks a click, and nothing else of the console's
 	// is let through.
 	msg.snap.ExemptConsole(m.consoleProcs())
-	v := desktop.Decide(in.Tool, in.Args, dm.Mission, msg.snap)
+	mission := dm.Mission
+	if dm.Task {
+		// The console's windows (Drey's dock) are off limits to a task like
+		// Den's own, read fresh on every call: the dock may reconnect.
+		if console := m.consoleProcs(); len(console) > 0 {
+			mission.Protected = maps.Clone(dm.Protected)
+			for _, w := range msg.snap.Windows {
+				if w.PID > 1 && console[w.PID] {
+					mission.Protected[w.Address] = true
+				}
+			}
+			mission.Console = console
+		}
+	}
+	v := desktop.Decide(in.Tool, in.Args, mission, msg.snap)
 	// spend counts a call Den forwards to hypruse against a task's limits.
 	spend := func() (bool, tea.Cmd) {
 		why, end := m.taskSpend(dm)
