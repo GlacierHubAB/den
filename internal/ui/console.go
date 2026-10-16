@@ -109,8 +109,8 @@ func (m Model) consoleLockCommand() (tea.Model, tea.Cmd) {
 	if _, ok := m.api.srv.CurrentConsole(); !ok {
 		return m.say("No console is paired.", false)
 	}
-	m.api.srv.LockConsolePowers("you locked them in Den")
-	return m.say("The console's powers are locked: it answers no cards, runs no commands, and its chat's tools wait for you. Den's powers card gives them back.", false)
+	m.api.srv.LockConsole("you locked them in Den")
+	return m.say("The console's powers are locked: it answers no cards, runs no commands, and its chat's tools wait for you, however it pairs again. Ctrl+Y on Den's powers card gives them back.", false)
 }
 
 // startConsoleCode puts a console code on Den's screen; "" when it did, else
@@ -193,7 +193,7 @@ func (m *Model) applyConsoleAct(act api.Act) tea.Cmd {
 			"command line, as the program reports it (it can be spoofed): " + sanitize.Label(p.Cmdline, 200),
 		}
 		if p.Rejoins && !p.Codeless {
-			body = append(body, "Den read it as "+sanitize.Label(p.Unit, 60)+" through your systemd user manager: this dock may rejoin without a code after a restart, without powers until you confirm.")
+			body = append(body, "Den read it as "+sanitize.Label(p.Unit, 60)+" through your systemd user manager: this dock pairs again by itself after a restart, with its powers; /api lock takes them, /api unpair ends it.")
 		}
 		if p.Codeless {
 			unit := sanitize.Label(p.Unit, 60)

@@ -292,6 +292,12 @@ func (s *Server) StartPairing() []string {
 	s.ctl.mu.Lock()
 	s.ctl.code = &pairCode{words: words, until: time.Now().Add(pairCodeLife)}
 	s.ctl.mu.Unlock()
+	s.con.mu.Lock()
+	if s.con.autoOff {
+		s.con.autoOff = false // the human acts in Den: the dock may pair by itself again
+		s.saveConsoleLocked()
+	}
+	s.con.mu.Unlock()
 	return append([]string(nil), words...)
 }
 

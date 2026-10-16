@@ -23,9 +23,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -170,8 +172,27 @@ func runTUI() {
 	}
 	ui.Version = version
 	m := ui.New(config.Load())
-	defer m.Close()
-	if _, err := tea.NewProgram(m).Run(); err != nil {
+	p := tea.NewProgram(m)
+	// A closed terminal (SIGHUP) ends Den as a quit does, so it exits
+	// cleanly: its console record is marked clean, and the dock pairs by
+	// itself after Den starts again. Bubble Tea quits on SIGTERM itself.
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		if _, ok := <-hup; ok {
+			p.Quit()
+		}
+	}()
+	final, err := p.Run()
+	signal.Stop(hup)
+	// The model as it ended holds what started after Den did (the API
+	// turned on in Den, say); close it before any exit.
+	if fm, ok := final.(ui.Model); ok {
+		fm.Close()
+	} else {
+		m.Close()
+	}
+	if err != nil {
 		fail("den: %v", err)
 	}
 }

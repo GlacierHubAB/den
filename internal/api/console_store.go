@@ -50,14 +50,18 @@ type storedConsole struct {
 	Started  time.Time `json:"started,omitzero"`
 	Since    time.Time `json:"since"`
 	Pages    string    `json:"pages_sha256,omitempty"`
-	// Verifier is what Den read of the console's service when the human
-	// paired it with no code; read back after a Den start, it only names
-	// what changed on a card, never re-pairs silently.
+	// Verifier is what Den last read of the console's service; read back
+	// after a Den start, it only names what changed since.
 	Verifier *sysd.Verifier `json:"verifier,omitempty"`
 }
 
 type storedConsoles struct {
 	Consoles []storedConsole `json:"consoles"`
+	// Locked is the human's /api lock, AutoOff and AutoHold (unix seconds)
+	// automatic pairing stopped, each kept across Den's restarts.
+	Locked   bool  `json:"locked,omitempty"`
+	AutoOff  bool  `json:"auto_off,omitempty"`
+	AutoHold int64 `json:"auto_hold,omitempty"`
 }
 
 // cleanMark is what a clean exit leaves.
@@ -108,7 +112,10 @@ func (s *Server) saveConsoleLocked() {
 	if s.consolePath() == "" {
 		return
 	}
-	var rec storedConsoles
+	rec := storedConsoles{Locked: s.con.locked, AutoOff: s.con.autoOff}
+	if time.Now().Before(s.con.autoHold) {
+		rec.AutoHold = s.con.autoHold.Unix()
+	}
 	if c := s.con.cur; c != nil {
 		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier}}
 	}
@@ -129,67 +136,147 @@ func (s *Server) loadConsole() string {
 	raw, err := os.ReadFile(path)
 	markRaw, markErr := os.ReadFile(s.markPath())
 	os.Remove(s.markPath()) // a crash from here on leaves no mark
-	if errors.Is(err, os.ErrNotExist) {
-		return ""
-	}
-	drop := func(why string) string {
+	// drop restores no console. closed also stops automatic pairing, as
+	// an unpair does, for a record Den cannot trust: it may have held the
+	// human's unpair.
+	drop := func(why string, closed bool) string {
 		s.con.mu.Lock()
 		s.con.cur = nil
+		if closed {
+			s.con.autoOff = true
+		}
 		s.saveConsoleLocked()
 		s.con.mu.Unlock()
+		if closed {
+			why += "; the dock does not pair by itself until you start a pairing in Den (/api console or den pair)"
+		}
 		return why
 	}
+	if errors.Is(err, os.ErrNotExist) {
+		if markErr == nil {
+			// Den exited cleanly with a record that is gone now.
+			return drop("Den's console record was removed while Den was stopped", true)
+		}
+		return "" // never paired
+	}
 	if err != nil {
-		return drop("Den could not read its console record, so no console was restored")
+		return drop("Den could not read its console record, so no console was restored", true)
 	}
 	var rec storedConsoles
 	if json.Unmarshal(raw, &rec) != nil {
-		return drop("Den's console record was damaged, so no console was restored")
+		return drop("Den's console record was damaged, so no console was restored", true)
 	}
-	if len(rec.Consoles) == 0 {
-		s.con.recordHash = sha256Hex(raw)
-		return ""
+	// The lock is kept whatever else is restored: a record that cannot be
+	// trusted below drops the console, never the lock.
+	s.con.mu.Lock()
+	s.con.locked = rec.Locked
+	s.con.mu.Unlock()
+	// Automatic pairing as the record keeps it: the switch and the hold.
+	kept := func() {
+		s.con.mu.Lock()
+		s.con.autoOff = rec.AutoOff
+		if rec.AutoHold > 0 {
+			s.con.autoHold = time.Unix(rec.AutoHold, 0)
+		}
+		s.con.mu.Unlock()
 	}
 	var mark cleanMark
 	switch {
 	case len(rec.Consoles) > 1:
-		return drop("Den's console record holds more than one console: it was changed by another program, and every console was dropped")
+		return drop("Den's console record holds more than one console: it was changed by another program, and every console was dropped", true)
 	case markErr != nil || json.Unmarshal(markRaw, &mark) != nil:
-		return drop("Den did not exit cleanly last time, so its console was not restored; pair again with den pair")
+		// An unclean exit (a crash, a killed terminal, a power loss) is
+		// not the human's unpair: automatic pairing stays as it was.
+		kept()
+		if len(rec.Consoles) == 0 {
+			s.con.recordHash = sha256Hex(raw)
+			return ""
+		}
+		return drop("Den did not exit cleanly last time, so its console was not restored", false)
 	case mark.Record != sha256Hex(raw) || mark.Consoles < len(rec.Consoles):
-		return drop("Den's console record was changed while Den was stopped: every console was dropped")
-	case mark.Key != sha256Hex([]byte(s.ckey.pubHex)):
-		return drop("Den's key changed since it last exited, so its console was not restored")
+		return drop("Den's console record was changed while Den was stopped: every console was dropped", true)
+	}
+	kept()
+	if len(rec.Consoles) == 0 {
+		s.con.recordHash = sha256Hex(raw)
+		return ""
+	}
+	if mark.Key != sha256Hex([]byte(s.ckey.pubHex)) {
+		return drop("Den's key changed since it last exited, so its console was not restored", false)
 	}
 	c := rec.Consoles[0]
 	pub, err := hex.DecodeString(c.Key)
 	if err != nil || len(pub) != ed25519.PublicKeySize || !isHex(c.ID, 32) {
-		return drop("Den's console record was damaged, so no console was restored")
+		return drop("Den's console record was damaged, so no console was restored", true)
 	}
 	boot, pid, start, ok := identityParts(c.Identity)
 	if !ok || pid != c.PID || start != c.Start {
-		return drop("Den's console record was damaged, so no console was restored")
+		return drop("Den's console record was damaged, so no console was restored", true)
 	}
 	if boot == "unknown" || boot != bootID() {
-		return drop("the console was paired before this boot: pair again with den pair")
+		return drop("the console was paired before this boot, so it was not restored", false)
 	}
 	if start, _, err := procStatFn(c.PID); err != nil || start != c.Start {
-		return drop("the console's process is gone or was started again: pair again with den pair")
+		return drop("the console's process is gone or was started again, so it was not restored", false)
 	}
 	s.con.mu.Lock()
 	restored := &consoleRec{
 		Console:  Console{ID: c.ID, Exe: c.Exe, PID: c.PID, Started: c.Started, Since: c.Since, PagesSHA: c.Pages},
 		identity: c.Identity, start: c.Start, pub: ed25519.PublicKey(pub), pubHex: c.Key, restored: true,
-		verifier: c.Verifier, // never trusted: read back from disk
+		verifier: c.Verifier,
 	}
 	s.con.cur = restored
+	s.con.last = c.Verifier
 	s.con.recordHash = sha256Hex(raw)
 	s.con.mu.Unlock()
 	s.note("console restored from before Den's restart: " + sanitize.Label(ExeLabel(c.Exe), 40) + " pid " + itoa(c.PID) + ", started " + hhmmss(c.Started) + ". If that is not your console, unpair it: den unpair all")
 	s.act(Act{ConsoleChanged: true})
-	// A Den start is never trusted with the console's powers: one ^Y.
-	s.askPowers(restored, "Den restarted")
+	// Its powers come back only as an automatic pairing's would: off the
+	// API's start, since the read may take seconds.
+	go s.restorePowers(restored)
 	return ""
+}
+
+// restorePowers gives a console restored after Den's restart its powers
+// back when the human chose "always", its process reads clean as the
+// console's service now, and neither the human's lock nor God mode holds;
+// else it asks on Den's powers card.
+func (s *Server) restorePowers(rec *consoleRec) {
+	s.con.mu.Lock()
+	locked := s.con.locked
+	s.con.mu.Unlock()
+	why := "Den restarted"
+	switch {
+	case locked:
+		why = "Den restarted, and you locked the console's powers"
+	case s.godMode():
+		why = "Den restarted, and God mode is on"
+	case rec.verifier == nil:
+		// Paired by code from a process that did not read clean.
+	case !s.opts.ConsolePowersAlways:
+		// What the record says Den read is from disk, which anything of
+		// the user's may rewrite while Den is down: one ^Y.
+	default:
+		v, err := readUnit(sysd.ProcID{PID: rec.PID, Start: rec.start})
+		if err != nil {
+			why = "Den restarted, and " + ConsoleUnit + " did not read clean"
+			break
+		}
+		s.con.mu.Lock()
+		mine := s.con.cur == rec && !s.con.locked
+		if mine {
+			rec.powers, rec.verifier, rec.readHere, s.con.last = true, &v, true, &v
+		}
+		s.con.mu.Unlock()
+		if !mine {
+			return
+		}
+		s.powersEvent(rec, true)
+		s.note("the restored console read clean as " + ConsoleUnit + ": it may answer cards and run commands again.")
+		s.act(Act{ConsoleChanged: true})
+		return
+	}
+	s.askPowers(rec, why)
 }
 
 // identityParts reads the boot, pid and start out of a console identity:

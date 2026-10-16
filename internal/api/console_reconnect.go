@@ -14,14 +14,11 @@ import (
 // Re-pairing the console's service after it restarted (console.reconnect),
 // and the console's powers.
 //
-// A restart of the same service, on the same build, run the same way,
-// while this Den has held what it read at pairing in memory, re-pairs
-// with no question: reading, chat and status at once, and the powers
-// (answering cards, running commands) after one ^Y in Den's own window.
-// Anything else that is still the service's main process asks on a card
-// that names what changed, and that ^Y gives the powers too: after a Den
-// start (the record on disk may have been rewritten while Den was down),
-// in God mode, or when anything Den read differs.
+// The service's new main process, read clean, re-pairs at once with its
+// powers, as console.request pairs, and Den names what changed in its
+// chat; Den signs its reply under the key the dock pinned. The powers
+// (answering cards, running commands) stay off while the human's /api
+// lock or God mode holds, until the ^Y on Den's powers card.
 
 // CodePowersLocked refuses card.answer and cmd.run while the console has
 // no powers.
@@ -39,8 +36,9 @@ type ConsolePowersAsk struct {
 	Why     string
 }
 
-// SetGodMode tells the API how to know whether God mode is on: no silent
-// re-pair while it is. God mode turning on calls LockConsolePowers.
+// SetGodMode tells the API how to know whether God mode is on: a console
+// paired automatically while it is comes without its powers. God mode
+// turning on calls LockConsolePowers.
 func (s *Server) SetGodMode(on func() bool) {
 	s.con.mu.Lock()
 	s.con.godOn = on
@@ -83,6 +81,18 @@ func (s *Server) LockConsolePowers(why string) {
 	}
 }
 
+// LockConsole is the human's /api lock: the console's powers are taken,
+// and every console paired after, automatically or by code, and one
+// restored after Den restarts, comes without them, until the human's ^Y
+// on Den's powers card.
+func (s *Server) LockConsole(why string) {
+	s.con.mu.Lock()
+	s.con.locked = true
+	s.saveConsoleLocked()
+	s.con.mu.Unlock()
+	s.LockConsolePowers(why)
+}
+
 // askPowers puts the console's powers on a card in Den.
 func (s *Server) askPowers(rec *consoleRec, why string) {
 	s.act(Act{ConsolePowers: &ConsolePowersAsk{ID: rec.ID, PID: rec.PID, Started: rec.Started, Why: why}})
@@ -102,9 +112,17 @@ func (s *Server) ConsolePowered(id string) bool {
 func (s *Server) ConsolePowersAnswered(id string, ok bool) {
 	s.con.mu.Lock()
 	cur := s.con.cur
-	given := ok && cur != nil && cur.ID == id && !cur.powers
+	mine := ok && cur != nil && cur.ID == id
+	given := mine && !cur.powers
 	if given {
 		cur.powers = true
+	}
+	if mine && s.con.locked {
+		s.con.locked = false // the ^Y lifts the human's lock too
+		s.saveConsoleLocked()
+	}
+	if mine && cur.verifier != nil && cur.readHere {
+		s.con.given = cur.verifier // what the human gave the powers to, as this Den read it
 	}
 	s.con.mu.Unlock()
 	if given {
@@ -153,19 +171,19 @@ func (s *Server) consoleReconnect(c *conn, req Request) {
 	st := &s.con
 	st.mu.Lock()
 	cur := st.cur
-	busy := s.consoleBusy(time.Now())
+	code, msg := s.autoPairRefusal(time.Now())
 	st.mu.Unlock()
-	if cur == nil || cur.verifier == nil {
+	if cur == nil {
 		c.fail(req.ID, CodeForbidden, "pair again: there is no pairing to reconnect to")
 		return
 	}
-	if busy != "" {
-		c.fail(req.ID, CodeUnavailable, busy)
+	if code != "" {
+		c.fail(req.ID, code, msg)
 		return
 	}
-	was := *cur.verifier
-	v, err := readUnit(sysd.ProcID{PID: c.peer.PID, Start: c.peer.Start})
-	if err == nil && v.Boot != was.Boot {
+	self := sysd.ProcID{PID: c.peer.PID, Start: c.peer.Start}
+	v, err := readUnit(self)
+	if err == nil && cur.verifier != nil && v.Boot != cur.verifier.Boot {
 		c.fail(req.ID, CodeForbidden, "pair again: it was paired before this boot")
 		return
 	}
@@ -180,45 +198,21 @@ func (s *Server) consoleReconnect(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "pair again: not "+ConsoleUnit+": "+sanitize.Label(err.Error(), 300))
 		return
 	}
-	var changes []string
-	for _, d := range sysd.Compare(was, v) {
-		changes = append(changes, string(d))
-	}
+	var extra []string
 	if pages != cur.PagesSHA {
-		changes = append(changes, "the dock's pages changed")
-	}
-	god := s.godMode()
-	silent := len(changes) == 0 && cur.trusted && !god
-	switch {
-	case !cur.trusted:
-		changes = append([]string{"Den has restarted since you paired it, so it cannot tell whether its record was changed while it was down"}, changes...)
-	case god:
-		changes = append([]string{"God mode is on: no console re-pairs without your ^Y"}, changes...)
+		extra = append(extra, "the dock's pages changed")
 	}
 	pub, _ := hex.DecodeString(pubHex)
-	now := time.Now()
 	rec := &consoleRec{
-		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: c.peer.PID, Since: now, PagesSHA: pages},
-		identity: identity, start: c.peer.Start, pub: ed25519.PublicKey(pub), pubHex: pubHex,
-		confirm: make(chan bool, 1), verifier: &v, trusted: true,
+		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: self.PID, Since: time.Now(), PagesSHA: pages},
+		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: pubHex,
 	}
-	rec.Started, _, _ = procInfo(c.peer.PID)
-	if silent {
-		s.repairSilently(c, req, cur, rec, signed(rec.ID))
+	rec.Started, _, _ = procInfo(self.PID)
+	powers, ok := s.pairAutomatically(c, req, cur, rec, v, "reconnected", extra)
+	if !ok {
 		return
 	}
-	ask := ConsoleAsk{ID: rec.ID, Exe: c.peer.Exe, PID: c.peer.PID, Codeless: true, Reconnect: true, Unit: ConsoleUnit,
-		Program: v.Exe.Path, ProgramSHA: v.Exe.SHA256, AppFP: Fingerprint(pubHex), DenFP: Fingerprint(s.ckey.pubHex), Changes: changes}
-	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
-	old := cur.Console
-	ask.Replaces = &old
-	confirm := s.raiseConsoleCard(c, req, rec, &ask)
-	if confirm == nil {
-		return
-	}
-	s.awaitConsole(c, req, rec, confirm, func() {}, func() map[string]any {
-		return map[string]any{"pairing": rec.ID, "den_sig": signed(rec.ID), "powers": true}
-	})
+	c.reply(req.ID, map[string]any{"pairing": rec.ID, "den_sig": signed(rec.ID), "powers": powers})
 }
 
 // reconnectSigned is what Den signs in console.reconnect's reply: its
@@ -231,28 +225,6 @@ func reconnectSigned(nonce, pairing, appKey string) []byte {
 // consoleReconnectLabel starts what Den signs for a reconnect: no other
 // signature of Den's is valid as one.
 const consoleReconnectLabel = "den-console-reconnect-v1"
-
-// repairSilently makes rec the console in place of was, with no powers
-// until the human's ^Y, and says so: a note, the console's event, and the
-// powers card.
-func (s *Server) repairSilently(c *conn, req Request, was, rec *consoleRec, sig string) {
-	st := &s.con
-	st.mu.Lock()
-	if st.cur != was || st.pending != nil {
-		st.mu.Unlock()
-		c.fail(req.ID, CodeUnavailable, ClaimBusy)
-		return
-	}
-	rec.reconnected = true
-	st.cur = rec
-	s.saveConsoleLocked()
-	st.mu.Unlock()
-	s.closeConsole(was.ID, ConsoleEvent{Kind: "unpaired", PID: was.PID, StartTicks: was.start, Started: hhmmss(was.Started), Reason: "it reconnected", Cause: CauseReplaced})
-	s.note("console reconnected: " + ConsoleUnit + " pid " + itoa(rec.PID) + ", started " + hhmmss(rec.Started) + ". It answers cards and runs commands again once you press Ctrl+Y on its card.")
-	s.act(Act{ConsoleChanged: true})
-	s.askPowers(rec, "it reconnected after a restart")
-	c.reply(req.ID, map[string]any{"pairing": rec.ID, "den_sig": sig, "powers": false})
-}
 
 // consoleIntruder counts a try for the console from another process, or
 // one that fails the service's checks: a strike (three in the window

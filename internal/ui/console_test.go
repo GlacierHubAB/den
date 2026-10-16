@@ -140,7 +140,7 @@ func TestConsoleCodelessCard(t *testing.T) {
 // A claim by code that Den read clean as the service says the dock may
 // rejoin with no code; one that did not read clean says nothing of it.
 func TestConsoleClaimCardSaysItMayRejoin(t *testing.T) {
-	const line = "this dock may rejoin without a code after a restart, without powers until you confirm"
+	const line = "this dock pairs again by itself after a restart, with its powers; /api lock takes them, /api unpair ends it"
 	for _, rejoins := range []bool{true, false} {
 		m := consoleModel(t)
 		ask := &api.ConsoleAsk{ID: "c-4", PID: 4242, Exe: "/home/u/.local/bin/console-host"}
