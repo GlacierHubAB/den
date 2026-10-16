@@ -533,13 +533,14 @@ func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
 
 // consoleRuns reports whether a tool the orchestrator wants runs without a
 // card: in a turn from the console that is paired now (its proof, by its
-// pairing id, never anything the text says) while it has its powers,
-// asked again at each tool, and only ListAgents, or send_message to an
-// agent Den would deliver to. Every other tool, and every tool in an app
-// pairing's turn, still asks.
+// pairing id, never anything the text says), sent and not yet ended, while
+// the console has its powers, asked again at each tool, and only
+// ListAgents, or send_message to an agent Den would deliver to. Every other
+// tool, every tool in an app pairing's turn, and a tool asked for outside
+// the console's live turn, still asks.
 func (m Model) consoleRuns(ev orch.Event) bool {
 	y := m.ctl.turn
-	if y == nil || y.Console == "" || m.api.srv == nil || m.orch.proc == nil || !consolePowered(m, y.Console) {
+	if y == nil || y.Console == "" || !m.ctl.sent || m.ctl.ended || m.api.srv == nil || m.orch.proc == nil || !consolePowered(m, y.Console) {
 		return false
 	}
 	switch ev.Tool {

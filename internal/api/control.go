@@ -779,6 +779,9 @@ type Say struct {
 }
 
 func (y *Say) push(ch Chunk) bool {
+	if y.c == nil {
+		return false // a turn no connection asked for (tests make them)
+	}
 	ch.Turn = y.Turn
 	return y.c.push(Event{Event: EventOrch, Data: ch}, true)
 }

@@ -291,9 +291,7 @@ func TestConsoleTurnRunsListAndMessageWithoutACard(t *testing.T) {
 		m.askControlTool(orch.Event{Kind: orch.PermissionAsk, RequestID: "r-" + tool, Tool: tool, Input: json.RawMessage(input)})
 	}
 	msg := `{"to":"worker-otter","message":"run the tests\nand tell me"}`
-	// The turns here have no connection to tell "needs approval" on: as
-	// ended, the cards still come but nothing is sent.
-	m.ctl.ended = true
+	m.ctl.sent, m.ctl.ended = true, false // the console's turn is live
 	m.ctl.turn = &api.Say{Turn: "t-1", Console: "c-1"}
 	ask("ListAgents", `{}`)
 	ask(orch.SendMessageTool, msg)
@@ -328,6 +326,16 @@ func TestConsoleTurnRunsListAndMessageWithoutACard(t *testing.T) {
 	ask("ListAgents", `{}`)
 	if n := cards(); n != 5 {
 		t.Errorf("%d cards after another console's and an app's turn, want 5", n)
+	}
+	// Outside the console's live turn (not sent yet, or ended while it is
+	// still Den's record of the turn), a tool asks.
+	m.ctl.turn = &api.Say{Turn: "t-4", Console: "c-1"}
+	m.ctl.sent, m.ctl.ended = false, false
+	ask("ListAgents", `{}`)
+	m.ctl.sent, m.ctl.ended = true, true
+	ask(orch.SendMessageTool, msg)
+	if n := cards(); n != 7 {
+		t.Errorf("%d cards outside the console's live turn, want 7", n)
 	}
 }
 
