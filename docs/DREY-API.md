@@ -940,7 +940,9 @@ off. While it is on:
   silence. Read the card's program and pid before you pair.
 - Any program running as you can also write Den's console record; a
   restored console is announced in Den and to the console, so check that
-  it is yours.
+  it is yours. After an unclean exit Den keeps the record's stop on
+  automatic pairing as it reads it, so a program that kills Den and
+  rewrites the record can lift your unpair for the next start.
 - What Den checks before a request or a reconnect is friction, not a
   boundary. Your systemd manager's socket is yours: any program running
   as you can serve one that answers as systemd, and can replace the
