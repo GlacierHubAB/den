@@ -183,7 +183,9 @@ func TestDesktopMissionCardAndStart(t *testing.T) {
 
 func TestDesktopMissionRefusals(t *testing.T) {
 	m, _, _ := missionRig(t, false)
-	r := missionReq("terminal")
+	// A configured app beside an unknown one: refused, with a pointer to
+	// task (none configured at all turns into a task: desktop_task_test).
+	r := missionReq("editor", "terminal")
 	runBatch(m.handleRequest(r))
 	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "editor, browser") || !strings.Contains(d.Message, "Use task instead") {
 		t.Fatalf("unknown app: %+v", d)

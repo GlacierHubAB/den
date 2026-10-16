@@ -62,6 +62,8 @@ type deskMission struct {
 	// recorded (no call is answered before), and the limits from the
 	// human's config with the calls forwarded so far.
 	view                string
+	viewPID             int  // the agent view's process: the agent's own terminal
+	viewChecked         bool // the agent was found running under it
 	placed              bool
 	limitActions        int
 	actions             int
@@ -259,6 +261,22 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	}
 	if dm.Task && !dm.placed {
 		return deny("Den is still placing the agent view; call again in a moment")
+	}
+	// The agent view must be the agent's own terminal. What proves the
+	// window is its marker class, set when it was created, on exactly one
+	// window. On top of that the agent must run under the window's process:
+	// Den starts that Ghostty as a process of its own
+	// (--gtk-single-instance=false), so it is the agent's ancestor, but
+	// under a shared terminal process this check would be weak, and
+	// HeldWindow's "no other window of that process" could not hold.
+	// Known once the agent is, which every call needs.
+	if dm.Task && !dm.viewChecked {
+		if !deskAncestorOf(dm.viewPID, dm.AgentPID) {
+			why := "the agent view is not the agent's own terminal"
+			deny(why + "; the task has ended")
+			return m.finishDeskMission(dm, why)
+		}
+		dm.viewChecked = true
 	}
 	if why := dm.taskGone(msg.snap); why != "" {
 		deny(why + "; the task has ended")

@@ -42,6 +42,7 @@ type deskOffer struct {
 	// task is a task mission's text as the card shows it ("" for a plan
 	// and apps), and minutes and actions the limits the card states.
 	task             string
+	steps            []string // a task's steps for the human, as the card shows them
 	minutes, actions int
 	// setup is the hypruse install ^Y does first, nil when it is installed
 	// and checks out.
@@ -157,12 +158,27 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 		}
 	}
 	if task {
-		return m.offerTask(r, in, setup)
+		return m.offerTask(r, in, setup, "")
 	}
 	all, problems := deskApps()
 	var names []string
 	for _, a := range all {
 		names = append(names, a.Name)
+	}
+	// None of the apps it named is configured (or none is at all): the
+	// human has not set up the restricted mode, so Den asks for the work as
+	// a task instead, on the task's own card. A plan naming some configured
+	// apps stays a plan, and an unknown one among them is refused below.
+	if !anyConfigured(in.Apps, all) {
+		asked := make([]string, 0, len(in.Apps))
+		for _, a := range in.Apps {
+			asked = append(asked, sanitize.Label(a, 40))
+		}
+		// The plan as sent becomes the task, checked like any task (never
+		// cut); its steps for the human stay, on the card and in the brief.
+		note := "The orchestrator asked for apps you have not configured (" + strings.Join(asked, ", ") + "); Den offers it as a full-desktop task instead."
+		in.Task, in.Plan, in.Apps = in.Plan, "", nil
+		return m.offerTask(r, in, setup, note)
 	}
 	var apps []desktop.App
 	for _, want := range in.Apps {
@@ -267,6 +283,19 @@ func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea
 	cmd := func() tea.Msg { return prepareMission(id, offer) }
 	model, say := m.say("Preparing the desktop mission…", false)
 	return model, tea.Batch(say, cmd)
+}
+
+// anyConfigured reports whether any of the named apps is in the human's
+// config.
+func anyConfigured(names []string, all []desktop.App) bool {
+	for _, n := range names {
+		for _, a := range all {
+			if a.Name == n {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // prepareMission picks the workspace and launches the apps. It runs off
@@ -398,7 +427,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	dm.save() // its session id is on disk before the agent starts
 	prompt := desktop.Brief(p.offer.in.Plan, p.offer.apps, p.workspace, p.offer.in.HumanSteps)
 	if task {
-		prompt = desktop.TaskBrief(p.offer.task)
+		prompt = desktop.TaskBrief(p.offer.task, p.offer.steps)
 	}
 	claude, err := deskClaude()
 	if err != nil {
@@ -479,10 +508,10 @@ func (m *Model) finishSpawn(s deskSpawned) tea.Cmd {
 		dm.AgentPID, dm.AgentStart, dm.AgentExe = pid, deskStart(pid), deskExeOf(pid)
 	}
 	if dm.Task {
-		// The agent view is the terminal window Den just opened, by its
-		// address; without it, the task does not run (and every call is
-		// refused from here on).
-		if s.res.Window == "" || dm.Protects(s.res.Window) {
+		// The agent view is the terminal window Den just opened, found by
+		// the marker class it was created with, by its address; without it,
+		// the task does not run (and every call is refused from here on).
+		if s.res.Window == "" || !s.res.Marked || dm.Protects(s.res.Window) {
 			end := m.finishDeskMission(dm, "Den could not find the agent view to keep it off limits")
 			if it != nil {
 				m.store.Settle(it, false, "approved, but Den could not find the agent view; stopped")
@@ -491,7 +520,7 @@ func (m *Model) finishSpawn(s deskSpawned) tea.Cmd {
 			return end
 		}
 		dm.Protected[s.res.Window] = true
-		dm.view, dm.placed = s.res.Window, true
+		dm.view, dm.viewPID, dm.placed = s.res.Window, s.res.WindowPID, true
 	}
 	dm.save()
 	msg := fmt.Sprintf("Started desktop agent %q on workspace %d with %d app window(s). It reports to Den when done; Den passes the report to you.", s.res.Name, dm.Workspace, len(dm.Windows))
