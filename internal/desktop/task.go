@@ -88,11 +88,15 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 		if m.Protects(s.Active) {
 			return deny("use_bind: one of Den's own windows is focused; focus another window first")
 		}
-		b, ok := findBind(str(args, "combo"), s.Binds)
-		if !ok {
-			return deny("use_bind: the human has no bind %q", str(args, "combo"))
+		combo := str(args, "combo")
+		if why := oneCombo(combo); why != "" {
+			return deny("use_bind: %s", why)
 		}
-		if why := refusedBind(b, m, s); why != "" {
+		bs := findBinds(combo, s.Binds)
+		if len(bs) == 0 {
+			return deny("use_bind: the human has no bind %q", combo)
+		}
+		if why := refusedBinds(bs, m, s); why != "" {
 			return deny("use_bind: %s", why)
 		}
 		return Verdict{Kind: Allow, Args: args}
@@ -196,10 +200,16 @@ func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 		if keys == "" {
 			return deny("keyboard key needs keys")
 		}
-		if b, ok := findBind(keys, s.Binds); ok {
-			if why := refusedBind(b, m, s); why != "" {
-				return deny("keyboard: %s runs a bind: %s", keys, why)
-			}
+		// One combo only, as hypruse takes it (T2), and never one the
+		// system takes for itself (T1).
+		if why := oneCombo(keys); why != "" {
+			return deny("keyboard: %s", why)
+		}
+		if why := systemCombo(keys); why != "" {
+			return deny("keyboard: %s", why)
+		}
+		if why := refusedBinds(findBinds(keys, s.Binds), m, s); why != "" {
+			return deny("keyboard: %s runs a bind: %s", keys, why)
 		}
 	default:
 		return deny("keyboard: unknown action")
@@ -228,19 +238,72 @@ func taskHypr(args map[string]any, m Mission, s Snapshot) Verdict {
 	return deny("hypr: unknown action")
 }
 
-// findBind is the human's bind for a combo ("super+return"), as Hyprland
-// has it now.
-func findBind(combo string, binds []Bind) (Bind, bool) {
+// findBinds are every one of the human's binds on a combo ("super+m"), as
+// Hyprland has them now, whatever their submap: Hyprland runs all of them.
+func findBinds(combo string, binds []Bind) []Bind {
 	if strings.TrimSpace(combo) == "" {
-		return Bind{}, false
+		return nil
 	}
 	mods, key := comboMods(combo)
+	var out []Bind
 	for _, b := range binds {
 		if b.Mods == mods && b.Key == key {
-			return b, true
+			out = append(out, b)
 		}
 	}
-	return Bind{}, false
+	return out
+}
+
+// refusedBinds says why one of the binds is refused, "" when none is.
+func refusedBinds(bs []Bind, m Mission, s Snapshot) string {
+	for _, b := range bs {
+		if why := refusedBind(b, m, s); why != "" {
+			return why
+		}
+	}
+	return ""
+}
+
+// modifierNames are the modifiers a combo may hold before its key.
+var modifierNames = map[string]bool{"ctrl": true, "control": true, "shift": true, "alt": true, "super": true, "logo": true, "mod4": true, "win": true, "meta": true, "hyper": true, "cmd": true}
+
+// oneCombo says why keys is not exactly one combo as hypruse takes it
+// (modifiers and one key joined by +): no sequence, no list, no bare
+// modifier tap (which can run a release bind Den cannot see as a combo).
+func oneCombo(keys string) string {
+	parts := strings.Split(keys, "+")
+	for i, p := range parts {
+		p = strings.TrimSpace(p)
+		switch {
+		case p == "":
+			return "keys must be one combo such as ctrl+shift+t"
+		case strings.ContainsAny(p, " \t,;"):
+			return "keys must be one combo such as ctrl+shift+t, not a sequence or a list"
+		case i < len(parts)-1 && !modifierNames[strings.ToLower(p)]:
+			return "unknown modifier " + p
+		case i == len(parts)-1 && modifierNames[strings.ToLower(p)]:
+			return "a modifier tapped alone is not allowed"
+		}
+	}
+	return ""
+}
+
+// systemCombo says why a combo is the system's, not an app's or the
+// human's binds: ctrl+alt+Delete, Backspace and F1 to F12 take the display
+// or the session (T1).
+func systemCombo(keys string) string {
+	mods := map[string]bool{}
+	for _, k := range strings.Split(strings.ToLower(keys), "+") {
+		mods[strings.TrimSpace(k)] = true
+	}
+	if (mods["ctrl"] || mods["control"]) && mods["alt"] {
+		for k := range mods {
+			if k == "delete" || k == "backspace" || len(k) >= 2 && k[0] == 'f' && k[1] >= '1' && k[1] <= '9' {
+				return "ctrl+alt+" + k + " is the system's"
+			}
+		}
+	}
+	return ""
 }
 
 // hyprctlWord and denWord find hyprctl or den as a command word.
@@ -284,6 +347,12 @@ func refusedBind(b Bind, m Mission, s Snapshot) string {
 // refusedLaunch says why a launch is refused: hyprctl or den run
 // directly (anything else is the agent's, as at the keyboard).
 func refusedLaunch(cmd string) string {
+	switch {
+	case hyprctlWord.MatchString(cmd):
+		return "hyprctl is never launched directly"
+	case denWord.MatchString(cmd):
+		return "den is never launched directly"
+	}
 	for _, f := range strings.Fields(cmd) {
 		switch filepath.Base(strings.Trim(f, `"'`)) {
 		case "hyprctl":

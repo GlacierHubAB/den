@@ -128,6 +128,36 @@ func TestTaskFixedDispatchListIsRefused(t *testing.T) {
 	}
 }
 
+// Hyprland runs every bind on a combo: a harmless one first does not let a
+// refused one after it through (T3). Keys are one combo (T2); the
+// system's combos are refused (T1).
+func TestTaskEveryBindOnACombo(t *testing.T) {
+	m, s := taskDesk()
+	s.Binds = append(s.Binds,
+		Bind{Mods: modSuper, Key: "m", Dispatcher: "exec", Arg: "notify-send bye"},
+		Bind{Mods: modSuper, Key: "m", Dispatcher: "exit"},
+	)
+	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+m"}, m, s); v.Kind != Deny {
+		t.Error("use_bind super+m ran exit behind a harmless bind")
+	}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "super+m"}, m, s); v.Kind != Deny {
+		t.Error("key super+m ran exit behind a harmless bind")
+	}
+	for _, keys := range []string{"ctrl+a super+shift+e", "ctrl+a,super+shift+e", "super", "ctrl+", "foo+e", "ctrl+alt+delete", "ctrl+alt+f2", "ctrl+alt+backspace"} {
+		if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": keys}, m, s); v.Kind != Deny {
+			t.Errorf("keys %q allowed", keys)
+		}
+	}
+	for _, keys := range []string{"ctrl+shift+t", "escape", "ctrl + c", "alt+tab", "f5"} {
+		if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": keys}, m, s); v.Kind != Allow {
+			t.Errorf("keys %q refused: %s", keys, v.Reason)
+		}
+	}
+	if v := taskCall(t, "launch", map[string]any{"command": `bash -c "x;hyprctl dispatch exit"`}, m, s); v.Kind != Deny {
+		t.Error("launch through bash -c with hyprctl allowed")
+	}
+}
+
 func TestTaskLaunch(t *testing.T) {
 	m, s := taskDesk()
 	for _, cmd := range []string{"hyprctl reload", "/usr/bin/hyprctl keyword unbind SUPER,X", "den desktop stop", "  /home/u/.local/bin/den  hook", "env FOO=1 hyprctl"} {
