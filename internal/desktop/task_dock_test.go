@@ -44,3 +44,41 @@ func TestTaskConsoleDockIsOffLimits(t *testing.T) {
 		t.Errorf("a key into the focused dock: %+v", v)
 	}
 }
+
+// Every one of drey-host's surfaces (drey-secreview's list, from Drey's
+// dev) refuses the agent's click in a task and in an app mission: Den
+// goes by the console's process, not the name, so a surface Drey adds
+// later is covered too. Only the pointer outline is exempt.
+func TestConsoleSurfacesRefuseClicksInEveryMode(t *testing.T) {
+	console := map[int]bool{1500: true}
+	surfaces := []string{"drey-dock", "drey-dropdown", "drey-focus", "drey-confirm", "drey-pair", "drey-catch", "drey-test-a-confirm", "drey-new-surface"}
+	for _, ns := range surfaces {
+		for _, level := range []int{2, OverlayLevel} {
+			layer := Layer{Monitor: "DP-1", Level: level, X: 0, Y: 0, W: 600, H: 400, Namespace: ns, PID: 1500}
+
+			m, s := taskDesk()
+			s.Layers = []Layer{layer}
+			s.ExemptConsole(console)
+			m.Console = console
+			if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 300, "y": 200}, m, s); v.Kind != Deny {
+				t.Errorf("task: a click on %s (level %d) was allowed", ns, level)
+			}
+
+			am, as := fixture()
+			as.Layers = []Layer{layer}
+			as.ExemptConsole(console)
+			raw := `{"action":"click","x":300,"y":200,"window":"0xb"}`
+			if v := Decide("pointer", []byte(raw), am, as); v.Kind == Allow {
+				t.Errorf("app mission: a click on %s (level %d) was allowed", ns, level)
+			}
+		}
+	}
+	// The outline alone is let through, and only the console's own.
+	m, s := taskDesk()
+	s.Layers = []Layer{{Monitor: "DP-1", Level: OverlayLevel, W: 2000, H: 1000, Namespace: PointerNamespace, PID: 1500}}
+	s.ExemptConsole(console)
+	m.Console = console
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1200, "y": 600}, m, s); v.Kind != Allow {
+		t.Errorf("the console's outline blocked a click: %+v", v)
+	}
+}
