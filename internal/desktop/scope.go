@@ -217,6 +217,11 @@ type Mission struct {
 	// MarksWindow is the window of the last marks call Den allowed: a
 	// click_ui by mark is only in scope for it.
 	MarksWindow string
+	// Task is a task mission: the whole desktop, with Den's own surfaces
+	// (Protected, by Hyprland address: the window Den runs in and the agent
+	// view) off limits, and no per-app rules. See task.go.
+	Task      bool
+	Protected map[string]bool
 }
 
 // InScope reports whether a window is the mission's: on its workspace, and

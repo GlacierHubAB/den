@@ -45,7 +45,7 @@ func TestAgentArgv(t *testing.T) {
 		t.Fatalf("no %s in %q", name, argv)
 		return ""
 	}
-	if got, want := flag("--tools"), strings.Join(AllowedToolNames(), ","); got != want {
+	if got, want := flag("--tools"), strings.Join(AllowedToolNames(false), ","); got != want {
 		t.Fatalf("--tools %s", got)
 	}
 	if flag("--allowedTools") != flag("--tools") {
@@ -107,7 +107,7 @@ func TestSettingsAndGuard(t *testing.T) {
 	den := filepath.Join(dir, "den")
 	os.WriteFile(den, []byte("binary"), 0o755)
 	path := filepath.Join(dir, "guards", "m1.json")
-	g, err := WriteSettings(path, den, "/run/user/1/den.sock")
+	g, err := WriteSettings(path, den, "/run/user/1/den.sock", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestSettingsAndGuard(t *testing.T) {
 			t.Errorf("%s is not denied: %s", want, deny)
 		}
 	}
-	for _, allowed := range AllowedToolNames() {
+	for _, allowed := range AllowedToolNames(false) {
 		if strings.Contains(","+deny+",", ","+allowed+",") {
 			t.Errorf("an allowed tool is denied: %s", allowed)
 		}
@@ -174,7 +174,7 @@ func TestSettingsAndGuard(t *testing.T) {
 	if why := g.Check(); !strings.Contains(why, "settings") {
 		t.Fatalf("edited settings: %q", why)
 	}
-	g, _ = WriteSettings(path, den, "/run/user/1/den.sock")
+	g, _ = WriteSettings(path, den, "/run/user/1/den.sock", false)
 	os.WriteFile(den, []byte("other"), 0o755)
 	if why := g.Check(); !strings.Contains(why, "binary") {
 		t.Fatalf("swapped den: %q", why)

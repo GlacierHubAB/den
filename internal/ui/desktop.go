@@ -501,7 +501,7 @@ func (m *Model) handleDesktopGate(r *bridge.Request) tea.Cmd {
 		if why := dm.refusal(); why != "" {
 			return deny(why)
 		}
-		for _, t := range desktop.AllowedToolNames() {
+		for _, t := range desktop.AllowedToolNames(dm.Task) {
 			if in.ToolName == t {
 				r.Reply(bridge.Decision{Behavior: "allow"})
 				return nil

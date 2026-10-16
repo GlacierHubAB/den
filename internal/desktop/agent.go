@@ -91,6 +91,9 @@ type AgentLaunch struct {
 	// Claude is the Claude Code binary Den resolved, absolute: launched by
 	// that path, and the agent's process must run that very file.
 	Claude string
+	// Task is a task mission: the agent also gets launch, binds and
+	// use_bind (see task.go).
+	Task bool
 }
 
 // AgentArgv is the claude command line for a desktop agent, launched like
@@ -107,7 +110,7 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 		MCPServer: map[string]any{"command": l.Den, "args": []string{"desktop-mcp", "--mission", l.Mission, "--socket", l.Socket}, "alwaysLoad": true},
 	}})
-	tools := strings.Join(AllowedToolNames(), ",")
+	tools := strings.Join(AllowedToolNames(l.Task), ",")
 	claude := "claude"
 	if l.Claude != "" {
 		if !filepath.IsAbs(l.Claude) {
@@ -128,7 +131,7 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 		"--setting-sources", "", "--settings", l.Settings,
 		"--permission-mode", "dontAsk",
 		"--allowedTools", tools,
-		"--disallowedTools", strings.Join(ClosedToolNames(), ","),
+		"--disallowedTools", strings.Join(ClosedToolNames(l.Task), ","),
 	}
 	if l.Model != "" {
 		argv = append(argv, "--model", l.Model)
@@ -146,11 +149,12 @@ func TerminalArgv(agent []string, den, mission string) []string {
 }
 
 // DeniedTools are the settings deny rules of a desktop agent: Claude Code's
-// own tools that act or reach outside, and hypruse's closed tools.
-func DeniedTools() []string {
+// own tools that act or reach outside, and hypruse's closed tools (a task
+// mission's, when task).
+func DeniedTools(task bool) []string {
 	out := []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
 		"Task", "Agent", "SendMessage", "ListAgents", "Skill", "SlashCommand", "KillShell", "BashOutput", "ToolSearch"}
-	return append(out, ClosedToolNames()...)
+	return append(out, ClosedToolNames(task)...)
 }
 
 // shellQuote quotes s for a POSIX shell.
@@ -160,7 +164,7 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // switched off by another settings file; peers' messages are refused (the
 // agent reads the screen and must take no one's word as the human's); and
 // every tool call passes Den's gate hook first.
-func SettingsJSON(den, socket string) ([]byte, error) {
+func SettingsJSON(den, socket string, task bool) ([]byte, error) {
 	if !filepath.IsAbs(den) || !filepath.IsAbs(socket) {
 		return nil, errors.New("den and its socket must be absolute paths")
 	}
@@ -192,7 +196,7 @@ func SettingsJSON(den, socket string) ([]byte, error) {
 		// Deny rules hold even when a hook fails (a failed PreToolUse hook
 		// lets the tool run) and beat a hook's allow: every tool the agent
 		// must never have is denied here as well as left out of --tools.
-		"permissions": map[string]any{"deny": DeniedTools()},
+		"permissions": map[string]any{"deny": DeniedTools(task)},
 		"hooks":       hooks,
 	}, "", "  ")
 }
@@ -206,8 +210,8 @@ type Guard struct {
 
 // WriteSettings writes the settings file at 0600 in a 0700 folder and
 // records the hashes Check compares.
-func WriteSettings(path, den, socket string) (Guard, error) {
-	data, err := SettingsJSON(den, socket)
+func WriteSettings(path, den, socket string, task bool) (Guard, error) {
+	data, err := SettingsJSON(den, socket, task)
 	if err != nil {
 		return Guard{}, err
 	}

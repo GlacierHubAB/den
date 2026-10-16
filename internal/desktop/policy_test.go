@@ -188,7 +188,7 @@ func TestDecideChildWindow(t *testing.T) {
 }
 
 func TestToolNames(t *testing.T) {
-	got := strings.Join(AllowedToolNames(), ",")
+	got := strings.Join(AllowedToolNames(false), ",")
 	for _, closed := range ClosedTools {
 		if strings.Contains(got, "__"+closed+",") || strings.HasSuffix(got, "__"+closed) {
 			t.Errorf("%s is allowed", closed)

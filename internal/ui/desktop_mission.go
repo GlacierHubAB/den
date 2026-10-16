@@ -311,7 +311,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	if err != nil {
 		return fail(err.Error())
 	}
-	guard, err := desktop.WriteSettings(filepath.Join(p.dir, "settings.json"), den, sock)
+	guard, err := desktop.WriteSettings(filepath.Join(p.dir, "settings.json"), den, sock, false)
 	if err != nil {
 		return fail("settings: " + err.Error())
 	}

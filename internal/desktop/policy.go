@@ -17,7 +17,31 @@ var (
 	// commands, compositor binds, unjudgeable bundles, the clipboard, and
 	// two observers that report the whole desktop.
 	ClosedTools = []string{"launch", "use_bind", "sequence", "clipboard", "binds", "wait_for"}
+	// TaskTools are the hypruse tools a task mission adds: launching apps
+	// and the human's binds, each checked by task mode's fixed rules.
+	TaskTools = []string{"launch", "binds", "use_bind"}
 )
+
+// tools is a mission's hypruse tools, and closed the ones it never gets.
+func tools(task bool) (open, closed []string) {
+	open = append([]string(nil), HypruseTools...)
+	if !task {
+		return open, ClosedTools
+	}
+	open = append(open, TaskTools...)
+	for _, t := range ClosedTools {
+		keep := true
+		for _, o := range TaskTools {
+			if t == o {
+				keep = false
+			}
+		}
+		if keep {
+			closed = append(closed, t)
+		}
+	}
+	return open, closed
+}
 
 // MCPServer is the name the desktop agent's MCP config gives the proxy, so
 // its tools reach Claude Code as mcp__hypruse__<tool>.
@@ -27,10 +51,11 @@ const MCPServer = "hypruse"
 func ToolName(tool string) string { return "mcp__" + MCPServer + "__" + tool }
 
 // AllowedToolNames are the Claude Code names of every tool a desktop agent
-// has: its --tools and --allowedTools.
-func AllowedToolNames() []string {
+// has (a task mission's, when task): its --tools and --allowedTools.
+func AllowedToolNames(task bool) []string {
+	open, _ := tools(task)
 	var out []string
-	for _, t := range append(append([]string(nil), HypruseTools...), DenTools...) {
+	for _, t := range append(open, DenTools...) {
 		out = append(out, ToolName(t))
 	}
 	return out
@@ -38,9 +63,10 @@ func AllowedToolNames() []string {
 
 // ClosedToolNames are the Claude Code names of the closed tools, for
 // --disallowedTools.
-func ClosedToolNames() []string {
+func ClosedToolNames(task bool) []string {
+	_, closed := tools(task)
 	var out []string
-	for _, t := range ClosedTools {
+	for _, t := range closed {
 		out = append(out, ToolName(t))
 	}
 	return out
@@ -104,6 +130,9 @@ func Decide(tool string, raw json.RawMessage, m Mission, s Snapshot) Verdict {
 	}
 	if _, ok := args["allow_auth"]; ok {
 		delete(args, "allow_auth")
+	}
+	if m.Task {
+		return decideTask(tool, args, m, s)
 	}
 	switch tool {
 	case "request_approval", "your_turn":
@@ -396,6 +425,9 @@ var argSchema = map[string]map[string]byte{
 	"keyboard":         {"action": 's', "text": 's', "keys": 's', "window": 's', "then": 's', "allow_auth": 'b'},
 	"click_ui":         {"name": 's', "mark": 'n', "window": 's', "index": 'n', "button": 's', "double": 'b', "then": 's', "allow_auth": 'b'},
 	"hypr":             {"action": 's', "target": 's', "workspace": 's', "then": 's'},
+	"launch":           {"command": 's', "workspace": 's', "wait_s": 'n'},
+	"binds":            {},
+	"use_bind":         {"combo": 's', "then": 's'},
 	"request_approval": {"intent": 's'},
 	"your_turn":        {"step": 's'},
 }

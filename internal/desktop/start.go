@@ -39,14 +39,20 @@ func ChildEnv(env []string, den []string) []string {
 }
 
 // HypruseEnv is what Den sets for hypruse in a mission: confinement to the
-// mission workspace, strict mode, the journal, screenshots inline (the
-// agent has no file tools), no bytecode. The auth guard stays at its
-// default (on), and the clipboard tool is never enabled.
+// mission workspace, strict mode (it stops when the human takes the seat),
+// the journal, screenshots inline (the agent has no file tools), no
+// bytecode. A task mission (workspace 0) has the whole desktop, so no
+// confinement: Den's gate keeps its own surfaces off limits instead. The
+// auth guard stays at its default (on), and the clipboard tool is never
+// enabled.
 func HypruseEnv(workspace int, journal string) []string {
-	return append([]string{
-		"HYPRUSE_CONFINE=workspace:" + strconv.Itoa(workspace),
+	var env []string
+	if workspace > 0 {
+		env = append(env, "HYPRUSE_CONFINE=workspace:"+strconv.Itoa(workspace))
+	}
+	return append(append(env,
 		"HYPRUSE_STRICT=1",
-		"HYPRUSE_JOURNAL=" + journal,
+		"HYPRUSE_JOURNAL="+journal,
 		"HYPRUSE_SCREENSHOT_MODE=image",
-	}, ServerEnv()...)
+	), ServerEnv()...)
 }
