@@ -935,13 +935,16 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	for _, card := range waiting {
 		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}
-	// Read now, with the connection subscribed: a lock from here on also
-	// reaches it as its own powers event, after this one.
+	// Each pushed under the lock its changers take, with the connection
+	// subscribed: a change after it reaches the connection after it, never
+	// before. push only queues, and closes on a full queue, with no lock.
 	st.mu.Lock()
 	powers := rec.powers
-	st.mu.Unlock()
 	c.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "powers", On: &powers, PID: ev.PID, StartTicks: ev.StartTicks}}, true)
-	c.push(Event{Event: EventGod, Data: s.god.get()}, true)
+	st.mu.Unlock()
+	s.god.mu.Lock()
+	c.push(Event{Event: EventGod, Data: s.god.valueLocked()}, true)
+	s.god.mu.Unlock()
 	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
 		c.push(Event{Event: EventMode, Data: v.Mode}, true)
 	}
