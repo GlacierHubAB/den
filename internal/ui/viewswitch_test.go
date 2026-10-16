@@ -606,3 +606,48 @@ func TestHideIsRefusedWhenNoAgentWindowIsDens(t *testing.T) {
 		t.Errorf("the view after a refused hide is %q", got)
 	}
 }
+
+// Den says User view only while a window it hid is hidden: when none is
+// (the compositor started afresh, or the windows were moved back by hand),
+// the next check says Agent view, tells the chat and the dock, and saves it.
+func TestReconcileSaysAgentViewWhenNothingIsHidden(t *testing.T) {
+	m, wm := viewRig(t)
+	if cmd := m.reconcileView(); cmd != nil {
+		t.Fatal("a reconcile was asked for in Agent view")
+	}
+	if rep, _ := switchView(t, m, api.ViewUser); rep.Code != "" {
+		t.Fatalf("hide: %+v", rep)
+	}
+	// Hidden windows: the record stands, and nothing changes.
+	cmd := m.reconcileView()
+	if cmd == nil {
+		t.Fatal("no reconcile in User view")
+	}
+	if msg := cmd().(viewReconciledMsg); msg.changed {
+		t.Fatalf("reconcile changed with windows hidden: %+v", msg)
+	}
+	// Every window put back with no word to Den.
+	wm.mu.Lock()
+	for i := range wm.cs {
+		wm.cs[i].Workspace.Name = "1"
+	}
+	wm.mu.Unlock()
+	msg := m.reconcileView()().(viewReconciledMsg)
+	if !msg.changed || msg.n != 3 {
+		t.Fatalf("reconcile: %+v", msg)
+	}
+	mm, _ := m.applyViewReconciled(msg)
+	got := mm.(Model)
+	if got.api.view != api.ViewAgent || viewSwitcher().Current() != view.Agent {
+		t.Errorf("view %q, saved %q", got.api.view, viewSwitcher().Current())
+	}
+	var noted bool
+	for _, e := range got.orch.chat {
+		if strings.Contains(e.text, "Agent view") && strings.Contains(e.text, "none of the 3 windows") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Error("the chat did not say why the view changed")
+	}
+}

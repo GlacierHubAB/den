@@ -386,6 +386,66 @@ func (sw *Switcher) Settle(ctx context.Context, marker string, pid int) (bool, e
 	return hidden, err
 }
 
+// Reconcile makes the saved view say only what the windows show: User view
+// is kept while a window Den recorded hiding is on special:den, and when
+// none is (Hyprland started afresh, the human moved them back, they were
+// closed) the record is dropped and the view saved as Agent. It reports
+// whether it changed anything and how many hidden windows the record held.
+// A record with no hidden window to check, Agent view, a compositor that
+// cannot be asked, or a switch in progress change nothing.
+func (sw *Switcher) Reconcile(ctx context.Context) (changed bool, n int, err error) {
+	if !sw.Ops.Available() || sw.path() == "" {
+		return false, 0, nil
+	}
+	if st, _ := loadState(sw.path()); st.View != User || len(st.Moved) == 0 {
+		return false, 0, nil // nothing a listing could contradict
+	}
+	unlock, ok := hypr.TryLockWindows()
+	if !ok {
+		return false, 0, ErrBusy
+	}
+	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, sw.budget())
+	defer cancel()
+	err = sw.withState(ctx, func(st *State) error {
+		if st.View != User || len(st.Moved) == 0 {
+			return nil
+		}
+		all, err := sw.Ops.Clients(ctx)
+		if err != nil {
+			return ErrList // Den cannot see: it claims nothing either way
+		}
+		for _, r := range st.Moved {
+			if hiddenNow(all, r) {
+				return nil
+			}
+		}
+		n = len(st.Moved)
+		st.View, st.Since, st.Moved = Agent, sw.now(), nil
+		if err := saveState(sw.path(), *st); err != nil {
+			return ErrState
+		}
+		changed = true
+		return nil
+	})
+	return changed, n, err
+}
+
+// hiddenNow reports whether the window a record names is out of sight on
+// special:den: found the way a show finds it.
+func hiddenNow(all []hypr.Client, r Moved) bool {
+	if r.Own || r.Titled {
+		c, ok := byAddress(all, r.Address)
+		return ok && c.PID == r.PID && c.InitialClass == r.Class && onSpecial(c)
+	}
+	for _, c := range windowsOf(all, r.Marker) {
+		if onSpecial(c) {
+			return true
+		}
+	}
+	return false
+}
+
 // Rescue brings back every window on special:den, whatever it is and
 // whoever put it there: the human's way out when a window is stranded, for
 // instance behind a decoy that carries an agent's class. A window with a

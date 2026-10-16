@@ -84,6 +84,45 @@ func (m *Model) applyView(r *api.ViewReq) tea.Cmd {
 }
 
 // viewRescueMsg is the end of /view rescue.
+// viewReconciledMsg is what reconcileView found: Den said User view, and no
+// window it recorded hiding was on special:den.
+type viewReconciledMsg struct {
+	changed bool
+	n       int
+}
+
+// reconcileView checks, while the saved view is User, that Den's record of
+// hidden windows still holds: at start and on every tick in User view. It
+// reads the window list once, off the UI's goroutine, and does nothing when
+// the record stands, the list cannot be read or a switch is running.
+func (m *Model) reconcileView() tea.Cmd {
+	sw := viewSwitcher()
+	if sw.Current() != view.User {
+		return nil // the record is read where the view is, not from the API
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), view.Budget+time.Second)
+		defer cancel()
+		changed, n, _ := sw.Reconcile(ctx)
+		return viewReconciledMsg{changed: changed, n: n}
+	}
+}
+
+// applyViewReconciled says Den is in Agent view now, because it saw that no
+// window it hid is hidden: the dock hears the view event too.
+func (m Model) applyViewReconciled(msg viewReconciledMsg) (tea.Model, tea.Cmd) {
+	if !msg.changed {
+		return m, nil
+	}
+	m.api.view = viewSwitcher().Current()
+	m.publishAPI()
+	if m.api.srv != nil {
+		m.api.srv.PushView(api.ViewChange{View: api.ViewAgent, Shown: msg.n, Total: msg.n})
+	}
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Agent view: Den's record said User view, but none of the " + strconv.Itoa(msg.n) + " windows it hid is hidden now.", at: time.Now()}))
+	return m, nil
+}
+
 type viewRescueMsg struct {
 	moved, left int
 	err         error
