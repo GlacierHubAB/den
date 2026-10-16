@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Exported at Drey commit `5b1805e89d9508e0296891cae22bca5c7b472ea7`, package SHA-256 `97c43fcbf3be867befd36777c431b957ff0ab89674c8fc82c0b3068b63bba17f`.
+Exported at Drey commit `369bb84ea07da747f8c1acb66b357af9f3f3905b`, package SHA-256 `1f00a4f83a080b5f4a8220dac7ef4ae0be882e30e7d5118bd512fd1d7ecde34e`.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -102,6 +102,17 @@ What only the server's own test can do is passed in:
   pairs or rejoins on its own, as Den does while `/api lock` or God mode
   holds them: a `console.reconnect`, and a `console.request` answered at
   once, must then say `powers: false`. Left false, those may say either.
+- `console.events snapshot` (needs `Card`): on subscribe the server sends
+  the current value of each stateful kind before any change. With a card
+  waiting, the subtest wants, in order, a `console` event `connected` or
+  `restored`, a `card` event `new` for each card `console.events` listed,
+  a `console` event of kind `powers` with `on` (equal to `console.auth`'s
+  `powers` on that connection, when it sent one), a `god` event with `on`,
+  then `mode` and `view`, each optional and in that order; a new card
+  raised after must come after them. One-shot console kinds (`paired`,
+  `reconnected`) pass. `fleet.events` must start with the whole fleet. A
+  kind the suite does not know may join the snapshot later (such as a
+  desktop state); it is let pass.
 - Console events of a kind a subtest is not waiting for (Den's `paired`,
   `reconnected`, `powers`) are skipped, as a client ignores kinds it does
   not know.
