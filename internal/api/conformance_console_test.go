@@ -10,12 +10,11 @@ import (
 	"github.com/GlacierHubAB/den/internal/api/denconformance"
 )
 
-// The suite's console.request and console.reconnect, end to end against
-// this server: the dock pairs with no code, Den's card answered as the
-// human's ^Y would, and its restart rejoins with no card. A test process
-// is no systemd unit, so the read of the console's service is stood in
-// for (fakeUnit) as the same unit each time; internal/ui's run of the
-// suite keeps both off, since it cannot stand in for it.
+// The suite's console.request end to end against this server: the dock
+// pairs with no code and no card, with its powers. A test process is no
+// systemd unit, so the read of the console's service is stood in for
+// (fakeUnit); internal/ui's run of the suite keeps it off, since it cannot
+// stand in for it.
 func TestConformanceRequestAndReconnect(t *testing.T) {
 	h, _ := consoleHarness(t)
 	asked := fakeUnit(t, testVerifier(), nil)
@@ -37,6 +36,8 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 			}
 		}
 	}()
+	// The service pairs with no card: Confirm answers one if it comes,
+	// and else lets the request's reply through.
 	var answered []ConsoleAsk
 	confirm := func(ctx context.Context) error {
 		select {
@@ -44,14 +45,19 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 			answered = append(answered, *ask)
 			h.s.ConsoleAnswered(ask.ID, true)
 			return nil
+		case <-time.After(300 * time.Millisecond):
+			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	// Only the two subtests: the rest of the suite runs in internal/ui.
+	// Only console.request: the rest of the suite runs in internal/ui.
+	// The pinned "console.reconnect" still wants a reconnect without its
+	// powers, where the service now reconnects with them as the human
+	// chose: skipped until the suite is fixed upstream and pinned again.
 	var skip []string
 	for _, name := range append(append([]string(nil), denconformance.Subtests...), denconformance.ConsoleSubtests...) {
-		if name != "console.request" && name != "console.reconnect" {
+		if name != "console.request" {
 			skip = append(skip, name)
 		}
 	}
@@ -68,15 +74,15 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 			Reconnect: true,
 		},
 	})
-	// Each ran, not skipped: one card for the request, none for the
-	// silent reconnect, and the unit read for both.
-	if len(answered) != 1 || !answered[0].Codeless || answered[0].Reconnect {
+	// It ran, not skipped: no card, the unit read, and the console paired
+	// with its powers.
+	if len(answered) != 0 {
 		t.Errorf("cards answered %+v", answered)
 	}
-	if len(*asked) != 2 {
-		t.Errorf("unit read %d times, want 2", len(*asked))
+	if len(*asked) != 1 {
+		t.Errorf("unit read %d times, want 1", len(*asked))
 	}
-	if cur, ok := h.s.CurrentConsole(); !ok || cur.Powers {
-		t.Errorf("after the reconnect: %+v %v", cur, ok)
+	if cur, ok := h.s.CurrentConsole(); !ok || !cur.Powers {
+		t.Errorf("after the request: %+v %v", cur, ok)
 	}
 }
