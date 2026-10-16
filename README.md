@@ -1185,7 +1185,10 @@ orchestrator answers with a proposal: the mission rewritten, done-when,
 constraints it inferred, the agents it means to reuse, the team it means to
 start (roles as a tree, each with the model it picked), and the shape it chose
 with one line of reasoning. `Ctrl+Y` starts it, `Ctrl+N` drops it, typing
-refines it, `Esc` keeps it for later. Nothing runs before `Ctrl+Y`. When the
+refines it, `Esc` keeps it for later. Nothing runs before `Ctrl+Y`. Den adds
+one criterion of its own to every mission that is not a schedule: "Shown
+working on the human's real setup: what was run, and what the human saw".
+Neither the orchestrator nor a template can leave it out. When the
 run starts, the orchestrator spawns only the roles that report to it; each lead
 starts its own people.
 

@@ -79,7 +79,7 @@ func TestTemplateSeedsAProposalAndStartsNothing(t *testing.T) {
 		}
 	}
 	// Den seeded the criteria and the roles' sub-goals from the template.
-	if len(ms.Criteria) != 1 || len(ms.Goals) != 3 || ms.Goals[0].Role != "review lead" {
+	if len(ms.Criteria) != 2 || len(ms.Goals) != 3 || ms.Goals[0].Role != "review lead" {
 		t.Errorf("seeded criteria %+v goals %+v", ms.Criteria, ms.Goals)
 	}
 	// The orchestrator adapts it through its tool, by the id; the template

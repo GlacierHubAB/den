@@ -24,13 +24,16 @@ func TestCriteriaAreSetForAProposalAndFrozenAfterTheStart(t *testing.T) {
 	if err := m.SetCriteria(many); err == nil {
 		t.Fatal("more than the cap accepted")
 	}
+	if err := m.SetCriteria(many[:MaxCriteria]); err == nil {
+		t.Fatal("the cap accepted with no room for Den's own criterion")
+	}
 	if err := m.SetCriteria([]string{"Tests pass", "Docs\u202e updated\x1b[31m"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.Criteria) != 2 || m.Criteria[1].ID != "c2" || m.Criteria[1].Text != "Docs updated" {
-		t.Fatalf("criteria not sanitized: %+v", m.Criteria)
+	if len(m.Criteria) != 3 || m.Criteria[1].ID != "c2" || m.Criteria[1].Text != "Docs updated" || m.Criteria[2].ID != "c3" || m.Criteria[2].Text != RealFlow {
+		t.Fatalf("criteria not sanitized, or no real-setup criterion: %+v", m.Criteria)
 	}
-	if m.DoneWhen != "Tests pass; Docs updated" {
+	if m.DoneWhen != "Tests pass; Docs updated; "+RealFlow {
 		t.Errorf("done-when not kept: %q", m.DoneWhen)
 	}
 	m.State = Running
@@ -39,8 +42,27 @@ func TestCriteriaAreSetForAProposalAndFrozenAfterTheStart(t *testing.T) {
 	}
 }
 
+// Den's own criterion, shown on the human's real setup, closes every
+// mission that ends, once, and never a schedule's runs.
+func TestRealFlowCriterion(t *testing.T) {
+	m := &Mission{ID: "m1", State: Proposed, Shape: Once}
+	m.SetCriteria([]string{"Tests pass", strings.ToUpper(RealFlow)})
+	if len(m.Criteria) != 2 || m.Criteria[1].Text != strings.ToUpper(RealFlow) {
+		t.Errorf("given already: %+v", m.Criteria)
+	}
+	m.SetCriteria([]string{"Tests pass"})
+	if len(m.Criteria) != 2 || m.Criteria[1].Text != RealFlow {
+		t.Errorf("set again: %+v", m.Criteria)
+	}
+	s := &Mission{ID: "m2", State: Proposed, Shape: Schedule}
+	s.SetCriteria([]string{"The report is posted"})
+	if len(s.Criteria) != 1 {
+		t.Errorf("a schedule: %+v", s.Criteria)
+	}
+}
+
 func TestClaimsDecideNothingAndTheHumanConfirms(t *testing.T) {
-	m := &Mission{ID: "m1", State: Proposed}
+	m := &Mission{ID: "m1", State: Proposed, Shape: Schedule} // only its own two criteria
 	m.SetCriteria([]string{"a", "b"})
 	m.State = Running
 	if err := m.Claim("c1", "", t0); err == nil {
