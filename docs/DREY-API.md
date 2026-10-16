@@ -761,10 +761,10 @@ Each connection proves once, at its start:
 |---|---|---|
 | `console.challenge` | | `{nonce, conn, claim_salt}` |
 | `console.claim` | `{public_key, proof, pages_sha256?}` | `{pairing, den_public_key, bind, console}`, once you `Ctrl+Y` in Den |
-| `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, once you `Ctrl+Y` in Den |
-| `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once or once you `Ctrl+Y` in Den |
+| `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, at once |
+| `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once |
 | `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then a `console` event, a `card` event for each of them, then `console`, `card` and `view` events as they come |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, its powers, God mode, the mode, the view, a `card` event for each waiting card), then `console`, `god`, `mode`, `card` and `view` events as they change |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
@@ -783,10 +783,19 @@ all` does in a terminal.
 
 ### Events
 
+On subscribe, Den sends the current value of each stateful kind before
+any change events, so that no client ever has to infer a state from the
+order of events. `console.events` starts with this snapshot, in this
+order: a `console` event (`connected`, or `restored` after Den
+restarted), a `console` event of kind `powers` with `on`, a `god` event,
+a `mode` event (once Den knows the mode), a `view` event (once Den has
+a view), and a `card` event, `new`, for each card waiting. Everything
+after it is a change. `fleet.events` starts with the whole fleet in the
+same way. A later kind that carries state joins the snapshot.
+
 - `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?, unit?, program_sha256?, changes?}`: `kind`
   is `connected`, `restored` (the first `console.events` after Den
-  restarted with this console: check `pid` and `start_ticks` are yours;
-  a `powers` event follows at once with where its powers stand),
+  restarted with this console: check `pid` and `start_ticks` are yours),
   `paired` or `reconnected` (after a `console.request` or a
   `console.reconnect`, to the first connection that subscribes, after the
   replay: `reason` `paired automatically`, with `unit`, `program` as the
@@ -821,7 +830,8 @@ all` does in a terminal.
   and prove as before; after a restart the first `console.events` says
   `restored`.
 - `view {view, shown, total}`: how a `view.show` or `view.hide` ended, as in
-  "Switching views".
+  "Switching views". In the snapshot it is the view now, with the last
+  switch's `shown` and `total` while that switch made it, else 0.
 - `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
   `new`, `changed` or `settled`. A new or changed card the console may
   not answer (`dock_answers` false) carries `needs_den_screen: true`: only
@@ -832,9 +842,9 @@ all` does in a terminal.
   it), absent for `gone`. Take any `by` you do not know as Den's own
   answer, never the console's or yours, and never drop the event for it.
 - `god {on, since?}`: God mode went on or off (see God mode), on the
-  console's `console.events` connections.
+  console's `console.events` connections; in the snapshot, where it is.
 - `mode {global, mixed}`: the permission mode changed (see Permission
-  mode). One follows the replay of `console.events`, once Den has a mode.
+  mode); in the snapshot, the mode in force, once Den has one.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
   of cards waiting: one you knew that is not in it is gone. The `new`
   events that follow are those cards.

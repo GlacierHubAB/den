@@ -29,7 +29,7 @@ func pairedEvents(t *testing.T) (*harness, *dock, consolePaired, *client) {
 		t.Fatalf("auth: %+v", l.Error)
 	}
 	c.call("console.events", nil)
-	c.next() // connected
+	skipSnapshot(t, h.s, c)
 	return h, d, p, c
 }
 

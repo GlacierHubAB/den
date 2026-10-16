@@ -428,7 +428,7 @@ func TestAutoPairSaysWhatItPaired(t *testing.T) {
 		t.Fatalf("auth %+v", l.Error)
 	}
 	c.call("console.events", nil)
-	c.next() // connected
+	skipSnapshot(t, h.s, c)
 	var ev ConsoleEvent
 	if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "paired" || ev.Reason != "paired automatically" || ev.Unit != ConsoleUnit ||
 		ev.Program != testVerifier().Exe.Path || ev.ProgramSHA != testVerifier().Exe.SHA256 || ev.PID == 0 || ev.StartTicks == 0 {

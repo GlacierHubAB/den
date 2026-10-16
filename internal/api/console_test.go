@@ -254,7 +254,7 @@ func TestConsoleRefusesOtherPrograms(t *testing.T) {
 		t.Fatal(l.Error)
 	}
 	mine.call("console.events", nil)
-	mine.next() // connected
+	skipSnapshot(t, h.s, mine)
 	h.s.setIdentify(func(p Peer) Peer { p.Exe = "/usr/bin/other"; return p })
 	for i := 0; i < consoleStrikesMax; i++ {
 		c := h.dial()
@@ -340,7 +340,7 @@ func TestConsoleReplacesTheOld(t *testing.T) {
 	c.hello()
 	d.auth(c, p1)
 	c.call("console.events", nil)
-	c.next()
+	skipSnapshot(t, h.s, c)
 	ask := func() *ConsoleAsk {
 		cl := h.dial()
 		cl.hello()
