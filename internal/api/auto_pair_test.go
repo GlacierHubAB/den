@@ -90,15 +90,51 @@ func TestAutoPairStopsOutlastARestart(t *testing.T) {
 	}
 }
 
-// A record Den cannot trust at its start, after a clean exit or not, stops
+// An unclean exit (a crash, a killed terminal) is not the human's unpair:
+// after one, the dock pairs by itself again, unless the record keeps an
+// unpair or a hold from before it.
+func TestAutoPairAfterAnUncleanExit(t *testing.T) {
+	for _, c := range []struct {
+		name, cause, code, msg string
+	}{
+		{"paired", "", "", ""},
+		{"unpaired", CauseDen, CodeForbidden, AutoPairOff},
+		{"held", CauseIntruders, CodeUnavailable, AutoPairHeld},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store := filepath.Join(t.TempDir(), "consoles.json")
+			priv := mustKey(t)
+			h := storeHarness(t, store, priv)
+			fakeUnit(t, testVerifier(), nil)
+			d := newDock(t, h)
+			requestPaired(t, h, d, "")
+			if c.cause != "" {
+				h.s.UnpairConsole(c.cause, "")
+			}
+			// No clean exit: no mark.
+			d.h = storeHarness(t, store, priv)
+			l := d.requestLine()
+			if c.cause == "" {
+				if !l.OK {
+					t.Errorf("request after a crash: %+v", l.Error)
+				}
+				return
+			}
+			if code(l) != c.code || l.Error.Message != c.msg {
+				t.Errorf("request after a crash: %+v", l.Error)
+			}
+		})
+	}
+}
+
+// A record Den cannot trust at its start, after a clean exit, stops
 // automatic pairing, as it may have held the human's unpair: changed,
-// damaged, removed, or no clean exit. A start that never paired does not.
+// damaged, or removed. A start that never paired does not.
 func TestAutoPairOffForARecordDenCannotTrust(t *testing.T) {
 	for name, spoil := range map[string]func(store string){
 		"changed":   func(store string) { os.WriteFile(store, []byte(`{"consoles":[]}`), 0o600) },
 		"damaged":   func(store string) { os.WriteFile(store, []byte(`{`), 0o600) },
 		"removed":   func(store string) { os.Remove(store) },
-		"no mark":   func(store string) { os.Remove(store + ".clean") },
 		"untouched": func(string) {},
 	} {
 		t.Run(name, func(t *testing.T) {

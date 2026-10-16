@@ -171,22 +171,32 @@ func (s *Server) loadConsole() string {
 	s.con.mu.Lock()
 	s.con.locked = rec.Locked
 	s.con.mu.Unlock()
+	// Automatic pairing as the record keeps it: the switch and the hold.
+	kept := func() {
+		s.con.mu.Lock()
+		s.con.autoOff = rec.AutoOff
+		if rec.AutoHold > 0 {
+			s.con.autoHold = time.Unix(rec.AutoHold, 0)
+		}
+		s.con.mu.Unlock()
+	}
 	var mark cleanMark
 	switch {
 	case len(rec.Consoles) > 1:
 		return drop("Den's console record holds more than one console: it was changed by another program, and every console was dropped", true)
 	case markErr != nil || json.Unmarshal(markRaw, &mark) != nil:
-		return drop("Den did not exit cleanly last time, so no console was restored", true)
+		// An unclean exit (a crash, a killed terminal, a power loss) is
+		// not the human's unpair: automatic pairing stays as it was.
+		kept()
+		if len(rec.Consoles) == 0 {
+			s.con.recordHash = sha256Hex(raw)
+			return ""
+		}
+		return drop("Den did not exit cleanly last time, so its console was not restored", false)
 	case mark.Record != sha256Hex(raw) || mark.Consoles < len(rec.Consoles):
 		return drop("Den's console record was changed while Den was stopped: every console was dropped", true)
 	}
-	// A record Den wrote: automatic pairing as Den left it.
-	s.con.mu.Lock()
-	s.con.autoOff = rec.AutoOff
-	if rec.AutoHold > 0 {
-		s.con.autoHold = time.Unix(rec.AutoHold, 0)
-	}
-	s.con.mu.Unlock()
+	kept()
 	if len(rec.Consoles) == 0 {
 		s.con.recordHash = sha256Hex(raw)
 		return ""
