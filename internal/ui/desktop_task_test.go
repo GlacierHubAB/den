@@ -504,3 +504,25 @@ func TestDesktopYourTurnEndStopsTheAgent(t *testing.T) {
 		t.Fatalf("ended %q stops %+v", dm.Ended, *stops)
 	}
 }
+
+// A task never runs without the watch that stops it when Den quits (the
+// card promises it): when Den cannot read its own start, nothing starts.
+func TestDesktopTaskNeedsDensStart(t *testing.T) {
+	m, d, spawned, _, _ := taskRig(t)
+	start := deskStart
+	deskStart = func(pid int) string {
+		if pid == os.Getpid() {
+			return ""
+		}
+		return start(pid)
+	}
+	r := taskReq("tidy my downloads folder")
+	runBatch(m.handleRequest(r))
+	runTask(t, m, d, "allow")
+	if dv, done := r.Decided(); !done || dv.Behavior != "deny" || !strings.Contains(dv.Message, "cannot read its own start") {
+		t.Fatalf("asker got %+v", dv)
+	}
+	if len(*spawned) != 0 || m.deskLive() != nil {
+		t.Fatal("a task started without Den's watch")
+	}
+}

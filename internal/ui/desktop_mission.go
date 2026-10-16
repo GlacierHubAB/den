@@ -386,6 +386,13 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	if start := deskStart(os.Getpid()); start != "" {
 		owner = strconv.Itoa(os.Getpid()) + ":" + start
 	}
+	if task && owner == "" {
+		// The card promises a task stops when Den quits: without Den's
+		// start for the watch, it does not run.
+		why := "Den cannot read its own start; the task did not start"
+		m.endDeskMission(dm, why)
+		return fail(why)
+	}
 	if _, err := desktop.AgentArgv(launch); err != nil {
 		m.endDeskMission(dm, err.Error())
 		return fail(err.Error())
