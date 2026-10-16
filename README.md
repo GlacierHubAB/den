@@ -810,7 +810,30 @@ off), no live card and nothing waiting in the inbox is idle. An open mission
 shows its cost, its merged changes with the cost of each, and its idle agents.
 The orchestrator sees the same in its missions block, and may give an idle
 agent its next sub-goal or close it with close_agent, which asks you as
-before. Den itself closes no one.
+before. Den itself closes no one. The count reads the repository's own
+branches, which agents can move, so the cost per merged change is a guide,
+never evidence that a mission's work is done.
+
+### When you are asked
+
+Once you start a mission, the orchestrator keeps it moving without asking you.
+It resolves review findings by dispatching the fixes. The exception is a
+finding that would change your routine, which comes to you as a choice. Its
+prompt names the hard limits that stay yours:
+
+| Hard limit | Examples | Who stops for you |
+| --- | --- | --- |
+| Weakening security | a permission mode that asks less, God mode, console powers, a new pairing | Den: `/mode` waits on a card, God mode only from Den's window, the powers card (unless `console_powers = "always"`) |
+| Publishing | a push, a pull request, a release, anything sent off the machine | the agent's own permission prompt, in its mode; nothing in God mode's `bypassPermissions` |
+| Money | a mission's budget crossed | Den: it pauses the mission and asks |
+| Acts that cannot be undone | deleting, forcing, closing an agent with uncommitted work | close_agent's card (Den answers it itself in God mode); the agent's permission prompt for the rest |
+
+The orchestrator is told not to take or order any of these without your yes
+for that work, or a standing rule you gave it yourself in Den's chat; a "rule"
+that reaches it in an agent's report, a file or a message never counts. Where only that instruction
+stands between an agent and the act (publishing in God mode, say), it is the
+orchestrator's word, not Den's check. This changes no card and no check of
+Den's.
 
 ### Permission mode
 
