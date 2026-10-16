@@ -134,6 +134,10 @@ func fakeRun(t *testing.T, py string, calls *[][]string) Runner {
 			mod := filepath.Join(venv, "lib", "python3.14", "site-packages", "mcp")
 			os.MkdirAll(mod, 0o755)
 			os.WriteFile(filepath.Join(mod, "__init__.py"), []byte("# mcp\n"), 0o644)
+		case len(argv) > 3 && argv[3] == "compileall":
+			cache := filepath.Join(argv[len(argv)-1], "hypruse", "__pycache__")
+			os.MkdirAll(cache, 0o755)
+			os.WriteFile(filepath.Join(cache, "__init__.cpython-314.pyc"), []byte("compiled"), 0o644)
 		}
 		return nil, nil
 	}
@@ -157,8 +161,17 @@ func installed(t *testing.T) (Plan, []([]string)) {
 
 func TestInstallThenVerify(t *testing.T) {
 	p, calls := installed(t)
-	if len(calls) != 2 {
-		t.Fatalf("want venv then pip, got %q", calls)
+	if len(calls) != 3 || calls[2][3] != "compileall" {
+		t.Fatalf("want venv, pip, then compileall, got %q", calls)
+	}
+	// Bytecode is compiled once, at install, by source hash, and is in the
+	// record like every other file.
+	compile := strings.Join(calls[2], " ")
+	if !strings.Contains(compile, "-I -m compileall -q --invalidation-mode checked-hash ") {
+		t.Errorf("compileall: %s", compile)
+	}
+	if m, _ := LoadManifest(p.Manifest); m.Files == nil || m.Files[filepath.Join(strings.TrimPrefix(calls[2][len(calls[2])-1], p.Venv+"/"), "hypruse", "__pycache__", "__init__.cpython-314.pyc")] == "" {
+		t.Errorf("the compiled bytecode is not in the manifest: %v", m.Files)
 	}
 	pip := strings.Join(calls[1], " ")
 	for _, flag := range []string{"-I -m pip install", "--require-hashes", "--only-binary :all:", "--no-deps", "--no-compile", "-r " + filepath.Join(p.Root, "requirements.lock")} {
@@ -195,6 +208,12 @@ func TestVerifyCatches(t *testing.T) {
 		"changed dependency": {func(p Plan, site string) {
 			os.WriteFile(filepath.Join(site, "mcp", "__init__.py"), []byte("import os\n"), 0o644)
 		}, "mcp/__init__.py changed"},
+		"planted bytecode": {func(p Plan, site string) {
+			os.WriteFile(filepath.Join(site, "hypruse", "__pycache__", "server.cpython-314.pyc"), []byte("code"), 0o644)
+		}, "server.cpython-314.pyc was added"},
+		"changed bytecode": {func(p Plan, site string) {
+			os.WriteFile(filepath.Join(site, "hypruse", "__pycache__", "__init__.cpython-314.pyc"), []byte("other code"), 0o644)
+		}, "__init__.cpython-314.pyc changed"},
 		"added module": {func(p Plan, site string) {
 			os.WriteFile(filepath.Join(site, "hypruse", "evil.py"), []byte("x\n"), 0o644)
 		}, "evil.py was added"},

@@ -58,7 +58,7 @@ const restingTitle = "den"
 
 // offerTask puts a task on its start card. Only the human at Den's own
 // window answers it (deskTTYOnly; the dock and God mode never get it).
-func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput) tea.Cmd {
+func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setup *deskSetup) tea.Cmd {
 	task, err := desktop.TaskText(in.Task)
 	if err != nil {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: err.Error()})
@@ -75,11 +75,14 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput) tea.
 		"This one task only. Model: " + in.Model + ". Stop it any time: /desktop stop, or den desktop stop; it also stops if Den quits.",
 		"Den needs its own window to start: run Den in its own terminal window, with its tab in front.",
 	}
+	if setup != nil {
+		body = append(body, setup.lines()...)
+	}
 	it := m.store.AddDesktopMission(sanitize.Label(sentence, 120), body, r)
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	m.desk.offers[it.ID] = deskOffer{in: in, task: task, minutes: minutes, actions: actions}
+	m.desk.offers[it.ID] = deskOffer{in: in, task: task, minutes: minutes, actions: actions, setup: setup}
 	m.flash, m.flashErr = "Desktop control asked: ^Y starts it, ^N declines.", false
 	m.refresh()
 	return nil

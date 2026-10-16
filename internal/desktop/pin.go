@@ -3,11 +3,12 @@
 // approved.
 //
 // hypruse is a third-party program (MIT, Copyright (c) 2026 Ilyas
-// Khallouki). Den neither vendors nor modifies it: `den install-hypruse`
-// copies its package files from a clone the human names into a venv of
-// Den's own, each checked against the hashes below, and installs its
-// dependencies from a hash-locked requirements file. Nothing of hypruse
-// runs at install time.
+// Khallouki). Den neither vendors nor modifies it: a desktop card's
+// install fetches its package files from GitHub's archive of the pinned
+// commit (`den install-hypruse` copies them from a clone the human names),
+// into a venv of Den's own, each checked against the hashes below, and
+// installs its dependencies from a hash-locked requirements file. Nothing
+// of hypruse runs at install time; its LICENSE travels with it.
 package desktop
 
 // Pin is one pinned hypruse release: where it came from and the SHA-256 of

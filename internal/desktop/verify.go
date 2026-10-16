@@ -74,18 +74,26 @@ func (m Manifest) Save(path string) error {
 	return os.Rename(tmp, path)
 }
 
+// ErrNotInstalled and ErrNotAsInstalled are why Verify fails: no install
+// at all, or one that is no longer as Den recorded it. Den offers to
+// install, or reinstall, on the next desktop card.
+var (
+	ErrNotInstalled   = errors.New("hypruse is not installed")
+	ErrNotAsInstalled = errors.New("Den's hypruse venv is not as installed")
+)
+
 // LoadManifest reads a saved manifest.
 func LoadManifest(path string) (Manifest, error) {
 	var m Manifest
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return m, errors.New("hypruse is not installed: run den install-hypruse")
+		return m, ErrNotInstalled
 	}
 	if err != nil {
 		return m, err
 	}
 	if err := json.Unmarshal(data, &m); err != nil || m.Files == nil {
-		return m, fmt.Errorf("the hypruse manifest at %s is unreadable; run den install-hypruse again", path)
+		return m, fmt.Errorf("%w: the manifest at %s is unreadable", ErrNotAsInstalled, path)
 	}
 	return m, nil
 }
@@ -174,7 +182,7 @@ func verify(p Paths, pin Pin) error {
 		if len(bad) > 8 {
 			bad = append(bad[:8], fmt.Sprintf("and %d more", len(bad)-8))
 		}
-		return fmt.Errorf("Den's hypruse venv is not as installed: %s; run den install-hypruse again", strings.Join(bad, "; "))
+		return fmt.Errorf("%w: %s", ErrNotAsInstalled, strings.Join(bad, "; "))
 	}
 	return nil
 }
