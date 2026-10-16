@@ -265,6 +265,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 
 	tail := events.Follow(o.EventsPath, req.Cursor)
 	defer tail.Close()
+	// Watched before the first snapshot is read: a change after the read
+	// signals a new one, rather than waiting for SnapshotEvery.
+	changed := watch(ctx, o.Watch, o.Debounce)
 	host, _ := os.Hostname()
 	agents, _ := o.Snapshot()
 	hello := Hello{
@@ -329,7 +332,6 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, o ServeOptions) err
 	silent := time.NewTicker(o.Silence / 4)
 	defer silent.Stop()
 
-	changed := watch(ctx, o.Watch, o.Debounce)
 	every := time.NewTicker(o.SnapshotEvery)
 	defer every.Stop()
 	poll := time.NewTicker(o.PollEvents)
