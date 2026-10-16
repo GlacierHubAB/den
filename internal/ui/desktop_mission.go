@@ -180,6 +180,7 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 			if len(problems) > 0 {
 				why += " (" + sanitize.Line(strings.Join(problems, "; ")) + ")"
 			}
+			why += ". Use task instead: desktop_mission with task (one sentence of what to do) needs no app config"
 			return deny(why)
 		}
 	}

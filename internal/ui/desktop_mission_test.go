@@ -185,7 +185,7 @@ func TestDesktopMissionRefusals(t *testing.T) {
 	m, _, _ := missionRig(t, false)
 	r := missionReq("terminal")
 	runBatch(m.handleRequest(r))
-	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "editor, browser") {
+	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "editor, browser") || !strings.Contains(d.Message, "Use task instead") {
 		t.Fatalf("unknown app: %+v", d)
 	}
 	// Not installed, and Den cannot install it (no python3): refused.
