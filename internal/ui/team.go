@@ -113,15 +113,31 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 		m.team.warned[key] = true
 		m.team.lastWarn[o.A], m.team.lastWarn[o.B] = now, now
+		// A God-mode guarded agent takes messages only as Den mediates
+		// them, and its hook would block this one: the orchestrator, which
+		// sees the overlap in its roster, tells it instead.
 		send := m.sender()
-		toA, toB := overlapMessage(b, o.Files), overlapMessage(a, o.Files)
+		var to []fleet.Agent
+		var guarded []string
+		for _, x := range []fleet.Agent{a, b} {
+			if m.med.guards[x.Session.SessionID] != nil {
+				guarded = append(guarded, x.Name)
+			} else {
+				to = append(to, x)
+			}
+		}
+		texts := map[string]string{a.Session.SessionID: overlapMessage(b, o.Files), b.Session.SessionID: overlapMessage(a, o.Files)}
 		cmds = append(cmds, func() tea.Msg {
-			send(a, toA)
-			send(b, toB)
+			for _, x := range to {
+				send(x, texts[x.Session.SessionID])
+			}
 			return nil
 		})
-		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now,
-			text: "Den told " + a.Name + " and " + b.Name + " that their branches both change " + fileCount(len(o.Files)) + ": they agree who goes first or how to split, and the orchestrator decides."}))
+		note := "Den told " + a.Name + " and " + b.Name + " that their branches both change " + fileCount(len(o.Files)) + ": they agree who goes first or how to split, and the orchestrator decides."
+		if len(guarded) > 0 {
+			note += " " + strings.Join(guarded, " and ") + " runs guarded in God mode, so the orchestrator tells it instead."
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: note}))
 	}
 	for key := range m.team.warned {
 		if !current[key] {

@@ -104,6 +104,27 @@ func TestOverlapWarnings(t *testing.T) {
 	}
 }
 
+// A God-mode guarded agent's hook blocks what Den does not mediate: it is
+// not sent the overlap message, the other agent is, and Den's note says the
+// orchestrator tells the guarded one.
+func TestOverlapSkipsGuardedAgents(t *testing.T) {
+	peer := useFakePeer(t)
+	m := testModel(120, 40)
+	m.agents = []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), teamAgent("Snug Capybara", "s2", "den-b", "/w/two")}
+	m.med.guards = map[string]*agentGuard{"s2": {}}
+	works := []process.Work{
+		{Key: "s1", Repo: "r", Tree: "/w/one", Files: []string{"a.go"}},
+		{Key: "s2", Repo: "r", Tree: "/w/two", Files: []string{"a.go"}},
+	}
+	runCmds(m.applyTeamScan(teamScanMsg{works: works}, time.Now()))
+	if len(peer.got["/sock/s1"]) != 1 || len(peer.got["/sock/s2"]) != 0 {
+		t.Errorf("messages %v", peer.got)
+	}
+	if last := m.orch.chat[len(m.orch.chat)-1].text; !strings.Contains(last, "Snug Capybara runs guarded in God mode, so the orchestrator tells it instead") {
+		t.Errorf("note %q", last)
+	}
+}
+
 // The team cap: under it a spawn goes on; at it, only with a reason,
 // which Den notes in its chat, quoted, with who gave it. Worktrees of one
 // repository count together, other repositories and the orchestrator not
