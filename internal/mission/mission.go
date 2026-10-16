@@ -112,6 +112,33 @@ type Mission struct {
 	// History is what happened to the mission itself, the last few.
 	Assigned []Assignment `json:"assigned,omitempty"`
 	History  []Event      `json:"history,omitempty"`
+	// Merges are the mission's branches Den saw land on the integration
+	// branch, oldest first: Den reads them from git, never an agent's word.
+	Merges []Merge `json:"merges,omitempty"`
+}
+
+// Merge is one branch Den saw land: its tip when Den last saw it ahead,
+// the branch's name then, and the agent working on it.
+type Merge struct {
+	Tip     string    `json:"tip"`
+	Branch  string    `json:"branch,omitempty"`
+	Session string    `json:"session,omitempty"`
+	At      time.Time `json:"at"`
+}
+
+// AddMerge records a landed tip once; it reports whether it was new.
+func (m *Mission) AddMerge(g Merge) bool {
+	for _, o := range m.Merges {
+		if o.Tip == g.Tip {
+			return false
+		}
+	}
+	g.Branch = sanitize.Label(g.Branch, maxLabel)
+	m.Merges = append(m.Merges, g)
+	if n := len(m.Merges) - maxMerges; n > 0 {
+		m.Merges = append([]Merge(nil), m.Merges[n:]...)
+	}
+	return true
 }
 
 // Assignment is one session Den put on a mission: a dispatch to it, or a
@@ -138,6 +165,7 @@ type Event struct {
 const (
 	maxAssigned = 200
 	maxHistory  = 50
+	maxMerges   = 500
 	maxLabel    = 80
 )
 

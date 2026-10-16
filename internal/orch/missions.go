@@ -17,6 +17,19 @@ type MissionInfo struct {
 	Run                                   int // the current run's number, 0 for none
 	Criteria                              []MissionCriterion
 	Goals                                 []MissionGoal
+	// Cost is what the mission used so far, Den's estimate; Merged how
+	// many of its branches Den saw land, PerMerge Cost divided by them;
+	// Idle its agents with no turn for a while and nothing open.
+	Cost, PerMerge string
+	Merged         int
+	Idle           []MissionIdle
+}
+
+// MissionIdle is one idle agent as the block carries it: Owner is the
+// critter name, Peer the handle for tools.
+type MissionIdle struct {
+	Owner, Peer string
+	Minutes     int
 }
 
 // MissionCriterion is one done criterion as the block carries it.
@@ -34,6 +47,7 @@ type MissionGoal struct {
 const (
 	maxMissionsShown = 12
 	maxMissionText   = 300
+	maxIdleShown     = 10
 )
 
 // quoted is a value in the missions block: one clean line, no invisible
@@ -103,6 +117,24 @@ func missionsBlock(ms []MissionInfo) string {
 				b.WriteString(" · note " + quoted(g.Note, 200))
 			}
 			b.WriteString("\n")
+		}
+		if m.Cost != "" || m.Merged > 0 {
+			b.WriteString("    cost so far " + quoted(m.Cost, 60) + " (estimate) · merged changes " + strconv.Itoa(m.Merged))
+			if m.PerMerge != "" {
+				b.WriteString(" · per merged change " + quoted(m.PerMerge, 60))
+			}
+			b.WriteString("\n")
+		}
+		for i, d := range m.Idle {
+			if i == maxIdleShown {
+				b.WriteString("    (" + strconv.Itoa(len(m.Idle)-i) + " more idle)\n")
+				break
+			}
+			b.WriteString("    idle " + quoted(d.Owner, 80))
+			if d.Peer != "" {
+				b.WriteString(" [peer for tools: " + quoted(d.Peer, 80) + "]")
+			}
+			b.WriteString(" · no turn for " + strconv.Itoa(d.Minutes) + " min, nothing open\n")
 		}
 	}
 	b.WriteString("</den_missions>\n")

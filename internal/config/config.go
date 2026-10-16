@@ -77,6 +77,9 @@ type Config struct {
 		// gets a nudge; 0 turns that one off.
 		BranchHours int
 		BehindMax   int
+		// IdleMinutes: an agent on a mission with no turn for this long
+		// and nothing open counts as idle to the orchestrator; 0 off.
+		IdleMinutes int
 	}
 	Usage struct {
 		// StopPercent stops the fleet at that share of the weekly limit:
@@ -151,7 +154,7 @@ func Defaults() Config {
 	c.API.AskBudgetUSD = 2
 	c.API.ConsolePowers = "unchanged"
 	c.Team.MaxAgents = 3
-	c.Team.BranchHours, c.Team.BehindMax = 24, 30
+	c.Team.BranchHours, c.Team.BehindMax, c.Team.IdleMinutes = 24, 30, 30
 	return c
 }
 
@@ -329,6 +332,11 @@ func (c *Config) apply(kv map[string]string) {
 	if v, ok := kv["team.behind_max"]; ok {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 10000 {
 			c.Team.BehindMax = n
+		}
+	}
+	if v, ok := kv["team.idle_minutes"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 24*60 {
+			c.Team.IdleMinutes = n
 		}
 	}
 	if v, ok := kv["usage.stop_percent"]; ok {
@@ -586,6 +594,7 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
 branch_hours = 24           # nudge an agent whose branch is older than this; 0 off
 behind_max = 30             # nudge an agent whose branch is this many commits behind dev, main or master; 0 off
+idle_minutes = 30           # an agent on a mission with no turn for this long and nothing open is idle to the orchestrator; 0 off
 
 [usage]
 stop_percent = 0            # off; e.g. 95 sends "USAGE STOP" to every agent at 95% of the weekly limit and holds new work

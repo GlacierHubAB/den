@@ -159,6 +159,23 @@ func TestHistoryAndAssignedAreCapped(t *testing.T) {
 	}
 }
 
+func TestMergesCountEachTipOnce(t *testing.T) {
+	now := time.Date(2026, 10, 16, 15, 0, 0, 0, time.UTC)
+	m := &Mission{ID: "m1"}
+	if !m.AddMerge(Merge{Tip: "aa", Branch: "fix\x1b[31m-x", Session: "s1", At: now}) || m.AddMerge(Merge{Tip: "aa", Branch: "other", At: now}) {
+		t.Fatal("a tip counted twice, or not at all")
+	}
+	if len(m.Merges) != 1 || strings.ContainsRune(m.Merges[0].Branch, '\x1b') {
+		t.Errorf("merges %+v", m.Merges)
+	}
+	for i := range maxMerges + 5 {
+		m.AddMerge(Merge{Tip: fmt.Sprint(i), At: now})
+	}
+	if len(m.Merges) != maxMerges || m.Merges[len(m.Merges)-1].Tip != fmt.Sprint(maxMerges+4) {
+		t.Errorf("%d merges kept", len(m.Merges))
+	}
+}
+
 func TestAssignKeepsOneOpenEntryPerSession(t *testing.T) {
 	now := time.Date(2026, 10, 11, 15, 0, 0, 0, time.UTC)
 	m := &Mission{ID: "m1"}
