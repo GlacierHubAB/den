@@ -202,6 +202,7 @@ func TestViewSwitchErrorsFromTheUI(t *testing.T) {
 func TestPushViewReachesTheConsoleAndFollowers(t *testing.T) {
 	h, _, _, ctl := viewConsole(t, ViewUser)
 	ctl.call("console.events", nil)
+	skipSnapshot(t, h.s, ctl) // the view as it stands, before the push
 	f := h.dial()
 	f.hello()
 	f.call("fleet.events", nil)
