@@ -23,9 +23,9 @@ func TestTaskConsoleDockIsOffLimits(t *testing.T) {
 		tool string
 		args map[string]any
 	}{
-		{"pointer", map[string]any{"action": "click", "x": 1600, "y": 100}},  // the dock's window
-		{"pointer", map[string]any{"action": "click", "x": 300, "y": 975}},   // the dock bar
-		{"pointer", map[string]any{"action": "scroll", "x": 300, "y": 975}},  // the dock bar
+		{"pointer", map[string]any{"action": "click", "x": 1600, "y": 100}}, // the dock's window
+		{"pointer", map[string]any{"action": "click", "x": 300, "y": 975}},  // the dock bar
+		{"pointer", map[string]any{"action": "scroll", "x": 300, "y": 975}}, // the dock bar
 		{"keyboard", map[string]any{"action": "type", "text": "hi", "window": "0xdock"}},
 		{"hypr", map[string]any{"action": "focus_window", "target": "0xdock"}},
 	}
