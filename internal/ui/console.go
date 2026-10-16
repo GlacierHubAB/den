@@ -288,29 +288,6 @@ func (m Model) decideConsole(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	return m.say("Paired as your console.", false)
 }
 
-// consoleChip is the header's console part: who it is and since when; ""
-// for none.
-func (m Model) consoleChip() string {
-	if m.api.srv == nil {
-		return ""
-	}
-	c, ok := m.api.srv.CurrentConsole()
-	if !ok {
-		return ""
-	}
-	who := appName(c.Exe) + " pid "
-	if api.Unidentified(c.Exe) {
-		// Den knows the console from the pairing; which program it is,
-		// it cannot read.
-		who = "program unverified, pid "
-	}
-	chip := consoleWord + ": " + who + strconv.Itoa(c.PID) + " since " + c.Since.Local().Format("15:04")
-	if !c.Powers {
-		chip += " · no powers until ^Y"
-	}
-	return m.st.attn.Render(chip)
-}
-
 // pairCallerRefusal is why Den refuses den pair from pid: it runs under
 // Claude Code, one of Den's agents' sessions, den mcp or den hook. A
 // terminal proves no human, and an agent could open one; "" lets it ask.

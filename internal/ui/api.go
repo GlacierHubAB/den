@@ -576,14 +576,18 @@ func (m Model) apiChipParts() []string {
 			paired = append(paired, appName(p.Exe)+" pid "+strconv.Itoa(p.PID))
 		}
 	}
-	if len(paired) > 0 {
-		return []string{m.st.attn.Render("paired: " + strings.Join(paired, ", "))}
-	}
-	consoleExe := ""
+	var console *api.Console
 	if c, ok := srv.CurrentConsole(); ok {
-		consoleExe = c.Exe
+		console = &c
 	}
-	chips, asking := connectedChips(srv.Clients(), consoleExe)
+	chips, asking := connectedChips(srv.Clients(), console)
+	if len(paired) > 0 {
+		parts := []string{m.st.attn.Render("paired: " + strings.Join(paired, ", "))}
+		if console != nil {
+			parts = append(parts, m.st.attn.Render(chips[0])) // the console's segment comes first
+		}
+		return parts
+	}
 	lane := laneChip(srv.LaneState())
 	if len(chips) == 0 {
 		if lane != "" {
@@ -617,15 +621,17 @@ func connectedChip(names []string, unidentified int) string {
 }
 
 // connectedChips are the header's words for what is connected, and
-// whether any of it is asking. A connection proved as the console is
-// "console", which Den knows from the pairing, never from what the
-// program says, with the program as Den read it (consoleExe), "program
-// unverified" when it could not read one. Every other app keeps its own
+// whether any of it is asking. The paired console (console, nil for none)
+// is one segment: "Drey" only when Den read it clean as Drey's unit for
+// this pairing itself, else "console", from Den's own words, never from
+// what the program says; "connected" while a connection of it is proved,
+// else "paired"; and "^Y for powers" while it has none. Which program and
+// pid it is stay in /api and Den's chat. Every other app keeps its own
 // words (connectedChip).
-func connectedChips(clients []api.Client, consoleExe string) ([]string, bool) {
+func connectedChips(clients []api.Client, console *api.Console) ([]string, bool) {
 	names := map[string]bool{}
 	unidentified := map[int]bool{}
-	asking, console := false, false
+	asking, connected := false, false
 	for _, c := range clients {
 		if c.Agent {
 			continue
@@ -633,7 +639,7 @@ func connectedChips(clients []api.Client, consoleExe string) ([]string, bool) {
 		asking = asking || c.Asking
 		switch {
 		case c.Console:
-			console = true
+			connected = true
 		case api.Unidentified(c.Exe):
 			unidentified[c.PID] = true
 		default:
@@ -641,12 +647,19 @@ func connectedChips(clients []api.Client, consoleExe string) ([]string, bool) {
 		}
 	}
 	var out []string
-	if console {
-		what := "program unverified"
-		if !api.Unidentified(consoleExe) {
-			what = appName(consoleExe)
+	if console != nil {
+		name, state := consoleWord, "paired"
+		if console.Verified {
+			name = api.ConsoleUnitName
 		}
-		out = append(out, "⇄ "+consoleWord+" connected · "+what)
+		if connected {
+			state = "connected"
+		}
+		seg := "⇄ " + name + " " + state
+		if !console.Powers {
+			seg += " · ^Y for powers"
+		}
+		out = append(out, seg)
 	}
 	if len(names) > 0 || len(unidentified) > 0 {
 		out = append(out, connectedChip(sortedKeys(names), len(unidentified)))

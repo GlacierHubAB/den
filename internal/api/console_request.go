@@ -25,8 +25,13 @@ import (
 // the service's unit or program. The human's levers are /api lock, /api
 // unpair, and God mode.
 
-// ConsoleUnit is the console's user service.
-const ConsoleUnit = sysd.ConsoleUnit
+// ConsoleUnit is the console's user service, and ConsoleUnitName what
+// Den calls a console it read clean as that unit: Den's own words, never
+// what the program says.
+const (
+	ConsoleUnit     = sysd.ConsoleUnit
+	ConsoleUnitName = "Drey"
+)
 
 // readUnit reads the console's service for the process peer; tests
 // replace it.
