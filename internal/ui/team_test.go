@@ -238,15 +238,86 @@ func TestQuotedFiles(t *testing.T) {
 }
 
 // The orchestrator, remote agents and agents with no git are never read;
-// with fewer than two agents to compare, nothing is read at all.
+// with none left, nothing is read at all.
 func TestTeamTickTargets(t *testing.T) {
 	m := testModel(120, 40)
 	remote := teamAgent("Far Fox", "s9", "den-far", "/w/far")
 	remote.Host = "box"
 	nogit := teamAgent("Plain Owl", "s8", "den-plain", "/w/plain")
 	nogit.HasGit = false
-	m.agents = []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), remote, nogit}
+	orc := teamAgent("Den Orchestrator", "s0", OrchestratorName, "/w/one")
+	m.agents = []fleet.Agent{remote, nogit, orc}
 	if cmd := m.teamTick(time.Now()); cmd != nil || m.team.scanning {
-		t.Error("read with one agent to compare")
+		t.Error("read with no agent to read")
+	}
+	var read []teamTarget
+	old := teamRead
+	teamRead = func(targets []teamTarget) []process.Work { read = targets; return nil }
+	t.Cleanup(func() { teamRead = old })
+	m.agents = append(m.agents, teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"))
+	m.team.next = time.Time{}
+	cmd := m.teamTick(time.Now())
+	if cmd == nil {
+		t.Fatal("one agent's branch not read")
+	}
+	cmd()
+	if len(read) != 1 || read[0].key != "s1" {
+		t.Errorf("read %+v", read)
+	}
+}
+
+// A branch older than the threshold, or too far behind, is nudged once a
+// day while it stays over: the agent hears it from Den, Den notes it in its
+// chat, and the roster carries it; a guarded agent is not messaged.
+func TestBranchNudges(t *testing.T) {
+	peer := useFakePeer(t)
+	m := testModel(120, 40)
+	m.cfg.Team.BranchHours, m.cfg.Team.BehindMax = 24, 30
+	m.agents = []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), teamAgent("Snug Capybara", "s2", "den-b", "/w/two"), teamAgent("Fuzzy Sprite", "s3", "den-c", "/w/three")}
+	m.med.guards = map[string]*agentGuard{"s3": {}}
+	now := time.Date(2026, 10, 16, 15, 0, 0, 0, time.UTC)
+	works := []process.Work{
+		{Key: "s1", Branch: "old\x1b[31m-one", Base: "refs/remotes/origin/dev", Since: now.Add(-50 * time.Hour), Behind: 3},
+		{Key: "s2", Branch: "fresh", Base: "refs/heads/main", Since: now.Add(-2 * time.Hour), Behind: 41},
+		{Key: "s3", Branch: "guarded", Base: "refs/heads/main", Since: now.Add(-30 * time.Hour)},
+	}
+	runCmds(m.applyTeamScan(teamScanMsg{works: works}, now))
+	if got := peer.got["/sock/s1"]; len(got) != 1 || !strings.Contains(got[0], `your branch "old-one" is 2 days old.`) || !strings.Contains(got[0], "rebase it onto origin/dev") {
+		t.Errorf("to s1: %v", got)
+	}
+	if got := peer.got["/sock/s2"]; len(got) != 1 || !strings.Contains(got[0], `"fresh" is 41 commits behind main`) {
+		t.Errorf("to s2: %v", got)
+	}
+	if len(peer.got["/sock/s3"]) != 0 {
+		t.Errorf("a guarded agent was messaged: %v", peer.got["/sock/s3"])
+	}
+	var notes []string
+	for _, e := range m.orch.chat {
+		notes = append(notes, e.text)
+	}
+	all := strings.Join(notes, "\n")
+	for _, want := range []string{`Den nudged Mossy Lemur: its branch "old-one" is 2 days old. You can tell it yourself (@Mossy Lemur merge or rebase now), or ask the orchestrator to split the work.`, `Den did not message Fuzzy Sprite, which runs guarded in God mode: its branch "guarded" is 30 hours old.`} {
+		if !strings.Contains(all, want) {
+			t.Errorf("notes lack %q:\n%s", want, all)
+		}
+	}
+	for _, r := range m.roster() {
+		if r.Critter == "Snug Capybara" && r.Branch != `"fresh" is 41 commits behind main` {
+			t.Errorf("roster %q", r.Branch)
+		}
+	}
+	// Again within the day: nothing; after it: again.
+	runCmds(m.applyTeamScan(teamScanMsg{works: works}, now.Add(time.Hour)))
+	if len(peer.got["/sock/s1"]) != 1 {
+		t.Errorf("nudged twice in a day: %v", peer.got["/sock/s1"])
+	}
+	runCmds(m.applyTeamScan(teamScanMsg{works: works}, now.Add(teamNudgeEvery+time.Minute)))
+	if len(peer.got["/sock/s1"]) != 2 {
+		t.Errorf("not nudged the next day: %v", peer.got["/sock/s1"])
+	}
+	// Thresholds off: nothing.
+	m.cfg.Team.BranchHours, m.cfg.Team.BehindMax = 0, 0
+	if why := branchOver(works[0], now, 0, 0); why != "" {
+		t.Errorf("off: %q", why)
 	}
 }

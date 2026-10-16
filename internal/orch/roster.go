@@ -53,6 +53,9 @@ type RosterAgent struct {
 	// Overlaps are other agents whose branches change the same files, with
 	// the files quoted as data, one line each.
 	Overlaps []string
+	// Branch is its branch, quoted, and how it is over Den's thresholds
+	// (age, how far behind), "" while it is not.
+	Branch   string
 	IsSelf   bool // the orchestrator itself
 	Terminal bool // has a terminal window
 	// Host is the remote host the agent runs on, "" for this machine.
@@ -110,6 +113,9 @@ func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []Missi
 		}
 		for _, o := range a.Overlaps {
 			b.WriteString("    its branch overlaps (Den read it from git) " + o + "\n")
+		}
+		if a.Branch != "" {
+			b.WriteString("    its branch (Den read it from git) " + a.Branch + ": tell the human, and ask it to merge or rebase soon\n")
 		}
 		if len(a.Earlier) > 0 {
 			b.WriteString("    earlier: " + strings.Join(a.Earlier, "; ") + "\n")

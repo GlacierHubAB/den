@@ -13,7 +13,9 @@ import (
 	"errors"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/gitsafe"
@@ -139,6 +141,14 @@ type Work struct {
 	Repo  string
 	Tree  string
 	Files []string
+	// Branch is the checked-out branch ("HEAD" when detached), Base the
+	// integration branch it is measured against, Since when its oldest
+	// commit after the merge base was made (zero with none), and Behind
+	// how many commits Base has that it lacks.
+	Branch string
+	Base   string
+	Since  time.Time
+	Behind int
 }
 
 // Read is the Work of the checkout at dir, for key.
@@ -155,7 +165,22 @@ func Read(ctx context.Context, key, dir string) (Work, error) {
 	if err != nil {
 		return Work{}, err
 	}
-	return Work{Key: key, Repo: repo, Tree: strings.TrimSpace(string(top)), Files: files}, nil
+	w := Work{Key: key, Repo: repo, Tree: strings.TrimSpace(string(top)), Files: files, Base: Base(ctx, dir)}
+	if out, err := git(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
+		w.Branch = strings.TrimSpace(string(out))
+	}
+	// The oldest commit on the branch since it left Base, by commit time.
+	if out, err := git(ctx, dir, "log", "--format=%ct", "--reverse", "HEAD", "--not", w.Base); err == nil {
+		if first, _, _ := strings.Cut(string(out), "\n"); first != "" {
+			if secs, err := strconv.ParseInt(strings.TrimSpace(first), 10, 64); err == nil {
+				w.Since = time.Unix(secs, 0)
+			}
+		}
+	}
+	if out, err := git(ctx, dir, "rev-list", "--count", "HEAD.."+w.Base); err == nil {
+		w.Behind, _ = strconv.Atoi(strings.TrimSpace(string(out)))
+	}
+	return w, nil
 }
 
 // Overlap is two agents in one repository whose branches change the same

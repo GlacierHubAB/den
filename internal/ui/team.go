@@ -45,7 +45,16 @@ type teamState struct {
 	overlaps map[string][]process.Overlap
 	warned   map[string]bool
 	lastWarn map[string]time.Time
+	// branches are each agent's branch as last read, by session id;
+	// nudged when each agent's branch (session and branch) was last
+	// nudged.
+	branches map[string]process.Work
+	nudged   map[string]time.Time
 }
+
+// teamNudgeEvery is how often a branch that stays over a threshold is
+// nudged again.
+const teamNudgeEvery = 24 * time.Hour
 
 // teamTarget is one agent's checkout to read.
 type teamTarget struct{ key, dir string }
@@ -66,7 +75,7 @@ var teamRead = func(targets []teamTarget) []process.Work {
 }
 
 // teamTick starts a read of the local agents' branches, at most one a
-// teamEvery and one at a time.
+// teamEvery and one at a time: their overlaps, and their age.
 func (m *Model) teamTick(now time.Time) tea.Cmd {
 	if m.team.scanning || now.Before(m.team.next) {
 		return nil
@@ -79,8 +88,8 @@ func (m *Model) teamTick(now time.Time) tea.Cmd {
 		targets = append(targets, teamTarget{key: a.Session.SessionID, dir: a.Session.CWD})
 	}
 	m.team.next = now.Add(teamEvery)
-	if len(targets) < 2 {
-		m.team.overlaps = nil
+	if len(targets) == 0 {
+		m.team.overlaps, m.team.branches = nil, nil
 		return nil
 	}
 	m.team.scanning = true
@@ -146,7 +155,99 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 	}
 	m.team.overlaps = by
+	cmds = append(cmds, m.nudgeBranches(msg.works, now))
 	return tea.Batch(cmds...)
+}
+
+// nudgeBranches tells each agent whose branch is older than BranchHours,
+// or more than BehindMax commits behind its integration branch, to merge
+// or rebase soon, once a teamNudgeEvery while it stays over; Den says so in
+// its chat, which the dock shows too, and the roster carries it.
+func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
+	if m.team.nudged == nil {
+		m.team.nudged = map[string]time.Time{}
+	}
+	m.team.branches = map[string]process.Work{}
+	send := m.sender()
+	type nudge struct {
+		agent fleet.Agent
+		text  string
+	}
+	var out []nudge
+	for _, w := range works {
+		m.team.branches[w.Key] = w
+		why := branchOver(w, now, m.cfg.Team.BranchHours, m.cfg.Team.BehindMax)
+		key := w.Key + "\x00" + w.Branch
+		if why == "" || now.Sub(m.team.nudged[key]) < teamNudgeEvery {
+			continue
+		}
+		a, ok := m.agentFor(w.Key)
+		if !ok {
+			continue
+		}
+		m.team.nudged[key] = now
+		branch := strconv.Quote(sanitize.Label(w.Branch, 80))
+		// What the human can do about it from here, in Den or the dock.
+		act := " You can tell it yourself (@" + a.Name + " merge or rebase now), or ask the orchestrator to split the work."
+		note := "Den nudged " + a.Name + ": its branch " + branch + " " + why + "." + act
+		if m.med.guards[w.Key] != nil {
+			note = "Den did not message " + a.Name + ", which runs guarded in God mode: its branch " + branch + " " + why + ". The orchestrator tells it; or ask the orchestrator to split the work."
+		} else {
+			out = append(out, nudge{a, "Den, an automatic check (not the human): your branch " + branch + " " + why +
+				". Short branches merge cleanly: merge it, or rebase it onto " + shortRef(w.Base) + ", soon, and tell the orchestrator if something holds it up."})
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: note}))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return func() tea.Msg {
+		for _, n := range out {
+			send(n.agent, n.text)
+		}
+		return nil
+	}
+}
+
+// branchOver says how a branch is over the thresholds ("is 2 days old",
+// "is 41 commits behind origin/dev", or both), "" when it is not.
+func branchOver(w process.Work, now time.Time, hours, behind int) string {
+	var why []string
+	if hours > 0 && !w.Since.IsZero() && now.Sub(w.Since) > time.Duration(hours)*time.Hour {
+		why = append(why, "is "+age(now.Sub(w.Since))+" old")
+	}
+	if behind > 0 && w.Behind > behind {
+		why = append(why, "is "+strconv.Itoa(w.Behind)+" commits behind "+shortRef(w.Base))
+	}
+	return strings.Join(why, " and ")
+}
+
+// age is a duration in whole days, or hours under two days.
+func age(d time.Duration) string {
+	if h := int(d.Hours()); h < 48 {
+		return strconv.Itoa(h) + " hours"
+	}
+	return strconv.Itoa(int(d.Hours()/24)) + " days"
+}
+
+// shortRef is a ref as people say it: origin/dev, dev.
+func shortRef(ref string) string {
+	ref = strings.TrimPrefix(ref, "refs/remotes/")
+	return strings.TrimPrefix(ref, "refs/heads/")
+}
+
+// branchLine is the roster's line for an agent's branch while it is over a
+// threshold, "" otherwise.
+func (m Model) branchLine(sessionID string, now time.Time) string {
+	w, ok := m.team.branches[sessionID]
+	if !ok {
+		return ""
+	}
+	why := branchOver(w, now, m.cfg.Team.BranchHours, m.cfg.Team.BehindMax)
+	if why == "" {
+		return ""
+	}
+	return strconv.Quote(sanitize.Label(w.Branch, 80)) + " " + why
 }
 
 // overlapMessage is Den's message to an agent whose branch changes files

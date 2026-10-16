@@ -783,6 +783,16 @@ refuses the spawn, naming the agents in the team. Den shows each reason in its
 chat, quoted, with who gave it. God mode does not lift the cap. Agents you start
 yourself are never counted against it.
 
+### Short branches
+
+Branches that live under a day merge cleanly. When an agent's branch is older
+than a day (from its oldest commit since it left the integration branch;
+`branch_hours` under `[team]`) or more than 30 commits behind that branch
+(`behind_max`), Den tells the agent to merge or rebase soon, notes it in its
+chat (the dock sees it too), and the orchestrator sees it in its view of the
+fleet. It repeats once a day while the branch stays over. 0 turns either check
+off.
+
 ### Permission mode
 
 Every agent Den starts or reopens runs in one permission mode, passed as
@@ -1582,6 +1592,8 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 
 [team]
 max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
+branch_hours = 24           # nudge an agent whose branch is older than this; 0 off
+behind_max = 30             # nudge an agent whose branch is this many commits behind dev, main or master; 0 off
 
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
