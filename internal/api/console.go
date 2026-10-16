@@ -113,9 +113,12 @@ type Console struct {
 	Since     time.Time
 	LastProof time.Time
 	PagesSHA  string
-	// Powers is whether it may answer cards and run commands now; only
-	// CurrentConsole fills it in.
-	Powers bool
+	// Powers is whether it may answer cards and run commands now, and
+	// Verified whether this Den read it clean as ConsoleUnit for this
+	// pairing itself (never from the record on disk); only CurrentConsole
+	// fills them in.
+	Powers   bool
+	Verified bool
 }
 
 // ConsoleEvent is the data of a console event.
@@ -382,6 +385,7 @@ func (s *Server) CurrentConsole() (Console, bool) {
 	}
 	c := s.con.cur.Console
 	c.Powers = s.con.cur.powers
+	c.Verified = s.con.cur.verifier != nil && s.con.cur.readHere
 	return c, true
 }
 

@@ -200,9 +200,6 @@ func (m Model) header(w int) []string {
 		}
 		sys = append(sys, headerPart{p, rank})
 	}
-	if chip := m.consoleChip(); chip != "" {
-		sys = append(sys, headerPart{chip, 0})
-	}
 	if m.desk.chip != "" {
 		sys = append(sys, headerPart{s.err.Render(m.desk.chip), 0})
 	}

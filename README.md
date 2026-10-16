@@ -665,8 +665,10 @@ as above, for pairing by hand. The console may:
   else it wants still waits for your `Ctrl+Y`, and with its powers locked
   every tool waits again.
 
-The header shows your console while one is paired (`console: app-host pid
-N since 14:05`). `den unpair` ends it from any terminal; `den unpair all`
+The header shows your console while one is paired: `⇄ Drey connected` when
+Den read it clean as drey-host.service itself, else `⇄ console connected`,
+with `· ^Y for powers` while it has none; `/api` says which program and pid
+it is. `den unpair` ends it from any terminal; `den unpair all`
 ends it and every app pairing. A code an app sends, in a question, a
 message to the orchestrator or a console command, is refused and the code
 cancelled.

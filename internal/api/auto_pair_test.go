@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // alwaysHarness is consoleHarness with api.console_powers = "always";
@@ -357,6 +359,37 @@ func TestAutoPairHeldAfterStrikes(t *testing.T) {
 				t.Errorf("request after the hold: %+v", l.Error)
 			}
 		})
+	}
+}
+
+// A console is Verified (Drey in Den's header) only when this Den read it
+// clean for the pairing itself: a request is, a claim by code that did
+// not read clean is not, nor is one restored from the record on disk.
+func TestConsoleVerifiedOnlyFromThisRun(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "consoles.json")
+	priv := mustKey(t)
+	h := storeHarness(t, store, priv)
+	fakeUnit(t, testVerifier(), nil)
+	d := newDock(t, h)
+	requestPaired(t, h, d, "")
+	if cur, _ := h.s.CurrentConsole(); !cur.Verified {
+		t.Error("a request read clean is not verified")
+	}
+	cleanExit(h.s)
+	h2 := storeHarness(t, store, priv)
+	if cur, ok := h2.s.CurrentConsole(); !ok || cur.Verified {
+		t.Errorf("restored from disk: %+v %v", cur, ok)
+	}
+	h3, _ := consoleHarness(t)
+	fakeUnit(t, testVerifier(), sysd.Problems{"not the unit's main process"})
+	d3 := newDock(t, h3)
+	c, id, ask := d3.claimAsk(h3.s.StartConsoleCode())
+	h3.s.ConsoleAnswered(ask.ID, true)
+	if l := c.replyTo(id); !l.OK {
+		t.Fatalf("claim %+v", l.Error)
+	}
+	if cur, _ := h3.s.CurrentConsole(); cur.Verified {
+		t.Error("a claim that did not read clean is verified")
 	}
 }
 
