@@ -283,6 +283,11 @@ func (m Model) Close() {
 
 func (m Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe(), clearNoFocus}
+	// Whatever view Den's record says it is in is checked against the
+	// windows before anyone relies on it.
+	if cmd := m.reconcileView(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
 	}
@@ -549,6 +554,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript()
 		m.restartForGuidance()
 		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
+		if cmd := m.reconcileView(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -622,6 +630,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.api.view = msg.view
 		m.publishAPI()
 		return m, nil
+	case viewReconciledMsg:
+		return m.applyViewReconciled(msg)
 	case viewRescueMsg:
 		return m.applyViewRescue(msg)
 	case viewRaisedMsg:

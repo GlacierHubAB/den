@@ -391,6 +391,14 @@ own.
   `{view, shown, total}`, and so do the console's connections that took
   `console.events`; a slow reader may miss it, and `hello`, `console.auth`
   and the fleet carry the view too.
+- Den claims User view only while a window it hid is hidden. It checks its
+  record against the windows when it starts and every few seconds while it
+  is in User view (one listing of the windows): when none of the windows it
+  recorded hiding is on `special:den` any more (the compositor started
+  afresh, or they were moved back by hand), it saves Agent view, notes it in
+  its chat and sends a `view` event `{view: "agent", shown, total}` with no
+  call behind it, `shown` and `total` both the number of windows it had
+  recorded. If it cannot list the windows, it changes nothing.
 - One switch at a time, and at most three a minute for the console. A call
   while another switch, or the closing of an agent's window, is running
   answers `busy` and does not count; past three a minute it answers

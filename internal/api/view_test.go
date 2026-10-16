@@ -197,6 +197,30 @@ func TestViewSwitchErrorsFromTheUI(t *testing.T) {
 	}
 }
 
+// TestPushViewReachesTheConsoleAndFollowers: a view Den found for itself,
+// with no call, is announced like one a switch ended in.
+func TestPushViewReachesTheConsoleAndFollowers(t *testing.T) {
+	h, _, _, ctl := viewConsole(t, ViewUser)
+	ctl.call("console.events", nil)
+	f := h.dial()
+	f.hello()
+	f.call("fleet.events", nil)
+	h.s.PushView(ViewChange{View: ViewAgent, Shown: 3, Total: 3})
+	for name, c := range map[string]*client{"the console": ctl, "a fleet follower": f} {
+		for {
+			ev := c.next()
+			if ev.Event != EventView {
+				continue
+			}
+			var ch ViewChange
+			if json.Unmarshal(ev.Data, &ch) != nil || ch != (ViewChange{View: ViewAgent, Shown: 3, Total: 3}) {
+				t.Errorf("%s: event %s", name, ev.Data)
+			}
+			break
+		}
+	}
+}
+
 // TestViewSwitchOneAtATimeAndThreeAMinute: a second call while one runs
 // answers busy and is not counted; past three a minute it is refused. The
 // limit is the console's, across its connections.

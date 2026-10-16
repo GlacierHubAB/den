@@ -133,6 +133,11 @@ func (s *Server) viewVerb(c *conn, req Request, want string) {
 	}()
 }
 
+// PushView tells the console and the fleet followers the view changed
+// without a view call: Den found, on its own, that the windows it recorded
+// as hidden are not.
+func (s *Server) PushView(ch ViewChange) { s.pushView(ch) }
+
 // pushView tells how a switch ended: to the console's connections that took
 // console.events, and to the connections that follow the fleet. A slow
 // reader may miss it: hello, console.auth and the fleet carry the view too.
