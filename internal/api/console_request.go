@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -13,14 +14,16 @@ import (
 
 // Pairing the console with no code (console.request): the program asking
 // must be the main process of the console's user service, run by the
-// user's own systemd as Den checks it (sysd). Den then asks the human on a
-// card in its own window, with the pid, the start and both keys'
-// fingerprints for them to match with what the dock shows. What Den read
-// of the service is kept with the pairing, so that a restart of the same
-// service, on the same build, can re-pair (console.reconnect).
+// user's own systemd as Den checks it (sysd). It then pairs at once, with
+// its powers, as the human chose: the dock is part of Den. Den says so in
+// its chat, naming the program and what changed since it last read the
+// service. What Den read is kept with the pairing, and a restart of the
+// service re-pairs the same way (console.reconnect).
 //
 // All of it is friction, not a boundary: the user's manager socket is
-// the user's own, and any program of the user can serve one.
+// the user's own, and any program of the user can serve one, or change
+// the service's unit or program. The human's levers are /api lock, /api
+// unpair, and God mode.
 
 // ConsoleUnit is the console's user service.
 const ConsoleUnit = sysd.ConsoleUnit
@@ -71,22 +74,109 @@ func requestAllowed(c *conn, req Request) bool {
 	return true
 }
 
-// consoleBusy is why a console card cannot be raised now, "" when it can:
-// one console card at a time, and none in the cooldown after a deny.
-// Called with s.con.mu held.
-func (s *Server) consoleBusy(now time.Time) string {
+// Automatic pairing's refusals.
+const (
+	// AutoPairOff: the console was unpaired by the human, by itself or by
+	// Den's own guard, and the human has not started a pairing in Den since.
+	AutoPairOff = "unpaired in Den: pair again there (/api console or den pair)"
+	// AutoPairHeld: other programs tried the console, or proofs failed,
+	// in the last autoPairHold.
+	AutoPairHeld = "the console was unpaired for tries from other programs: pair by code, or wait ten minutes"
+)
+
+// autoPairRefusal is why the console's service may not pair by itself
+// now, as an error code and message; "" when it may. Called with s.con.mu
+// held.
+func (s *Server) autoPairRefusal(now time.Time) (code, msg string) {
 	st := &s.con
 	switch {
-	case now.Before(st.cooldown):
-		return ClaimCooldown
+	case st.autoOff:
+		return CodeForbidden, AutoPairOff
+	case now.Before(st.autoHold):
+		return CodeUnavailable, AutoPairHeld
 	case st.pending != nil:
-		return ClaimBusy
+		return CodeUnavailable, ClaimBusy
 	}
-	return ""
+	return "", ""
 }
 
-// consoleRequest is console.request: pair the console's service with no
-// code, on the human's ^Y in Den.
+// pairAutomatically makes rec, which read clean as v, the console at once:
+// in place of was when was is not nil, and only while was is still the
+// console; in place of any console when it is nil. It comes with its
+// powers unless the human locked them or God mode is on, and Den says so
+// in its chat and, as kind, to the console's first subscribed connection,
+// naming the program and what changed since Den last read the service
+// (with extra). It reports the powers, and false when it refused.
+func (s *Server) pairAutomatically(c *conn, req Request, was, rec *consoleRec, v sysd.Verifier, kind string, extra []string) (powers, ok bool) {
+	god := s.godMode()
+	st := &s.con
+	st.mu.Lock()
+	if code, msg := s.autoPairRefusal(time.Now()); code != "" {
+		st.mu.Unlock()
+		c.fail(req.ID, code, msg)
+		return false, false
+	}
+	if was != nil && st.cur != was {
+		st.mu.Unlock()
+		c.fail(req.ID, CodeUnavailable, ClaimBusy)
+		return false, false
+	}
+	locked, read := st.locked, st.last != nil
+	var changes []string
+	if read {
+		for _, d := range sysd.Compare(*st.last, v) {
+			changes = append(changes, string(d))
+		}
+	}
+	changes = append(changes, extra...)
+	rec.powers = !locked && !god
+	rec.verifier = &v
+	rec.auto = &ConsoleEvent{Kind: kind, PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started), Reason: "paired automatically",
+		Unit: ConsoleUnit, Program: sanitize.Label(v.Exe.Path, 160), ProgramSHA: v.Exe.SHA256, Changes: changes}
+	old := st.cur
+	st.cur, st.last = rec, &v
+	s.saveConsoleLocked()
+	st.mu.Unlock()
+	if old != nil {
+		reason := "another console was paired"
+		if kind == "reconnected" {
+			reason = "it reconnected"
+		}
+		s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: reason, Cause: CauseReplaced})
+	}
+	note := "console paired automatically: " + ConsoleUnit + " pid " + itoa(rec.PID) + ", started " + hhmmss(rec.Started) +
+		", program " + sanitize.Label(v.Exe.Path, 160) + " (sha256 " + v.Exe.SHA256 + ")"
+	if len(changes) > 0 {
+		var said []string
+		for _, ch := range changes {
+			said = append(said, sanitize.Label(ch, 200))
+		}
+		note += "; changed since Den last read it: " + strings.Join(said, "; ")
+	} else if read {
+		note += "; nothing changed since Den last read it"
+	}
+	why := ""
+	switch {
+	case locked:
+		why = "you locked the console's powers in Den"
+	case god:
+		why = "God mode is on"
+	}
+	if why != "" {
+		note += ". It answers no cards and runs no commands until you press Ctrl+Y on its card: " + why + "."
+	} else {
+		note += ". It may answer cards and run commands; /api lock takes that back, /api unpair ends it."
+	}
+	s.note(note)
+	s.act(Act{ConsoleChanged: true})
+	if why != "" {
+		s.askPowers(rec, why)
+	}
+	return rec.powers, true
+}
+
+// consoleRequest is console.request: the console's service pairs with no
+// code, at once.
 func (s *Server) consoleRequest(c *conn, req Request) {
 	if s.ckey == nil {
 		c.fail(req.ID, CodeUnavailable, "console pairing is not set up")
@@ -103,64 +193,29 @@ func (s *Server) consoleRequest(c *conn, req Request) {
 	}
 	st := &s.con
 	st.mu.Lock()
-	busy := s.consoleBusy(time.Now())
+	code, msg := s.autoPairRefusal(time.Now())
 	st.mu.Unlock()
-	if busy != "" {
-		c.fail(req.ID, CodeUnavailable, busy)
+	if code != "" {
+		c.fail(req.ID, code, msg)
 		return
 	}
-	v, err := readUnit(sysd.ProcID{PID: c.peer.PID, Start: c.peer.Start})
+	// Only a clean read pairs: any problem, or a manager that did not
+	// answer through every try, refuses, with no other way in but a code.
+	self := sysd.ProcID{PID: c.peer.PID, Start: c.peer.Start}
+	v, err := readUnit(self)
 	if err != nil {
 		c.fail(req.ID, CodeForbidden, "not "+ConsoleUnit+": "+sanitize.Label(err.Error(), 300)+"; pair with den pair")
 		return
 	}
 	pub, _ := hex.DecodeString(pubHex)
-	now := time.Now()
 	rec := &consoleRec{
-		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: c.peer.PID, Since: now, PagesSHA: pages},
-		identity: identity, start: c.peer.Start, pub: ed25519.PublicKey(pub), pubHex: pubHex,
-		confirm: make(chan bool, 1), verifier: &v, trusted: true,
+		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: self.PID, Since: time.Now(), PagesSHA: pages},
+		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: pubHex,
 	}
-	ask := ConsoleAsk{ID: rec.ID, Exe: c.peer.Exe, PID: c.peer.PID, Codeless: true, Unit: ConsoleUnit,
-		Program: v.Exe.Path, ProgramSHA: v.Exe.SHA256, AppFP: Fingerprint(pubHex), DenFP: Fingerprint(s.ckey.pubHex)}
-	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
-	rec.Started = ask.Started
-	confirm := s.raiseConsoleCard(c, req, rec, &ask)
-	if confirm == nil {
+	rec.Started, _, _ = procInfo(self.PID)
+	powers, ok := s.pairAutomatically(c, req, nil, rec, v, "paired", nil)
+	if !ok {
 		return
 	}
-	s.awaitConsole(c, req, rec, confirm, func() {}, func() map[string]any {
-		return map[string]any{"pairing": rec.ID, "den_public_key": s.ckey.pubHex, "console": true, "powers": true}
-	})
-}
-
-// raiseConsoleCard makes rec the claim waiting for the human and asks on
-// a card, unless another waits or the cooldown runs: then it refuses, and
-// returns nil. It returns rec's answer channel, taken under s.con.mu with
-// the claim, for awaitConsole.
-func (s *Server) raiseConsoleCard(c *conn, req Request, rec *consoleRec, ask *ConsoleAsk) chan bool {
-	st := &s.con
-	st.mu.Lock()
-	if busy := s.consoleBusy(time.Now()); busy != "" {
-		st.mu.Unlock()
-		c.fail(req.ID, CodeUnavailable, busy)
-		return nil
-	}
-	if st.cur != nil && ask.Replaces == nil && st.cur.ID != rec.ID {
-		old := st.cur.Console
-		ask.Replaces = &old
-	}
-	st.pending = rec
-	confirm := rec.confirm
-	st.mu.Unlock()
-	if !s.act(Act{Console: ask}) {
-		st.mu.Lock()
-		if st.pending == rec {
-			st.pending = nil
-		}
-		st.mu.Unlock()
-		c.fail(req.ID, CodeUnavailable, ClaimBusy)
-		return nil
-	}
-	return confirm
+	c.reply(req.ID, map[string]any{"pairing": rec.ID, "den_public_key": s.ckey.pubHex, "console": true, "powers": powers})
 }

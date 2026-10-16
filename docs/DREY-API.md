@@ -560,8 +560,8 @@ Ed25519, and the console is bound to one process. Den's `hello` lists
 - After a right proof, before the card, Den also reads the claimant as
   "Pairing with no code" does. If it is the main process of a
   `drey-host.service` that passes every check there, Den keeps what it
-  read, the card says the dock may rejoin with no code after a restart,
-  and `console.reconnect` works for it as for a pairing with no code. Any
+  read, the card says the dock pairs again by itself after a restart, and
+  `console.reconnect` works for it as for a pairing with no code. Any
   other claimant pairs as before, with no word of the read on the card
   and no strike. The read can take up to ten seconds; a code whose two
   minutes end meanwhile answers `no code waiting`.
@@ -574,21 +574,22 @@ Ed25519, and the console is bound to one process. Den's `hello` lists
   `unpaired`. Den keeps its side (the console's identity and public key)
   across its own clean restarts, and says so (see Events). A console
   whose process ended, a new boot, or a record Den did not write unpairs.
-  A console restored after Den restarted comes back without its powers
-  until you press `Ctrl+Y` in Den (see Powers).
+  A console restored after Den restarted gets its powers back once Den
+  reads it clean as `drey-host.service`; any other waits for your
+  `Ctrl+Y` in Den (see Powers).
 
 ### Pairing with no code
 
-Drey's own service may pair with no code, and pair again by itself after
-it restarts. Den checks, through your systemd user manager, that the
+Drey's own service pairs with no code, at once and with its powers, and
+pairs again by itself after it restarts: you chose to treat the dock as
+part of Den. Den checks, through your systemd user manager, that the
 program asking is `drey-host.service`'s main process and how the manager
-runs it; you still match what the dock shows with Den's card.
+runs it, and says in its chat what it paired. There is no card and
+nothing to match.
 
 - `hello`'s reply carries `console_public_key`, Den's console key (64 hex
-  digits), so the dock can show its fingerprint while the card waits.
-- A key's fingerprint is the first 16 lowercase hex digits of the SHA-256
-  of its 32 bytes, in four groups of four joined by single spaces
-  (`1a2b 3c4d 5e6f 7a8b`).
+  digits): the key a request's reply names, and the one `den_sig` is
+  under.
 - `console.request {public_key, pages_sha256?}`, on any connection, at most
   one a second on each. Den reads the unit from the manager's own socket
   (`$XDG_RUNTIME_DIR/systemd/private`); a manager slow to answer, as just
@@ -622,15 +623,26 @@ runs it; you still match what the dock shows with Den's card.
     of `$XDG_CONFIG_DIRS`' `gtk-3.0`, `/etc/gtk-3.0`,
     `/usr/share/gtk-3.0`) sets `gtk-modules`.
 
-  Anything else answers `forbidden` with `not drey-host.service:` and what
-  failed. Otherwise Den puts a card in its own window: the pid, the start
-  time, the program, both keys' fingerprints. Only your `Ctrl+Y` there
-  pairs; the dock should show its own pid, start time (`HH:MM:SS`) and both
-  fingerprints the same way meanwhile. The reply is `{pairing,
-  den_public_key, console: true, powers: true}`; then prove as above. Its
-  refusals and limits are `console.claim`'s: one console card at a time
-  (`unavailable`, `Den is busy`), two minutes, and 30 seconds after a
-  `Ctrl+N`.
+  Anything else, or a manager that did not answer through every try,
+  answers `forbidden` with `not drey-host.service:` and what failed:
+  never a card, never a pairing. Otherwise it pairs at once, replacing any
+  console paired before: `{pairing, den_public_key, console: true,
+  powers}`, where `den_public_key` is `hello`'s `console_public_key`, and
+  `powers` is false while you have locked them (`/api lock`) or God mode
+  is on, with a card in Den for them. Then prove as above. Den notes in
+  its chat the unit, pid, start, the program and its SHA-256, and what
+  changed since it last read the service; the first connection that
+  subscribes to `console.events` hears it as a `paired` event (see
+  Events).
+
+  It is refused while a claim by code waits for you (`unavailable`, `Den
+  is busy`); after you, the console itself or Den's own guard unpaired it,
+  until you start a pairing in Den (`/api console`, `den pair` or `/api
+  pair`): `forbidden`, `unpaired in Den: pair again there (/api console or
+  den pair)`; and for ten minutes after three tries from other programs,
+  three wrong proofs or a burst of answers unpaired it: `unavailable`,
+  `the console was unpaired for tries from other programs: pair by code,
+  or wait ten minutes`. A pairing by code works meanwhile.
 - `console.reconnect {public_key, nonce, pages_sha256?}`, after the
   service restarted with a fresh key, at most one a second on each
   connection. It may be the first request on a connection, before
@@ -638,20 +650,16 @@ runs it; you still match what the dock shows with Den's card.
   that has only just started answers `unavailable`, `Den is starting`:
   try again shortly.
   `nonce` is the dock's own: 64 hex digits, fresh each time. Den reads
-  the unit again and compares it with what it read at pairing:
-  - the same in everything but the main process, while this Den has run
-    since the pairing, and God mode off: a new pairing at once, `{pairing,
-    den_sig, powers: false}`, a note in Den, a `reconnected` event, and a
-    card in Den for the powers;
-  - anything that differs (the program, the unit's settings or file, a
-    pin, the manager, the dock's pages), a Den that has restarted since
-    the pairing, or God mode on: a card in Den's own window that names
-    why, answered as a request is; its `Ctrl+Y` answers `{pairing,
-    den_sig, powers: true}`. A `Ctrl+N` or no answer keeps the old pairing
-    on record;
+  the unit again, as a request does:
+  - read clean: a new pairing at once, `{pairing, den_sig, powers}`, with
+    `powers` as for a request, also after Den restarted and whatever
+    changed (the program, the unit, the dock's pages). Den notes what it
+    paired and what changed, and the first subscribed connection hears a
+    `reconnected` event;
   - nothing to reconnect to, another boot, or a check that fails:
     `forbidden`, `pair again: …`. The last, when a console is paired,
-    counts toward the three that unpair it, and takes its powers.
+    counts toward the three tries that unpair it, and takes its powers;
+  - and a request's refusals.
 
   `den_sig` is Den's Ed25519 signature, 128 hex digits, under the console
   key the dock pinned at pairing (the one `hello` publishes as
@@ -682,9 +690,14 @@ does not gets `powers_locked` (`press Ctrl+Y in Den to let the console
 answer cards and run commands`) from `card.answer`, `cmd.run` and
 `mode.set`; it can still read, chat (`orch.say`) and follow events.
 
-- A pairing by code or request, and a reconnect you answered, have them.
-- A silent reconnect and a console restored after Den restarted do not,
-  until your `Ctrl+Y` on Den's card. Another program's try for the
+- A pairing by code, request or reconnect has them, and so does a console
+  restored after Den restarted once its process reads clean as
+  `drey-host.service`; one that does not waits for your `Ctrl+Y` on Den's
+  card.
+- `/api lock` (from Den or the dock) takes them, and every console paired
+  after, by any way and across Den's restarts, comes without them, until
+  your `Ctrl+Y` on Den's powers card. While God mode is on, a console
+  paired by itself comes without them too. Another program's try for the
   console, a wrong proof, or God mode turning on take them.
 - `console.auth`'s reply carries `powers`, and a `console` event of kind
   `powers` says each change, `{on: true}` or `{on: false}`.
@@ -743,11 +756,14 @@ all` does in a terminal.
 
 ### Events
 
-- `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?}`: `kind`
+- `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?, unit?, program_sha256?, changes?}`: `kind`
   is `connected`, `restored` (the first `console.events` after Den
   restarted with this console: check `pid` and `start_ticks` are yours),
-  `reconnected` (after a silent `console.reconnect`, to the first
-  connection that subscribes, after the replay), `powers` (`on` says
+  `paired` or `reconnected` (after a `console.request` or a
+  `console.reconnect`, to the first connection that subscribes, after the
+  replay: `reason` `paired automatically`, with `unit`, `program` as the
+  manager runs it, `program_sha256`, and `changes`, what changed since
+  Den last read the service, as Den's note says), `powers` (`on` says
   whether the console has them now), `refused` (another program tried
   this console) or `unpaired`. Ignore a kind you do not know.
   An `unpaired` event carries `cause`, why the console is no longer
@@ -915,14 +931,16 @@ off. While it is on:
 - Any program running as you can also write Den's console record; a
   restored console is announced in Den and to the console, so check that
   it is yours.
-- What Den checks before a request or a silent reconnect is friction, not
-  a boundary. Your systemd manager's socket is yours: any program running
+- What Den checks before a request or a reconnect is friction, not a
+  boundary. Your systemd manager's socket is yours: any program running
   as you can serve one that answers as systemd, and can replace the
-  service's program, edit its unit or set the manager's environment. A
-  changed program, unit, pin or manager makes a card, never a silent
-  re-pair, but Den cannot stop the change; and a restart of the service,
-  unchanged, re-pairs silently, as the genuine service. That is why a
-  silent re-pair comes without powers. Where your manager's program
+  service's program, edit its unit or set the manager's environment. As
+  you chose, the service pairs by itself with its powers: anything
+  running as you that can change `drey-host.service`'s unit or program
+  (both in your home directory) gets the dock's full powers with no
+  question in Den. Den names a changed program, unit, pin or manager in
+  its chat, but pairs all the same. Your levers are `/api lock`, `/api
+  unpair`, and God mode staying off. Where your manager's program
   cannot be read, Den knows it by `CAP_WAKE_ALARM`, which no program of
   yours can give itself: a forged manager then takes root, or a file
   root installed with that capability.
