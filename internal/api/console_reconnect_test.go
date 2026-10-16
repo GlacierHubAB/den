@@ -85,7 +85,7 @@ func TestReconnectAtOnce(t *testing.T) {
 	if !l.OK || json.Unmarshal(l.Result, &r) != nil || r.Pairing == old.ID || !r.verified(h, d2) || !r.Powers {
 		t.Fatalf("reply %+v %s", l.Error, l.Result)
 	}
-	noteWith(t, h.s, "console paired automatically: "+ConsoleUnit)
+	noteWith(t, h.s, "console paired automatically: "+ConsoleUnitName+" ("+ConsoleUnit+") pid ")
 	noCard(t, h.s)
 	// The old pairing is gone; the new one proves, and hears it reconnected.
 	pc := h.dial()
