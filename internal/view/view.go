@@ -104,6 +104,9 @@ func (hyprOps) Active(ctx context.Context) (hypr.Workspace, bool) {
 type Session struct {
 	ID  string
 	PID int
+	// Peer is the agent's peer name, which names its terminal (hypr.AgentTitle).
+	// "" for none.
+	Peer string
 }
 
 // Request is one switch.
@@ -137,8 +140,10 @@ type Moved struct {
 	// only by it, and only when it is the one window carrying it.
 	Marker string `json:"marker,omitempty"`
 	// Den's own window has no class of its own, so it is found again by
-	// its address, its terminal process and its class, all three.
+	// its address, its terminal process and its class, all three. So is
+	// the window of an agent found by its title (Titled).
 	Own     bool   `json:"own,omitempty"`
+	Titled  bool   `json:"titled,omitempty"`
 	Address string `json:"address,omitempty"`
 	PID     int    `json:"pid,omitempty"`
 	Class   string `json:"class,omitempty"`
@@ -152,6 +157,18 @@ type State struct {
 	View  string    `json:"view"`
 	Since time.Time `json:"since,omitempty"`
 	Moved []Moved   `json:"moved,omitempty"`
+}
+
+// NoAgentWindows is the refusal of a hide that could take no agent's window
+// out of sight: N agents run, and none has a window Den can prove is the
+// agent's.
+type NoAgentWindows struct{ N int }
+
+func (e *NoAgentWindows) Error() string {
+	if e.N == 1 {
+		return "no agent window is Den's to hide: 1 agent runs in a window Den cannot tell is its own"
+	}
+	return "no agent window is Den's to hide: " + strconv.Itoa(e.N) + " agents run in windows Den cannot tell are their own"
 }
 
 // Switcher switches views. The zero value is not ready: use New. Tests set
@@ -402,9 +419,9 @@ func (sw *Switcher) Rescue(ctx context.Context) (moved, left int, err error) {
 			to := ""
 			for _, r := range st.Moved {
 				switch {
-				case r.Own && r.Address == c.Address && r.PID == c.PID && r.Class == c.InitialClass:
+				case (r.Own || r.Titled) && r.Address == c.Address && r.PID == c.PID && r.Class == c.InitialClass:
 					to = r.From
-				case !r.Own && r.Marker != "" && r.Marker == c.InitialClass && len(windowsOf(all, r.Marker)) == 1:
+				case !r.Own && !r.Titled && r.Marker != "" && r.Marker == c.InitialClass && len(windowsOf(all, r.Marker)) == 1:
 					to = r.From
 				}
 			}
@@ -441,7 +458,7 @@ func (sw *Switcher) Rescue(ctx context.Context) (moved, left int, err error) {
 		}
 		for _, r := range st.Moved {
 			for _, c := range after {
-				if onSpecial(c) && (r.Own && r.Address == c.Address || !r.Own && r.Marker == c.InitialClass) {
+				if onSpecial(c) && ((r.Own || r.Titled) && r.Address == c.Address || !r.Own && !r.Titled && r.Marker == c.InitialClass) {
 					keep = append(keep, r)
 					break
 				}
@@ -544,6 +561,7 @@ type item struct {
 	addr   string
 	marker string
 	own    bool
+	titled bool // an agent's window found by its title, hidden on that ground only
 	tied   bool
 }
 
@@ -567,13 +585,40 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 	// counted and left where they are.
 	notDens := map[string]bool{}
 	seen := map[string]bool{}
+	// unmarked counts the agents whose window is not Den's to move: it has
+	// no marker, and no title window either. Only a hide counts them: a show
+	// moves back what the record says Den hid, whoever else is running.
+	unmarked := 0
+	count := func() {
+		if rq.Want == User {
+			unmarked++
+		}
+	}
+	titledAt := map[string]string{} // session id to its window, found by title
 	for _, s := range rq.Sessions {
 		m := sw.Marker(s.ID)
-		if m == "" || seen[m] {
-			continue // an agent Den did not spawn has no marker
+		if m == "" {
+			// An agent Den did not spawn with a marker (or an older Den
+			// did not): for a hide only, which a show undoes, the title Den
+			// gave its terminal and the agent running under it find the
+			// window. A show never relies on this: it moves what the record
+			// says Den hid.
+			if rq.Want == User && s.Peer != "" {
+				if c, ok := hypr.TitledWindow(all, hypr.AgentTitle(s.Peer), sw.Ancestors(s.PID)); ok {
+					add(item{addr: c.Address, titled: true, tied: true})
+					titledAt[s.ID] = c.Address
+					continue
+				}
+			}
+			count()
+			continue
+		}
+		if seen[m] {
+			continue
 		}
 		seen[m] = true
 		if len(windowsOf(all, m)) == 0 {
+			count() // its window carries no such class: not Den's to move
 			continue
 		}
 		if c, ok := hypr.HeldWindow(all, m, sw.Ancestors(s.PID)); ok {
@@ -591,6 +636,10 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 		if !hold[s.ID] {
 			continue
 		}
+		if a := titledAt[s.ID]; a != "" {
+			held[a] = true
+			continue
+		}
 		if m := sw.Marker(s.ID); m != "" {
 			if c, ok := hypr.HeldWindow(all, m, sw.Ancestors(s.PID)); ok {
 				held[c.Address] = true
@@ -602,11 +651,11 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 		add(item{addr: own.Address, own: true, tied: true})
 	}
 	for _, r := range st.Moved {
-		if r.Own {
+		if r.Own || r.Titled {
 			c, ok := byAddress(all, r.Address)
 			if ok && c.PID == r.PID && c.InitialClass == r.Class && onSpecial(c) {
-				add(item{addr: c.Address, own: true})
-				ownKnown = true
+				add(item{addr: c.Address, own: r.Own, titled: r.Titled})
+				ownKnown = ownKnown || r.Own
 			}
 			continue
 		}
@@ -619,6 +668,21 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 		}
 	}
 
+	// A hide that could take no agent's window out of sight, though agents
+	// are running, is refused whole: Den would be in User view with every
+	// agent still on screen, and would say so. Nothing is moved, not even
+	// Den's own window.
+	if rq.Want == User && unmarked > 0 {
+		agents := 0
+		for _, it := range items {
+			if !it.own {
+				agents++
+			}
+		}
+		if agents == 0 {
+			return Result{}, &NoAgentWindows{N: unmarked}
+		}
+	}
 	// The record before the move: a window is never out of sight without
 	// one.
 	type move struct {
@@ -641,8 +705,8 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 				continue
 			}
 			r := Moved{Marker: it.marker, From: origin(c), At: sw.now()}
-			if it.own {
-				r = Moved{Own: true, Address: c.Address, PID: c.PID, Class: c.InitialClass, From: origin(c), At: sw.now()}
+			if it.own || it.titled {
+				r = Moved{Own: it.own, Titled: it.titled, Address: c.Address, PID: c.PID, Class: c.InitialClass, From: origin(c), At: sw.now()}
 			}
 			st.upsert(r)
 			moves = append(moves, move{it, Workspace})
@@ -698,7 +762,7 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 	}
 	var keep []Moved
 	for _, r := range st.Moved {
-		if !r.Own && notDens[r.Marker] {
+		if !r.Own && !r.Titled && notDens[r.Marker] {
 			keep = append(keep, r) // maybe the hidden window itself: not dropped
 		}
 	}
@@ -715,8 +779,8 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 		r, found := st.find(it)
 		if !found {
 			r = Moved{Marker: it.marker, At: sw.now()}
-			if it.own {
-				r = Moved{Own: true, Address: c.Address, PID: c.PID, Class: c.InitialClass, At: sw.now()}
+			if it.own || it.titled {
+				r = Moved{Own: it.own, Titled: it.titled, Address: c.Address, PID: c.PID, Class: c.InitialClass, At: sw.now()}
 			}
 		}
 		keep = append(keep, r)
@@ -729,7 +793,7 @@ func (sw *Switcher) run(ctx context.Context, st *State, rq Request) (Result, err
 	if err := saveState(sw.path(), *st); err != nil {
 		return Result{}, ErrState
 	}
-	res.Reason = reason(rq, res, len(notDens), heldN, timedOut, keptOwn, ownKnown)
+	res.Reason = reason(rq, res, len(notDens)+unmarked, heldN, timedOut, keptOwn, ownKnown)
 	return res, nil
 }
 
@@ -865,18 +929,18 @@ func (st *State) drop(r Moved) {
 }
 
 func same(a, b Moved) bool {
-	if a.Own || b.Own {
-		return a.Own && b.Own && a.Address == b.Address
+	if a.Own || b.Own || a.Titled || b.Titled {
+		return a.Own == b.Own && a.Titled == b.Titled && a.Address == b.Address
 	}
 	return a.Marker == b.Marker
 }
 
 func (st *State) find(it item) (Moved, bool) {
 	for _, r := range st.Moved {
-		if it.own && r.Own && r.Address == it.addr {
+		if (it.own || it.titled) && r.Own == it.own && r.Titled == it.titled && r.Address == it.addr {
 			return r, true
 		}
-		if !it.own && !r.Own && r.Marker != "" && r.Marker == it.marker {
+		if !it.own && !it.titled && !r.Own && !r.Titled && r.Marker != "" && r.Marker == it.marker {
 			return r, true
 		}
 	}

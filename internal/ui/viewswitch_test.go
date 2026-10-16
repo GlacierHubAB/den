@@ -581,3 +581,28 @@ func TestGodModeKeepsDensWindow(t *testing.T) {
 		t.Error("the agents' windows were not hidden")
 	}
 }
+
+// A hide that cannot take any agent's window out of sight is refused, not
+// answered as User view: the answer says why, and the view does not change.
+func TestHideIsRefusedWhenNoAgentWindowIsDens(t *testing.T) {
+	m, wm := viewRig(t)
+	wm.mu.Lock()
+	for i := range wm.cs {
+		if wm.cs[i].Address == "0xa" || wm.cs[i].Address == "0xb" {
+			wm.cs[i].InitialClass = "com.mitchellh.ghostty" // a window Den did not mark
+		}
+	}
+	wm.mu.Unlock()
+	rep, _ := switchView(t, m, api.ViewUser)
+	if rep.Code != api.CodeUnavailable || !strings.Contains(rep.Msg, "no agent window is Den's to hide") {
+		t.Fatalf("reply %+v", rep)
+	}
+	for _, a := range []string{"0xa", "0xb", "0xden"} {
+		if w := wm.where(a); w == api.ViewWorkspace {
+			t.Errorf("%s was hidden by a refused hide", a)
+		}
+	}
+	if got := viewSwitcher().Current(); got != view.Agent {
+		t.Errorf("the view after a refused hide is %q", got)
+	}
+}

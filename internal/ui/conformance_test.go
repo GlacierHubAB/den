@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,9 @@ import (
 	"github.com/GlacierHubAB/den/internal/api/denconformance"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 // conformanceLane is a fake claude that behaves like the read-only lane
@@ -97,9 +100,28 @@ func TestDreyInterface(t *testing.T) {
 	m.cfg.API.AskBudgetUSD = 2
 	// The suite's view subtest really switches views: over a window manager
 	// that holds Den's own window and nothing else, never a real desktop.
+	// The fleet's local agents each have a terminal window titled as Den
+	// titles an agent's terminal, which a hide finds when the agent has no
+	// marker: with agents running and none of their windows Den's, a hide
+	// is refused.
 	wm := &viewWM{}
 	wm.cs = append(wm.cs, viewClient("0xden", "com.mitchellh.ghostty", 900, 1))
-	useViewWM(t, wm, nil)
+	chains := map[int][]procs.Proc{}
+	for i, a := range m.agents {
+		if a.Host != "" || a.Status == fleet.Gone || a.Session.PID <= 1 {
+			continue
+		}
+		// The sample agents share a process and a peer name: give each its own.
+		// A refresh builds the fleet again from base.
+		m.agents[i].Session.PID, m.agents[i].Session.Name = 6000+i, "sample-"+strconv.Itoa(i)
+		m.base[i].Session.PID, m.base[i].Session.Name = m.agents[i].Session.PID, m.agents[i].Session.Name
+		a = m.agents[i]
+		c := viewClient("0xag"+strconv.Itoa(i), "com.mitchellh.ghostty", 5000+i, 2)
+		c.Title = hypr.AgentTitle(a.Session.Name)
+		wm.cs = append(wm.cs, c)
+		chains[a.Session.PID] = []procs.Proc{{PID: a.Session.PID}, {PID: 5000 + i}}
+	}
+	useViewWM(t, wm, chains)
 	// Console turns start the orchestrator: a fake one, held and checked
 	// as conformance_orch_test.go says, and never a real claude.
 	gate := stubOrchestrator(t)

@@ -29,7 +29,6 @@ import (
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/permmode"
-	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/view"
 	"github.com/GlacierHubAB/den/internal/winmark"
 	"github.com/GlacierHubAB/den/internal/worktree"
@@ -248,7 +247,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	if res.Name != "" {
 		// PeerName keeps names to safe characters; sanitised again since a
 		// title is shown by the terminal and the window manager.
-		title = sanitize.Line("den · " + res.Name)
+		title = hypr.AgentTitle(res.Name)
 	}
 	// The agent's terminal carries a window class of its own, the one way
 	// Den may later tell its window from others with the same title or
