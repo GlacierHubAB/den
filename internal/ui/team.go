@@ -13,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/process"
+	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 )
@@ -278,14 +279,51 @@ func (m *Model) applyTeamCap(msg teamCapMsg, now time.Time) {
 			" agents, Den's cap of " + strconv.Itoa(limit) + " (" + strings.Join(msg.members, ", ") + "): give reason, one line on why one more agent is needed, or close one first"})
 		return
 	}
-	who := "The orchestrator"
-	if msg.in.Lead != "" {
-		who = "A lead"
-		if a, ok := m.agentByPeer(msg.in.Lead); ok {
-			who = a.Name
+	// Who asks, Den reads from the asking process, never from the payload;
+	// a caller that is neither the orchestrator's den mcp nor an agent's
+	// gets its answer and no note in Den's chat.
+	if who, agent, ok := m.teamCaller(msg.r.PeerPID); ok {
+		line := who + " starts one more agent in " + strconv.Quote(repo) + ", over the team cap of " + strconv.Itoa(limit) + ", saying: " + strconv.Quote(reason)
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: line}))
+		if agent != "" && m.missions != nil {
+			if ms := m.missions.Get(m.missionOf(agent)); ms != nil {
+				ms.Note(now, line)
+				m.missions.Save(ms)
+			}
 		}
 	}
-	m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now,
-		text: who + " starts one more agent in " + strconv.Quote(repo) + ", over the team cap of " + strconv.Itoa(limit) + ", saying: " + strconv.Quote(reason)}))
 	msg.r.Reply(bridge.Decision{Behavior: "allow"})
+}
+
+// teamAncestors is a process's ancestors, itself first; tests replace it.
+var teamAncestors = func(pid int) []int {
+	var out []int
+	for _, p := range procs.Ancestors(pid) {
+		out = append(out, p.PID)
+	}
+	return out
+}
+
+// teamCaller names who asks, by its process: the orchestrator's den mcp,
+// or a live local agent's (its process an ancestor of pid), with that
+// agent's session id; ok is false for any other process.
+func (m Model) teamCaller(pid int) (who, session string, ok bool) {
+	if pid <= 1 {
+		return "", "", false
+	}
+	if fromOrchestrator(&m, pid) {
+		return "The orchestrator", "", true
+	}
+	by := map[int]fleet.Agent{}
+	for _, a := range m.agents {
+		if a.Status != fleet.Gone && a.Session.Alive && a.Host == "" && a.Session.PID > 1 && !m.isOrchestrator(a) {
+			by[a.Session.PID] = a
+		}
+	}
+	for _, p := range teamAncestors(pid) {
+		if a, found := by[p]; found {
+			return a.Name, a.Session.SessionID, true
+		}
+	}
+	return "", "", false
 }

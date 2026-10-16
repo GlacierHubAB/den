@@ -158,10 +158,18 @@ func TestTeamCap(t *testing.T) {
 		teamAgent("Den Orchestrator", "s0", OrchestratorName, proj), // never counted
 	}
 	m.base = m.agents
-	ask := func(dir, reason, lead string) bridge.Decision {
+	// The asking processes: 555 under Mossy Lemur's (pid 100), 777 under
+	// nothing Den knows, 999 the orchestrator's den mcp.
+	m.agents[0].Session.PID = 100
+	oldAnc, oldOrc := teamAncestors, fromOrchestrator
+	teamAncestors = func(pid int) []int { return map[int][]int{555: {555, 100, 1}, 777: {777, 1}}[pid] }
+	fromOrchestrator = func(_ *Model, pid int) bool { return pid == 999 }
+	t.Cleanup(func() { teamAncestors, fromOrchestrator = oldAnc, oldOrc })
+	askFrom := func(pid int, dir, reason, lead string) bridge.Decision {
 		t.Helper()
 		payload, _ := json.Marshal(bridge.TeamQueryInput{Dir: dir, Reason: reason, Lead: lead})
 		r := bridge.TestRequest(bridge.Envelope{Event: bridge.TeamEvent, Payload: payload})
+		r.PeerPID = pid
 		if cmd := m.handleTeamQuery(r); cmd != nil {
 			m.applyTeamCap(cmd().(teamCapMsg), time.Now())
 		}
@@ -171,6 +179,7 @@ func TestTeamCap(t *testing.T) {
 		}
 		return d
 	}
+	ask := func(dir, reason, lead string) bridge.Decision { t.Helper(); return askFrom(999, dir, reason, lead) }
 	// Not a repository, another repository, and proj with two agents (the
 	// orchestrator not counted): room for one more.
 	for _, d := range []string{base, other, proj} {
@@ -189,12 +198,22 @@ func TestTeamCap(t *testing.T) {
 		t.Errorf("a blank reason: %+v", d)
 	}
 	// A lead's spawn with a reason: allowed, and noted, quoted, with whose.
-	if d := ask(wt1, "two reviews \x1b[31min parallel", "den-a"); d.Behavior != "allow" {
+	// An agent's den mcp, by its process: allowed, and noted, quoted, with
+	// the name Den read, whatever lead the payload claims.
+	if d := askFrom(555, wt1, "two reviews \x1b[31min parallel", "den-b"); d.Behavior != "allow" {
 		t.Fatalf("with a reason: %+v", d)
 	}
 	last := m.orch.chat[len(m.orch.chat)-1].text
 	if !strings.Contains(last, `Mossy Lemur starts one more agent in "proj", over the team cap of 3, saying: "two reviews in parallel"`) {
 		t.Errorf("note %q", last)
+	}
+	if d := ask(proj, "a third reviewer", ""); d.Behavior != "allow" || !strings.HasPrefix(m.orch.chat[len(m.orch.chat)-1].text, "The orchestrator starts one more agent") {
+		t.Errorf("the orchestrator's: %+v %q", d, m.orch.chat[len(m.orch.chat)-1].text)
+	}
+	// Any other process: its answer, and nothing in Den's chat.
+	n := len(m.orch.chat)
+	if d := askFrom(777, proj, "trust me", "den-a"); d.Behavior != "allow" || len(m.orch.chat) != n {
+		t.Errorf("a stranger: %+v, %d notes added", d, len(m.orch.chat)-n)
 	}
 	// God mode does not lift it.
 	m.god.on = true
