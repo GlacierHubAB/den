@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Exported at Drey commit `aef816a6f8e8c9c5f2ee27151cb4e703e11416f4`, package SHA-256 `87482e68ea37b1dfc80a71da37af4008247e766a7c32d53524368cefb5ba7a4a`.
+Exported at Drey commit `5b1805e89d9508e0296891cae22bca5c7b472ea7`, package SHA-256 `97c43fcbf3be867befd36777c431b957ff0ab89674c8fc82c0b3068b63bba17f`.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -81,13 +81,30 @@ What only the server's own test can do is passed in:
   it is skipped.
 - `Request` says the server pairs a console by `console.request` for this
   test process (its unit check stood in for, as Den's harness does):
-  `console.request` sends a fresh key and a pages hash, `Confirm` answers
-  the code-less card, and the reply `{pairing, den_public_key, console:
+  `console.request` sends a fresh key and a pages hash. A server that pairs
+  its console's service by itself replies at once with no card, and
+  `Confirm` is not pressed; if no reply comes within a second, a card is
+  taken to wait and `Confirm` answers it (and the reply must then carry
+  powers). Either way the reply `{pairing, den_public_key, console:
   true, powers}` must name hello's `console_public_key`; the pairing then
   proves. `console.reconnect` rejoins that pairing with the same pages
   hash (a server records the unit only for a request). Left false,
   `console.request` is skipped and `console.reconnect` uses the console
   paired by code.
+- `RequestRefusals` (with `Request`) says the server refuses
+  `console.request` as Den's own pairing of its console's service does:
+  `console.request after an unpairing` wants `forbidden` "unpaired in Den:
+  …" after the console unpaired itself, and a pairing again once `Offer`
+  starts one in the server; `unpaired cause intruders` then wants
+  `unavailable` from a request (for ten minutes after an unpairing for
+  other programs' tries).
+- `PowersLocked` says the server holds back powers from a console that
+  pairs or rejoins on its own, as Den does while `/api lock` or God mode
+  holds them: a `console.reconnect`, and a `console.request` answered at
+  once, must then say `powers: false`. Left false, those may say either.
+- Console events of a kind a subtest is not waiting for (Den's `paired`,
+  `reconnected`, `powers`) are skipped, as a client ignores kinds it does
+  not know.
 - `Reconnect` says the server answers `console.reconnect` at once (a
   silent reconnect) for this test process. `console.reconnect` then sends
   it before `hello` from a fresh key: a missing or malformed `nonce` must
