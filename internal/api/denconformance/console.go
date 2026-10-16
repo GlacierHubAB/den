@@ -90,6 +90,21 @@ type ConsoleOptions struct {
 	// Left false, "console.request" is skipped and "console.reconnect"
 	// uses the code-claimed console.
 	Request bool
+	// RequestRefusals says the server refuses console.request as Den's
+	// own pairing of its console's service does (Den auto-console): after
+	// an unpairing by the console itself, forbidden "unpaired in Den: …"
+	// until a pairing is started in Den (Offer); and for ten minutes after
+	// one for tries from other programs, unavailable. It turns on
+	// "console.request after an unpairing" and a check at the end of
+	// "unpaired cause intruders". Needs Request.
+	RequestRefusals bool
+	// PowersLocked says the server answers a console that pairs or rejoins
+	// on its own (console.reconnect, a console.request answered at once)
+	// without powers: Den does while the human has locked them (/api lock)
+	// or God mode is on. Then those replies must say powers false; left
+	// false, powers may be either (Den's own pairing of its console's
+	// service gives them).
+	PowersLocked bool
 	// Reconnect says the server answers console.reconnect at once, as a
 	// silent reconnect, for this test process: "console.reconnect" runs
 	// its signature checks. Den checks the dock's systemd unit first,
@@ -121,10 +136,14 @@ var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
 	"console.events", "card.get", "card.answer", "card read timer", "card replay", "view.hide keeps a waiting card", "console orch.say", "console connections",
-	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.unpair unproved", "console.unpair all",
+	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.request after an unpairing", "console.unpair unproved", "console.unpair all",
 	"unpaired cause self", "unpaired cause replaced", "unpaired cause proofs", "unpaired cause intruders",
 	"unpaired cause burst", "unpaired cause den", "unpaired: not at end of file", "unpaired cause other", "console cooldown",
 }
+
+// requestCardWait is how long a console.request may take to answer at
+// once before the suite takes it that a card waits and presses Confirm.
+const requestCardWait = time.Second
 
 // Den's known answer for console.reconnect's den_sig (DREY-API.md): the
 // key from the Ed25519 seed of 32 bytes 0x01, and its signature with nonce
@@ -493,7 +512,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Fatal(err)
 		}
 		events = c
-		ev, err := nextEvent(ctx, c, "console")
+		ev, err := nextConsoleKind(ctx, c, "connected", "restored")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -816,16 +835,10 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		// Closing the connection ends the turn: soon after, another
 		// console connection may start one. Two tries at most, so the
 		// console's six a minute hold.
-		// Den up to v0.5.2 clears its running turn just after it sends
-		// that turn's done, so a say sent on done may meet unavailable
-		// once; it is retried once (den-lead's guidance).
+		// A turn is free before its done goes out (Den cb06e63, #88), so a
+		// say sent the moment done arrives is accepted.
 		c3 := proved()
-		err = c3.call(ctx, "orch.say", map[string]string{"text": text}, &turn)
-		if codeOf(err) == codeUnavailable {
-			time.Sleep(200 * time.Millisecond)
-			err = c3.call(ctx, "orch.say", map[string]string{"text": text}, &turn)
-		}
-		if err != nil {
+		if err := c3.call(ctx, "orch.say", map[string]string{"text": text}, &turn); err != nil {
 			t.Fatalf("orch.say after the first turn ended: %v", err)
 		}
 		c3.close()
@@ -965,7 +978,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			events.close()
 		}
 		events = ec
-		if _, err := nextEvent(ctx, ec, "console"); err != nil { // connected, about us
+		if _, err := nextConsoleKind(ctx, ec, "connected", "restored"); err != nil { // about us
 			t.Fatal(err)
 		}
 		self, _, err := co.identities(ec)
@@ -976,7 +989,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		ev, err := nextEvent(ctx, ec, "console")
+		ev, err := nextConsoleKind(ctx, ec, "refused")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1088,10 +1101,11 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if !hex32Re.MatchString(rep.Pairing) || !hex128Re.MatchString(rep.DenSig) || rep.Powers == nil {
 			t.Fatalf("console.reconnect's reply: %+v", rep)
 		}
-		// Answered at once is a silent reconnect: no powers until the
-		// human's Ctrl+Y on Den's card.
-		if *rep.Powers {
-			t.Error("a silent console.reconnect came with powers: only a reconnect the human answered in Den may")
+		// A reconnect answered at once has powers unless the server holds
+		// them back (Den: locked, or God mode on; an older Den: until a
+		// Ctrl+Y). With PowersLocked it must say false.
+		if co.PowersLocked && *rep.Powers {
+			t.Error("console.reconnect came with powers while the server's powers are locked")
 		}
 		h, in, err := open(ctx, o.Dial)
 		if err != nil {
@@ -1162,6 +1176,41 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		t.Helper()
 		need(t, co != nil && co.Offer != nil, co != nil && co.Confirm != nil)
 	}
+
+	// After the console unpaired itself, a request is refused until a
+	// pairing is started in Den; then it pairs again.
+	run("console.request after an unpairing", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, co != nil && co.Request && co.RequestRefusals, co != nil && co.Offer != nil && co.Confirm != nil)
+		rp, err := requestConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, rp); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.call(ctx, "console.unpair", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		p = nil
+		_, err = requestConsole(ctx, o.Dial, co)
+		var we *WireError
+		if !errors.As(err, &we) || we.Code != codeForbidden || !strings.HasPrefix(we.Message, "unpaired in Den") {
+			t.Fatalf(`console.request after the console unpaired itself: want forbidden "unpaired in Den: …", got %v`, err)
+		}
+		if _, err := co.Offer(ctx); err != nil { // a pairing started in Den
+			t.Fatal(err)
+		}
+		np, err := requestConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatalf("console.request once a pairing was started in Den: %v", err)
+		}
+		p = np
+	})
 
 	run("console.unpair unproved", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t)
@@ -1279,12 +1328,23 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		for i := range 3 {
-			if _, err := co.thief(ctx, pp, self, i == 2); err != nil {
+		// Three thief processes of two tries each: the third refused try
+		// unpairs (a server striking per try, as Den does, on the second
+		// run; one striking per program, on the third), and any try after
+		// it may find no pairing.
+		for range 3 {
+			if _, err := co.thief(ctx, pp, self, true); err != nil {
 				t.Fatal(err)
 			}
 		}
 		wantCause(t, ctx, w, "intruders")
+		// For ten minutes after, a request is refused; a code still pairs.
+		if co.Request && co.RequestRefusals {
+			_, err := requestConsole(ctx, o.Dial, co)
+			if codeOf(err) != codeUnavailable {
+				t.Errorf("console.request after an unpairing for intruders: want unavailable, got %v", err)
+			}
+		}
 	})
 
 	run("unpaired cause burst", func(t *testing.T, ctx context.Context, cl *client) {
@@ -1447,18 +1507,37 @@ func (o *ConsoleOptions) watch(ctx context.Context, dial Dialer, pp *consolePair
 		c.close()
 		return nil, err
 	}
-	if _, err := nextEvent(ctx, c, "console"); err != nil {
+	if _, err := nextConsoleKind(ctx, c, "connected", "restored"); err != nil {
 		c.close()
 		return nil, err
 	}
 	return c, nil
 }
 
+// nextConsoleKind reads console events on c until one of the kinds, and
+// returns its data. Other kinds pass: a server may send ones the suite
+// does not wait for (Den's paired, reconnected, powers), and a client
+// ignores a kind it does not know.
+func nextConsoleKind(ctx context.Context, c *conn, kinds ...string) (json.RawMessage, error) {
+	for {
+		raw, err := nextEvent(ctx, c, "console")
+		if err != nil {
+			return nil, err
+		}
+		var d struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &d) == nil && slices.Contains(kinds, d.Kind) {
+			return raw, nil
+		}
+	}
+}
+
 // thief runs this test binary again as ThiefTest: another process proves
-// with pp's key as self, and must be refused. With last, its try may be
-// the one that unpairs the console, so its second may find none. It
-// returns that process's pid.
-func (o *ConsoleOptions) thief(ctx context.Context, pp *consolePairing, self string, last bool) (int, error) {
+// with pp's key as self, and must be refused. With mayUnpair, any of its
+// tries may come after the strike that unpairs the console, and find none
+// (not_found). It returns that process's pid.
+func (o *ConsoleOptions) thief(ctx context.Context, pp *consolePairing, self string, mayUnpair bool) (int, error) {
 	//nolint:gosec // re-running this test binary is the point; ThiefTest is the server's own test name, from its own Options
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+o.ThiefTest+"$", "-test.v")
 	cmd.Env = append(os.Environ(),
@@ -1467,8 +1546,8 @@ func (o *ConsoleOptions) thief(ctx context.Context, pp *consolePairing, self str
 		"DENCONFORMANCE_THIEF_PAIRING="+pp.pairing,
 		"DENCONFORMANCE_THIEF_KEY="+hex.EncodeToString(pp.priv), // a test key only
 		"DENCONFORMANCE_THIEF_DEN="+pp.denPubHex())
-	if last {
-		cmd.Env = append(cmd.Env, "DENCONFORMANCE_THIEF_LAST=1")
+	if mayUnpair {
+		cmd.Env = append(cmd.Env, "DENCONFORMANCE_THIEF_MAY_UNPAIR=1")
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1500,8 +1579,12 @@ func nextUnpaired(ctx context.Context, c *conn) (cause, reason string, err error
 }
 
 // requestConsole pairs a console by console.request: a fresh key and a
-// pages hash, and Den's reply once Confirm answers its card. The reply's
-// den_public_key must be the console_public_key hello named.
+// pages hash. A Den that pairs its console's service by itself (Den
+// auto-console) replies at once, with no card: then Confirm is not
+// pressed. Otherwise (an older Den raises a card) Confirm answers the card
+// after requestCardWait, and a reply so confirmed must come with powers.
+// Either way the reply's den_public_key must be the console_public_key
+// hello named.
 func requestConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*consolePairing, error) {
 	c, in, err := open(ctx, dial)
 	if err != nil {
@@ -1523,11 +1606,23 @@ func requestConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*cons
 	go func() {
 		done <- c.call(ctx, "console.request", map[string]string{"public_key": hex.EncodeToString(pub), "pages_sha256": pages}, &rep)
 	}()
-	if err := co.Confirm(ctx); err != nil {
-		return nil, err
-	}
-	if err := <-done; err != nil {
-		return nil, err
+	confirmed := false
+	select {
+	case err := <-done: // paired at once: no card was raised
+		if err != nil {
+			return nil, err
+		}
+	case <-time.After(requestCardWait):
+		// No answer yet: a card waits (or a slow reply). A Confirm that
+		// finds no card is not the suite's failure; the reply decides.
+		confirmed = true
+		cerr := co.Confirm(ctx)
+		if err := <-done; err != nil {
+			if cerr != nil {
+				return nil, fmt.Errorf("%w (Confirm: %v)", err, cerr) //nolint:errorlint // both are reported; the request's error is the one to match
+			}
+			return nil, err
+		}
 	}
 	if !hex32Re.MatchString(rep.Pairing) || !hex64Re.MatchString(rep.DenPublicKey) || !rep.Console || rep.Powers == nil {
 		return nil, fmt.Errorf("console.request's reply not as pinned: %+v", rep)
@@ -1535,10 +1630,14 @@ func requestConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*cons
 	if rep.DenPublicKey != in.ConsolePublicKey {
 		return nil, fmt.Errorf("console.request's den_public_key %s is not hello's console_public_key %s", rep.DenPublicKey, in.ConsolePublicKey)
 	}
-	// Paired by the human's Ctrl+Y: with powers, the counterpart of a
-	// silent reconnect's none.
-	if !*rep.Powers {
+	// Paired by the human's Ctrl+Y: with powers. Paired at once, powers
+	// may be off (Den locked, or God mode on), with a card in Den for
+	// them; with PowersLocked they must be.
+	if confirmed && !*rep.Powers {
 		return nil, errors.New("console.request confirmed in Den came without powers")
+	}
+	if !confirmed && co.PowersLocked && *rep.Powers {
+		return nil, errors.New("console.request answered at once came with powers while the server's powers are locked")
 	}
 	den, _ := hex.DecodeString(rep.DenPublicKey)
 	return &consolePairing{pub: pub, priv: priv, pairing: rep.Pairing, denPub: den, pages: pages}, nil
@@ -1721,9 +1820,9 @@ func ConsoleThiefHelper(t *testing.T) {
 		co := &ConsoleOptions{Identity: as}
 		err = co.prove(ctx, c, p)
 		c.close()
-		// The third other program in ten minutes unpairs the console with
-		// its first try ("unpaired cause intruders"): its next finds none.
-		if os.Getenv("DENCONFORMANCE_THIEF_LAST") == "1" && as == "" && codeOf(err) == CodeNotFound {
+		// For "unpaired cause intruders": the third refused try in ten
+		// minutes unpairs the console, and every try after it finds none.
+		if os.Getenv("DENCONFORMANCE_THIEF_MAY_UNPAIR") == "1" && codeOf(err) == CodeNotFound {
 			continue
 		}
 		if codeOf(err) != codeForbidden {

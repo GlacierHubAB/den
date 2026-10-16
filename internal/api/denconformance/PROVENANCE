@@ -6,18 +6,18 @@ against the same suite. Den changes none of it: a finding is fixed upstream
 and the copy pinned again.
 
 Source        the client's conformance package, pinned at commit
-              aef816a6f8e8c9c5f2ee27151cb4e703e11416f4
+              5b1805e89d9508e0296891cae22bca5c7b472ea7
 Code          client.go, console.go, d1.go, denconformance.go at commit
-              aef816a6f8e8c9c5f2ee27151cb4e703e11416f4
+              5b1805e89d9508e0296891cae22bca5c7b472ea7
               client.go         803916dc11644943879be59917f21133f5fa7ef0163430361a770181d792aa40
-              console.go        da21dd2b626ca53befcd455095cd7b5749a0ea09b4fcf4f3de927be197463fa8
+              console.go        361ce60672679dee09416637eec2953c826c0b643830317a650496aebbeba4f7
               d1.go             e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416
               denconformance.go a3baeeca05197103feece0a158320f489aa925e5bfbc45eefb958c6c85c61ccf
               package hash (sha256sum of the .go files in name order, hashed)
-                                87482e68ea37b1dfc80a71da37af4008247e766a7c32d53524368cefb5ba7a4a
-README.md     at commit 404041e, the one that records the pin above;
+                                97c43fcbf3be867befd36777c431b957ff0ab89674c8fc82c0b3068b63bba17f
+README.md     at commit f48aa51, the one that records the pin above;
               byte-identical, as every file here
-              3fda140315d2dea3f95355a7421ed7ca27567e4070b4ff0f0f3fa0106a6b3133
+              308ca6cf38af50abfacba1dc11d2aca5dba2660e37e345bf5a0771fa85aa3e21
 License       MIT, in README.md and the files' own headers
 
 It is test-only. It imports nothing but the standard library, only

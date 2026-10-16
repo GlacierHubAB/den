@@ -10,12 +10,13 @@ import (
 	"github.com/GlacierHubAB/den/internal/api/denconformance"
 )
 
-// The suite's console.request end to end against this server: the dock
-// pairs with no code and no card, with its powers, as with
-// api.console_powers = "always" (the pinned suite wants them). A test
-// process is no systemd unit, so the read of the console's service is
-// stood in for (fakeUnit); internal/ui's run of the suite keeps it off,
-// since it cannot stand in for it.
+// The suite's console.request, console.reconnect and request refusals end
+// to end against this server, as with api.console_powers = "always": the
+// dock pairs with no code and no card, rejoins after a restart, is refused
+// after it unpaired itself until a pairing starts in Den. A test process
+// is no systemd unit, so the read of the console's service is stood in for
+// (fakeUnit); internal/ui's run of the suite keeps them off, since it
+// cannot stand in for it.
 func TestConformanceRequestAndReconnect(t *testing.T) {
 	h := alwaysHarness(t)
 	asked := fakeUnit(t, testVerifier(), nil)
@@ -52,13 +53,11 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 			return ctx.Err()
 		}
 	}
-	// Only console.request: the rest of the suite runs in internal/ui.
-	// The pinned "console.reconnect" still wants a reconnect without its
-	// powers, where the service now reconnects with them as the human
-	// chose: skipped until the suite is fixed upstream and pinned again.
+	// Only these: the rest of the suite runs in internal/ui.
+	run := map[string]bool{"console.request": true, "console.reconnect": true, "console.request after an unpairing": true}
 	var skip []string
 	for _, name := range append(append([]string(nil), denconformance.Subtests...), denconformance.ConsoleSubtests...) {
-		if name != "console.request" {
+		if !run[name] {
 			skip = append(skip, name)
 		}
 	}
@@ -69,21 +68,23 @@ func TestConformanceRequestAndReconnect(t *testing.T) {
 		},
 		Skip: skip,
 		Console: &denconformance.ConsoleOptions{
-			Offer:     func(context.Context) (string, error) { return strings.Join(h.s.StartConsoleCode(), " "), nil },
-			Confirm:   confirm,
-			Request:   true,
-			Reconnect: true,
+			Offer:           func(context.Context) (string, error) { return strings.Join(h.s.StartConsoleCode(), " "), nil },
+			Confirm:         confirm,
+			Request:         true,
+			Reconnect:       true,
+			RequestRefusals: true,
 		},
 	})
-	// It ran, not skipped: no card, the unit read, and the console paired
-	// with its powers.
+	// They ran, not skipped: no card, and the unit read for each pairing:
+	// the request, the reconnect, and the two requests of "after an
+	// unpairing" that were not refused before any read.
 	if len(answered) != 0 {
 		t.Errorf("cards answered %+v", answered)
 	}
-	if len(*asked) != 1 {
-		t.Errorf("unit read %d times, want 1", len(*asked))
+	if len(*asked) != 4 {
+		t.Errorf("unit read %d times, want 4", len(*asked))
 	}
 	if cur, ok := h.s.CurrentConsole(); !ok || !cur.Powers {
-		t.Errorf("after the request: %+v %v", cur, ok)
+		t.Errorf("at the end: %+v %v", cur, ok)
 	}
 }
