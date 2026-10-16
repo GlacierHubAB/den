@@ -74,7 +74,7 @@ func reconnect(t *testing.T, h *harness, d *dock, pages string) (*client, int64)
 // its chat, and the console's first subscribed connection hears it
 // reconnected, automatically.
 func TestReconnectAtOnce(t *testing.T) {
-	h, _ := consoleHarness(t)
+	h := alwaysHarness(t)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	old := requestPaired(t, h, d, "")
@@ -128,7 +128,7 @@ func TestReconnectNamesWhatChanged(t *testing.T) {
 		{"god mode", func(t *testing.T, h *harness) { h.s.SetGodMode(func() bool { return true }) }, testVerifier(), "", "God mode is on", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			h, _ := consoleHarness(t)
+			h := alwaysHarness(t)
 			fakeUnit(t, testVerifier(), nil)
 			d := newDock(t, h)
 			requestPaired(t, h, d, "")
@@ -157,12 +157,12 @@ func TestReconnectNamesWhatChanged(t *testing.T) {
 func TestReconnectAfterDenRestart(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	h := storeHarness(t, store, priv)
+	h := alwaysStore(t, store, priv)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
-	h2 := storeHarness(t, store, priv)
+	h2 := alwaysStore(t, store, priv)
 	d.h = h2
 	d2 := d.restarted()
 	conn, id := reconnect(t, h2, d2, "")

@@ -249,10 +249,11 @@ func (m *Model) startAPI() tea.Cmd {
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den made a new console key (" + consoleKeyFile + "): a dock paired with an earlier one sees Den's key changed and must pair again.", at: time.Now()}))
 	}
 	srv, err := api.Listen(api.Options{
-		Version:      Version,
-		ConsoleKey:   key,
-		ConsoleStore: filepath.Join(state, "consoles.json"),
-		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
+		Version:             Version,
+		ConsoleKey:          key,
+		ConsoleStore:        filepath.Join(state, "consoles.json"),
+		ConsolePowersAlways: cfg.API.ConsolePowers == "always",
+		ChatLog:             filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,

@@ -634,7 +634,11 @@ unpair` revokes every pairing, your console's too.
 and no card, whenever Den and the dock both run: Den checks through your
 systemd user manager that it is `drey-host.service`'s main process, and says
 in its chat what it paired (the program and its SHA-256, and what changed
-since last time). It pairs again by itself after either restarts. `den pair`
+since last time). It pairs again by itself after either restarts. Its powers
+(answering cards, running commands) come with it when the program, unit and
+pins are what you last gave them to since Den started; the first pairing
+after Den starts, and one after a new Drey build, wait for one `Ctrl+Y` on
+Den's powers card (`api.console_powers = "always"` skips that). `den pair`
 in a terminal (or `/api console` in Den) shows a console code the same way
 as above, for pairing by hand. The console may:
 
@@ -675,9 +679,11 @@ takes the console's powers, for every pairing after too, until your `Ctrl+Y`
 on Den's powers card.
 
 What stays: anything running as you that can change drey-host.service's
-unit or program (both in your home dir) gets the dock's full powers with no
-question in Den; your levers are `/api lock`, `/api unpair`, and God mode
-staying off.
+unit or program (both in your home dir) gets the dock's reading and chat
+with no question in Den, and its full powers once you press `Ctrl+Y` on the
+powers card after a change; with `api.console_powers = "always"` it gets
+them with no question at all. Your levers are `/api lock`, `/api unpair`, and
+God mode staying off.
 
 Any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
@@ -1497,6 +1503,7 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

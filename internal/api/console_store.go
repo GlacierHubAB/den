@@ -238,9 +238,9 @@ func (s *Server) loadConsole() string {
 }
 
 // restorePowers gives a console restored after Den's restart its powers
-// back when its process reads clean as the console's service now, and
-// neither the human's lock nor God mode holds; else it asks on Den's
-// powers card, as for any console paired by code.
+// back when the human chose "always", its process reads clean as the
+// console's service now, and neither the human's lock nor God mode holds;
+// else it asks on Den's powers card.
 func (s *Server) restorePowers(rec *consoleRec) {
 	s.con.mu.Lock()
 	locked := s.con.locked
@@ -253,6 +253,9 @@ func (s *Server) restorePowers(rec *consoleRec) {
 		why = "Den restarted, and God mode is on"
 	case rec.verifier == nil:
 		// Paired by code from a process that did not read clean.
+	case !s.opts.ConsolePowersAlways:
+		// What the record says Den read is from disk, which anything of
+		// the user's may rewrite while Den is down: one ^Y.
 	default:
 		v, err := readUnit(sysd.ProcID{PID: rec.PID, Start: rec.start})
 		if err != nil {
@@ -262,7 +265,7 @@ func (s *Server) restorePowers(rec *consoleRec) {
 		s.con.mu.Lock()
 		mine := s.con.cur == rec && !s.con.locked
 		if mine {
-			rec.powers, rec.verifier, s.con.last = true, &v, &v
+			rec.powers, rec.verifier, rec.readHere, s.con.last = true, &v, true, &v
 		}
 		s.con.mu.Unlock()
 		if !mine {

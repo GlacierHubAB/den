@@ -11,6 +11,18 @@ import (
 	"time"
 )
 
+// alwaysHarness is consoleHarness with api.console_powers = "always";
+// alwaysStore is storeHarness with it.
+func alwaysHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsolePowersAlways = mustKey(t), true })
+}
+
+func alwaysStore(t *testing.T, store string, priv ed25519.PrivateKey) *harness {
+	t.Helper()
+	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore, o.ConsolePowersAlways = priv, store, true })
+}
+
 // requestLine sends d's console.request from a new connection and returns
 // the reply.
 func (d *dock) requestLine() line {
@@ -55,8 +67,8 @@ func TestAutoPairOffAfterAnUnpair(t *testing.T) {
 				} else {
 					h.s.StartPairing()
 				}
-				if !d.requestPowers() {
-					t.Error("paired without its powers")
+				if l := d.requestLine(); !l.OK {
+					t.Errorf("request after the human started a pairing: %+v", l.Error)
 				}
 			})
 		}
@@ -175,6 +187,79 @@ func mustKey(t *testing.T) ed25519.PrivateKey {
 	return priv
 }
 
+// By default ("unchanged"), the dock pairs by itself at once, but comes
+// with its powers only as this Den run gave them: the first pairing after
+// Den starts, and any change of program, unit or pins, ask for one ^Y on
+// the powers card; the same build after that ^Y has them.
+func TestPowersOnlyForWhatThisRunGaveThemTo(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "consoles.json")
+	priv := mustKey(t)
+	h := storeHarness(t, store, priv)
+	fakeUnit(t, testVerifier(), nil)
+	d := newDock(t, h)
+	// The first: paired, no powers, a card that says why.
+	if d.requestPowers() {
+		t.Fatal("the first pairing has powers")
+	}
+	pw := ctlAct(t, h.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
+	if !strings.Contains(pw.Why, "has not given this dock its powers") {
+		t.Errorf("powers card %+v", pw)
+	}
+	h.s.ConsolePowersAnswered(pw.ID, true)
+	// The same build restarts: powers.
+	reconnectPowers := func(d *dock) bool {
+		t.Helper()
+		time.Sleep(requestEvery)
+		c, id := reconnect(t, d.h, d, "")
+		var r reconnectReply
+		if l := c.replyTo(id); !l.OK || json.Unmarshal(l.Result, &r) != nil {
+			t.Fatalf("reconnect %+v %s", l.Error, l.Result)
+		}
+		return r.Powers
+	}
+	d = d.restarted()
+	if !reconnectPowers(d) {
+		t.Error("the same build has no powers after the ^Y")
+	}
+	// A new build: paired, no powers, the change named.
+	changed := testVerifier()
+	changed.Exe.SHA256 = strings.Repeat("99", 32)
+	fakeUnit(t, changed, nil)
+	d = d.restarted()
+	if reconnectPowers(d) {
+		t.Error("a new build has its powers")
+	}
+	pw = ctlAct(t, h.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
+	if !strings.Contains(pw.Why, "the program changed") {
+		t.Errorf("powers card %+v", pw)
+	}
+	// Restarted again, still not given: still none.
+	d = d.restarted()
+	if reconnectPowers(d) {
+		t.Error("a build never given the powers has them")
+	}
+	pw = ctlAct(t, h.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
+	h.s.ConsolePowersAnswered(pw.ID, true)
+	d = d.restarted()
+	if !reconnectPowers(d) {
+		t.Error("the new build has no powers after its ^Y")
+	}
+	// After Den restarts, what it read before is from disk: the restored
+	// console, and the next re-pair, ask again.
+	cleanExit(h.s)
+	h2 := storeHarness(t, store, priv)
+	if pw := ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers; pw.Why != "Den restarted" {
+		t.Errorf("restored: %+v", pw)
+	}
+	cur, _ := h2.s.CurrentConsole()
+	h2.s.ConsolePowersAnswered(cur.ID, true) // a ^Y for what is on disk counts for nothing after
+	d.h = h2
+	d = d.restarted()
+	if reconnectPowers(d) {
+		t.Error("a re-pair after Den restarted has its powers from the record on disk")
+	}
+}
+
 // A replaced console does not stop automatic pairing.
 func TestAutoPairOnAfterAReplace(t *testing.T) {
 	h, _ := consoleHarness(t)
@@ -192,7 +277,7 @@ func TestAutoPairOnAfterAReplace(t *testing.T) {
 func TestLockOutlastsRepairs(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	h := storeHarness(t, store, priv)
+	h := alwaysStore(t, store, priv)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	requestPaired(t, h, d, "")
@@ -223,7 +308,7 @@ func TestLockOutlastsRepairs(t *testing.T) {
 	// After Den restarts.
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
-	h2 := storeHarness(t, store, priv)
+	h2 := alwaysStore(t, store, priv)
 	if pw := ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers; !strings.Contains(pw.Why, "you locked") {
 		t.Errorf("powers card after the restart: %+v", pw)
 	}
@@ -294,7 +379,7 @@ func TestAutoPairInGodMode(t *testing.T) {
 // program and its SHA-256, and what changed since Den last read the
 // service.
 func TestAutoPairSaysWhatItPaired(t *testing.T) {
-	h, _ := consoleHarness(t)
+	h := alwaysHarness(t)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	p := requestPaired(t, h, d, "")

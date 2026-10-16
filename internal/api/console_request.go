@@ -129,8 +129,30 @@ func (s *Server) pairAutomatically(c *conn, req Request, was, rec *consoleRec, v
 		}
 	}
 	changes = append(changes, extra...)
-	rec.powers = !locked && !god
-	rec.verifier = &v
+	// The powers come with what this Den run already gave them to, as it
+	// read it itself; anything else, or anything at all when the human
+	// chose "always", as said.
+	known, since := s.opts.ConsolePowersAlways, ""
+	if !known {
+		switch g := st.given; {
+		case g == nil:
+			since = "Den has not given this dock its powers since Den started"
+		default:
+			var diff []string
+			for _, d := range sysd.Compare(*g, v) {
+				diff = append(diff, string(d))
+			}
+			known = len(diff) == 0
+			if !known {
+				since = "it changed since you last gave it its powers: " + strings.Join(diff, "; ")
+			}
+		}
+	}
+	rec.powers = !locked && !god && known
+	rec.verifier, rec.readHere = &v, true
+	if rec.powers {
+		st.given = &v
+	}
 	rec.auto = &ConsoleEvent{Kind: kind, PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started), Reason: "paired automatically",
 		Unit: ConsoleUnit, Program: sanitize.Label(v.Exe.Path, 160), ProgramSHA: v.Exe.SHA256, Changes: changes}
 	old := st.cur
@@ -161,6 +183,8 @@ func (s *Server) pairAutomatically(c *conn, req Request, was, rec *consoleRec, v
 		why = "you locked the console's powers in Den"
 	case god:
 		why = "God mode is on"
+	case !known:
+		why = sanitize.Label(since, 300)
 	}
 	if why != "" {
 		note += ". It answers no cards and runs no commands until you press Ctrl+Y on its card: " + why + "."

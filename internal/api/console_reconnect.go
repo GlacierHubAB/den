@@ -121,6 +121,9 @@ func (s *Server) ConsolePowersAnswered(id string, ok bool) {
 		s.con.locked = false // the ^Y lifts the human's lock too
 		s.saveConsoleLocked()
 	}
+	if mine && cur.verifier != nil && cur.readHere {
+		s.con.given = cur.verifier // what the human gave the powers to, as this Den read it
+	}
 	s.con.mu.Unlock()
 	if given {
 		s.powersEvent(cur, true)

@@ -67,7 +67,7 @@ func noCard(t *testing.T, s *Server) {
 // its powers and no card: the reply names Den's key, Den records what it
 // read, and the new console proves as any other.
 func TestConsoleRequestPairsAtOnce(t *testing.T) {
-	h, _ := consoleHarness(t)
+	h := alwaysHarness(t)
 	asked := fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	c := h.dial()
@@ -156,12 +156,12 @@ func TestConsoleRequestLimits(t *testing.T) {
 func TestConsoleRestoredGetsItsPowersOnACleanRead(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	h := storeHarness(t, store, priv)
+	h := alwaysStore(t, store, priv)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
-	h2 := storeHarness(t, store, priv)
+	h2 := alwaysStore(t, store, priv)
 	noteWith(t, h2.s, "read clean as "+ConsoleUnit)
 	h2.s.con.mu.Lock()
 	cur := h2.s.con.cur
@@ -176,13 +176,13 @@ func TestConsoleRestoredGetsItsPowersOnACleanRead(t *testing.T) {
 func TestConsoleRestoredNotCleanAsks(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	h := storeHarness(t, store, priv)
+	h := alwaysStore(t, store, priv)
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
 	fakeUnit(t, testVerifier(), sysd.Problems{`its Type is "forking", not simple or exec`})
-	h2 := storeHarness(t, store, priv)
+	h2 := alwaysStore(t, store, priv)
 	pw := ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
 	if !strings.Contains(pw.Why, "did not read clean") {
 		t.Errorf("powers card: %+v", pw)

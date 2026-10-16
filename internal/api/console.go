@@ -186,8 +186,10 @@ type consoleRec struct {
 	restored bool // restored from before a Den restart, not yet announced
 	// verifier is what Den last read of the console's service (an
 	// automatic pairing, or a claim by code that read clean), nil for any
-	// other pairing by code.
+	// other pairing by code. readHere says this Den process read it, not
+	// a record from disk.
 	verifier *sysd.Verifier
+	readHere bool
 	// powers is whether the console may answer cards and run commands:
 	// given with a pairing unless the human locked them or God mode is
 	// on, and by the human's ^Y on Den's powers card; taken by /api lock,
@@ -228,8 +230,12 @@ type consoleState struct {
 	autoOff  bool
 	autoHold time.Time
 	// last is what Den last read of the console's service, for the changes
-	// an automatic pairing names.
-	last *sysd.Verifier
+	// an automatic pairing names. given is the read this Den process last
+	// gave the powers to, itself (never one read back from disk): unless
+	// ConsolePowersAlways, only the same program, unit and pins pair with
+	// them.
+	last  *sysd.Verifier
+	given *sysd.Verifier
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches
@@ -616,7 +622,7 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 	}
 	ask := ConsoleAsk{ID: id, Exe: c.peer.Exe, PID: self.PID}
 	if err == nil {
-		rec.verifier = &v
+		rec.verifier, rec.readHere = &v, true
 		ask.Rejoins, ask.Unit = true, ConsoleUnit
 	}
 	ask.Started, ask.Parent, ask.Cmdline = procInfo(self.PID)
@@ -710,7 +716,8 @@ func (s *Server) awaitConsole(c *conn, req Request, rec *consoleRec, confirm cha
 			rec.powers = !locked
 			old, st.cur = st.cur, rec
 			if rec.verifier != nil {
-				st.last = rec.verifier
+				// The human paired this program by code and ^Y.
+				st.last, st.given = rec.verifier, rec.verifier
 			}
 			s.saveConsoleLocked()
 		} else if why == ClaimDenied && mine {

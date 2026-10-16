@@ -46,6 +46,11 @@ type Options struct {
 	// ConsoleStore is where Den keeps its side of the console across
 	// restarts (console_store.go); "" keeps it in memory only.
 	ConsoleStore string
+	// ConsolePowersAlways gives the console's service its powers whenever
+	// it pairs by itself (api.console_powers = "always"). Left false, only
+	// a program, unit and pins this Den run already gave them to come with
+	// them; anything else asks for one Ctrl+Y.
+	ConsolePowersAlways bool
 }
 
 // Client is a connected app, as /api and the chip show it.

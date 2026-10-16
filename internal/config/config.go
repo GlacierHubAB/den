@@ -80,6 +80,10 @@ type Config struct {
 	API struct {
 		Enabled      bool
 		AskBudgetUSD float64 // what apps' questions may spend a day
+		// ConsolePowers is when the dock, pairing by itself, comes with
+		// its powers: "unchanged" (the program, unit and pins Den last gave
+		// them to in this run) or "always".
+		ConsolePowers string
 	}
 	// On holds a shell command per event kind, run by Den with the event's
 	// metadata. Empty runs nothing.
@@ -133,6 +137,7 @@ func Defaults() Config {
 	c.Stuck.ToolFailures = 3
 	c.Events.Log = true
 	c.API.AskBudgetUSD = 2
+	c.API.ConsolePowers = "unchanged"
 	return c
 }
 
@@ -280,6 +285,9 @@ func (c *Config) apply(kv map[string]string) {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
 			c.API.AskBudgetUSD = f
 		}
+	}
+	if v := kv["api.console_powers"]; v == "always" || v == "unchanged" {
+		c.API.ConsolePowers = v
 	}
 	for key, dst := range map[string]*string{
 		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
@@ -520,6 +528,7 @@ weekly_usd = 0              # none; a weekly $ budget to estimate usage against 
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

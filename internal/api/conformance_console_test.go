@@ -11,12 +11,13 @@ import (
 )
 
 // The suite's console.request end to end against this server: the dock
-// pairs with no code and no card, with its powers. A test process is no
-// systemd unit, so the read of the console's service is stood in for
-// (fakeUnit); internal/ui's run of the suite keeps it off, since it cannot
-// stand in for it.
+// pairs with no code and no card, with its powers, as with
+// api.console_powers = "always" (the pinned suite wants them). A test
+// process is no systemd unit, so the read of the console's service is
+// stood in for (fakeUnit); internal/ui's run of the suite keeps it off,
+// since it cannot stand in for it.
 func TestConformanceRequestAndReconnect(t *testing.T) {
-	h, _ := consoleHarness(t)
+	h := alwaysHarness(t)
 	asked := fakeUnit(t, testVerifier(), nil)
 	// A view, as Den publishes one: a reconnect before hello needs it.
 	h.s.Publish(Project(Snapshot{Taken: time.Now()}))
