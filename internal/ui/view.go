@@ -64,6 +64,7 @@ func (m Model) View() tea.View {
 	content = sanitize.Styled(content)
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.WindowTitle = m.desk.title
 	if m.tab == tabReview || m.tab == tabOrch || m.tab == tabOverview {
 		// Clicks and drags pick lines in the diff, and select text inside
 		// one pane on the chat views. The Fleet and Inbox views keep the

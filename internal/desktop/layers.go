@@ -36,6 +36,10 @@ func (l Layer) Overlaps(w Window) bool {
 type Bind struct {
 	Mods int
 	Key  string
+	// Dispatcher and Arg are what the bind runs ("exec", "killactive",
+	// ...): task mode refuses a short fixed list of them.
+	Dispatcher string
+	Arg        string
 }
 
 // Modifier bits as Hyprland reports them.
@@ -81,9 +85,11 @@ func readLayers(raw []byte) ([]Layer, error) {
 // cannot be pressed from a keyboard and are left out.
 func readBinds(raw []byte) ([]Bind, error) {
 	var binds []struct {
-		Modmask int    `json:"modmask"`
-		Key     string `json:"key"`
-		Mouse   bool   `json:"mouse"`
+		Modmask    int    `json:"modmask"`
+		Key        string `json:"key"`
+		Mouse      bool   `json:"mouse"`
+		Dispatcher string `json:"dispatcher"`
+		Arg        string `json:"arg"`
 	}
 	if err := json.Unmarshal(raw, &binds); err != nil {
 		return nil, err
@@ -94,7 +100,7 @@ func readBinds(raw []byte) ([]Bind, error) {
 		if b.Mouse || k == "" || strings.HasPrefix(k, "mouse") || strings.HasPrefix(k, "switch:") {
 			continue
 		}
-		out = append(out, Bind{Mods: b.Modmask &^ (modCaps | modNum), Key: keyName(k)})
+		out = append(out, Bind{Mods: b.Modmask &^ (modCaps | modNum), Key: keyName(k), Dispatcher: strings.ToLower(strings.TrimSpace(b.Dispatcher)), Arg: b.Arg})
 	}
 	return out, nil
 }

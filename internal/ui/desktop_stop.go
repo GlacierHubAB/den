@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -132,6 +133,10 @@ func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
 	if dm == nil {
 		return m.say("No desktop mission is running. /desktop stop stops one at once.", false)
 	}
+	if dm.Task {
+		left := time.Until(dm.deadline).Round(time.Second)
+		return m.say(fmt.Sprintf("Desktop task by %s: %d of %d actions used, %s left. /desktop stop ends it at once.", sanitize.Label(dm.AgentName, 40), dm.actions, dm.limitActions, left), false)
+	}
 	return m.say("Desktop mission on workspace "+strconv.Itoa(dm.Workspace)+" by "+sanitize.Label(dm.AgentName, 40)+": /desktop stop ends it at once.", false)
 }
 
@@ -158,6 +163,9 @@ func (m *Model) deskOnTick() tea.Cmd {
 		m.finishDeskMission(dm, "the agent's session ended")
 		return nil
 	}
+	if dm.Task && !dm.deadline.IsZero() && time.Now().After(dm.deadline) {
+		return m.finishDeskMission(dm, "the task's time ran out")
+	}
 	if dm.AgentPID <= 1 && !dm.launchedAt.IsZero() && time.Since(dm.launchedAt) > deskStartWait {
 		// Den learns the agent's process when its desktop server first
 		// calls; one that never does would hold the one mission slot.
@@ -171,6 +179,9 @@ func (m *Model) deskOnTick() tea.Cmd {
 		m.desk.chip = "DESKTOP · acting · /desktop stop"
 	default:
 		m.desk.chip = "DESKTOP · on · /desktop stop"
+	}
+	if check := m.deskTaskCheck(dm); check != nil {
+		return tea.Batch(deskTick(), check)
 	}
 	return deskTick()
 }
@@ -219,7 +230,11 @@ func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 
 // startDeskWatch begins the tick and says desktop control is on.
 func (m *Model) startDeskWatch(dm *deskMission) tea.Cmd {
-	deskNotify(notify.Note{Summary: "Desktop control on", Body: "A Den agent may drive workspace " + strconv.Itoa(dm.Workspace) + ". /desktop stop or den desktop stop ends it."})
+	body := "A Den agent may drive workspace " + strconv.Itoa(dm.Workspace) + ". /desktop stop or den desktop stop ends it."
+	if dm.Task {
+		body = "A Den agent may use your whole desktop for one task. /desktop stop or den desktop stop ends it."
+	}
+	deskNotify(notify.Note{Summary: "Desktop control on", Body: body})
 	m.desk.chip = "DESKTOP · on · /desktop stop"
 	return deskTick()
 }

@@ -257,6 +257,9 @@ type DesktopMissionInput struct {
 	Dir        string   `json:"dir"`
 	Model      string   `json:"model,omitempty"`
 	AskedBy    string   `json:"asked_by"` // the asker's peer name, for the card and the report
+	// Task, in place of Plan and Apps, asks for a task mission: the whole
+	// desktop for this one task, behind Den's fixed rules.
+	Task string `json:"task,omitempty"`
 }
 
 // DesktopInput is the payload of a DesktopEvent.

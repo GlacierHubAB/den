@@ -58,6 +58,16 @@ type deskMission struct {
 	kept, purged bool      // the human kept its files; they were deleted
 	tokens       map[string]deskToken
 	turn         string // the open your-turn card's item id
+	// A task mission: view is the agent view's address, placed says it is
+	// recorded (no call is answered before), and the limits from the
+	// human's config with the calls forwarded so far.
+	view                string
+	placed              bool
+	limitActions        int
+	actions             int
+	deadline            time.Time
+	checking, pinWarned bool
+	checkedAt           time.Time
 }
 
 // deskToken lets the proxy forward the rest of an allowed typed text.
@@ -85,6 +95,9 @@ type deskState struct {
 	// install runs: the question stays open until the install's own result
 	// settles it, which is what answers `den install-hypruse`.
 	installing string
+	// title is Den's terminal title when Den sets one: a task's handshake
+	// token while Den finds its own window, then restingTitle.
+	title string
 }
 
 // Seams for tests.
@@ -190,7 +203,7 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 		dm.ProxyPID, dm.ProxyStart, dm.ProxyExe = r.PeerPID, deskStart(r.PeerPID), deskExe()
 		dm.ChildPID, dm.ChildStart, dm.ChildExe = 0, "", ""
 		paths := desktop.DefaultPaths()
-		data, _ := json.Marshal(desktop.StartInfo{Argv: paths.ServerArgv(), Env: desktop.HypruseEnv(dm.Workspace, filepath.Join(dm.Dir, "journal.ndjson")), Log: filepath.Join(dm.Dir, "desktop.log")})
+		data, _ := json.Marshal(desktop.StartInfo{Argv: paths.ServerArgv(), Env: desktop.HypruseEnv(dm.Workspace, filepath.Join(dm.Dir, "journal.ndjson")), Log: filepath.Join(dm.Dir, "desktop.log"), Task: dm.Task})
 		r.Reply(bridge.Decision{Behavior: "allow", Data: data})
 		return nil
 	case "child":
@@ -244,7 +257,23 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	if r.HungUp() {
 		return nil
 	}
+	if dm.Task && !dm.placed {
+		return deny("Den is still placing the agent view; call again in a moment")
+	}
+	if why := dm.taskGone(msg.snap); why != "" {
+		deny(why + "; the task has ended")
+		return m.finishDeskMission(dm, why)
+	}
 	v := desktop.Decide(in.Tool, in.Args, dm.Mission, msg.snap)
+	// spend counts a call Den forwards to hypruse against a task's limits.
+	spend := func() (bool, tea.Cmd) {
+		why, end := m.taskSpend(dm)
+		if why != "" {
+			deny(why)
+			return false, end
+		}
+		return true, nil
+	}
 	if in.Token != "" {
 		// The next piece of a text the gate (or the human) already allowed:
 		// the same window, still in scope; no second card.
@@ -259,6 +288,9 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 			delete(dm.tokens, in.Token)
 			return deny("the target window changed")
 		}
+		if ok, end := spend(); !ok {
+			return end
+		}
 		tok.left--
 		dm.tokens[in.Token] = tok
 		m.deskAllow(r, dm, in.Tool, v, 0)
@@ -268,6 +300,9 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	case desktop.Deny:
 		return deny(v.Reason)
 	case desktop.Allow:
+		if ok, end := spend(); !ok {
+			return end
+		}
 		if in.Tool == "marks" && v.Target != nil {
 			dm.MarksWindow = v.Target.Address
 		}
@@ -423,9 +458,9 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		dm.Paused, dm.turn = false, ""
 		if verb != "allow" {
 			m.store.SettleWith(it, bridge.Decision{Behavior: "deny", Message: "Den: the human ended the mission at this step. Stop now."}, "you ended the mission")
-			m.endDeskMission(dm, "you ended it at your step")
-			m.refresh()
-			return m.say("Ended the desktop mission.", false)
+			end := m.finishDeskMission(dm, "you ended it at your step")
+			model, say := m.say("Ended the desktop mission.", false)
+			return model, tea.Batch(say, end)
 		}
 		step, _ := p.verdict.Args["step"].(string)
 		m.store.SettleWith(it, bridge.Decision{Behavior: "allow", Message: "The human finished this step: " + sanitize.Line(step) + ". Go on with the plan."}, "you did it; the agent goes on")
@@ -501,7 +536,7 @@ func (m *Model) handleDesktopGate(r *bridge.Request) tea.Cmd {
 		if why := dm.refusal(); why != "" {
 			return deny(why)
 		}
-		for _, t := range desktop.AllowedToolNames() {
+		for _, t := range desktop.AllowedToolNames(dm.Task) {
 			if in.ToolName == t {
 				r.Reply(bridge.Decision{Behavior: "allow"})
 				return nil

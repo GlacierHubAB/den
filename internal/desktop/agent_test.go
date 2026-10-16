@@ -43,7 +43,7 @@ func TestAgentArgv(t *testing.T) {
 		t.Fatalf("no %s in %q", name, argv)
 		return ""
 	}
-	if got, want := flag("--tools"), strings.Join(AllowedToolNames(), ","); got != want {
+	if got, want := flag("--tools"), strings.Join(AllowedToolNames(false), ","); got != want {
 		t.Fatalf("--tools %s", got)
 	}
 	if flag("--allowedTools") != flag("--tools") {

@@ -21,6 +21,7 @@ type Window struct {
 	Size      [2]int `json:"size"`
 	Floating  bool   `json:"floating"`
 	Mapped    bool   `json:"mapped"`
+	Pinned    bool   `json:"-"` // shown on every workspace (Den pins the agent view)
 }
 
 // Contains reports whether the global point lies inside the window.
@@ -116,6 +117,7 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 		At        [2]int `json:"at"`
 		Size      [2]int `json:"size"`
 		Floating  bool   `json:"floating"`
+		Pinned    bool   `json:"pinned"`
 		Mapped    *bool  `json:"mapped"`
 		Hidden    bool   `json:"hidden"`
 		Workspace struct {
@@ -127,7 +129,7 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 	}
 	for _, c := range clients {
 		mapped := (c.Mapped == nil || *c.Mapped) && !c.Hidden
-		s.Windows = append(s.Windows, Window{Address: c.Address, Class: c.Class, Title: c.Title, PID: c.PID, Workspace: c.Workspace.ID, At: c.At, Size: c.Size, Floating: c.Floating, Mapped: mapped})
+		s.Windows = append(s.Windows, Window{Address: c.Address, Class: c.Class, Title: c.Title, PID: c.PID, Workspace: c.Workspace.ID, At: c.At, Size: c.Size, Floating: c.Floating, Mapped: mapped, Pinned: c.Pinned})
 	}
 	out, err = hyprctl(ctx, "monitors", "-j")
 	if err != nil {
@@ -217,6 +219,11 @@ type Mission struct {
 	// MarksWindow is the window of the last marks call Den allowed: a
 	// click_ui by mark is only in scope for it.
 	MarksWindow string
+	// Task is a task mission: the whole desktop, with Den's own surfaces
+	// (Protected, by Hyprland address: the window Den runs in and the agent
+	// view) off limits, and no per-app rules. See task.go.
+	Task      bool
+	Protected map[string]bool
 }
 
 // InScope reports whether a window is the mission's: on its workspace, and

@@ -150,6 +150,19 @@ func TestDesktopInstallSecondYesWhileInstalling(t *testing.T) {
 	}
 }
 
+// While an approved install runs, a new request is refused even if the
+// first command stopped waiting and its question left the inbox.
+func TestDesktopInstallRefusedWhileInstalling(t *testing.T) {
+	fakeDesktopInstall(t, nil, nil)
+	m := closeModel(t)
+	m.desk.installing = "some-item"
+	req := desktopInstallRequest()
+	runBatch(m.handleRequest(req))
+	if d, done := req.Decided(); !done || d.Behavior != "deny" || !strings.Contains(d.Message, "installing now") || desktopInstallItem(m) != nil {
+		t.Errorf("a second install during one: %+v %v", d, done)
+	}
+}
+
 func TestDesktopInstallDeclined(t *testing.T) {
 	ran := fakeDesktopInstall(t, nil, nil)
 	m := closeModel(t)

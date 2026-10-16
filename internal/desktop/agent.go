@@ -90,6 +90,9 @@ type AgentLaunch struct {
 	// Claude is the Claude Code binary Den resolved, absolute: launched by
 	// that path, and the agent's process must run that very file.
 	Claude string
+	// Task is a task mission: the agent also gets launch, binds and
+	// use_bind (see task.go).
+	Task bool
 }
 
 // AgentArgv is the claude command line for a desktop agent, launched like
@@ -106,7 +109,7 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 	mcp, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{
 		MCPServer: map[string]any{"command": l.Den, "args": []string{"desktop-mcp", "--mission", l.Mission, "--socket", l.Socket}, "alwaysLoad": true},
 	}})
-	tools := strings.Join(AllowedToolNames(), ",")
+	tools := strings.Join(AllowedToolNames(l.Task), ",")
 	claude := "claude"
 	if l.Claude != "" {
 		if !filepath.IsAbs(l.Claude) {
@@ -127,7 +130,7 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 		"--setting-sources", "", "--settings", l.Settings,
 		"--permission-mode", "dontAsk",
 		"--allowedTools", tools,
-		"--disallowedTools", strings.Join(ClosedToolNames(), ","),
+		"--disallowedTools", strings.Join(ClosedToolNames(l.Task), ","),
 	}
 	if l.Model != "" {
 		argv = append(argv, "--model", l.Model)
@@ -139,17 +142,24 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 
 // TerminalArgv is what the agent's terminal runs: `den desktop-view`,
 // which starts the agent itself (an argv, no shell between Den and the
-// prompt) and shows its words and tool calls, sanitised.
-func TerminalArgv(agent []string, den, mission string) []string {
-	return append([]string{den, "desktop-view", "--mission", mission, "--exec", "--"}, agent...)
+// prompt) and shows its words and tool calls, sanitised. owner is Den's
+// process as "pid:start" (clock ticks), or "": the view stops the agent
+// when that process ends, since the terminal is not Den's child (P4).
+func TerminalArgv(agent []string, den, mission, owner string) []string {
+	argv := []string{den, "desktop-view", "--mission", mission}
+	if owner != "" {
+		argv = append(argv, "--den", owner)
+	}
+	return append(append(argv, "--exec", "--"), agent...)
 }
 
 // DeniedTools are the settings deny rules of a desktop agent: Claude Code's
-// own tools that act or reach outside, and hypruse's closed tools.
-func DeniedTools() []string {
+// own tools that act or reach outside, and hypruse's closed tools (a task
+// mission's, when task).
+func DeniedTools(task bool) []string {
 	out := []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Read", "Glob", "Grep", "WebFetch", "WebSearch",
 		"Task", "Agent", "SendMessage", "ListAgents", "Skill", "SlashCommand", "KillShell", "BashOutput", "ToolSearch"}
-	return append(out, ClosedToolNames()...)
+	return append(out, ClosedToolNames(task)...)
 }
 
 // Brief is the desktop agent's first prompt.

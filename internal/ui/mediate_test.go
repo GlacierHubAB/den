@@ -257,7 +257,7 @@ func TestDesktopSettingsThroughGuardAgent(t *testing.T) {
 	dir := t.TempDir()
 	den := filepath.Join(dir, "den")
 	os.WriteFile(den, []byte("binary"), 0o755)
-	path, err := m.guardAgent("11111111-2222-4333-8444-555555555555", den, "/run/user/1/den.sock", deskHooks())
+	path, err := m.guardAgent("11111111-2222-4333-8444-555555555555", den, "/run/user/1/den.sock", deskHooks(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestDesktopSettingsThroughGuardAgent(t *testing.T) {
 			t.Errorf("%s is not denied", want)
 		}
 	}
-	for _, allowed := range desktop.AllowedToolNames() {
+	for _, allowed := range desktop.AllowedToolNames(false) {
 		if strings.Contains(deny, ","+allowed+",") {
 			t.Errorf("an allowed tool is denied: %s", allowed)
 		}
@@ -323,7 +323,7 @@ func TestDesktopSettingsThroughGuardAgent(t *testing.T) {
 	if why := g.check(); !strings.Contains(why, "settings") {
 		t.Fatalf("edited settings: %q", why)
 	}
-	m.guardAgent("11111111-2222-4333-8444-555555555555", den, "/run/user/1/den.sock", deskHooks())
+	m.guardAgent("11111111-2222-4333-8444-555555555555", den, "/run/user/1/den.sock", deskHooks(false))
 	g = m.med.guards["11111111-2222-4333-8444-555555555555"]
 	os.WriteFile(den, []byte("other"), 0o755)
 	if why := g.check(); !strings.Contains(why, "binary") {
@@ -348,7 +348,7 @@ func TestGuardsGoWithTheirAgents(t *testing.T) {
 	den := filepath.Join(t.TempDir(), "den")
 	os.WriteFile(den, []byte("binary"), 0o755)
 	dm := &deskMission{Mission: desktop.Mission{ID: "m1"}, SessionID: "22222222-2222-4333-8444-555555555555"}
-	path, err := m.guardAgent(dm.SessionID, den, "/run/user/1/den.sock", deskHooks())
+	path, err := m.guardAgent(dm.SessionID, den, "/run/user/1/den.sock", deskHooks(false))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,5 +375,38 @@ func TestGuardsGoWithTheirAgents(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Errorf("its settings file stayed: %v", err)
+	}
+}
+
+// A task mission's deny rules are the same as any desktop agent's, less
+// exactly the tools a task has: launch, binds and use_bind. Everything
+// outside the task's tools stays denied.
+func TestDeskHooksForATask(t *testing.T) {
+	plain, task := deskHooks(false).Deny, deskHooks(true).Deny
+	inTask := map[string]bool{}
+	for _, d := range task {
+		inTask[d] = true
+	}
+	var dropped []string
+	for _, d := range plain {
+		if !inTask[d] {
+			dropped = append(dropped, d)
+		}
+	}
+	if strings.Join(dropped, ",") != "mcp__hypruse__launch,mcp__hypruse__use_bind,mcp__hypruse__binds" {
+		t.Errorf("a task drops %v from the deny rules", dropped)
+	}
+	if len(task) != len(plain)-3 {
+		t.Errorf("a task denies %d, the plain %d", len(task), len(plain))
+	}
+	for _, allowed := range desktop.AllowedToolNames(true) {
+		if inTask[allowed] {
+			t.Errorf("a task's tool is denied: %s", allowed)
+		}
+	}
+	for _, want := range []string{"Bash", "Write", "Read", "WebFetch", "SendMessage", "mcp__hypruse__sequence", "mcp__hypruse__clipboard", "mcp__hypruse__wait_for"} {
+		if !inTask[want] {
+			t.Errorf("a task does not deny %s", want)
+		}
 	}
 }

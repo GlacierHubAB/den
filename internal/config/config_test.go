@@ -251,3 +251,21 @@ func TestAgentsPermissionMode(t *testing.T) {
 		t.Errorf("ModeSetting with no file = %q, %q, %v", mode, refused, err)
 	}
 }
+
+// A task mission's limits come from the [desktop] section alone, with
+// defaults; nonsense keeps the default.
+func TestDesktopTaskLimits(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	if m, a := DesktopTask(); m != DefaultTaskMinutes || a != DefaultTaskActions {
+		t.Fatalf("no file: %d %d", m, a)
+	}
+	os.WriteFile(p, []byte("[desktop]\ntask_minutes = 5\ntask_actions = 40\n"), 0o600)
+	if m, a := DesktopTask(); m != 5 || a != 40 {
+		t.Fatalf("set: %d %d", m, a)
+	}
+	os.WriteFile(p, []byte("[desktop]\ntask_minutes = 0\ntask_actions = lots\n"), 0o600)
+	if m, a := DesktopTask(); m != DefaultTaskMinutes || a != DefaultTaskActions {
+		t.Fatalf("nonsense: %d %d", m, a)
+	}
+}
