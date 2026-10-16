@@ -162,7 +162,7 @@ func TestConsoleRestoredGetsItsPowersOnACleanRead(t *testing.T) {
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
 	h2 := alwaysStore(t, store, priv)
-	noteWith(t, h2.s, "read clean as "+ConsoleUnit)
+	noteWith(t, h2.s, "the restored console is "+ConsoleUnitName+" ("+ConsoleUnit+") pid "+itoa(os.Getpid())+", read clean now")
 	h2.s.con.mu.Lock()
 	cur := h2.s.con.cur
 	h2.s.con.mu.Unlock()

@@ -33,6 +33,13 @@ const (
 	ConsoleUnitName = "Drey"
 )
 
+// consoleUnitWho is how Den's chat names a console it read clean as
+// ConsoleUnit, in Den's own words: ConsoleUnitName, the unit in
+// brackets, and the pid.
+func consoleUnitWho(pid int) string {
+	return ConsoleUnitName + " (" + ConsoleUnit + ") pid " + itoa(pid)
+}
+
 // readUnit reads the console's service for the process peer; tests
 // replace it.
 var readUnit = func(peer sysd.ProcID) (sysd.Verifier, error) { return sysd.Read(ConsoleUnit, peer) }
@@ -171,7 +178,7 @@ func (s *Server) pairAutomatically(c *conn, req Request, was, rec *consoleRec, v
 		}
 		s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: reason, Cause: CauseReplaced})
 	}
-	note := "console paired automatically: " + ConsoleUnit + " pid " + itoa(rec.PID) + ", started " + hhmmss(rec.Started) +
+	note := "console paired automatically: " + consoleUnitWho(rec.PID) + ", started " + hhmmss(rec.Started) +
 		", program " + sanitize.Label(v.Exe.Path, 160) + " (sha256 " + v.Exe.SHA256 + ")"
 	if len(changes) > 0 {
 		var said []string

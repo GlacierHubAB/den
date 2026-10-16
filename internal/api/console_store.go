@@ -272,7 +272,7 @@ func (s *Server) restorePowers(rec *consoleRec) {
 			return
 		}
 		s.powersEvent(rec, true)
-		s.note("the restored console read clean as " + ConsoleUnit + ": it may answer cards and run commands again.")
+		s.note("the restored console is " + consoleUnitWho(rec.PID) + ", read clean now: it may answer cards and run commands again.")
 		s.act(Act{ConsoleChanged: true})
 		return
 	}

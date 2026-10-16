@@ -416,7 +416,7 @@ func TestAutoPairSaysWhatItPaired(t *testing.T) {
 	fakeUnit(t, testVerifier(), nil)
 	d := newDock(t, h)
 	p := requestPaired(t, h, d, "")
-	n := noteWith(t, h.s, "console paired automatically: "+ConsoleUnit)
+	n := noteWith(t, h.s, "console paired automatically: "+ConsoleUnitName+" ("+ConsoleUnit+") pid ")
 	for _, want := range []string{"/home/u/.local/bin/console-host", testVerifier().Exe.SHA256, "pid "} {
 		if !strings.Contains(n, want) {
 			t.Errorf("note lacks %q: %s", want, n)
