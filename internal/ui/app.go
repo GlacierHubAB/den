@@ -159,6 +159,7 @@ type Model struct {
 	installs        map[string]remote.Plan     // remote install questions in the inbox, by item id
 	desktopInstalls map[string]desktop.Plan    // hypruse install questions in the inbox, by item id
 	desk            deskState                  // desktop missions
+	team            teamState                  // the small-team process: overlapping branches
 	sends           map[string]askedSend       // den send questions in the inbox, by item id
 	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
@@ -553,7 +554,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		m.refreshTranscript()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded()}
+		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
 		if cmd := m.reconcileView(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
@@ -649,6 +650,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyCLISent(msg)
 		m.refresh()
 		return m, nil
+	case teamScanMsg:
+		cmd := m.applyTeamScan(msg, time.Now())
+		return m, cmd
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
