@@ -62,6 +62,8 @@ type deskMission struct {
 	// recorded (no call is answered before), and the limits from the
 	// human's config with the calls forwarded so far.
 	view                string
+	viewPID             int  // the agent view's process: the agent's own terminal
+	viewChecked         bool // the agent was found running under it
 	placed              bool
 	limitActions        int
 	actions             int
@@ -259,6 +261,17 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	}
 	if dm.Task && !dm.placed {
 		return deny("Den is still placing the agent view; call again in a moment")
+	}
+	// The agent view must be the agent's own terminal: its process runs the
+	// agent (as HeldWindow checks a marked window). Known once the agent
+	// is, which every call needs.
+	if dm.Task && !dm.viewChecked {
+		if !deskAncestorOf(dm.viewPID, dm.AgentPID) {
+			why := "the agent view is not the agent's own terminal"
+			deny(why + "; the task has ended")
+			return m.finishDeskMission(dm, why)
+		}
+		dm.viewChecked = true
 	}
 	if why := dm.taskGone(msg.snap); why != "" {
 		deny(why + "; the task has ended")

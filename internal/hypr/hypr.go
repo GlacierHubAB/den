@@ -321,6 +321,31 @@ func NewTerminal(before, after []Client) (Client, bool) {
 	return Client{}, false
 }
 
+// NewMarked returns the window in after but not in before that was created
+// with Den's marker class (its initial class, which a program cannot change
+// later), if exactly one did. A marker's class names no terminal program,
+// so NewTerminal never sees such a window.
+func NewMarked(before, after []Client, marker string) (Client, bool) {
+	if marker == "" {
+		return Client{}, false
+	}
+	seen := map[string]bool{}
+	for _, c := range before {
+		seen[c.Address] = true
+	}
+	var found []Client
+	for _, c := range after {
+		if c.InitialClass == marker {
+			found = append(found, c)
+		}
+	}
+	// Exactly one window with the marker at all, and a new one.
+	if len(found) == 1 && !seen[found[0].Address] {
+		return found[0], true
+	}
+	return Client{}, false
+}
+
 // MarkerHolds reports whether pid runs in the one window that carries
 // marker (its initial class): exactly one window has it, its terminal
 // process has no other window, and pid descends from that process. When

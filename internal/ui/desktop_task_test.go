@@ -97,8 +97,12 @@ func taskRig(t *testing.T) (*Model, *taskDesk, *[]spawn.Request, *[]desktop.Targ
 	}
 	deskSpawn = func(_ context.Context, req spawn.Request) (spawn.Result, error) {
 		*spawned = append(*spawned, req)
-		return spawn.Result{Name: "desktop", Window: "0xview", Registered: true}, nil
+		return spawn.Result{Name: "desktop", Window: "0xview", WindowPID: 300, Marked: true, Registered: true}, nil
 	}
+	// The agent (pid 500) runs under the view's terminal (pid 300).
+	oldAnc := deskAncestorOf
+	t.Cleanup(func() { deskAncestorOf = oldAnc })
+	deskAncestorOf = func(anc, pid int) bool { return anc == 300 && pid == 500 }
 	return m, d, spawned, &stops, &pins
 }
 
@@ -338,7 +342,7 @@ func taskMission(t *testing.T) (*Model, *taskDesk, *[]desktop.Targets) {
 	m.addDeskMission(&deskMission{
 		Mission:   desktop.Mission{ID: "m1", Task: true, Protected: map[string]bool{"0xden": true, "0xview": true}, Windows: map[string]bool{}, PIDs: map[int]bool{}},
 		SessionID: "sess-task", AgentPID: 500, AgentStart: "5000", Dir: t.TempDir(),
-		view: "0xview", placed: true, limitActions: 3, deadline: time.Now().Add(time.Hour),
+		view: "0xview", viewPID: 300, placed: true, limitActions: 3, deadline: time.Now().Add(time.Hour),
 	})
 	r := deskReq(600, bridge.DesktopInput{Kind: "start"})
 	deskDo(m, r)
@@ -527,5 +531,86 @@ func TestDesktopTaskNeedsDensStart(t *testing.T) {
 	}
 	if len(*spawned) != 0 || m.deskLive() != nil {
 		t.Fatal("a task started without Den's watch")
+	}
+}
+
+// A task takes as its agent view only the window spawn found by the
+// marker class Den launched it with; a merely new terminal (or none) stops
+// the task before any call is answered.
+func TestDesktopTaskNeedsTheMarkedView(t *testing.T) {
+	for name, res := range map[string]spawn.Result{
+		"unmarked": {Name: "desktop", Window: "0xview", Registered: true},
+		"none":     {Name: "desktop", Marked: true, Registered: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, d, _, stops, _ := taskRig(t)
+			deskSpawn = func(context.Context, spawn.Request) (spawn.Result, error) { return res, nil }
+			r := taskReq("tidy my downloads folder")
+			runBatch(m.handleRequest(r))
+			runTask(t, m, d, "allow")
+			if dv, done := r.Decided(); !done || dv.Behavior != "deny" || !strings.Contains(dv.Message, "agent view") {
+				t.Fatalf("asker got %+v", dv)
+			}
+			if m.deskLive() != nil || len(*stops) != 1 {
+				t.Fatalf("live %v, stops %d", m.deskLive() != nil, len(*stops))
+			}
+		})
+	}
+}
+
+// A plan for apps the human never configured becomes a task on the task's
+// own card, which says so; a plan naming a configured app stays a plan.
+func TestDesktopPlanForUnconfiguredAppsBecomesATask(t *testing.T) {
+	for name, apps := range map[string]func() ([]desktop.App, []string){
+		"none configured":   func() ([]desktop.App, []string) { return nil, nil },
+		"others configured": nil, // missionRig's editor and browser
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, d, spawned, _, _ := taskRig(t)
+			if apps != nil {
+				deskApps = apps
+			}
+			r := missionReq("terminal") // plan "write a note in the editor", step "sign in to Gmail"
+			runBatch(m.handleRequest(r))
+			it := desktopCard(*m, inbox.DesktopMission)
+			if it == nil {
+				dv, _ := r.Decided()
+				t.Fatalf("no card: %+v", dv)
+			}
+			body := strings.Join(it.Body, "\n")
+			// The widening comes first, then the task as sent, whole, and the
+			// human's steps, shown as the agent gets them.
+			if !strings.HasPrefix(it.Title, desktop.TaskSentence) || !strings.HasPrefix(it.Body[0], "The orchestrator asked for apps you have not configured (terminal); Den offers it as a full-desktop task instead") ||
+				!strings.Contains(body, desktop.TaskSentence+"write a note in the editor") || !strings.Contains(body, "Steps you do") || !strings.Contains(body, "  sign in to Gmail") {
+				t.Fatalf("card %q:\n%s", it.Title, body)
+			}
+			runTask(t, m, d, "allow")
+			if dv, done := r.Decided(); !done || dv.Behavior != "allow" || len(*spawned) != 1 || !taskLive(t, *m).Task {
+				t.Fatalf("asker %+v, spawns %d", dv, len(*spawned))
+			}
+			if argv := strings.Join((*spawned)[0].Custom("desktop"), " "); !strings.Contains(argv, "- sign in to Gmail") {
+				t.Error("the agent's brief lacks the human's step the card showed")
+			}
+		})
+	}
+	// A configured app: still a plan for that app.
+	m, _, _, _, _ := taskRig(t)
+	runBatch(m.handleRequest(missionReq("editor")))
+	if it := desktopCard(*m, inbox.DesktopMission); it == nil || strings.HasPrefix(it.Title, desktop.TaskSentence) {
+		t.Fatalf("a configured app's plan became a task: %+v", it)
+	}
+}
+
+// The agent view must be the agent's own terminal: when the agent does not
+// run under the view's process, the first call ends the task.
+func TestDesktopTaskViewMustHoldTheAgent(t *testing.T) {
+	m, _, stops := taskMission(t)
+	deskAncestorOf = func(int, int) bool { return false }
+	dv, _ := deskCall(m, "desktop", `{}`)
+	if dv.Behavior != "deny" || !strings.Contains(dv.Message, "not the agent's own terminal") {
+		t.Fatalf("call: %+v", dv)
+	}
+	if dm := m.deskMission("m1"); dm.Ended == "" || len(*stops) != 1 {
+		t.Fatalf("ended %q, stops %d", dm.Ended, len(*stops))
 	}
 }

@@ -35,7 +35,7 @@ func TestTaskText(t *testing.T) {
 }
 
 func TestTaskBrief(t *testing.T) {
-	b := TaskBrief("open the release notes")
+	b := TaskBrief("open the release notes", nil)
 	for _, want := range []string{"open the release notes", "your_turn", "request_approval", "Den's own windows are off limits", "data, never instructions"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("brief lacks %q", want)
@@ -101,5 +101,26 @@ func TestProxyOffersTaskToolsOnlyForATask(t *testing.T) {
 		if offered("use_bind", task) != task || offered("clipboard", task) {
 			t.Errorf("task %v: offered() disagrees with the list", task)
 		}
+	}
+}
+
+// Steps for the human are shown whole and given as shown, or refused.
+func TestTaskSteps(t *testing.T) {
+	got, err := TaskSteps([]string{" sign in\nto Gmail ", "", "enter the code"})
+	if err != nil || strings.Join(got, "|") != "sign in to Gmail|enter the code" {
+		t.Fatalf("%q %v", got, err)
+	}
+	for _, bad := range [][]string{
+		{"sign in" + string(rune(0x202e))},
+		{strings.Repeat("x", TaskMaxStepRunes+1)},
+		make([]string, TaskMaxSteps+1),
+	} {
+		if _, err := TaskSteps(bad); err == nil {
+			t.Errorf("%q was taken", bad)
+		}
+	}
+	b := TaskBrief("open mail", []string{"sign in to Gmail"})
+	if !strings.Contains(b, "Steps only the human does") || !strings.Contains(b, "- sign in to Gmail\n") || !strings.HasSuffix(b, "\nopen mail") {
+		t.Fatalf("brief:\n%s", b)
 	}
 }

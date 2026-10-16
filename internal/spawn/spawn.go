@@ -158,8 +158,13 @@ type Result struct {
 	WorktreePath   string
 	WorktreeBranch string
 	Window         string // Hyprland address of the new terminal, "" when unknown
-	Workspace      string // where the window is, "" when unknown
-	Moved          bool   // it landed elsewhere and was moved to the active workspace
+	// Marked says Window is the one new window created with the agent's
+	// marker class, not merely a new terminal window.
+	Marked bool
+	// WindowPID is the window's process (the terminal), 0 when unknown.
+	WindowPID int
+	Workspace string // where the window is, "" when unknown
+	Moved     bool   // it landed elsewhere and was moved to the active workspace
 	// Untrusted means Claude Code has never been told to trust this folder,
 	// so it is asking the human in the new terminal before starting.
 	Untrusted bool
@@ -272,8 +277,15 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		for time.Now().Before(deadline) && ctx.Err() == nil {
 			after, err := hypr.Clients()
 			if err == nil {
-				if c, ok := hypr.NewTerminal(before, after); ok {
-					res.Window = c.Address
+				// The marked window first: Ghostty, started with the marker as
+				// its class, names no terminal program, so only this finds it.
+				c, ok := hypr.NewMarked(before, after, marker)
+				res.Marked = ok
+				if !ok {
+					c, ok = hypr.NewTerminal(before, after)
+				}
+				if ok {
+					res.Window, res.WindowPID = c.Address, c.PID
 					res.Workspace = c.Workspace.Name
 					if want.ID != 0 && c.Workspace.ID != want.ID {
 						if hypr.MoveToWorkspace(c.Address, strconv.Itoa(want.ID)) == nil {

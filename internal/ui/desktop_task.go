@@ -41,6 +41,18 @@ var (
 		return append(out, os.Getpid())
 	}
 	deskKeepOnTop = hypr.KeepOnTop
+	// deskAncestorOf reports whether anc is pid or a process above it.
+	deskAncestorOf = func(anc, pid int) bool {
+		if anc > 1 && anc == pid {
+			return true
+		}
+		for _, p := range procs.Ancestors(pid) {
+			if p.PID == anc && anc > 1 {
+				return true
+			}
+		}
+		return false
+	}
 	// deskOwnWait is how long Den looks for its own window by the title.
 	deskOwnWait = 3 * time.Second
 	// deskSettle is the pause for a title change to reach the compositor.
@@ -58,23 +70,39 @@ const restingTitle = "den"
 
 // offerTask puts a task on its start card. Only the human at Den's own
 // window answers it (deskTTYOnly; the dock and God mode never get it).
-func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setup *deskSetup) tea.Cmd {
+func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setup *deskSetup, note string) tea.Cmd {
 	task, err := desktop.TaskText(in.Task)
+	if err == nil {
+		var steps []string
+		if steps, err = desktop.TaskSteps(in.HumanSteps); err == nil {
+			in.HumanSteps = steps
+		}
+	}
 	if err != nil {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: err.Error()})
 		return nil
 	}
 	minutes, actions := deskLimits()
 	sentence := desktop.TaskSentence + task
-	body := []string{
-		"Asked by " + sanitize.Label(in.AskedBy, 60) + " (as it says).",
-		sentence,
+	var body []string
+	if note != "" {
+		// A widening says so before anything else.
+		body = append(body, note)
+	}
+	body = append(body, "Asked by "+sanitize.Label(in.AskedBy, 60)+" (as it says).", sentence)
+	if len(in.HumanSteps) > 0 {
+		body = append(body, "Steps you do (the agent hands each to you with your turn and waits):")
+		for _, st := range in.HumanSteps {
+			body = append(body, "  "+st)
+		}
+	}
+	body = append(body,
 		"While it runs, the agent can do anything you can at the keyboard: run commands as you in a terminal, type into other agents' terminals and their permission prompts, use the clipboard, read the screen, and act in apps you are signed in to.",
 		"Den keeps its own window and the agent view off limits and refuses a short fixed list (ending your session, reloading or rebinding Hyprland, the panic stop's bind).",
 		fmt.Sprintf("Den stops it after %d minutes or %d actions, whichever comes first (task_minutes and task_actions in your config's [desktop]).", minutes, actions),
-		"This one task only. Model: " + in.Model + ". Stop it any time: /desktop stop, or den desktop stop; it also stops if Den quits.",
+		"This one task only. Model: "+in.Model+". Stop it any time: /desktop stop, or den desktop stop; it also stops if Den quits.",
 		"Den needs its own window to start: run Den in its own terminal window, with its tab in front.",
-	}
+	)
 	if setup != nil {
 		body = append(body, setup.lines()...)
 	}
@@ -82,7 +110,7 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	m.desk.offers[it.ID] = deskOffer{in: in, task: task, minutes: minutes, actions: actions, setup: setup}
+	m.desk.offers[it.ID] = deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup}
 	m.flash, m.flashErr = "Desktop control asked: ^Y starts it, ^N declines.", false
 	m.refresh()
 	return nil
