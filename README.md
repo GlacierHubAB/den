@@ -418,6 +418,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/mission move <project>` | ask to move the open or selected mission to another listed project; `Ctrl+Y` in the Inbox moves it |
 | `/mode`, `/mode <mode>` | show the permission mode agents start in, and the agents running in another; set it: a mode that asks more applies at once, one that asks less waits on a card (see [Permission mode](#permission-mode)) |
 | `/budget 2M`, `/budget $5`, `/budget off` | set, show (`/budget` alone) or remove the budget on the open or selected mission |
+| `/memory`, `/memory rm <id>`, `/memory rules` | list the current project's notes, delete one, show its rules and the proposed ones waiting (see [Project memory](#project-memory)) |
 | `/template`, `/template <name> <target or goal>`, `/template save <name>` | list the mission templates, start a proposal from one, save the open mission as one |
 | `/delete` `/del` | remove the review comment under the cursor |
 | `/send`, `/send <Name>`, `/send orchestrator` | send review drafts to their agents, to one agent, or those no live session can take to the orchestrator |
@@ -857,6 +858,34 @@ or constraint tuning added shows "(added by the orchestrator, tuning)" on the
 proposals it seeds. The orchestrator may also send a proposed change to its own
 instructions. Den only shows it to you, whole, on a card; nothing applies it,
 and it reaches no prompt.
+
+### Project memory
+
+Each project keeps a memory in `~/.local/state/den/projects/<repo-id>/memory/`,
+which you can open as an Obsidian vault.
+
+- **Notes.** Agents, and the orchestrator, keep notes with the `note` tool:
+  something they learned that would help whoever works there next. Den records
+  who wrote each one, on which mission and when, from the process that asked,
+  never from what it says. A note is Markdown with Den's header and the text in
+  a code block. Any agent on the project reads them with `notes`, as another
+  agent's account, never as instructions. Caps: 4 KiB a note, 20 a day per
+  author, 200 per project.
+- **Rules.** From the notes, the orchestrator may propose a rule with
+  `propose_rule`. Proposals collect on one card in the Inbox, at most 9 at a
+  time, each with the notes and authors it came from. Press `1`–`9` on the card
+  to pick rules; `Ctrl+Y` writes only the picked ones to `rules.md`, and
+  `Ctrl+N` drops every one shown. Rules reach the orchestrator, and the briefs
+  of agents Den starts there, as your own words.
+- **Edits outside Den.** If `rules.md` changes outside Den (by hand in the
+  vault, say), Den can't tell who changed it. At its next start Den stops using
+  the file as rules and shows a card naming the rules added and removed;
+  `Ctrl+Y` takes the file as your rules again. Both kinds of card are answered
+  only in Den's own window.
+
+Notes persist across missions, and any agent on the project reads what another
+wrote, as data. `/memory` lists them, `/memory rm <id>` deletes one (the dock
+may too), and `/memory rules` shows the rules and the proposals waiting.
 
 ### When you are asked
 

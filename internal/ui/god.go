@@ -72,6 +72,8 @@ var godTTYKinds = map[inbox.Kind]bool{
 	// The orchestrator's tuning, and its proposed change to its own
 	// instructions, are the human's to keep or undo.
 	inbox.ProcessTuned: true, inbox.PromptProposal: true,
+	// What becomes a project's rules reaches prompts as the human's words.
+	inbox.RulesPick: true, inbox.RulesEdited: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

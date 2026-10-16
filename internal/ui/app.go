@@ -163,6 +163,7 @@ type Model struct {
 	mirror          mirrorState                // the conversation mirror (conversation.go)
 	metrics         metricsState               // figures waiting for the next orchestrator turn
 	tune            tuneState                  // the orchestrator's tuning, by project
+	mem             memState                   // each project's notes and rules
 	sends           map[string]askedSend       // den send questions in the inbox, by item id
 	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
@@ -664,6 +665,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tuneMsg:
 		m.applyTune(msg, time.Now())
 		return m, nil
+	case memMsg:
+		m.applyMemory(msg, time.Now())
+		return m, nil
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
@@ -817,6 +821,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == bridge.TeamEvent {
 		return m.handleTeamQuery(r)
+	}
+	if r.Event == bridge.NoteEvent || r.Event == bridge.NotesEvent || r.Event == bridge.RuleEvent {
+		return m.handleMemory(r)
 	}
 	if r.Event == bridge.GodOffEvent {
 		return m.handleGodOff(r)
@@ -1220,6 +1227,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.move(-5)
 		return m, nil
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// Picks a rule only on a selected rules card with nothing typed;
+		// else the digit is typed as usual.
+		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RulesPick {
+			if m.toggleRule(it, int(msg.String()[0]-'0')) {
+				return m, nil
+			}
+		}
 	case "ctrl+y":
 		if m.tab == tabOrch && m.selectedProposal() != nil {
 			return m.answerProposal(true)
@@ -1568,6 +1583,12 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.PromptProposal {
 		return m.decideProposal(it, verb)
 	}
+	if it.Kind == inbox.RulesPick {
+		return m.decideRules(it, verb)
+	}
+	if it.Kind == inbox.RulesEdited {
+		return m.decideRulesEdited(it, verb)
+	}
 	if it.Kind == inbox.MissionCriteria {
 		return m.decideMissionCriteria(it, verb)
 	}
@@ -1786,6 +1807,9 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.desktopCommand(fields[1:])
 	case "/budget":
 		note, isErr := m.budgetCommand(fields[1:])
+		return m.say(note, isErr)
+	case "/memory":
+		note, isErr := m.memoryCommand(fields[1:])
 		return m.say(note, isErr)
 	case "/orchestrator", "/orch":
 		m.tab = tabOrch
