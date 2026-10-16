@@ -294,7 +294,7 @@ func oneCombo(keys string) string {
 func systemCombo(keys string) string {
 	mods := map[string]bool{}
 	for _, k := range strings.Split(strings.ToLower(keys), "+") {
-		mods[strings.TrimSpace(k)] = true
+		mods[keyName(k)] = true
 	}
 	if (mods["ctrl"] || mods["control"]) && mods["alt"] {
 		for k := range mods {

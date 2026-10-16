@@ -143,7 +143,7 @@ func TestTaskEveryBindOnACombo(t *testing.T) {
 	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "super+m"}, m, s); v.Kind != Deny {
 		t.Error("key super+m ran exit behind a harmless bind")
 	}
-	for _, keys := range []string{"ctrl+a super+shift+e", "ctrl+a,super+shift+e", "super", "ctrl+", "foo+e", "ctrl+alt+delete", "ctrl+alt+f2", "ctrl+alt+backspace"} {
+	for _, keys := range []string{"ctrl+a super+shift+e", "ctrl+a,super+shift+e", "super", "ctrl+", "foo+e", "ctrl+alt+delete", "ctrl+alt+del", "ctrl+alt+f2", "ctrl+alt+backspace"} {
 		if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": keys}, m, s); v.Kind != Deny {
 			t.Errorf("keys %q allowed", keys)
 		}
