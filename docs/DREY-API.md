@@ -777,7 +777,8 @@ all` does in a terminal.
 
 - `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?, unit?, program_sha256?, changes?}`: `kind`
   is `connected`, `restored` (the first `console.events` after Den
-  restarted with this console: check `pid` and `start_ticks` are yours),
+  restarted with this console: check `pid` and `start_ticks` are yours;
+  a `powers` event follows at once with where its powers stand),
   `paired` or `reconnected` (after a `console.request` or a
   `console.reconnect`, to the first connection that subscribes, after the
   replay: `reason` `paired automatically`, with `unit`, `program` as the

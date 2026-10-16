@@ -904,6 +904,7 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	auto := rec.auto
 	rec.auto = nil
 	ev := ConsoleEvent{Kind: kind, PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started)}
+	powers := rec.powers
 	st.mu.Unlock()
 	c.mu.Lock()
 	c.subs[EventConsole] = true
@@ -925,6 +926,12 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	}
 	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
 	c.push(Event{Event: EventConsole, Data: ev}, true)
+	// A restored console's powers may have come back before any of its
+	// connections subscribed, with no one to hear the powers event then:
+	// say where they stand now, so "restored" is never read as without.
+	if kind == "restored" {
+		c.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "powers", On: &powers, PID: ev.PID, StartTicks: ev.StartTicks}}, true)
+	}
 	for _, card := range waiting {
 		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
 	}
