@@ -13,6 +13,8 @@ type StartInfo struct {
 	// Log is where the proxy writes hypruse's stderr and its own errors:
 	// the mission's private folder, since Claude Code keeps neither.
 	Log string `json:"log,omitempty"`
+	// Task: the proxy offers a task mission's tools.
+	Task bool `json:"task,omitempty"`
 }
 
 // childPassthrough are the variables of the agent's environment hypruse

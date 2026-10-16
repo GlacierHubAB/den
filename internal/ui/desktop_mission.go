@@ -39,6 +39,10 @@ import (
 type deskOffer struct {
 	in   bridge.DesktopMissionInput
 	apps []desktop.App
+	// task is a task mission's text as the card shows it ("" for a plan
+	// and apps), and minutes and actions the limits the card states.
+	task             string
+	minutes, actions int
 }
 
 // deskLaunched is one app window Den opened for a mission.
@@ -54,6 +58,7 @@ type deskPrepared struct {
 	itemID    string
 	focused   string // the window the human had focused before Den opened anything
 	offer     deskOffer
+	own       string // a task mission: the address of the window Den runs in
 	id        string
 	workspace int
 	dir       string
@@ -107,8 +112,15 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 		return deny("desktop missions are this machine's only")
 	}
 	var in bridge.DesktopMissionInput
-	if json.Unmarshal(r.Payload, &in) != nil || strings.TrimSpace(in.Plan) == "" || len(in.Apps) == 0 {
-		return deny("a desktop mission needs a plan and apps")
+	if json.Unmarshal(r.Payload, &in) != nil {
+		return deny("unreadable request")
+	}
+	task := strings.TrimSpace(in.Task) != ""
+	switch {
+	case task && (strings.TrimSpace(in.Plan) != "" || len(in.Apps) > 0):
+		return deny("a desktop mission is a task, or a plan and apps; not both")
+	case !task && (strings.TrimSpace(in.Plan) == "" || len(in.Apps) == 0):
+		return deny("a desktop mission needs a task, or a plan and apps")
 	}
 	if in.Model == "" {
 		in.Model = "sonnet"
@@ -121,6 +133,19 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 	}
 	if err := deskVerify(); err != nil {
 		return deny("desktop control is not ready: " + sanitize.Line(err.Error()))
+	}
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.DesktopMission && it.State == inbox.Waiting {
+			return deny("a desktop mission is already waiting for the human")
+		}
+	}
+	for _, dm := range m.desk.missions {
+		if dm.Ended == "" {
+			return deny("a desktop mission is already running; one at a time")
+		}
+	}
+	if task {
+		return m.offerTask(r, in)
 	}
 	all, problems := deskApps()
 	var names []string
@@ -144,16 +169,6 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 				why += " (" + sanitize.Line(strings.Join(problems, "; ")) + ")"
 			}
 			return deny(why)
-		}
-	}
-	for _, it := range m.store.Items() {
-		if it.Kind == inbox.DesktopMission && it.State == inbox.Waiting {
-			return deny("a desktop mission is already waiting for the human")
-		}
-	}
-	for _, dm := range m.desk.missions {
-		if dm.Ended == "" {
-			return deny("a desktop mission is already running; one at a time")
 		}
 	}
 	body := []string{"Asked by " + sanitize.Label(in.AskedBy, 60) + " (as it says). The plan, in its words:"}
@@ -219,6 +234,9 @@ func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea
 	}
 	it.Resolved = "starting…"
 	id := it.ID
+	if offer.task != "" {
+		return m.startTask(id, offer)
+	}
 	cmd := func() tea.Msg { return prepareMission(id, offer) }
 	model, say := m.say("Preparing the desktop mission…", false)
 	return model, tea.Batch(say, cmd)
@@ -311,7 +329,8 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	if err != nil {
 		return fail(err.Error())
 	}
-	guard, err := desktop.WriteSettings(filepath.Join(p.dir, "settings.json"), den, sock, false)
+	task := p.offer.task != ""
+	guard, err := desktop.WriteSettings(filepath.Join(p.dir, "settings.json"), den, sock, task)
 	if err != nil {
 		return fail("settings: " + err.Error())
 	}
@@ -321,6 +340,14 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		Dir:       p.dir,
 		Guard:     guard.Check,
 		AskedBy:   p.offer.in.AskedBy,
+	}
+	if task {
+		// The whole desktop, with Den's window off limits from the start;
+		// the agent view joins it once it is up, and until then no call
+		// is answered (decideDesktopCall).
+		dm.Task, dm.Protected = true, map[string]bool{p.own: true}
+		dm.limitActions = p.offer.actions
+		dm.deadline = time.Now().Add(time.Duration(p.offer.minutes) * time.Minute)
 	}
 	for _, l := range p.windows {
 		dm.Windows[l.Address] = true
@@ -338,6 +365,9 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	m.addDeskMission(dm)
 	dm.save() // its session id is on disk before the agent starts
 	prompt := desktop.Brief(p.offer.in.Plan, p.offer.apps, p.workspace, p.offer.in.HumanSteps)
+	if task {
+		prompt = desktop.TaskBrief(p.offer.task)
+	}
 	claude, err := deskClaude()
 	if err != nil {
 		m.endDeskMission(dm, err.Error())
@@ -345,7 +375,12 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	}
 	dm.Claude = claude
 	missionID := dm.ID
-	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: guard.Settings, Model: p.offer.in.Model, Prompt: prompt, Claude: claude}
+	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: guard.Settings, Model: p.offer.in.Model, Prompt: prompt, Claude: claude, Task: task}
+	// The agent's view stops it when this Den ends (P4).
+	owner := ""
+	if start := deskStart(os.Getpid()); start != "" {
+		owner = strconv.Itoa(os.Getpid()) + ":" + start
+	}
 	if _, err := desktop.AgentArgv(launch); err != nil {
 		m.endDeskMission(dm, err.Error())
 		return fail(err.Error())
@@ -358,7 +393,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 			// is up (below), at the mission's end and at Den's start.
 			deskNoFocus(hypr.Marker(name))
 			argv, _ := desktop.AgentArgv(launch)
-			return desktop.TerminalArgv(argv, den, missionID)
+			return desktop.TerminalArgv(argv, den, missionID, owner)
 		},
 		NoSessionWait: true,
 	}
@@ -404,8 +439,26 @@ func (m *Model) finishSpawn(s deskSpawned) tea.Cmd {
 	if pid, ok := deskSession(dm.SessionID); ok && dm.AgentPID == 0 && deskSameExe(pid, dm.Claude) {
 		dm.AgentPID, dm.AgentStart, dm.AgentExe = pid, deskStart(pid), deskExeOf(pid)
 	}
+	if dm.Task {
+		// The agent view is the terminal window Den just opened, by its
+		// address; without it, the task does not run (and every call is
+		// refused from here on).
+		if s.res.Window == "" || dm.Protects(s.res.Window) {
+			end := m.finishDeskMission(dm, "Den could not find the agent view to keep it off limits")
+			if it != nil {
+				m.store.Settle(it, false, "approved, but Den could not find the agent view; stopped")
+			}
+			m.refresh()
+			return end
+		}
+		dm.Protected[s.res.Window] = true
+		dm.view, dm.placed = s.res.Window, true
+	}
 	dm.save()
 	msg := fmt.Sprintf("Started desktop agent %q on workspace %d with %d app window(s). It reports to Den when done; Den passes the report to you.", s.res.Name, dm.Workspace, len(dm.Windows))
+	if dm.Task {
+		msg = fmt.Sprintf("Started desktop agent %q on the task. It reports to Den when done, or Den stops it at the human's limits; Den passes the report to you.", s.res.Name)
+	}
 	if it != nil {
 		m.store.Settle(it, true, msg)
 	}

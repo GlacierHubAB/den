@@ -196,6 +196,29 @@ func DesktopApps() map[string]map[string]string {
 	return out
 }
 
+// Task mission limits when the [desktop] section sets none.
+const (
+	DefaultTaskMinutes = 20
+	DefaultTaskActions = 300
+)
+
+// DesktopTask is a task mission's limits from the [desktop] section:
+// task_minutes of wall time and task_actions forwarded desktop calls. They
+// are the human's alone: read from this file when a task starts, with no
+// environment override and nothing an agent or tool can set. A value that
+// is not a positive whole number keeps the default.
+func DesktopTask() (minutes, actions int) {
+	minutes, actions = DefaultTaskMinutes, DefaultTaskActions
+	kv := parse(Path())
+	if n, err := strconv.Atoi(kv["desktop.task_minutes"]); err == nil && n > 0 {
+		minutes = n
+	}
+	if n, err := strconv.Atoi(kv["desktop.task_actions"]); err == nil && n > 0 {
+		actions = n
+	}
+	return minutes, actions
+}
+
 func (c *Config) apply(kv map[string]string) {
 	str := func(dst *string, key string) {
 		if v, ok := kv[key]; ok && v != "" {

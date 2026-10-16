@@ -72,7 +72,10 @@ type Proxy struct {
 	Seed uint64
 	// Log, when set, is told every text the agent types, so hypruse's
 	// stderr never carries it into the mission's log.
-	Log   *LogFilter
+	Log *LogFilter
+	// Task is a task mission's proxy: it also offers TaskTools (Den's gate
+	// still decides each call).
+	Task  bool
 	shown bool // the outline is showing (the pointer file says so)
 	rng   *rand.Rand
 
@@ -192,7 +195,7 @@ func (p *Proxy) request(ctx context.Context, msg message) {
 	case "tools/list":
 		res, err := p.roundTrip(ctx, "tools/list", msg.Params)
 		if err == nil {
-			res, err = listTools(res)
+			res, err = listTools(res, p.Task)
 		}
 		p.reply(msg.ID, res, err)
 	case "tools/call":
@@ -223,7 +226,7 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 	if json.Unmarshal(params, &in) != nil {
 		return toolError("unreadable call")
 	}
-	if !offered(in.Name) {
+	if !offered(in.Name, p.Task) {
 		return toolError(in.Name + " is not a tool here")
 	}
 	ans, err := p.Gate.Call(ctx, in.Name, in.Arguments, "")
@@ -382,8 +385,9 @@ func (p *Proxy) reply(id json.RawMessage, res json.RawMessage, err error) {
 	p.send(message{JSONRPC: "2.0", ID: id, Result: res})
 }
 
-func offered(name string) bool {
-	for _, t := range append(append([]string(nil), HypruseTools...), DenTools...) {
+func offered(name string, task bool) bool {
+	open, _ := tools(task)
+	for _, t := range append(open, DenTools...) {
 		if t == name {
 			return true
 		}
@@ -393,7 +397,7 @@ func offered(name string) bool {
 
 // listTools keeps hypruse's tools that Den offers, in hypruse's own
 // words, and adds Den's.
-func listTools(res json.RawMessage) (json.RawMessage, error) {
+func listTools(res json.RawMessage, task bool) (json.RawMessage, error) {
 	var list struct {
 		Tools []map[string]any `json:"tools"`
 	}
@@ -401,9 +405,10 @@ func listTools(res json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("tools/list: %v", err)
 	}
 	var kept []map[string]any
+	open, _ := tools(task)
 	for _, t := range list.Tools {
 		name, _ := t["name"].(string)
-		for _, h := range HypruseTools {
+		for _, h := range open {
 			if name == h {
 				kept = append(kept, t)
 			}

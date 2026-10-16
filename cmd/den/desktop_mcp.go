@@ -117,7 +117,7 @@ func runDesktopMCP(args []string) {
 	}
 	proxyLog("Den took hypruse's process; relaying")
 	p := &desktop.Proxy{Gate: denGate{socket: socket, mission: mission}, Client: os.Stdin, ToClient: os.Stdout, Child: fromChild, ToChild: toChild,
-		Cursor: cursorPos, Pointer: desktop.PointerPath(), Log: filter}
+		Cursor: cursorPos, Pointer: desktop.PointerPath(), Log: filter, Task: info.Task}
 	if err := p.Run(context.Background()); err != nil {
 		proxyLog("relay ended: %v", err)
 	} else {

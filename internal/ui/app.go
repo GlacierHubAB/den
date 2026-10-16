@@ -651,6 +651,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.finishPrepare(msg)
 	case deskSpawned:
 		return m, m.finishSpawn(msg)
+	case deskOwnMsg:
+		return m, m.finishOwn(msg)
+	case deskTaskCheckMsg:
+		return m, m.finishTaskCheck(msg)
 	case askedSentMsg:
 		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:

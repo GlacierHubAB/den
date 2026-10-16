@@ -143,9 +143,15 @@ func AgentArgv(l AgentLaunch) ([]string, error) {
 
 // TerminalArgv is what the agent's terminal runs: `den desktop-view`,
 // which starts the agent itself (an argv, no shell between Den and the
-// prompt) and shows its words and tool calls, sanitised.
-func TerminalArgv(agent []string, den, mission string) []string {
-	return append([]string{den, "desktop-view", "--mission", mission, "--exec", "--"}, agent...)
+// prompt) and shows its words and tool calls, sanitised. owner is Den's
+// process as "pid:start" (clock ticks), or "": the view stops the agent
+// when that process ends, since the terminal is not Den's child (P4).
+func TerminalArgv(agent []string, den, mission, owner string) []string {
+	argv := []string{den, "desktop-view", "--mission", mission}
+	if owner != "" {
+		argv = append(argv, "--den", owner)
+	}
+	return append(append(argv, "--exec", "--"), agent...)
 }
 
 // DeniedTools are the settings deny rules of a desktop agent: Claude Code's
