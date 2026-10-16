@@ -653,6 +653,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case teamScanMsg:
 		cmd := m.applyTeamScan(msg, time.Now())
 		return m, cmd
+	case teamCapMsg:
+		m.applyTeamCap(msg, time.Now())
+		return m, nil
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
@@ -797,6 +800,9 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.ModeEvent {
 		m.modeQuery(r)
 		return nil
+	}
+	if r.Event == bridge.TeamEvent {
+		return m.handleTeamQuery(r)
 	}
 	if r.Event == bridge.GodOffEvent {
 		return m.handleGodOff(r)

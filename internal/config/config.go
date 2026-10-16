@@ -66,6 +66,13 @@ type Config struct {
 	Events struct {
 		Log bool // den hook appends metadata-only events to events.jsonl
 	}
+	// Team is the small-team process Den keeps.
+	Team struct {
+		// MaxAgents is how many live agents one repository's team has
+		// before spawn_agent needs a stated reason (the orchestrator not
+		// counted); 1 to 20.
+		MaxAgents int
+	}
 	Usage struct {
 		// StopPercent stops the fleet at that share of the weekly limit:
 		// "USAGE STOP" to every agent, and no new agents or mission runs
@@ -138,6 +145,7 @@ func Defaults() Config {
 	c.Events.Log = true
 	c.API.AskBudgetUSD = 2
 	c.API.ConsolePowers = "unchanged"
+	c.Team.MaxAgents = 3
 	return c
 }
 
@@ -293,6 +301,11 @@ func (c *Config) apply(kv map[string]string) {
 	count(&c.Stuck.Stalled, "stuck.stalled")
 	count(&c.Stuck.ToolFailures, "stuck.tool_failures")
 	boolean(&c.Events.Log, "events.log")
+	if v, ok := kv["team.max_agents"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 20 {
+			c.Team.MaxAgents = n
+		}
+	}
 	if v, ok := kv["usage.stop_percent"]; ok {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
 			c.Usage.StopPercent = n
@@ -543,6 +556,9 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
+
+[team]
+max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
 
 [usage]
 stop_percent = 0            # off; e.g. 95 sends "USAGE STOP" to every agent at 95% of the weekly limit and holds new work

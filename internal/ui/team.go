@@ -2,15 +2,19 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/process"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/spawn"
 )
 
 // The small-team process, as Den keeps it: Den reads each local agent's
@@ -174,4 +178,98 @@ func (m Model) overlapLines(sessionID string) []string {
 		out = append(out, "with "+name+", files as git lists them: "+quotedFiles(o.Files))
 	}
 	return out
+}
+
+// teamReasonMax caps a reason for going over the team cap.
+const teamReasonMax = 200
+
+// teamCapMsg is a team query read off the loop: the repository the new
+// agent goes into, and the live agents already in it.
+type teamCapMsg struct {
+	r       *bridge.Request
+	in      bridge.TeamQueryInput
+	repo    string // RepoID, "" when dir is not in a repository
+	name    string // the repository's name, for the human
+	members []string
+}
+
+// teamRepo reads a directory's repository id and name; tests replace it.
+var teamRepo = func(ctx context.Context, dir string) (id, name string, err error) {
+	id, err = process.RepoID(ctx, dir)
+	if err != nil {
+		return "", "", err
+	}
+	return id, id[:max(0, len(id)-13)], nil
+}
+
+// handleTeamQuery answers spawn_agent's question before it starts an
+// agent: may the repository's team grow? It reads the repositories off the
+// loop and answers there (applyTeamCap).
+func (m *Model) handleTeamQuery(r *bridge.Request) tea.Cmd {
+	var in bridge.TeamQueryInput
+	if json.Unmarshal(r.Envelope.Payload, &in) != nil {
+		r.Reply(bridge.Decision{Behavior: "allow"}) // spawn_agent refuses a bad input itself
+		return nil
+	}
+	dir, err := spawn.ExpandDir(in.Dir)
+	if err != nil {
+		r.Reply(bridge.Decision{Behavior: "allow"}) // and a directory that is not there
+		return nil
+	}
+	type member struct{ name, dir string }
+	var live []member
+	for _, a := range m.agents {
+		if a.Status == fleet.Gone || !a.Session.Alive || a.Host != "" || a.Session.CWD == "" || m.isOrchestrator(a) {
+			continue
+		}
+		live = append(live, member{a.Name, a.Session.CWD})
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), teamScanTimeout)
+		defer cancel()
+		msg := teamCapMsg{r: r, in: in}
+		repo, name, err := teamRepo(ctx, dir)
+		if err != nil {
+			return msg // not a repository: no team to count
+		}
+		msg.repo, msg.name = repo, name
+		for _, a := range live {
+			if id, _, err := teamRepo(ctx, a.dir); err == nil && id == repo {
+				msg.members = append(msg.members, a.name)
+			}
+		}
+		return msg
+	}
+}
+
+// applyTeamCap answers a team query: at the cap, only with a reason, which
+// Den shows the human in its chat, quoted, with who gave it. Leads' spawns
+// count as the orchestrator's do, and God mode does not lift the cap.
+func (m *Model) applyTeamCap(msg teamCapMsg, now time.Time) {
+	limit := m.cfg.Team.MaxAgents
+	if limit <= 0 {
+		limit = 3
+	}
+	if msg.repo == "" || len(msg.members) < limit {
+		msg.r.Reply(bridge.Decision{Behavior: "allow"})
+		return
+	}
+	repo := sanitize.Label(msg.name, 40)
+	sort.Strings(msg.members)
+	reason := sanitize.Label(strings.TrimSpace(msg.in.Reason), teamReasonMax)
+	if reason == "" {
+		msg.r.Reply(bridge.Decision{Behavior: "deny", Message: "the team in " + strconv.Quote(repo) + " has " + strconv.Itoa(len(msg.members)) +
+			" agents, Den's cap of " + strconv.Itoa(limit) + " (" + strings.Join(msg.members, ", ") + "): give reason, one line on why one more agent is needed, or close one first"})
+		return
+	}
+	who := "The orchestrator"
+	if msg.in.Lead != "" {
+		who = "A lead"
+		if a, ok := m.agentByPeer(msg.in.Lead); ok {
+			who = a.Name
+		}
+	}
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now,
+		text: who + " starts one more agent in " + strconv.Quote(repo) + ", over the team cap of " + strconv.Itoa(limit) + ", saying: " + strconv.Quote(reason)}))
+	msg.r.Reply(bridge.Decision{Behavior: "allow"})
 }

@@ -773,6 +773,16 @@ notes it in its chat and never stops anyone over it. An agent hears it at most
 once every ten minutes. Den runs nothing the checkout's own git config names
 while it reads.
 
+### Team size
+
+A repository's team is small by default: 3 live agents (`max_agents` under
+`[team]`, 1 to 20; the orchestrator is not counted, and every worktree of one
+repository counts toward the same team). The orchestrator and its leads start
+a fourth only with spawn_agent's `reason`, one line on why; without it Den
+refuses the spawn, naming the agents in the team. Den shows each reason in its
+chat, quoted, with who gave it. God mode does not lift the cap. Agents you start
+yourself are never counted against it.
+
 ### Permission mode
 
 Every agent Den starts or reopens runs in one permission mode, passed as
@@ -1567,6 +1577,9 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
+
+[team]
+max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
 
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
