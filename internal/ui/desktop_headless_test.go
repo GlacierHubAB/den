@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
@@ -36,7 +38,7 @@ func headlessRig(t *testing.T, pid int, err error) (*Model, *taskDesk, chan stri
 // runHeadlessTask answers the task's card and runs the handshake, the
 // prepare and the headless start as the event loop would; it returns the
 // command that reads the agent's steps.
-func runHeadlessTask(t *testing.T, m *Model, d *taskDesk) []any {
+func runHeadlessTask(t *testing.T, m *Model, d *taskDesk) []tea.Msg {
 	t.Helper()
 	it := desktopCard(*m, inbox.DesktopMission)
 	if it == nil {
@@ -47,7 +49,7 @@ func runHeadlessTask(t *testing.T, m *Model, d *taskDesk) []any {
 	mm, cmd := m.answer("allow")
 	*m = mm.(Model)
 	d.title = m.View().WindowTitle
-	var after []any
+	var after []tea.Msg
 	for _, msg := range runBatch(cmd) {
 		own, ok := msg.(deskOwnMsg)
 		if !ok {
@@ -94,7 +96,7 @@ func TestDesktopTaskRunsHeadless(t *testing.T) {
 		t.Fatalf("mission: pid %d placed %v view %q protected %v", dm.AgentPID, dm.placed, dm.view, dm.Protected)
 	}
 	// The steps, read as the event loop would.
-	var pending []any = after
+	pending := after
 	for len(pending) > 0 {
 		msg := pending[0]
 		pending = pending[1:]
