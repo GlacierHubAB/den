@@ -8,6 +8,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -44,6 +45,28 @@ type Snapshot struct {
 	Settled []Settled
 	// Commands are Den's commands with their dock flags (cmd.go).
 	Commands []CommandInfo
+	// Mode is the global permission mode and whether agents differ.
+	Mode ModeInfo
+	// Modes are the permission modes local agents' own hooks last
+	// reported, by session id.
+	Modes map[string]string
+	// View is the view Den is in (ViewAgent or ViewUser), "" when it cannot
+	// switch views.
+	View string
+	// HooksInstalled is whether Den's hooks are installed; HookSeen holds the
+	// sessions on this machine that have reported a hook event since Den
+	// started.
+	HooksInstalled bool
+	HookSeen       map[string]bool
+}
+
+// modeLabel is a mode as the wire carries it: one Claude Code names, else
+// "unknown"; "" stays "".
+func modeLabel(mode string) string {
+	if mode == "" || permmode.Valid(mode) || mode == permmode.Bypass {
+		return mode
+	}
+	return "unknown"
 }
 
 // View is what the server serves until the next one.
@@ -58,6 +81,7 @@ type View struct {
 	Cards      map[string]Card // by id
 	Settled    map[string]Settled
 	Commands   []CommandInfo
+	Mode       ModeInfo
 }
 
 // AgentProc is one agent's process: its pid, and its start time in clock
@@ -103,7 +127,13 @@ func Project(s Snapshot) *View {
 		Cards:      map[string]Card{},
 		Settled:    map[string]Settled{},
 		Commands:   projectCommands(s.Commands),
+		Mode:       ModeInfo{Global: modeLabel(s.Mode.Global), Mixed: s.Mode.Mixed},
 	}
+	if v.Mode.Global != "" {
+		mode := v.Mode
+		v.Fleet.Mode = &mode
+	}
+	v.Fleet.View = s.View
 	for _, p := range s.AgentProcs {
 		if p.PID > 1 {
 			v.AgentProcs[p.PID] = p
@@ -143,7 +173,18 @@ func Project(s Snapshot) *View {
 			Remote:   a.Host != "",
 		}
 		if a.Host == "" {
+			switch {
+			case s.HookSeen[a.Session.SessionID]:
+				ag.Hooks = HooksOn
+			case !s.HooksInstalled:
+				ag.Hooks = HooksOff
+			default:
+				ag.Hooks = HooksUnknown
+			}
+		}
+		if a.Host == "" {
 			ag.Color = hexColor(s.Colors[a.Session.SessionID])
+			ag.PermissionMode = modeLabel(s.Modes[a.Session.SessionID])
 		}
 		switch a.Status {
 		case fleet.Working:
@@ -162,6 +203,7 @@ func Project(s Snapshot) *View {
 		default:
 			ag.State, ag.Waiting = StateWaiting, w
 		}
+		ag.Doing.Text = doingText(a, ag.State, ag.Waiting)
 		if a.Window != nil && a.Host == "" {
 			c := a.Window.Client
 			ag.Window = sanitize.Label(c.Address, labelMax)
@@ -215,7 +257,7 @@ func Project(s Snapshot) *View {
 		v.Cards[c.ID] = c
 	}
 	for _, st := range s.Settled {
-		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console") {
+		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console" || st.By == "rule") {
 			v.Settled[st.ID] = st
 		}
 	}
@@ -249,6 +291,7 @@ func projectCard(c Card) Card {
 		Truncated:   c.Truncated,
 		CutAt:       c.CutAt,
 		DockAnswers: c.DockAnswers,
+		TTYOnly:     c.TTYOnly,
 		Verbs:       []string{},
 	}
 	lines := strings.Split(c.Body, "\n")

@@ -9,6 +9,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -48,11 +49,11 @@ var dockVerbs = []dockVerb{
 	{"/deny", []string{"/n", "/no"}, "/deny", "deny the selected request", always(api.DockRefused, whyCard)},
 	{"/always", []string{"/a"}, "/always", "allow, and from now on", always(api.DockRefused, whyCard)},
 	{"/answer", nil, "/answer <text>", "answer a question held in Den", always(api.DockRefused, whyNever)},
-	{"/api", nil, "/api [off|disconnect|unpair|disallow <n>|all|control off]", "den-api.sock", func(a []string) (string, string) {
+	{"/api", nil, "/api [off|disconnect|unpair|lock|disallow <n>|all|control off]", "den-api.sock", func(a []string) (string, string) {
 		switch {
 		case len(a) == 0, a[0] == "status", a[0] == "list":
 			return api.DockOK, ""
-		case a[0] == "off", a[0] == "disconnect", a[0] == "unpair", a[0] == "disallow":
+		case a[0] == "off", a[0] == "disconnect", a[0] == "unpair", a[0] == "lock", a[0] == "disallow":
 			return api.DockOK, ""
 		case a[0] == "control" && len(a) > 1 && a[1] == "off":
 			return api.DockOK, ""
@@ -65,6 +66,8 @@ var dockVerbs = []dockVerb{
 		}
 		return api.DockRefused, "connecting with a changed policy is for Den only"
 	}},
+	// Stopping desktop control only lowers: always allowed from the dock.
+	{"/desktop", nil, "/desktop [stop|keep]", "desktop control: stop it at once, or keep the last mission's files", always(api.DockOK, "")},
 	{"/open", []string{"/o", "/focus"}, "/open", "focus the agent's terminal", always(api.DockDenScreen, whyScreen)},
 	{"/copy", nil, "/copy", "copy the last code block", always(api.DockDenScreen, whyScreen)},
 	{"/close", []string{"/kill"}, "/close <name>[, name…] | idle [dur] [--force]", "close agents, on a card", func(a []string) (string, string) {
@@ -144,6 +147,13 @@ var dockVerbs = []dockVerb{
 	{"/pause", nil, "/pause", "pause the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/resume", nil, "/resume", "resume the open mission", always(api.DockDenScreen, whyScreen)},
 	{"/stop", nil, "/stop", "stop the open mission", always(api.DockDenScreen, whyScreen)},
+	{"/god", nil, "/god off", "end God mode", func(a []string) (string, string) {
+		if len(a) > 0 && a[0] == "off" {
+			return api.DockOK, ""
+		}
+		// On is typed in Den's own window, with its phrase, and nowhere else.
+		return api.DockRefused, "God mode is turned on only in Den's own window"
+	}},
 	{"/usage", nil, "/usage [set <pct>|clear|stop|resume]", "the weekly limit", func(a []string) (string, string) {
 		switch {
 		case len(a) == 0, a[0] == "stop":
@@ -155,7 +165,26 @@ var dockVerbs = []dockVerb{
 		}
 		return api.DockRefused, "no such /usage command"
 	}},
+	{"/mode", nil, "/mode [dontAsk|plan|default|acceptEdits|auto]", "agents' permission mode; one that asks less waits on a card", func(a []string) (string, string) {
+		if len(a) == 0 {
+			return api.DockOK, ""
+		}
+		if _, ok := permmode.Parse(a[0]); !ok || len(a) > 1 {
+			return api.DockRefused, "one of dontAsk, plan, default, acceptEdits, auto; bypassPermissions is God mode's, never the dock's"
+		}
+		// A lowering applies at once; a raise waits on a card.
+		return api.DockCard, ""
+	}},
 	{"/budget", nil, "/budget", "the open mission's budget", always(api.DockDenScreen, whyScreen)},
+	{"/memory", nil, "/memory [rm <id>|rules]", "the project's notes and rules", func(a []string) (string, string) {
+		switch {
+		case len(a) > 0 && a[0] == "rm":
+			return api.DockOK, "" // deleting a note only lowers
+		case len(a) > 0 && a[0] == "rules":
+			return api.DockRefused, "the project's rules are for Den's own window"
+		}
+		return api.DockDenScreen, whyScreen
+	}},
 	{"/orchestrator", []string{"/orch"}, "/orchestrator [new|restart]", "the orchestrator", func(a []string) (string, string) {
 		if len(a) > 0 && (a[0] == "new" || a[0] == "restart") {
 			return api.DockOK, ""
@@ -169,7 +198,7 @@ var dockVerbs = []dockVerb{
 // dockJudged is how many leading words each verb's verdict judges: they
 // run in the form judged (lowercased), so what runs is what was checked;
 // the words after (names, notes, paths) run as typed.
-var dockJudged = map[string]int{"/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1}
+var dockJudged = map[string]int{"/god": 1, "/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1, "/memory": 1}
 
 // dockVerbOf is the verb a command word names, by its name or an alias.
 func dockVerbOf(word string) (dockVerb, bool) {
@@ -264,10 +293,10 @@ func (m *Model) runFromDock(r *api.CommandRun) tea.Cmd {
 	}
 	line := strings.Join(words, " ")
 	m.flash, m.flashErr = "", false
-	m.dockFrom = sanitize.Label(r.Console, 40)
+	m.fromDock, m.dockFrom = true, sanitize.Label(r.Console, 40)
 	mm, cmd := m.command(line)
 	*m = mm.(Model)
-	m.dockFrom = ""
+	m.fromDock, m.dockFrom = false, ""
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "from " + sanitize.Label(r.Console, 40) + ": " + sanitize.Label(line, 200), at: time.Now()}))
 	note := sanitize.Label(m.flash, 200)
 	if m.flashErr {

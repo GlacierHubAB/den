@@ -403,7 +403,7 @@ func TestRemoteProjectsAreHostScoped(t *testing.T) {
 		t.Errorf("no den @devbox project: %+v", m.proj.list)
 	}
 	m.proj.cur = "den @devbox"
-	if cmd := m.proposeMission("ship it"); cmd == nil || !strings.Contains(m.flash, "remote hosts come later") {
+	if cmd := m.requestMission("ship it"); cmd == nil || !strings.Contains(m.flash, "remote hosts come later") {
 		t.Errorf("mission on a remote project: flash %q", m.flash)
 	}
 }

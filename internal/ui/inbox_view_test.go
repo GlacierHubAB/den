@@ -74,3 +74,36 @@ func TestInboxKeepsSelectionVisibleAndNewestOnTop(t *testing.T) {
 		t.Errorf("selected (oldest) notice should scroll into view:\n%s", out)
 	}
 }
+
+// Inbox prose wraps at word boundaries to the pane instead of being cut:
+// a long summary shows whole, word for word, no "…", no line too wide.
+func TestInboxWrapsInsteadOfCutting(t *testing.T) {
+	store := inbox.New()
+	agents := sample()
+	s1 := agents[0].Session.SessionID
+	long := "I've asked the designer for the look on the two queued items from drey-lead and the strip's wording, and I'll come back with screenshots once both are signed off by the human."
+	store.Apply(req("Stop", s1, map[string]any{"last_assistant_message": long}))
+	m := Model{st: newStyles(theme.Deepharness), agents: agents, store: store, tab: tabInbox, width: 70, height: 40}
+	m.input = newInput(m.st)
+	var it *inbox.Item
+	for _, x := range store.Items() {
+		it = x
+	}
+	const w = 60
+	lines := m.inboxBlock(it, false, w)
+	plain := ansi.Strip(strings.Join(lines, "\n"))
+	if strings.Contains(plain, "…") {
+		t.Errorf("prose was cut:\n%s", plain)
+	}
+	words := " " + strings.Join(strings.Fields(strings.NewReplacer("▌", " ", "▏", " ").Replace(plain)), " ") + " "
+	for _, word := range strings.Fields(long) {
+		if !strings.Contains(words, " "+word+" ") {
+			t.Errorf("word %q missing or split:\n%s", word, plain)
+		}
+	}
+	for i, l := range lines {
+		if ansi.StringWidth(l) > w {
+			t.Errorf("line %d too wide (%d): %q", i, ansi.StringWidth(l), ansi.Strip(l))
+		}
+	}
+}

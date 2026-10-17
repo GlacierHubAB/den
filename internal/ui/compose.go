@@ -134,10 +134,16 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 	if text == "" {
 		return m, nil
 	}
+	// The line after /god on is the phrase or nothing: it goes nowhere else.
+	if m.godPhraseTyped(text) {
+		cleared := m.clear()
+		return m, tea.Batch(cleared, m.godSweep())
+	}
 	if strings.HasPrefix(text, "/") {
 		cleared := m.clear()
 		mm, cmd := m.command(text)
-		return mm, tea.Batch(cleared, cmd)
+		next := mm.(Model)
+		return next, tea.Batch(cleared, cmd, next.godSweep())
 	}
 	// Chips become "[Image #1: /path]" so the receiver can open the file.
 	text = m.expandChips(text)
@@ -147,9 +153,6 @@ func (m Model) submit() (tea.Model, tea.Cmd) {
 		return m.say(fmt.Sprintf("Which one: %s?", strings.Join(mt.ambiguous, ", ")), true)
 	case mt.target == nil && (mt.missing != "" || strings.HasPrefix(text, "@")):
 		return m.say(fmt.Sprintf("No agent called %q", mt.missing), true)
-	case mt.target == nil && m.tab == tabOverview:
-		cleared := m.clear()
-		return m, tea.Batch(cleared, m.missionText(mt.body))
 	case mt.target == nil:
 		cleared := m.clear()
 		return m, tea.Batch(cleared, m.askOrchestrator(mt.body))
@@ -205,6 +208,37 @@ func (m Model) sender() sendFunc {
 		}
 		sid, host := splitKey(a.Session.SessionID)
 		return feed.Send(host, sid, text)
+	}
+}
+
+// sendDen delivers Den's own automatic message; tests replace it.
+var sendDen = peer.SendFromDen
+
+// denSender is how Den's own checks (overlaps, branch nudges) message a
+// local agent: framed as Den's, never as the human's words. They run on
+// local agents only.
+func (m Model) denSender() sendFunc {
+	return func(a fleet.Agent, text string) error {
+		if a.Host != "" {
+			return fmt.Errorf("%s is on another host; Den's checks message local agents only", a.Name)
+		}
+		return sendDen(a.Session.Socket, text)
+	}
+}
+
+// sendUsage delivers the usage stop; tests replace it.
+var sendUsage = peer.SendUsage
+
+// usageSender is how the usage stop reaches agents: on this machine framed
+// as Den enforcing the human's limit (binding, never typed by the human);
+// on a host through the host's own delivery, as any message.
+func (m Model) usageSender() sendFunc {
+	remote := m.sender()
+	return func(a fleet.Agent, text string) error {
+		if a.Host != "" {
+			return remote(a, text)
+		}
+		return sendUsage(a.Session.Socket, text)
 	}
 }
 

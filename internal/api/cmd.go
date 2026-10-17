@@ -167,6 +167,10 @@ func (s *Server) cmdRun(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
+	if !s.consolePowers(c) {
+		c.fail(req.ID, CodePowersLocked, PowersLocked)
+		return
+	}
 	var p struct {
 		Text string `json:"text"`
 	}
@@ -183,8 +187,7 @@ func (s *Server) cmdRun(c *conn, req Request) {
 		c.fail(req.ID, CodeUnavailable, "too many commands")
 		return
 	}
-	cur, _ := s.CurrentConsole()
-	r := &CommandRun{Text: p.Text, Console: ExeLabel(cur.Exe), Reply: make(chan CommandResult, 1)}
+	r := &CommandRun{Text: p.Text, Console: ConsoleLabel, Reply: make(chan CommandResult, 1)}
 	if !s.act(Act{Command: r}) {
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return

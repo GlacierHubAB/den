@@ -39,19 +39,25 @@ func Untrusted(s string) string {
 
 // RosterAgent is what Den tells the orchestrator about one agent.
 type RosterAgent struct {
-	Critter  string // the human's name for it
-	Peer     string // Claude Code's session name, for SendMessage
-	Role     string
-	Status   string
-	Task     string
-	Earlier  []string // earlier tasks this session worked on, newest first
-	Where    string
-	Title    string   // the terminal title Claude Code gave the session
-	Files    []string // folders of files the agent changed recently
-	Recent   []string // its latest words and tool call, newest first
-	Waiting  []string // inbox items waiting on the human, one line each
-	IsSelf   bool     // the orchestrator itself
-	Terminal bool     // has a terminal window
+	Critter string // the human's name for it
+	Peer    string // Claude Code's session name, for SendMessage
+	Role    string
+	Status  string
+	Task    string
+	Earlier []string // earlier tasks this session worked on, newest first
+	Where   string
+	Title   string   // the terminal title Claude Code gave the session
+	Files   []string // folders of files the agent changed recently
+	Recent  []string // its latest words and tool call, newest first
+	Waiting []string // inbox items waiting on the human, one line each
+	// Overlaps are other agents whose branches change the same files, with
+	// the files quoted as data, one line each.
+	Overlaps []string
+	// Branch is its branch, quoted, and how it is over Den's thresholds
+	// (age, how far behind), "" while it is not.
+	Branch   string
+	IsSelf   bool // the orchestrator itself
+	Terminal bool // has a terminal window
 	// Host is the remote host the agent runs on, "" for this machine.
 	// SendMessage is machine-local, so it cannot reach a remote agent.
 	Host string
@@ -71,6 +77,12 @@ func Compose(agents []RosterAgent, text string) string {
 // ComposeWith is Compose with the names of the mission templates, so a
 // request like "start a code review of ~/code/x" can use one.
 func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) string {
+	return ComposeAll(agents, templates, nil, nil, nil, text)
+}
+
+// ComposeAll is ComposeWith with the <den_missions> block: the missions Den
+// tracks, so the orchestrator can carry out what the human asks of them.
+func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []MissionInfo, metrics []MetricsInfo, rules []RulesInfo, text string) string {
 	var b strings.Builder
 	b.WriteString("<den_fleet>\n")
 	n, remote := 0, 0
@@ -79,7 +91,9 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 			continue
 		}
 		n++
-		fmt.Fprintf(&b, "- %s → peer %q", a.Critter, a.Peer)
+		// The critter name leads; the peer name closes the line, marked as
+		// a handle for tools, so it is not mistaken for the agent's name.
+		b.WriteString("- " + a.Critter)
 		if a.Role != "" {
 			b.WriteString(" · " + a.Role)
 		}
@@ -90,12 +104,18 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 		if a.Where != "" {
 			b.WriteString(" · in " + a.Where)
 		}
-		b.WriteString("\n")
+		fmt.Fprintf(&b, " [peer for tools: %q]\n", a.Peer)
 		if a.Title != "" {
 			b.WriteString("    title: " + a.Title + "\n")
 		}
 		if len(a.Files) > 0 {
 			b.WriteString("    recently changed files in: " + strings.Join(a.Files, ", ") + "\n")
+		}
+		for _, o := range a.Overlaps {
+			b.WriteString("    its branch overlaps (Den read it from git) " + o + "\n")
+		}
+		if a.Branch != "" {
+			b.WriteString("    its branch (Den read it from git) " + a.Branch + ": tell the human, and ask it to merge or rebase soon\n")
 		}
 		if len(a.Earlier) > 0 {
 			b.WriteString("    earlier: " + strings.Join(a.Earlier, "; ") + "\n")
@@ -152,6 +172,9 @@ func ComposeWith(agents []RosterAgent, templates []TemplateInfo, text string) st
 		}
 		b.WriteString("</den_templates>\n")
 	}
+	b.WriteString(missionsBlock(missions))
+	b.WriteString(metricsBlock(metrics))
+	b.WriteString(rulesBlocks(rules))
 	b.WriteString("\n")
 	b.WriteString(strings.TrimSpace(text))
 	return b.String()

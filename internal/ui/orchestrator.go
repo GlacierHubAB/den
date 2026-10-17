@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -117,6 +118,11 @@ type orchState struct {
 	// mixed is set once a refused prompt could not be placed among the
 	// turns: from then on no turn counts as the human's alone.
 	mixed bool
+	// propFocus is the proposal row of the missions strip the human
+	// selected with the arrows, "" for none, and propAt when: ^Y and ^N
+	// act on it only, never on a proposal by default.
+	propFocus string
+	propAt    time.Time
 	// version is the Claude Code release the process reported at init.
 	version string
 	// control says the process runs in control mode (a paired app).
@@ -221,7 +227,7 @@ func (m Model) isOrchestrator(a fleet.Agent) bool {
 	if a.Session.Name == OrchestratorName || m.isLane(a) {
 		return true // the API's read-only lane is never a fleet member either
 	}
-	return m.orch.proc != nil && (a.Session.PID == m.orch.proc.PID || (m.orch.proc.SessionID != "" && a.Session.SessionID == m.orch.proc.SessionID))
+	return m.orch.proc != nil && (a.Session.PID == m.orch.proc.PID || (m.orch.proc.SessionID() != "" && a.Session.SessionID == m.orch.proc.SessionID()))
 }
 
 // roster describes the fleet for the orchestrator.
@@ -276,21 +282,44 @@ func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 		}
 		if lane {
 			r.Recent, r.Earlier = nil, nil
+		} else if a.Host == "" {
+			r.Overlaps = m.overlapLines(a.Session.SessionID)
+			r.Branch = m.branchLine(a.Session.SessionID, time.Now())
 		}
 		out = append(out, r)
 	}
 	return out
 }
 
-// askOrchestrator sends a message typed outside the Overview: the plain
-// chat, shown on the Orchestrator tab.
+// askOrchestrator sends the human's typed text: the plain chat, on the
+// Orchestrator view, from any view. Typed on the Overview with a project
+// picked, the orchestrator is told which project the human is looking at,
+// so "start a mission to ..." needs no project named.
 func (m *Model) askOrchestrator(text string) tea.Cmd {
+	prompt := text
+	if p, ok := m.curProject(); ok && m.tab == tabOverview {
+		prompt = text + "\n\n(Typed on Den's Overview, with project " + promptValue(p.Name) + " (" + promptValue(p.Root) + ") picked.)"
+	}
+	m.openOrchestrator()
+	return m.tell("", text, prompt)
+}
+
+// promptValue is a value Den puts into a prompt of its own, such as a
+// project's name or root (which can come from an agent's repository): one
+// clean line with < and > made harmless, so it cannot add lines or pass
+// for a block's tags.
+func promptValue(s string) string {
+	return strings.NewReplacer("<", "‹", ">", "›").Replace(sanitize.Line(s))
+}
+
+// openOrchestrator shows the Orchestrator view, remembering where the
+// human came from.
+func (m *Model) openOrchestrator() {
 	m.orch.cardCur = -1
 	if m.tab != tabOrch {
 		m.orch.prevTab = m.tab
 	}
 	m.tab = tabOrch
-	return m.tell("", text, text)
 }
 
 // tell is the one way a message reaches the orchestrator. The chat shows
@@ -305,6 +334,7 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 		origin = originHuman
 	}
 	m.orch.nextOrigin = ""
+	m.mirrorTurn(origin, shown)
 	if m.orch.proc == nil {
 		m.orch.pending = append(m.orch.pending, prompt)
 		m.orch.pendingOrigins = append(m.orch.pendingOrigins, origin)
@@ -316,7 +346,7 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 		if m.orch.resume != "" {
 			m.orch.status = "resuming…"
 		}
-		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.controlWanted())
+		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.sendLaunchWanted())
 	}
 	return m.sendToOrchestrator(prompt, origin)
 }
@@ -384,7 +414,7 @@ func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
 		text = m.orch.replay + "\n\nNow the human says:\n" + text
 		m.orch.replay = ""
 	}
-	content := orch.ComposeWith(m.roster(), m.templateInfos(), text)
+	content := orch.ComposeAll(m.roster(), m.templateInfos(), m.missionInfos(), m.takeMetrics(), m.rulesInfos(), text)
 	proc := m.orch.proc
 	return func() tea.Msg {
 		if err := proc.Send(content); err != nil {
@@ -392,6 +422,22 @@ func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
 		}
 		return nil
 	}
+}
+
+// fromOrchestratorSession reports whether a hook request is the
+// orchestrator's own: its session id, once its init named it, or, before
+// that, a sender that is the orchestrator's own hook process (Spawned:
+// Den's binary, started by the orchestrator process, whose pid and start
+// time it checks). Either is enough. A turn can go out before init, so the
+// session id alone would let an early request through as an agent's.
+func (m *Model) fromOrchestratorSession(r *bridge.Request) bool {
+	if m.orch.proc == nil {
+		return false
+	}
+	if sid := m.orch.proc.SessionID(); sid != "" && r.SessionID == sid {
+		return true
+	}
+	return r.PeerPID > 0 && m.orch.proc.Spawned(r.PeerPID)
 }
 
 func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
@@ -417,6 +463,9 @@ func (m *Model) handleOrchStarted(msg orchStartedMsg) tea.Cmd {
 		cmds = append(cmds, m.sendToOrchestrator(p, origin))
 	}
 	m.orch.pending, m.orch.pendingOrigins = nil, nil
+	// An app's turn that waited for this start goes now, or after the
+	// human's turns just sent (tryAppTurn waits for their results).
+	cmds = append(cmds, m.tryAppTurn())
 	return tea.Batch(cmds...)
 }
 
@@ -427,6 +476,9 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	ctlCmd, only := m.controlEvent(ev)
 	if only {
 		return tea.Batch(ctlCmd, waitOrch(m.orch.proc))
+	}
+	if ev.Kind == orch.Result || ev.Kind == orch.Blocked {
+		m.ctl.finishedAt = time.Now()
 	}
 	cmd := m.orchEvent(ev)
 	switch ev.Kind {
@@ -463,6 +515,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 		}
 	case orch.Text:
 		m.orch.said = true
+		m.mirrorText(ev.Text)
 		text := m.missionReply(strings.TrimSpace(ev.Text))
 		if i := m.orch.streaming(); i >= 0 {
 			m.orch.chat[i].text = text
@@ -546,6 +599,11 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 	case orch.Backstop:
 		return m.onBackstop(ev.Text, ev.Trip)
 	case orch.Result:
+		// The mirror hears the reply as the turn it answers: the oldest in
+		// flight, and the console's turn that ends, if it is one.
+		if len(m.orch.origins) > 0 {
+			m.mirrorReply(m.orch.origins[0], strings.TrimSpace(ev.Text))
+		}
 		m.turnDone()
 		if ev.IsError && !m.orch.said && authTrouble(ev.Text) {
 			m.addChat(chatEntry{role: "note", text: authNote(ev.Text), at: now})
@@ -586,7 +644,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 			m.addChat(chatEntry{role: "note", text: "the previous orchestrator session could not be resumed · starting a fresh one with the conversation so far", at: now})
 			m.orch.starting = true
 			m.orch.status = "starting…"
-			return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
+			return startOrchestrator(m.cfg, "", m.guide.active, m.sendLaunchWanted())
 		}
 		m.orch.status = "stopped"
 		m.addChat(chatEntry{role: "note", text: ev.Text + " · it restarts with your next message", at: now})
@@ -633,6 +691,7 @@ func (m Model) orchPane(w, h int) string {
 	var lines []string
 	if len(m.orch.chat) == 0 {
 		pad := chatPad(w)
+		lines = append(lines, m.missionStrip(w, h)...)
 		lines = append(lines, "", pad+s.dim.Render("Type without an @ to talk to the orchestrator."), "")
 		for _, l := range strings.Split(ansi.Wrap("It sees every agent's name, state, task and what is waiting on you, and it can message agents for you. It cannot approve anything; you do that in the inbox. The first message starts it, which takes a few seconds.", w-2*len(pad), ""), "\n") {
 			lines = append(lines, pad+s.muted.Render(l))
@@ -646,7 +705,7 @@ func (m Model) orchPane(w, h int) string {
 // orchWindow is what the Orchestrator pane shows: the strip, the chat lines
 // in view, and for each of those the chat entry it draws (-1 for none).
 func (m Model) orchWindow(w, h int) (strip, lines []string, owners []int) {
-	strip = m.stripLines(w-2, time.Now())
+	strip = append(m.missionStrip(w, h), m.stripLines(w-2, time.Now())...)
 	lines, owners, focusStart, focusEnd := m.chatLinesOwned(w, func(chatEntry) bool { return true })
 	// The strip stays put; the chat scrolls under it. With a card focused
 	// the window is anchored to that card, otherwise it follows the tail,
@@ -698,8 +757,8 @@ func (m Model) chatLinesOwned(w int, keep func(chatEntry) bool) (lines []string,
 	// The orchestrator's code highlights carry its own colour, the way an
 	// agent's do in the detail pane.
 	orchColor := s.pal.Bright
-	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
-		orchColor = m.colorFor(m.orch.proc.SessionID)
+	if m.orch.proc != nil && m.orch.proc.SessionID() != "" {
+		orchColor = m.colorFor(m.orch.proc.SessionID())
 	}
 	mo := m
 	mo.st.code = lipgloss.NewStyle().Foreground(lipgloss.Color(orchColor))
@@ -862,6 +921,9 @@ func (m Model) closeOrchestrator() {
 // once and owed messages are resent. A stuck API connection looks exactly
 // like deep thought from outside, so the thresholds are generous.
 func (m *Model) watchOrchestrator() tea.Cmd {
+	if cmd := m.watchAppTurn(); cmd != nil {
+		return cmd
+	}
 	if !m.orch.thinking || m.orch.proc == nil {
 		return nil
 	}
@@ -875,6 +937,32 @@ func (m *Model) watchOrchestrator() tea.Cmd {
 		m.orch.status = fmt.Sprintf("thinking… no reply for %s · /orch restart", humanAge(quiet))
 	}
 	return nil
+}
+
+// appTurnGrace is how long Den waits, after Claude Code finished a turn
+// and with nothing from it since, before it closes an app turn still open.
+var appTurnGrace = 2 * time.Minute
+
+// watchAppTurn closes an app's turn whose end Den missed: Claude Code
+// finished a turn after the app's was sent, nothing came since, and the
+// app's turn is still open. Without it, a turn Den mistook for another's
+// would hold every later message (the app's, the human's, reports) for
+// good. A turn still running (a tool waiting on a card) has not finished,
+// so it is never closed here.
+func (m *Model) watchAppTurn() tea.Cmd {
+	if m.ctl.turn == nil || !m.ctl.sent || m.orch.proc == nil || len(m.ctl.asks) > 0 {
+		return nil
+	}
+	if m.ctl.finishedAt.IsZero() || !m.ctl.finishedAt.After(m.ctl.sentAt) || time.Since(m.orch.lastEvent) < appTurnGrace || time.Since(m.ctl.finishedAt) < appTurnGrace {
+		return nil
+	}
+	m.orch.proc.CloseAppTurn()
+	if m.turnOrigin() == originApp {
+		m.turnDone()
+	}
+	m.orch.thinking = len(m.orch.origins) > 0
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "The orchestrator finished, but Den missed the end of the app's turn; Den closed it, and sends what waited behind it.", at: time.Now()}))
+	return m.appTurnOver()
 }
 
 // restartOrchestrator kills the process, resumes the same session and
@@ -894,9 +982,12 @@ func (m *Model) restartOrchestrator() tea.Cmd {
 		m.orch.pendingOrigins = append(m.orch.pendingOrigins, originDen)
 	}
 	m.orch.origins, m.peers.inFlight, m.peers.envelopes = nil, 0, 0
+	// The turns in flight are gone: what the mirror kept for their replies
+	// goes with them, so no later reply is named for a stale report.
+	m.mirror.reports, m.mirror.reply = nil, nil
 	m.orch.started = false
 	m.orch.starting = true
 	m.orch.status = "restarting…"
 	m.guide.restart = false // the new process starts with the guidance in use
-	return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.controlWanted())
+	return startOrchestrator(m.cfg, m.resumable(), m.guide.active, m.sendLaunchWanted())
 }

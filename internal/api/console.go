@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // A console is the one program the human paired, in Den's own window, as
@@ -38,6 +39,10 @@ const (
 	consoleStrikesMax   = 3                // proofs from other programs, in consoleStrikeWindow, that unpair
 	consoleStrikeWindow = 10 * time.Minute
 	unpairAllEvery      = 10 * time.Second // console.unpair {"all": true}, for everyone
+	// autoPairHold is how long three tries from other programs, wrong
+	// proofs or a burst of answers stop automatic pairing: the strike
+	// window. Pairing by code still works meanwhile.
+	autoPairHold = consoleStrikeWindow
 )
 
 // EventConsole carries what happened to the console (ConsoleEvent).
@@ -73,6 +78,24 @@ type ConsoleAsk struct {
 	Parent   string
 	Cmdline  string   // as the program reports it: it can be spoofed
 	Replaces *Console // the console it replaces, nil for none
+	// Codeless is a console.request: no code was typed, and the human
+	// matches the pid, start and fingerprints with the dock's. Unit,
+	// Program and ProgramSHA are the service as Den read it from its
+	// manager; AppFP and DenFP the two keys' fingerprints (Fingerprint).
+	Codeless bool
+	// Reconnect is a console.reconnect the human answers: the service
+	// restarted, and Changes says why it is not re-paired silently.
+	Reconnect bool
+	// Rejoins is a claim by code whose process Den read clean as Unit:
+	// the dock may re-pair after a restart with no code, as one paired
+	// with none, and the card says so.
+	Rejoins    bool
+	Changes    []string
+	Unit       string
+	Program    string
+	ProgramSHA string
+	AppFP      string
+	DenFP      string
 }
 
 // ConsoleIntruder is a proof for the console from another process.
@@ -90,17 +113,65 @@ type Console struct {
 	Since     time.Time
 	LastProof time.Time
 	PagesSHA  string
+	// Powers is whether it may answer cards and run commands now, and
+	// Verified whether this Den read it clean as ConsoleUnit for this
+	// pairing itself (never from the record on disk); only CurrentConsole
+	// fills them in.
+	Powers   bool
+	Verified bool
 }
 
 // ConsoleEvent is the data of a console event.
 type ConsoleEvent struct {
-	Kind       string `json:"kind"` // restored, connected, refused or unpaired
+	Kind       string `json:"kind"` // restored, connected, paired, reconnected, powers, refused or unpaired
 	PID        int    `json:"pid"`
 	StartTicks uint64 `json:"start_ticks"`
 	Started    string `json:"started,omitempty"` // HH:MM:SS, local time
 	Program    string `json:"program,omitempty"`
 	Reason     string `json:"reason,omitempty"`
+	On         *bool  `json:"on,omitempty"` // powers: whether the console has them now
+	// Cause says why an unpaired console is unpaired, one of the Cause
+	// values; reason is display text. A Den from before causes sends none.
+	Cause string `json:"cause,omitempty"`
+	// An automatic pairing (paired, reconnected) names the unit, the
+	// program as the manager runs it and its SHA-256, and what changed
+	// since Den last read the service.
+	Unit       string   `json:"unit,omitempty"`
+	ProgramSHA string   `json:"program_sha256,omitempty"`
+	Changes    []string `json:"changes,omitempty"`
 }
+
+// The causes of an unpaired console event (ConsoleEvent.Cause). The set is
+// closed: every path that unpairs the console names one.
+const (
+	// CauseBurst: the console answered cards faster than anyone could read.
+	CauseBurst = "burst"
+	// CauseProofs: three wrong proofs for the console in ten minutes.
+	CauseProofs = "proofs"
+	// CauseIntruders: three tries for the console from other programs in ten
+	// minutes.
+	CauseIntruders = "intruders"
+	// CauseSelf: the console unpaired itself, with console.unpair.
+	CauseSelf = "self"
+	// CauseDen: unpaired in Den (/api unpair) or with den unpair in a
+	// terminal, which a program run on this machine can issue too: word it
+	// as "in Den", not as the human's act.
+	CauseDen = "den"
+	// CauseOther: another program on this machine unpaired every pairing
+	// with console.unpair {all: true}, from a connection that is not the
+	// console's own. Never the human's act.
+	CauseOther = "other"
+	// CauseReplaced: another pairing took its place: another console, or
+	// this one after a console.reconnect with a fresh key.
+	CauseReplaced = "replaced"
+	// CauseRecord: Den found its console record changed outside Den.
+	CauseRecord = "record"
+	// CauseGuard: Den's own guard stopped the orchestrator, and unpaired.
+	CauseGuard = "guard"
+)
+
+// UnpairCauses are the Cause values.
+var UnpairCauses = []string{CauseBurst, CauseProofs, CauseIntruders, CauseSelf, CauseDen, CauseOther, CauseReplaced, CauseRecord, CauseGuard}
 
 type consoleRec struct {
 	Console
@@ -116,6 +187,20 @@ type consoleRec struct {
 	leaked   bool
 	strikes  []time.Time
 	restored bool // restored from before a Den restart, not yet announced
+	// verifier is what Den last read of the console's service (an
+	// automatic pairing, or a claim by code that read clean), nil for any
+	// other pairing by code. readHere says this Den process read it, not
+	// a record from disk.
+	verifier *sysd.Verifier
+	readHere bool
+	// powers is whether the console may answer cards and run commands:
+	// given with a pairing unless the human locked them or God mode is
+	// on, and by the human's ^Y on Den's powers card; taken by /api lock,
+	// God mode, or a refused try for the console.
+	powers bool
+	// auto is an automatic pairing's event (paired, or reconnected), not
+	// yet told to the console's first subscribed connection.
+	auto *ConsoleEvent
 }
 
 type consoleCode struct {
@@ -135,6 +220,25 @@ type consoleState struct {
 	// when each identity last raised an intruder card.
 	recordHash string
 	intruders  map[string]time.Time
+	// godOn says whether God mode is on (SetGodMode), nil for never.
+	godOn func() bool
+	// locked is the human's /api lock: every console, re-paired or
+	// restored, comes without its powers until the ^Y on Den's powers
+	// card. It is kept in the record across Den's restarts.
+	locked bool
+	// autoOff stops automatic pairing after an unpair by the human, the
+	// console itself or Den's own guards, until the human starts a pairing
+	// in Den; autoHold stops it until then after three tries from other
+	// programs or wrong proofs.
+	autoOff  bool
+	autoHold time.Time
+	// last is what Den last read of the console's service, for the changes
+	// an automatic pairing names. given is the read this Den process last
+	// gave the powers to, itself (never one read back from disk): unless
+	// ConsolePowersAlways, only the same program, unit and pins pair with
+	// them.
+	last  *sysd.Verifier
+	given *sysd.Verifier
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches
@@ -252,6 +356,10 @@ func (s *Server) StartConsoleCode() []string {
 	}
 	s.con.mu.Lock()
 	s.con.code = &consoleCode{words: words, until: time.Now().Add(pairCodeLife)}
+	if s.con.autoOff {
+		s.con.autoOff = false // the human acts in Den: the dock may pair by itself again
+		s.saveConsoleLocked()
+	}
 	s.con.mu.Unlock()
 	return append([]string(nil), words...)
 }
@@ -275,7 +383,10 @@ func (s *Server) CurrentConsole() (Console, bool) {
 	if s.con.cur == nil {
 		return Console{}, false
 	}
-	return s.con.cur.Console, true
+	c := s.con.cur.Console
+	c.Powers = s.con.cur.powers
+	c.Verified = s.con.cur.verifier != nil && s.con.cur.readHere
+	return c, true
 }
 
 // ConsoleAnswered is the human's ^Y (ok) or ^N on a console card.
@@ -295,13 +406,18 @@ func (s *Server) ConsoleAnswered(id string, ok bool) {
 // UnpairConsole ends the console, and a claim waiting for the human, and
 // closes the console's connections after telling them why; why is also
 // noted in Den's chat when it is not "".
-func (s *Server) UnpairConsole(why string) int {
+func (s *Server) UnpairConsole(cause, why string) int {
 	s.con.mu.Lock()
 	rec, pending := s.con.cur, s.con.pending
 	s.con.cur, s.con.pending = nil, nil
-	if rec != nil {
-		s.saveConsoleLocked()
+	switch cause {
+	case CauseReplaced:
+	case CauseIntruders, CauseProofs, CauseBurst:
+		s.con.autoHold = time.Now().Add(autoPairHold)
+	default:
+		s.con.autoOff = true
 	}
+	s.saveConsoleLocked() // the switch and the hold are kept across Den's restarts too
 	if pending != nil && pending.confirm != nil {
 		close(pending.confirm)
 		pending.confirm = nil
@@ -314,11 +430,12 @@ func (s *Server) UnpairConsole(why string) int {
 	if len(reason) > 40 {
 		reason = "unpaired in Den"
 	}
-	s.closeConsole(rec.ID, ConsoleEvent{Kind: "unpaired", PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started), Reason: reason})
+	s.closeConsole(rec.ID, ConsoleEvent{Kind: "unpaired", PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started), Reason: reason, Cause: cause})
 	if why != "" {
 		s.note(why)
 	}
-	s.act(Act{ConsoleChanged: true})
+	// An unpair also ends God mode: both are lowerings.
+	s.act(Act{ConsoleChanged: true, GodOff: "the console was unpaired"})
 	return 1
 }
 
@@ -489,17 +606,38 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, ClaimWrong)
 		return
 	}
+	// Proved: the claimant is read as the console's service, as a
+	// console.request is, outside the lock. A clean read is kept, so the
+	// dock may re-pair after a restart as one paired with no code; any
+	// other read leaves the pairing as a code makes it, with no strike.
+	self := sysd.ProcID{PID: c.peer.PID, Start: c.peer.Start}
+	v, err := readUnit(self)
+	if time.Now().After(code.until) {
+		zero(text)
+		c.fail(req.ID, CodeForbidden, ClaimNoCode)
+		return
+	}
 	pub, _ := hex.DecodeString(p.PublicKey)
 	id := randHex()
 	rec := &consoleRec{
-		Console:  Console{ID: id, Exe: c.peer.Exe, PID: c.peer.PID, Since: now, PagesSHA: p.Pages},
-		identity: identity, start: c.peer.Start, pub: ed25519.PublicKey(pub), pubHex: p.PublicKey,
+		Console:  Console{ID: id, Exe: c.peer.Exe, PID: self.PID, Since: now, PagesSHA: p.Pages},
+		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: p.PublicKey,
 		confirm: make(chan bool, 1), words: words,
 	}
-	ask := ConsoleAsk{ID: id, Exe: c.peer.Exe, PID: c.peer.PID}
-	ask.Started, ask.Parent, ask.Cmdline = procInfo(c.peer.PID)
+	ask := ConsoleAsk{ID: id, Exe: c.peer.Exe, PID: self.PID}
+	if err == nil {
+		rec.verifier, rec.readHere = &v, true
+		ask.Rejoins, ask.Unit = true, ConsoleUnit
+	}
+	ask.Started, ask.Parent, ask.Cmdline = procInfo(self.PID)
 	rec.Started = ask.Started
 	st.mu.Lock()
+	if time.Now().Before(st.cooldown) {
+		st.mu.Unlock()
+		zero(text)
+		c.fail(req.ID, CodeUnavailable, ClaimCooldown)
+		return
+	}
 	if st.pending != nil {
 		st.mu.Unlock()
 		zero(text)
@@ -511,6 +649,8 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		ask.Replaces = &old
 	}
 	st.pending = rec
+	// Taken with the claim, under the lock: the human's answer and a leak
+	// clear the field (ConsoleAnswered, leakedConsole) under it too.
 	confirm := rec.confirm
 	st.mu.Unlock()
 	if !s.act(Act{Console: &ask}) {
@@ -523,8 +663,27 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 		c.fail(req.ID, CodeUnavailable, ClaimBusy)
 		return
 	}
+	s.awaitConsole(c, req, rec, confirm, func() { zero(text) }, func() map[string]any {
+		bindKey := codeKey(text, id, consoleBindInfo)
+		bind := macHex(bindKey, consoleBindInfo+"\n"+rec.pubHex+"\n"+s.ckey.pubHex+"\n"+id)
+		zero(bindKey)
+		return map[string]any{"pairing": id, "den_public_key": s.ckey.pubHex, "bind": bind, "console": true}
+	})
+}
+
+// awaitConsole waits, off the connection's reader, for the human's answer
+// to a console card in Den, then makes rec the console or refuses: the
+// ^Y counts only for the claimant still connected and still the same
+// process, and only while rec is still the claim waiting; a deny cools
+// claims down. confirm is rec's answer channel, as the caller took it
+// under s.con.mu when it made rec the claim waiting; rec.confirm itself is
+// never read here, since the answer clears it under that lock. reply is
+// the success answer, end runs last either way. The human's ^Y in Den's
+// own window gives the console its powers.
+func (s *Server) awaitConsole(c *conn, req Request, rec *consoleRec, confirm chan bool, end func(), reply func() map[string]any) {
+	st := &s.con
 	go func() {
-		defer zero(text)
+		defer end()
 		ok, why := false, ClaimTimeout
 		select {
 		case answer, open := <-confirm:
@@ -554,8 +713,16 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 			ok, why = false, ClaimLeaked
 		}
 		var old *consoleRec
+		locked := st.locked
 		if ok && mine {
+			// The human's /api lock outlasts any pairing: only the powers
+			// card's ^Y lifts it.
+			rec.powers = !locked
 			old, st.cur = st.cur, rec
+			if rec.verifier != nil {
+				// The human paired this program by code and ^Y.
+				st.last, st.given = rec.verifier, rec.verifier
+			}
 			s.saveConsoleLocked()
 		} else if why == ClaimDenied && mine {
 			st.cooldown = time.Now().Add(consoleCooldown)
@@ -565,18 +732,18 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 			if !mine {
 				why = ClaimRevoked
 			}
-			s.act(Act{ConsoleDone: id})
+			s.act(Act{ConsoleDone: rec.ID})
 			c.fail(req.ID, CodeForbidden, why)
 			return
 		}
-		if old != nil {
-			s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: "another console was paired"})
+		if old != nil && old.ID != rec.ID {
+			s.closeConsole(old.ID, ConsoleEvent{Kind: "unpaired", PID: old.PID, StartTicks: old.start, Started: hhmmss(old.Started), Reason: "another console was paired", Cause: CauseReplaced})
 		}
-		bindKey := codeKey(text, id, consoleBindInfo)
-		bind := macHex(bindKey, consoleBindInfo+"\n"+rec.pubHex+"\n"+s.ckey.pubHex+"\n"+id)
-		zero(bindKey)
-		s.act(Act{ConsoleDone: id, ConsoleChanged: true})
-		c.reply(req.ID, map[string]any{"pairing": id, "den_public_key": s.ckey.pubHex, "bind": bind, "console": true})
+		s.act(Act{ConsoleDone: rec.ID, ConsoleChanged: true})
+		if locked {
+			s.askPowers(rec, "you locked the console's powers in Den")
+		}
+		c.reply(req.ID, reply())
 	}()
 }
 
@@ -654,7 +821,9 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 		// Unpaired first, then told, as for a burst.
 		if unpair {
-			s.UnpairConsole("three other programs tried your console in ten minutes: it is unpaired; pair again with den pair")
+			s.UnpairConsole(CauseIntruders, "three tries for your console from other programs in ten minutes: it is unpaired; pair again with den pair")
+		} else {
+			s.LockConsolePowers("another program tried your console")
 		}
 		c.fail(req.ID, CodeForbidden, "another program holds this console")
 		return
@@ -672,7 +841,9 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		st.mu.Unlock()
 		// Unpaired first, then told, as for a burst.
 		if unpair {
-			s.UnpairConsole("three wrong console proofs in ten minutes: the console is unpaired; pair again with den pair")
+			s.UnpairConsole(CauseProofs, "three wrong console proofs in ten minutes: the console is unpaired; pair again with den pair")
+		} else {
+			s.LockConsolePowers("a wrong proof for your console")
 		}
 		c.fail(req.ID, CodeForbidden, "wrong proof")
 		time.Sleep(50 * time.Millisecond) // the answer first, as for too_large
@@ -686,6 +857,7 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		return
 	}
 	rec.LastProof = now
+	powers := rec.powers
 	st.mu.Unlock()
 	others := s.consoleConns(rec.ID)
 	c.mu.Lock()
@@ -697,9 +869,13 @@ func (s *Server) consoleAuth(c *conn, req Request) {
 		}
 	}
 	den := ed25519.Sign(s.ckey.priv, consoleSigned(dirDenToApp, cid, rec.ID, appKey, s.ckey.pubHex, nd, p.Nonce, s.ckey.identity))
-	// No God mode and no views yet: God mode is off, and every session
-	// shows in its own window (the agent view).
-	c.reply(req.ID, map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": map[string]any{"on": false}, "view": "agent"})
+	// God mode's state as it is now. The view is the one Den is in, and
+	// absent when this Den cannot switch views.
+	rep := map[string]any{"paired": true, "sig": hex.EncodeToString(den), "god": s.god.get(), "powers": powers}
+	if v := s.currentView(); v != "" {
+		rep["view"] = v
+	}
+	c.reply(req.ID, rep)
 }
 
 // consoleEvents is console.events: this proved connection of the console
@@ -725,6 +901,8 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	if rec.restored {
 		kind, rec.restored = "restored", false
 	}
+	auto := rec.auto
+	rec.auto = nil
 	ev := ConsoleEvent{Kind: kind, PID: rec.PID, StartTicks: rec.start, Started: hhmmss(rec.Started)}
 	st.mu.Unlock()
 	c.mu.Lock()
@@ -746,9 +924,45 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 		ids = append(ids, card.ID)
 	}
 	c.reply(req.ID, map[string]any{"ok": true, "cards": ids})
+	// First where every stateful kind stands now, before any change, so
+	// that no client infers state from the order of events: who the
+	// console is (connected, or restored), each waiting card as new (the
+	// cards listed in the reply, right after), its powers, God mode, the
+	// permission mode, the view. A state may have changed while no
+	// connection was there to hear it (a restored console's powers come
+	// back before it reconnects).
 	c.push(Event{Event: EventConsole, Data: ev}, true)
 	for _, card := range waiting {
 		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
+	}
+	// Each pushed under the lock its changers take, with the connection
+	// subscribed: a change after it reaches the connection after it, never
+	// before. push only queues, and closes on a full queue, with no lock.
+	st.mu.Lock()
+	powers := rec.powers
+	c.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "powers", On: &powers, PID: ev.PID, StartTicks: ev.StartTicks}}, true)
+	st.mu.Unlock()
+	s.god.mu.Lock()
+	c.push(Event{Event: EventGod, Data: s.god.valueLocked()}, true)
+	s.god.mu.Unlock()
+	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
+		c.push(Event{Event: EventMode, Data: v.Mode}, true)
+	}
+	if vc, ok := s.viewNow(); ok {
+		c.push(Event{Event: EventView, Data: vc}, true)
+	}
+	// Whether a desktop mission runs, and which.
+	s.replayDesktop(c)
+	// Whether the conversation is shown here (off, asking or on), worked
+	// out and queued under the mirror's push lock, so that a switch racing
+	// this subscribe is queued after it, never before.
+	s.conv.pushMu.Lock()
+	c.push(Event{Event: EventMirror, Data: s.mirrorFor(id)}, true)
+	s.conv.pushMu.Unlock()
+	// Then what happened: an automatic pairing, told to the connection
+	// that subscribes first.
+	if auto != nil {
+		c.push(Event{Event: EventConsole, Data: *auto}, true)
 	}
 }
 
@@ -770,7 +984,7 @@ func (s *Server) consoleUnpair(c *conn, req Request) {
 			c.fail(req.ID, CodeForbidden, "prove first, or send {\"all\": true}")
 			return
 		}
-		c.reply(req.ID, map[string]any{"ok": true, "unpaired": s.UnpairConsole("the console unpaired itself")})
+		c.reply(req.ID, map[string]any{"ok": true, "unpaired": s.UnpairConsole(CauseSelf, "the console unpaired itself")})
 		return
 	}
 	now := time.Now()
@@ -784,7 +998,17 @@ func (s *Server) consoleUnpair(c *conn, req Request) {
 	s.con.mu.Unlock()
 	n := len(s.Pairings())
 	s.Unpair("", "")
-	n += s.UnpairConsole("")
+	// From the console's own proved connection it is the console unpairing
+	// itself (along with the rest); from any other program, that program's
+	// act, which the human did not do.
+	c.mu.Lock()
+	id := c.console
+	c.mu.Unlock()
+	if cur, ok := s.CurrentConsole(); ok && id != "" && cur.ID == id {
+		n += s.UnpairConsole(CauseSelf, "")
+	} else {
+		n += s.UnpairConsole(CauseOther, "")
+	}
 	s.note("every console and app pairing was unpaired by " + sanitize.Label(ExeLabel(c.peer.Exe), 40) + " pid " + itoa(c.peer.PID))
 	c.reply(req.ID, map[string]any{"ok": true, "unpaired": n})
 }

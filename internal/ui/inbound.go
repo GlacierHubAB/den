@@ -175,6 +175,7 @@ func (m *Model) noteRefusal(sender, why string) {
 func (m *Model) sendReport(a fleet.Agent, body string) tea.Cmd {
 	content := peermsg.Report(a.Name, body)
 	m.addChat(chatEntry{role: "fan", to: a.Name, sid: a.Session.SessionID, tool: "report to the orchestrator", text: actionSummary("", body), full: sanitize.Text(body), fromAgent: true, status: "passed on", at: time.Now()})
+	m.mirrorReportTurn(a.Name, a.Session.SessionID)
 	if m.holdReport(content) {
 		return nil // after the app's turn, as it is
 	}
@@ -229,11 +230,11 @@ func (m Model) turnOrigin() string {
 // already killed. Its session is never resumed; a fresh one starts, which
 // runs the hook's self-test first.
 func (m *Model) onBackstop(why, kind string) tea.Cmd {
-	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
+	if m.orch.proc != nil && m.orch.proc.SessionID() != "" {
 		if m.orch.poisoned == nil {
 			m.orch.poisoned = map[string]bool{}
 		}
-		m.orch.poisoned[m.orch.proc.SessionID] = true
+		m.orch.poisoned[m.orch.proc.SessionID()] = true
 	}
 	m.orch.proc = nil
 	m.orch.resume, m.orch.replay = "", ""
@@ -245,7 +246,7 @@ func (m *Model) onBackstop(why, kind string) tea.Cmd {
 	m.logEntry(m.addChat(chatEntry{role: "note", text: "Den stopped the orchestrator: " + sanitize.Label(why, 120) + ". " + backstopWhy(kind) + " Nothing it was asking was resent.", at: time.Now()}))
 	m.orch.starting = true
 	m.orch.status = "starting a fresh session…"
-	return startOrchestrator(m.cfg, "", m.guide.active, m.controlWanted())
+	return startOrchestrator(m.cfg, "", m.guide.active, m.sendLaunchWanted())
 }
 
 // backstopWhy says, by the backstop's kind (orch.Trip*), why the

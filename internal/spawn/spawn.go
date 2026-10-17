@@ -28,7 +28,8 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
-	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/permmode"
+	"github.com/GlacierHubAB/den/internal/view"
 	"github.com/GlacierHubAB/den/internal/winmark"
 	"github.com/GlacierHubAB/den/internal/worktree"
 )
@@ -61,7 +62,28 @@ type Request struct {
 	// conversation a new session id (--fork-session).
 	Resume string
 	Fork   bool
+	// PermissionMode is the claude --permission-mode the agent starts in;
+	// "" is default, never Claude Code's own default (auto). Den gives its
+	// global mode.
+	PermissionMode string
+	// Custom, when set, is the whole command for the agent named name, in
+	// place of Command's: a desktop agent is launched like the
+	// orchestrator, with its own tools, settings and prompt.
+	Custom func(name string) []string
+	// NoSessionWait returns once the window is up, without waiting for a
+	// session to register: a print-mode agent may never write one.
+	NoSessionWait bool
+
+	// SessionID is the session id a new agent starts with (claude
+	// --session-id), "" for Claude Code's own; never with Resume. Settings
+	// is a --settings file Den wrote for it (an absolute path), "" for
+	// none. God mode gives both to an agent it guards.
+	SessionID string
+	Settings  string
 }
+
+// uuidRe is a session id as Claude Code takes one.
+var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Worktree is spawn_agent's worktree input: true (a worktree named after
 // the agent), false, or the name to give it.
@@ -136,8 +158,13 @@ type Result struct {
 	WorktreePath   string
 	WorktreeBranch string
 	Window         string // Hyprland address of the new terminal, "" when unknown
-	Workspace      string // where the window is, "" when unknown
-	Moved          bool   // it landed elsewhere and was moved to the active workspace
+	// Marked says Window is the one new window created with the agent's
+	// marker class, not merely a new terminal window.
+	Marked bool
+	// WindowPID is the window's process (the terminal), 0 when unknown.
+	WindowPID int
+	Workspace string // where the window is, "" when unknown
+	Moved     bool   // it landed elsewhere and was moved to the active workspace
 	// Untrusted means Claude Code has never been told to trust this folder,
 	// so it is asking the human in the new terminal before starting.
 	Untrusted bool
@@ -178,6 +205,15 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		if req.Model != "" && req.Resume == "" && !ValidModel(req.Model) {
 			return res, fmt.Errorf("unknown model %q: pick one of %s", req.Model, strings.Join(ModelNames(), ", "))
 		}
+		if req.PermissionMode != "" && !permmode.Valid(req.PermissionMode) && req.PermissionMode != permmode.Bypass {
+			return res, fmt.Errorf("unknown permission mode %q", req.PermissionMode)
+		}
+		if req.Settings != "" && !filepath.IsAbs(req.Settings) {
+			return res, fmt.Errorf("the settings file must be an absolute path")
+		}
+		if req.SessionID != "" && (req.Resume != "" || !uuidRe.MatchString(req.SessionID)) {
+			return res, fmt.Errorf("a session id is a UUID, for a new agent only")
+		}
 		sessions, _ = discover.Scan()
 		res.Name = PeerName(req.Name, dir, sessions)
 		res.Model = req.Model
@@ -190,6 +226,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 			res.Worktree, res.WorktreePath, res.WorktreeBranch = name, path, WorktreeBranch(name)
 		}
 		command = Command(req, res.Name)
+		if req.Custom != nil {
+			command = req.Custom(res.Name)
+		}
 	}
 	// The agent's own spawns name it as their lead through this variable;
 	// the orchestrator's marker must not leak into agents it starts.
@@ -213,7 +252,7 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	if res.Name != "" {
 		// PeerName keeps names to safe characters; sanitised again since a
 		// title is shown by the terminal and the window manager.
-		title = sanitize.Line("den · " + res.Name)
+		title = hypr.AgentTitle(res.Name)
 	}
 	// The agent's terminal carries a window class of its own, the one way
 	// Den may later tell its window from others with the same title or
@@ -238,8 +277,15 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		for time.Now().Before(deadline) && ctx.Err() == nil {
 			after, err := hypr.Clients()
 			if err == nil {
-				if c, ok := hypr.NewTerminal(before, after); ok {
-					res.Window = c.Address
+				// The marked window first: Ghostty, started with the marker as
+				// its class, names no terminal program, so only this finds it.
+				c, ok := hypr.NewMarked(before, after, marker)
+				res.Marked = ok
+				if !ok {
+					c, ok = hypr.NewTerminal(before, after)
+				}
+				if ok {
+					res.Window, res.WindowPID = c.Address, c.PID
 					res.Workspace = c.Workspace.Name
 					if want.ID != 0 && c.Workspace.ID != want.ID {
 						if hypr.MoveToWorkspace(c.Address, strconv.Itoa(want.ID)) == nil {
@@ -254,6 +300,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		}
 	}
 	if !req.Agent {
+		return res, nil
+	}
+	if req.NoSessionWait {
 		return res, nil
 	}
 	if res.Untrusted = !Trusted(dir); res.Untrusted {
@@ -298,6 +347,11 @@ func Run(ctx context.Context, req Request) (Result, error) {
 			continue
 		}
 		if first != nil {
+			if holds {
+				// Only a window bound to the session just now: in User view
+				// it comes up out of sight.
+				settleView(ctx, marker, first.PID)
+			}
 			res.SessionID = first.SessionID
 			res.Critter = badge.Name(first.SessionID)
 			res.Registered = true
@@ -306,6 +360,19 @@ func Run(ctx context.Context, req Request) (Result, error) {
 		sleep(ctx, pollEvery)
 	}
 	return res, nil
+}
+
+// viewSwitcher is what hides a new agent's window in User view; tests
+// replace it.
+var viewSwitcher = view.New
+
+// settleView hides the window the marker names when Den is in User view
+// and the session's process runs in it (internal/view). It never delays the
+// spawn by more than a few seconds and never fails it.
+func settleView(ctx context.Context, marker string, pid int) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, _ = viewSwitcher().Settle(ctx, marker, pid)
 }
 
 // WorktreeBranch is the branch Claude Code gives a worktree called name.
@@ -393,6 +460,20 @@ func Command(req Request, name string) []string {
 	if req.Model != "" {
 		command = append(command, "--model", req.Model)
 	}
+	// Always a mode, on a resume too: with none Claude Code starts in auto,
+	// and a reopened agent starts in the mode in force now, not the one it
+	// last ran in.
+	mode := req.PermissionMode
+	if mode == "" {
+		mode = permmode.Default
+	}
+	command = append(command, "--permission-mode", mode)
+	if req.Settings != "" {
+		command = append(command, "--settings", req.Settings)
+	}
+	if req.SessionID != "" && req.Resume == "" {
+		command = append(command, "--session-id", req.SessionID)
+	}
 	if req.Spawner != "" {
 		// Den's server beside the user's own: the agent keeps its usual
 		// tools and gains spawn_agent, pre-approved so a lead can staff its
@@ -414,7 +495,7 @@ func Command(req Request, name string) []string {
 // The MCP server Den offers and the tools on it, as Claude Code names them.
 const MCPServer = "den"
 
-var SpawnTools = []string{"mcp__den__spawn_agent", "mcp__den__open_terminal"}
+var SpawnTools = []string{"mcp__den__spawn_agent", "mcp__den__open_terminal", "mcp__den__desktop_mission"}
 
 // MCPConfig is the --mcp-config JSON that registers `<exe> mcp` as the
 // server named MCPServer.
@@ -653,6 +734,10 @@ var inherited = []string{
 	"CLAUDE_CODE_ENTRYPOINT=", "CLAUDE_CODE_EXECPATH=",
 	"DEN_ORCHESTRATOR=", "DEN_PEER=",
 }
+
+// ChildEnv is childEnv for agents Den starts without a terminal (a
+// headless desktop agent).
+func ChildEnv(environ, extra []string) []string { return childEnv(environ, extra) }
 
 // childEnv is the environment for the new terminal: the current one
 // without what a parent session set, plus extra.

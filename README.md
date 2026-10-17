@@ -26,7 +26,7 @@ Hyprland.
 - [Notifications](#notifications) · [Events for scripts](#events-for-scripts)
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
-- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Skills for roles](#skills-for-roles)
+- [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Desktop control](#desktop-control) · [Skills for roles](#skills-for-roles)
 - [Overview, projects and missions](#overview-projects-and-missions) · [Templates](#templates)
 - [Cost](#cost)
 - [Review](#review) · [Worktrees in Review](#worktrees-in-review) · [The agent badge](#the-agent-badge)
@@ -190,7 +190,7 @@ den remote status devbox   the read-only checks again; also: install, remove, di
 den install-mods        put the bundled agent-badge mod into ~/.claude/skills
 den mods                what ships in this binary and where it is loaded from
 den uninstall-mods      undo
-den pair                pair your console app (Drey's dock): a code in Den's header, then your ^Y on its card
+den pair                pair a console app by hand: a code in Den's header, then your ^Y on its card
 den unpair [all]        end the console; all also ends every app pairing
 den config              the config file path and the settings in effect
 den config init         write a documented ~/.config/den/config.toml
@@ -403,9 +403,11 @@ each chip. Delete a chip from the text and its image is left out.
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent (also one on a remote host, `/close Name@devbox`); `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
+| `/desktop`, `/desktop stop`, `/desktop keep` | how a desktop mission stands; stop it at once; keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
+| `/view`, `/view rescue` | say whether the windows are shown (Agent view) or hidden on Hyprland's `special:den` (User view, set by an app on den-api.sock); `rescue` brings back every window on `special:den`, whatever it is, to its workspace or the one you are on. Only you can run it, from Den's own screen |
 | `/remote`, `/remote connect <label>`, `/remote retry <label>` | list the remote hosts with their state; retry one now, applying a raise in `remotes.toml` after showing it (`connect`) or not (`retry`) (see [Remote agents](#remote-agents)) |
 | `/overview` `/missions`, `/fleet`, `/inbox`, `/review` | switch view |
 | `/fleet project`, `/fleet flat` | group the Fleet by project, or not; remembered |
@@ -414,7 +416,9 @@ each chip. Delete a chip from the text and its image is left out.
 | `/project <name>`, `/project add <dir>`, `/project drop` | pick, list or unlist a project |
 | `/mission <goal>`, `/pause`, `/resume`, `/stop` | missions |
 | `/mission move <project>` | ask to move the open or selected mission to another listed project; `Ctrl+Y` in the Inbox moves it |
+| `/mode`, `/mode <mode>` | show the permission mode agents start in, and the agents running in another; set it: a mode that asks more applies at once, one that asks less waits on a card (see [Permission mode](#permission-mode)) |
 | `/budget 2M`, `/budget $5`, `/budget off` | set, show (`/budget` alone) or remove the budget on the open or selected mission |
+| `/memory`, `/memory rm <id>`, `/memory rules` | list the current project's notes, delete one, show its rules and the proposed ones waiting (see [Project memory](#project-memory)) |
 | `/template`, `/template <name> <target or goal>`, `/template save <name>` | list the mission templates, start a proposal from one, save the open mission as one |
 | `/delete` `/del` | remove the review comment under the cursor |
 | `/send`, `/send <Name>`, `/send orchestrator` | send review drafts to their agents, to one agent, or those no live session can take to the orchestrator |
@@ -554,6 +558,54 @@ other users, not against your own processes.
 `den ask` from the command line starts a fresh orchestrator and doesn't load
 guidance.
 
+### God mode
+
+God mode lets the agents you start act without asking, and lets Den answer
+some of its own cards. It is turned on only in Den's own window: type
+`/god on`, read the warning, then type `let agents act without asking`
+within a minute. Nothing else turns it on (no config key, environment
+variable, command from an app or socket verb), and every Den start begins
+with it off. `/god off`, `den god off` in a terminal, your console and any
+unpair end it.
+
+While it is on, Den's header says so in red, and:
+
+- agents the orchestrator starts on this machine run in
+  `bypassPermissions`: Claude Code never asks them, so Den shows no
+  permission cards for them at all. Remote hosts keep their own policy;
+  agents a lead starts, and agents Den reopens, start in the global mode,
+  and a bypass agent cannot start agents of its own;
+- Den answers, yes, its own close, cleanup, restore, mission-update and
+  mission-move cards that came after God mode went on, with a line in its
+  chat for each;
+- pairings, app grants, turning the API on, installs, guidance, skills,
+  budgets and usage, messages to hosts, an app's turn, merges and your
+  console stay yours, and only Den's own window answers them, as it alone
+  gives an "always" answer to any card. That includes each tool in a turn
+  your console's chat started: from the dock alone you cannot approve it
+  while God mode is on, so answer it in Den's window;
+- every message to an agent that runs without asking goes through Den: a
+  hook Den gives that agent lets a peer message in only if Den delivered
+  it, and Den shows a red notice for any it blocked. Den tests that hook
+  when the agent starts, and reads the agent's transcript for any peer
+  message Den did not deliver. If the test fails, such a message shows
+  up, or that agent's Den settings file or the den binary changes, Den
+  marks it unguarded in red, delivers nothing more to it and offers to
+  close it. An agent in `bypassPermissions` that Den did not start this
+  way is listed unguarded too;
+- the orchestrator runs on Den's own `send_message`, never Claude Code's
+  `SendMessage`, while God mode is on and while any guarded agent still
+  runs.
+
+What stays open: an agent that runs without asking can do anything you
+can, including changing Den itself. What it reads is not fenced: files,
+cloned repositories (their CLAUDE.md too), web pages and MCP output, which
+is how an injection most often reaches it. Any program or agent that can run
+commands as you without asking (including agents in auto, plan or God
+mode) can type into a God-mode agent's terminal, or write to its inbox
+socket, and is not stopped. Den lowers the chance that an injection
+reaches such an agent; it cannot contain one that has.
+
 ### Apps (den-api.sock)
 
 Den can serve a local API to apps on your machine: the
@@ -579,9 +631,17 @@ waits for your `Ctrl+Y`: for an app pairing, everything that would change
 your fleet waits for you in Den. `/api control off` stops it, and `/api
 unpair` revokes every pairing, your console's too.
 
-**Your console.** `den pair` in a terminal (or `/api console` in Den) shows a
-console code the same way, for the one app you make your console (Drey's
-dock). After your `Ctrl+Y` on its card, the console may:
+**Your console.** Drey's dock pairs as your console by itself, with no code
+and no card, whenever Den and the dock both run: Den checks through your
+systemd user manager that it is `drey-host.service`'s main process, and says
+in its chat what it paired (the program and its SHA-256, and what changed
+since last time). It pairs again by itself after either restarts. Its powers
+(answering cards, running commands) come with it when the program, unit and
+pins are what you last gave them to since Den started; the first pairing
+after Den starts, and one after a new Drey build, wait for one `Ctrl+Y` on
+Den's powers card (`api.console_powers = "always"` skips that). `den pair`
+in a terminal (or `/api console` in Den) shows a console code the same way
+as above, for pairing by hand. The console may:
 
 - read the cards Den shows and answer most of them, as your `Ctrl+Y` would.
   It never answers a console or app pairing, turning the API on, guidance,
@@ -600,21 +660,55 @@ dock). After your `Ctrl+Y` on its card, the console may:
   and `clear` apply at once). The console can answer those cards too, so it
   can lower the usage figure your usage stop is measured against. Den's chat
   notes every command a console sent.
+- chat with the orchestrator, as an app's messages, never as yours. While
+  the console has its powers, the orchestrator lists agents and messages
+  them for it without a card, as it does for your chat in Den; anything
+  else it wants still waits for your `Ctrl+Y`, and with its powers locked
+  every tool waits again.
 
-The header shows your console while one is paired (`console: app-host pid
-N since 14:05`). `den unpair` ends it from any terminal; `den unpair all`
+The header shows your console while one is paired: `⇄ Drey connected` when
+Den read it clean as drey-host.service itself, else `⇄ console connected`,
+with `· ^Y for powers` while it has none; `/api` says which program and pid
+it is. `den unpair` ends it from any terminal; `den unpair all`
 ends it and every app pairing. A code an app sends, in a question, a
 message to the orchestrator or a console command, is refused and the code
 cancelled.
 
 After Den restarts, it restores your console and says so in its chat, with
 the program's pid and start time: if that is not your app, run `den unpair
-all`. When the app itself restarts, pair it again with `den pair`.
+all`. `/api unpair` or `den unpair` stops the dock pairing by itself until
+you start a pairing in Den again (`/api console` or `den pair`); `/api lock`
+takes the console's powers, for every pairing after too, until your `Ctrl+Y`
+on Den's powers card.
 
-What stays: any program running as you can type into Den's window, read its
+What stays: anything running as you that can change drey-host.service's
+unit or program (both in your home dir) gets the dock's reading and chat
+with no question in Den, and its full powers once you press `Ctrl+Y` on the
+powers card after a change; with `api.console_powers = "always"` it gets
+them with no question at all. Your levers are `/api lock`, `/api unpair`, and
+God mode staying off.
+
+The dock can also show your whole orchestrator conversation:
+- what you type in Den, and the orchestrator's replies;
+- its answers to agents' reports and mission runs. An agent's own report text
+  is never shown, only Den's line saying who reported.
+
+With `api.mirror_conversation = "ask"` (the default), Den asks once per pairing
+on a card in its own window. `"always"` skips the question and `"off"` never
+shows it. Den says in its chat when it starts showing it. `/api mirror off`
+stops it, `/api mirror on` starts it, and unpairing ends it. Only the paired
+dock with its powers receives it, from that moment on. As with
+`console_powers`, anyone who can write Den's config could set `"always"`. The
+chat note each time it starts is how you would notice.
+
+Any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
 answers for you, within the limits above, so pair only an app you trust,
-and unpair it when you are not using it. On Hyprland, `permission` rules for
+and unpair it when you are not using it. Anything that can type into the
+console's chat, or drive the console's process, can message any of your
+agents through the orchestrator without a card; to stop that, lock the
+console's powers (`/api lock`, until your `Ctrl+Y` on Den's powers card)
+or unpair it. On Hyprland, `permission` rules for
 keyboard access and screen capture can keep other programs from Den's
 window.
 
@@ -679,6 +773,174 @@ elsewhere. If Claude Code has never worked in the folder, it asks you to trust
 it in that terminal first; nothing happens until you answer. Set `spawn =
 false` under `[orchestrator]`, or `DEN_ORCHESTRATOR_SPAWN=off`, to take the two
 tools away.
+
+### Overlapping work
+
+Once a minute Den reads, from git, the files each local agent's branch changes
+against the repository's integration branch (`origin/dev`, `origin/main` or
+`origin/master`, else a local `dev`, `main` or `master`): committed, staged,
+unstaged and untracked. When two agents in different checkouts of one
+repository change the same files, Den tells both, once, which files and with
+whom, so they agree who goes first or how to split the work, and the
+orchestrator, which sees the overlap in its view of the fleet, decides. Den
+notes it in its chat and never stops anyone over it. An agent hears it at most
+once every ten minutes. Den runs nothing the checkout's own git config names
+while it reads. On the trunk (`main`, `dev`, `master`, or origin's default
+branch), or once a branch's commits have landed (a squash merge, say), only
+what is uncommitted counts. These messages, and the branch nudges
+below, reach the agent framed as Den's own ("Automatic message from Den … your
+human did not type it"), never as words you typed.
+
+### Team size
+
+A repository's team is small by default: 3 live agents (`max_agents` under
+`[team]`, 1 to 20; the orchestrator is not counted, and every worktree of one
+repository counts toward the same team). The orchestrator and its leads start
+a fourth only with spawn_agent's `reason`, one line on why; without it Den
+refuses the spawn, naming the agents in the team. Den shows each reason in its
+chat, quoted, with who gave it. God mode does not lift the cap. Agents you start
+yourself are never counted against it.
+
+### Short branches
+
+Branches that live under a day merge cleanly. When an agent's branch is older
+than a day (from its oldest commit since it left the integration branch;
+`branch_hours` under `[team]`) or more than 30 commits behind that branch
+(`behind_max`), Den tells the agent to merge or rebase soon, notes it in its
+chat (the dock sees it too), and the orchestrator sees it in its view of the
+fleet. It repeats once a day while the branch stays over. 0 turns either check
+off. Only feature branches are nudged: never the trunk, a branch with no
+commits of its own, or one whose commits already landed.
+
+### Cost per merged change and idle agents
+
+Den counts what a mission's branches land. While an agent on a mission has
+commits of its own, Den remembers its branch's tip. Once that tip is on the
+integration branch, or every file the branch changes reads there as it does at
+the tip (a squash merge), the change counts once for the mission. It counts
+even if the agent's worktree is gone. Den notes each one in its chat. An agent
+on a mission with no turn for 30 minutes (`idle_minutes` under `[team]`, 0
+off), no live card and nothing waiting in the inbox is idle. An open mission
+shows its cost, its merged changes with the cost of each, and its idle agents.
+The orchestrator sees the same in its missions block, and may give an idle
+agent its next sub-goal or close it with close_agent, which asks you as
+before. Den itself closes no one. The count reads the repository's own
+branches, which agents can move, so the cost per merged change is a guide,
+never evidence that a mission's work is done.
+
+Den also records each mission's figures when it ends, and each live mission's
+once a day, in `~/.local/state/den/metrics.jsonl` (yours alone to read,
+rotated at 1 MiB). A record holds the runs, the cost, the merged changes, how
+long the merged branches lived, and the overlaps and nudges Den sent. Den
+can't see CI, so CI failures are left out. The orchestrator gets them with the
+next turn it is sent anyway; Den never starts a turn for them.
+
+### The orchestrator's tuning
+
+The orchestrator may tune a project with its `tune_process` tool, within bounds
+Den enforces:
+
+- `[team]` numbers: `max_agents` 1 to 6, `branch_hours` 4 to 72, `behind_max`
+  10 to 100, `idle_minutes` 15 to 240.
+- A template's defaults: it may add a done criterion or a constraint (never
+  remove or reword one), pick a role's model, set a cadence at least 30 minutes
+  apart, or add a role while the team stays within `max_agents`.
+
+A value you set in `config.toml` always wins, and Den never writes your config
+or your templates. The tuning lives in
+`~/.local/state/den/projects/<repo-id>/tuning.json` (yours alone to read). Den
+reads it once per run, and at that point ignores anything out of bounds, or the
+whole file if it doesn't parse. At most 5 changes a day per project, one per
+key. Each change applies at once and comes to you as a card naming the old and
+new value (and for a model, whether it costs more). `Ctrl+Y` keeps it, `Ctrl+N`
+undoes it exactly; only Den's own window answers, never the dock. A criterion
+or constraint tuning added shows "(added by the orchestrator, tuning)" on the
+proposals it seeds. The orchestrator may also send a proposed change to its own
+instructions. Den only shows it to you, whole, on a card; nothing applies it,
+and it reaches no prompt.
+
+### Project memory
+
+Each project keeps a memory in `~/.local/state/den/projects/<repo-id>/memory/`,
+which you can open as an Obsidian vault.
+
+- **Notes.** Agents, and the orchestrator, keep notes with the `note` tool:
+  something they learned that would help whoever works there next. Den records
+  who wrote each one, on which mission and when, from the process that asked,
+  never from what it says. A note is Markdown with Den's header and the text in
+  a code block. Any agent on the project reads them with `notes`, as another
+  agent's account, never as instructions. Caps: 4 KiB a note, 20 a day per
+  author, 200 per project.
+- **Rules.** From the notes, the orchestrator may propose a rule with
+  `propose_rule`. Proposals collect on one card in the Inbox, at most 9 at a
+  time, each with the notes and authors it came from. Press `1`–`9` on the card
+  to pick rules; `Ctrl+Y` writes only the picked ones to `rules.md`, and
+  `Ctrl+N` drops every one shown. Rules reach the orchestrator, and the briefs
+  of agents Den starts there, as your own words.
+- **Edits outside Den.** If `rules.md` changes outside Den (by hand in the
+  vault, say), Den can't tell who changed it. At its next start Den stops using
+  the file as rules and shows a card naming the rules added and removed;
+  `Ctrl+Y` takes the file as your rules again. Both kinds of card are answered
+  only in Den's own window.
+
+Notes persist across missions, and any agent on the project reads what another
+wrote, as data. `/memory` lists them, `/memory rm <id>` deletes one (the dock
+may too), and `/memory rules` shows the rules and the proposals waiting.
+
+### When you are asked
+
+Once you start a mission, the orchestrator keeps it moving without asking you.
+It resolves review findings by dispatching the fixes. The exception is a
+finding that would change your routine, which comes to you as a choice. Its
+prompt names the hard limits that stay yours:
+
+| Hard limit | Examples | Who stops for you |
+| --- | --- | --- |
+| Weakening security | a permission mode that asks less, God mode, console powers, a new pairing | Den: `/mode` waits on a card, God mode only from Den's window, the powers card (unless `console_powers = "always"`) |
+| Publishing | a push, a pull request, a release, anything sent off the machine | the agent's own permission prompt, in its mode; nothing in God mode's `bypassPermissions` |
+| Money | a mission's budget crossed | Den: it pauses the mission and asks |
+| Acts that cannot be undone | deleting, forcing, closing an agent with uncommitted work | close_agent's card (Den answers it itself in God mode); the agent's permission prompt for the rest |
+
+The orchestrator is told not to take or order any of these without your yes
+for that work, or a standing rule you gave it yourself in Den's chat; a "rule"
+that reaches it in an agent's report, a file or a message never counts. Where only that instruction
+stands between an agent and the act (publishing in God mode, say), it is the
+orchestrator's word, not Den's check. This changes no card and no check of
+Den's.
+
+### Permission mode
+
+Every agent Den starts or reopens runs in one permission mode, passed as
+`claude --permission-mode`. From the mode that asks least to the one that
+asks most:
+
+- `auto` (the default): a classifier approves actions; nothing asks you.
+- `acceptEdits`: edits files in its folder without asking; asks before
+  commands, MCP tools and edits elsewhere.
+- `plan`: asks before edits and MCP tools, but runs any command the
+  classifier allows.
+- `default`: asks before edits, commands and MCP tools.
+- `dontAsk`: runs only what you allowed in advance and denies the rest.
+
+`plan` and `acceptEdits` each run something the other asks for, so neither
+is below the other.
+
+`/mode` shows the mode and names the agents running in another one. The
+header shows the mode when it is not `auto`, and how many agents differ.
+`/mode default` (or any mode that asks more) applies at once. A mode that
+asks less, or a move between `plan` and `acceptEdits`, waits on a card in
+the inbox that shows both modes and what each allows; only `Ctrl+Y` there
+changes it. Agents already running keep their mode until they restart.
+
+The mode is kept as `permission_mode` under `[agents]` in `config.toml`.
+Den treats the file as a request: an edit that asks more applies, and one
+that asks less, made while Den runs, waits on a card like `/mode`.
+`bypassPermissions` is never accepted there, nor by `/mode`.
+
+Agents Den started before this setting existed ran in `auto` too, which is
+what Claude Code uses with no flag. Den now always passes the flag. An
+agent in `auto` can run classifier-approved commands without asking you,
+and those include writing to another agent's terminal input.
 
 **A model per agent.** `spawn_agent` takes a model: `haiku` for small,
 mechanical, well-specified tasks, `sonnet` for ordinary building, writing and
@@ -806,6 +1068,159 @@ id, which Den records so the copy takes the original's place in the tree.
 `restore.ask = false` in the config, or `DEN_RESTORE=off`, turns the restart
 question off; the roster is still kept for `/reopen`.
 
+## Desktop control
+
+A desktop agent moves the mouse and types on your Hyprland desktop, in apps
+you allowed, on a workspace Den frees for it, and every step passes Den's
+gate. It is built on [hypruse](https://github.com/IlyasKhallouki/hypruse)
+(MIT), pinned at commit 0035d86 and installed unmodified into Den's own
+venv.
+
+**Install.** Nothing to do by hand. When hypruse is missing, the first
+desktop card says "Den installs hypruse first", and `Ctrl+Y` installs it,
+then starts. Den downloads GitHub's archive of the pinned commit (HTTPS to
+github.com only) and keeps only the files the pin names, each checked
+against the SHA-256 Den was built with. Any mismatch stops the install. It
+makes a venv from the system's `python3`, and installs the dependencies
+(`mcp` and 28 more) from PyPI, each pinned by hash, wheels only. None of
+hypruse runs while it installs. It compiles the bytecode once, then records a
+hash of every installed file. Den checks them all before every desktop agent
+starts, and runs hypruse so that it never writes bytecode. If the venv is no
+longer as recorded (a file added or changed), the next card says what is wrong
+and `Ctrl+Y` reinstalls it. The venv is `~/.local/share/den/hypruse/venv`;
+nothing runs `uvx` later.
+
+To install from a clone you made yourself instead, run `den install-hypruse`.
+It asks on a card too. It uses `--from <folder>` (a local clone, never a URL),
+or the folder it runs in, or else a folder named `hypruse` up to four levels
+under your home, but only a clone whose every file matches the pin.
+`--wheels <dir>` installs the dependencies from a folder, offline. When the
+venv already holds the pinned hypruse, it says so and changes nothing.
+
+**Allow apps.** A desktop agent uses only the apps you list in Den's config:
+
+```toml
+[desktop.apps.editor]
+command = ["foot", "--app-id", "den-editor", "nvim"]
+class = "den-editor"
+outward = "no"            # "ask" (the default): every click and keystroke asks; "words": only Send-like clicks and Enter ask
+
+[desktop.apps.browser]
+command = ["zen-browser", "--new-instance"]
+class = "zen"
+profile = ["--profile", "{dir}"]   # a profile of its own, in the mission's folder
+if_running = "refuse"              # or "warn": joining an instance already running uses its sign-ins
+```
+
+**Start a mission.** The orchestrator (or a lead) calls `desktop_mission`
+with a plan, app names and the steps only you do ("sign in to Gmail"). A card
+shows the plan, each app, and what the agent will and will not have. On
+`Ctrl+Y` Den picks an empty workspace (9 down to 5), opens the apps there
+itself, and starts the agent. The agent has only the desktop tools: no
+shell, files, web, messages, app launching, keybinds or clipboard. It runs
+with no window of its own, so nothing opens in front of the work: what it
+says and does shows in Den's chat, and Drey's overlay shows
+it at work on the screen. To watch it in a terminal of its own instead, set
+`agent_view = true` in the `[desktop]` section; `Ctrl+C` there stops it.
+
+**A task: the whole desktop.** The orchestrator can instead call
+`desktop_mission` with one task and no apps. The card reads "Control your
+mouse and keyboard to: …" with the whole task (a task too long to show whole
+is refused, and so is one holding hidden characters). On `Ctrl+Y` the agent
+may use your whole desktop for that task: the pointer and keyboard in any
+window, your Hyprland binds, and launching apps, with no app config. No step
+asks you except the agent's own `request_approval` and `your_turn`.
+
+Read this before you say yes: **while a task runs, the agent can do anything
+you can at the keyboard.** That includes running commands as you in a
+terminal, typing into other agents' terminals (their permission prompts
+too), the clipboard, everything on the screen, and every app you are signed
+in to. Den refuses only a short fixed list: anything on Den's own window,
+the agent's terminal when you turned it on, or a paired console's dock
+(Drey's); exiting or reloading Hyprland, or running `hyprctl` or
+`den` through a bind or a launch; closing or killing Den's window; binds
+that send keys to another window by name; and `ctrl+alt+Delete`,
+`Backspace` and `F1`–`F12`. Your levers are these:
+
+- **The panic stop.** `/desktop stop` or `den desktop stop` (bind it to a
+  key, below). The agent also stops when Den quits, however Den ends: it is
+  Den's own child, signalled when Den goes (with `agent_view`, its terminal
+  watches Den), and `den desktop stop` still works from Den's records.
+- **The per-task limit.** Den stops the task after `task_minutes` of wall
+  time or `task_actions` desktop calls, whichever comes first. Den counts
+  them itself, and only your config sets them:
+
+  ```toml
+  [desktop]
+  task_minutes = 20   # the default
+  task_actions = 300  # the default; every forwarded call counts, each typed piece too
+  ```
+
+- **One task per card.** A task never widens. Another task is another
+  card, answered only in Den's own window.
+
+Den finds its own window by briefly setting its terminal title to a one-off
+token, so it starts only when it can see that title. Run Den in its own
+terminal window, with its tab in front, not inside tmux or screen; otherwise
+the start is refused and says so. In a window with several tabs, the whole
+window is off limits to the agent, other tabs too. `/desktop` shows how many
+actions and minutes a running task has left. One gap: if the dock's command
+bar takes the keyboard (through one of your binds, say), Den cannot see it,
+and the agent's typing may reach the bar; clicking into it is refused.
+
+**While it runs.** Den reads each call before hypruse gets it. Reading its
+own windows, and clicking and typing in them, goes ahead, unless a
+notification or other overlay covers the point, or the keys are one of your
+Hyprland shortcuts (both are refused); anything outside the mission is
+refused; in an app marked outward, every click and keystroke
+asks you on a card, as do Send-like controls anywhere and the agent's own
+`request_approval`. A card shows the reason, the window, the input and a
+screenshot of the window, and is answered only in Den's own window, once.
+For a step only you do, the agent calls `your_turn`: every desktop tool is
+paused until you say it is done (`Ctrl+Y`) or end the mission (`Ctrl+N`). The
+header shows `DESKTOP · on` (or `acting`) while a mission runs.
+
+**Stop it.** `/desktop stop` in Den, `/desktop stop` from the dock, or
+`den desktop stop` from anywhere: it stops hypruse, the agent and its server
+at once and closes the windows Den opened. It works with Den's window hidden,
+and with Den not running (from Den's records; the windows then stay). A
+Hyprland bind makes it one key; Den never edits your config, so add it
+yourself, for example in Lua:
+
+```lua
+hl.bind("SUPER + SHIFT + Escape", hl.dsp.exec_cmd("den desktop stop"))
+```
+
+**Files.** Each mission has a private folder in
+`~/.local/state/den/desktop/<mission>/`: its settings, hypruse's journal
+(typed text as length and digest only), screenshot crops for cards, and a log.
+The journal, crops and log are deleted ten minutes after the mission ends;
+`/desktop keep` keeps them.
+
+**Limits.** Read these before you let it near anything that matters.
+
+- Den's proxy, the agent's only route to hypruse, is the gate: it forwards
+  nothing Den did not allow. The agent's hook is a second layer only (a hook
+  that fails lets a tool run).
+- In an app not marked outward, a click by coordinates is not asked about;
+  only Send-like names and the outward rules ask.
+- hypruse focuses the window and then types, about 50 ms apart, with no check
+  in between.
+- A zoom can show a notification drawn over the window.
+- The apps you allowed can take the keyboard for a moment when they open;
+  Den gives the focus back to your window. (The agent's own terminal opens
+  without taking it.)
+- Strict mode (refusing when you move the mouse) has not been tried against a
+  real takeover; treat stopping as the way to take control back.
+- A desktop agent is never restored or reopened by Den. If you resume one by
+  hand with `claude --resume` outside Den, it gets an ordinary agent's tools
+  on a conversation that read your screen, and Den cannot stop that.
+- Everything runs as your user: Den detects changes to its venv and the
+  agent's settings, but anything running as you could change them.
+- The agent never types credentials: signing in is your turn. Text on the
+  screen (a web page, an email) can still try to steer it, which is why
+  outward steps ask you.
+
 ## Skills for roles
 
 Den ships a small, vetted catalogue of Claude Code skills (SKILL.md folders)
@@ -889,7 +1304,10 @@ orchestrator answers with a proposal: the mission rewritten, done-when,
 constraints it inferred, the agents it means to reuse, the team it means to
 start (roles as a tree, each with the model it picked), and the shape it chose
 with one line of reasoning. `Ctrl+Y` starts it, `Ctrl+N` drops it, typing
-refines it, `Esc` keeps it for later. Nothing runs before `Ctrl+Y`. When the
+refines it, `Esc` keeps it for later. Nothing runs before `Ctrl+Y`. Den adds
+one criterion of its own to every mission that is not a schedule: "Shown
+working on the human's real setup: what was run, and what the human saw".
+Neither the orchestrator nor a template can leave it out. When the
 run starts, the orchestrator spawns only the roles that report to it; each lead
 starts its own people.
 
@@ -1239,9 +1657,11 @@ At 80% and again at 90% Den puts a card in the inbox and sends a desktop
 notification, once each per weekly reset. Nothing stops on its own unless you
 set `stop_percent` under `[usage]` (off by default). Then, at that share,
 or at once with `/usage stop`, Den sends `USAGE STOP` to every agent on this
-machine through the same path as a message you send, and to agents on hosts
-whose policy lets Den act on them (the others are listed as not reachable for
-stop). The header turns red (`usage stop`), and no agent is started (by the
+machine, and to agents on hosts whose policy lets Den act on them (the others
+are listed as not reachable for stop). On this machine it arrives framed as
+Den enforcing your rule: an automatic message from Den, binding because the
+stop is yours, naming the share you set, and never claiming you typed it. On
+a host it still arrives as that host's Den delivers any message. The header turns red (`usage stop`), and no agent is started (by the
 orchestrator or by a lead) and no mission run goes until you let the fleet go
 on: `/usage resume` puts the question in the inbox, and only your `Ctrl+Y`
 there answers it. Den's cost estimate never triggers a stop; Claude Code's
@@ -1260,6 +1680,10 @@ name = "den-orchestrator"   # how the orchestrator session names itself to peers
 spawn = true                # may open terminals and start agents on the workspace you are on
 guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
                             # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
+
+[agents]
+permission_mode = "auto"    # the mode agents Den starts run in: auto, acceptEdits, plan, default or dontAsk;
+                            # /mode in Den changes it, and a change to a mode that asks less waits for your ^Y
 
 [inbox]
 history = 100               # finished turns kept as history
@@ -1290,9 +1714,17 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
 
+[team]
+max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
+branch_hours = 24           # nudge an agent whose branch is older than this; 0 off
+behind_max = 30             # nudge an agent whose branch is this many commits behind dev, main or master; 0 off
+idle_minutes = 30           # an agent on a mission with no turn for this long and nothing open is idle to the orchestrator; 0 off
+
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
+mirror_conversation = "ask" # show your orchestrator conversation in the paired dock: "ask" (a card once per pairing), "always" or "off"
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

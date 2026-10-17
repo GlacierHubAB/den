@@ -6,6 +6,8 @@
 package denconformance
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/hkdf"
@@ -16,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -26,6 +29,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // ConsoleOptions turns on the console subtests (the console section of
@@ -43,6 +47,24 @@ type ConsoleOptions struct {
 	Confirm func(ctx context.Context) error
 	// Decline stands in for ^N. Left nil, the cooldown subtest is skipped.
 	Decline func(ctx context.Context) error
+	// Unpair has Den unpair its own console (/api unpair in Den, or den
+	// unpair in a terminal, which any program on the machine may run):
+	// "unpaired cause den" wants its unpaired event with cause "den".
+	// Left nil, that subtest is skipped.
+	Unpair func(ctx context.Context) error
+	// Disconnect stands in for /api disconnect (or the API turned off and
+	// on): every connection ends with no unpaired event, and
+	// "unpaired: not at end of file" wants the pairing to prove again
+	// after. Left nil, that subtest is skipped.
+	Disconnect func(ctx context.Context) error
+	// Burst is for a server's test build or test hooks only, never a
+	// switch in a running server: it turns a safety guard's pacing off.
+	// It turns the server's pacing of card answers off for
+	// "unpaired cause burst", which then answers five cards (from Card)
+	// less than a second apart and wants cause "burst"; restore turns the
+	// pacing back on, so the other card subtests never meet the guard.
+	// Left nil, that subtest is skipped.
+	Burst func(ctx context.Context) (restore func(), err error)
 	// Card raises a pending card the dock may answer (dock_answers true,
 	// "deny" among its verbs) and returns its id. Left nil, the card
 	// subtests are skipped.
@@ -50,6 +72,53 @@ type ConsoleOptions struct {
 	// LongCard raises a pending card like Card's whose body has more than
 	// ten lines, for the read timer. Left nil, "card read timer" is skipped.
 	LongCard func(ctx context.Context) (id string, err error)
+	// Mirror makes the server show the conversation in the console (state "on"), ask the human in
+	// its own window (the server's card; "asking") or not show it ("off"), as the human's answer
+	// in the server does. Left nil, the subtests that change the mirror are skipped.
+	Mirror func(ctx context.Context, state string) error
+	// Conversation adds one entry of the human's conversation (the human types a line in the server's
+	// own input, say) while the mirror is on. Left nil, "conversation entry" is skipped.
+	Conversation func(ctx context.Context) error
+	// View says the server switches views (view.show, view.hide) and can
+	// identify its own window, so "view.hide keeps a waiting card" runs:
+	// with a card from Card waiting, a hide leaves Den's own window up,
+	// counted in shown, with a reason. The subtest really hides the
+	// server's windows (and shows them again after): set it only for a
+	// test server on a test desktop, never for a Den someone works in.
+	// The reply does not name the window kept, so a window that would not
+	// move also satisfies shown; the server's own test pins which. Left
+	// false, it is skipped.
+	View bool
+	// Request says the server pairs a console by console.request for this
+	// test process (its unit check stood in for, as Den's harness does):
+	// "console.request" pairs one from a fresh key, with Confirm answering
+	// the code-less card as it stands in for ^Y, and "console.reconnect"
+	// then rejoins that pairing (Den records the unit only for a request).
+	// Left false, "console.request" is skipped and "console.reconnect"
+	// uses the code-claimed console.
+	Request bool
+	// RequestRefusals says the server refuses console.request as Den's
+	// own pairing of its console's service does (Den auto-console): after
+	// an unpairing by the console itself, forbidden "unpaired in Den: …"
+	// until a pairing is started in Den (Offer); and for ten minutes after
+	// one for tries from other programs, unavailable. It turns on
+	// "console.request after an unpairing" and a check at the end of
+	// "unpaired cause intruders". Needs Request.
+	RequestRefusals bool
+	// PowersLocked says the server answers a console that pairs or rejoins
+	// on its own (console.reconnect, a console.request answered at once)
+	// without powers: Den does while the human has locked them (/api lock)
+	// or God mode is on. Then those replies must say powers false; left
+	// false, powers may be either (Den's own pairing of its console's
+	// service gives them).
+	PowersLocked bool
+	// Reconnect says the server answers console.reconnect at once, as a
+	// silent reconnect, for this test process: "console.reconnect" runs
+	// its signature checks. Den checks the dock's systemd unit first,
+	// which a test process is not; a refusal "not drey-host.service" or
+	// "pair again" skips the rest. Left false, only the subtest's known
+	// answer for its own verify runs.
+	Reconnect bool
 	// ThiefTest and SocketPath turn on "console thief": the suite runs
 	// this test binary again (os.Args[0] -test.run=^ThiefTest$), and the
 	// copy proves with the console's own key from another process. The
@@ -73,8 +142,32 @@ type ConsoleOptions struct {
 var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
-	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console connections",
-	"console.auth refusals", "console thief", "console.unpair unproved", "console.unpair all", "console cooldown",
+	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console.events snapshot", "console mirror", "conversation entry", "fleet doing", "view.hide keeps a waiting card", "console orch.say", "console connections",
+	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.request after an unpairing", "console.unpair unproved", "console.unpair all",
+	"unpaired cause self", "unpaired cause replaced", "unpaired cause proofs", "unpaired cause intruders",
+	"unpaired cause burst", "unpaired cause den", "unpaired: not at end of file", "unpaired cause other", "console cooldown",
+}
+
+// requestCardWait is how long a console.request may take to answer at
+// once before the suite takes it that a card waits and presses Confirm.
+const requestCardWait = time.Second
+
+// Den's known answer for console.reconnect's den_sig (DREY-API.md): the
+// key from the Ed25519 seed of 32 bytes 0x01, and its signature with nonce
+// 64 × "5a", pairing 32 × "0a" and the dock's key 64 × "0b".
+const (
+	reconnectVectorDen = "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c"
+	reconnectVectorSig = "7a3ce0532530d6793e45ebbf3360530055b842dbb42c30278e5fd70e0fe77c285967f693c26f10e4996d2ead6e8990a2729b50a525e3ac3e3de6bfa35927dd05"
+)
+
+// verifyReconnect checks den_sig: Ed25519 under Den's console key over
+// "den-console-reconnect-v1", nonce, pairing and the dock's new key,
+// joined by "\n", with no newline at the end.
+func verifyReconnect(den ed25519.PublicKey, nonce, pairing, dockKey string, sig []byte) bool {
+	if len(den) != ed25519.PublicKeySize || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	return ed25519.Verify(den, []byte("den-console-reconnect-v1\n"+nonce+"\n"+pairing+"\n"+dockKey), sig)
 }
 
 // Wire constants of the console (DREY-API.md, the console section).
@@ -89,6 +182,7 @@ var (
 	hex32Re  = regexp.MustCompile(`^[0-9a-f]{32}$`)
 	hex64Re  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	hex128Re = regexp.MustCompile(`^[0-9a-f]{128}$`)
+	turnRe   = regexp.MustCompile(`^t-[0-9a-f]{32}$`)
 )
 
 // consolePairing is what a confirmed claim leaves for later subtests.
@@ -97,6 +191,7 @@ type consolePairing struct {
 	priv    ed25519.PrivateKey
 	pairing string
 	denPub  ed25519.PublicKey
+	pages   string // the pages_sha256 a console.request sent, "" for a claim
 }
 
 func (p *consolePairing) pubHex() string    { return hex.EncodeToString(p.pub) }
@@ -210,31 +305,38 @@ func getChallenge(ctx context.Context, c *conn) (challenge, error) {
 type authReply struct {
 	Paired bool   `json:"paired"`
 	Sig    string `json:"sig"`
+	Powers *bool  `json:"powers"` // the console's powers now, when the server says
 }
 
 // prove proves p on c and checks the server's signature; it returns the
 // error of console.auth as is.
 func (o *ConsoleOptions) prove(ctx context.Context, c *conn, p *consolePairing) error {
+	_, err := o.proveReply(ctx, c, p)
+	return err
+}
+
+// proveReply is prove, returning console.auth's reply.
+func (o *ConsoleOptions) proveReply(ctx context.Context, c *conn, p *consolePairing) (authReply, error) {
 	ch, err := getChallenge(ctx, c)
 	if err != nil {
-		return err
+		return authReply{}, err
 	}
 	self, denID, err := o.identities(c)
 	if err != nil {
-		return err
+		return authReply{}, err
 	}
 	na := randHex(32)
 	sig := ed25519.Sign(p.priv, signedText("app-to-den", ch.Conn, p.pairing, p.pubHex(), p.denPubHex(), ch.Nonce, na, self))
 	var rep authReply
 	if err := c.call(ctx, "console.auth", map[string]string{"pairing": p.pairing, "nonce": na, "sig": hex.EncodeToString(sig)}, &rep); err != nil {
-		return err
+		return authReply{}, err
 	}
 	den, derr := hex.DecodeString(rep.Sig)
 	if !rep.Paired || !hex128Re.MatchString(rep.Sig) || derr != nil ||
 		!ed25519.Verify(p.denPub, signedText("den-to-app", ch.Conn, p.pairing, p.pubHex(), p.denPubHex(), ch.Nonce, na, denID), den) {
-		return fmt.Errorf("console.auth: the server's signature does not verify over the pinned string (signer %q)", denID)
+		return authReply{}, fmt.Errorf("console.auth: the server's signature does not verify over the pinned string (signer %q)", denID)
 	}
-	return nil
+	return rep, nil
 }
 
 func (o *ConsoleOptions) identities(c *conn) (self, den string, err error) {
@@ -424,7 +526,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Fatal(err)
 		}
 		events = c
-		ev, err := nextEvent(ctx, c, "console")
+		ev, err := nextConsoleKind(ctx, c, "connected", "restored")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -645,6 +747,536 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		}
 	})
 
+	// view.hide never takes a waiting card out of sight: Den's own window
+	// stays up, counted in shown, and reason says why (Den's DREY-API.md,
+	// "What view.hide leaves visible").
+	// On subscribe the server sends the current value of each stateful
+	// kind before any change (DREY-API.md, Events): console (connected or
+	// restored), console powers with on, god, mode (once known), view
+	// (once there is one), a card new for each waiting card. Everything
+	// after is a change. fleet.events starts with the whole fleet.
+	run("console.events snapshot", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil, co != nil && co.Card != nil)
+		// A card waits before the subscription, so the snapshot ends with
+		// at least one card new and its order can be read to the end.
+		before, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		auth, err := co.proveReply(ctx, c, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rep struct {
+			Cards []string `json:"cards"`
+		}
+		if err := c.call(ctx, "console.events", struct{}{}, &rep); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		kindOf := func(data json.RawMessage) string {
+			var d struct {
+				Kind string `json:"kind"`
+			}
+			_ = json.Unmarshal(data, &d)
+			return d.Kind
+		}
+		// next is the next event line. A console event of another kind
+		// than connected, restored or powers passes: Den's one-shot
+		// paired or reconnected may reach the first subscriber.
+		next := func() (string, json.RawMessage) {
+			t.Helper()
+			for {
+				l, err := c.read()
+				if err != nil {
+					t.Fatalf("reading the snapshot: %v", err)
+				}
+				if l.Event == "" {
+					continue
+				}
+				if k := kindOf(l.Data); l.Event == "console" && k != "connected" && k != "restored" && k != "powers" {
+					continue
+				}
+				return l.Event, l.Data
+			}
+		}
+		// The snapshot, in order: the console (connected or restored), a
+		// card new for each card the reply listed, the console's powers
+		// with on, god with on, then mode and view, each once the server
+		// has one. A kind the suite does not know may join it later (a
+		// desktop state); it is let pass.
+		name, data := next()
+		if name != "console" || (kindOf(data) != "connected" && kindOf(data) != "restored") {
+			t.Fatalf("the snapshot's first event: %s %s, want console connected or restored", name, data)
+		}
+		waiting := map[string]bool{}
+		for _, id := range rep.Cards {
+			waiting[id] = true
+		}
+		if !waiting[before] {
+			t.Fatalf("console.events' cards %v do not list the card waiting, %s", rep.Cards, before)
+		}
+		for len(waiting) > 0 {
+			name, data = next()
+			var cd struct {
+				ID     string `json:"id"`
+				Change string `json:"change"`
+			}
+			_ = json.Unmarshal(data, &cd)
+			if name != "card" || cd.Change != "new" || !waiting[cd.ID] {
+				t.Fatalf("before the listed cards' new %v ended: %s %s", waiting, name, data)
+			}
+			delete(waiting, cd.ID)
+		}
+		name, data = next()
+		var pw struct {
+			Kind string `json:"kind"`
+			On   *bool  `json:"on"`
+		}
+		_ = json.Unmarshal(data, &pw)
+		if name != "console" || pw.Kind != "powers" || pw.On == nil {
+			t.Fatalf("the snapshot after its cards: %s %s, want console powers with on", name, data)
+		}
+		if auth.Powers != nil && *auth.Powers != *pw.On {
+			t.Errorf("the snapshot says powers %v, console.auth on the same connection said %v", *pw.On, *auth.Powers)
+		}
+		name, data = next()
+		var gd struct {
+			On *bool `json:"on"`
+		}
+		if _ = json.Unmarshal(data, &gd); name != "god" || gd.On == nil {
+			t.Fatalf("the snapshot after powers: %s %s, want god with on", name, data)
+		}
+
+		// mode and view may follow, in that order, then the desktop and the
+		// mirror (each once, in that order, last in the snapshot); then the
+		// changes. A change now (a new card) must come after them.
+		id, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			for _, cid := range []string{before, id} {
+				if rec, err := cardGet(ctx, c, cid); err == nil {
+					_ = c.call(ctx, "card.answer", map[string]string{"id": cid, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+				}
+			}
+		}()
+		sawView, sawDesktop, sawMirror := false, false, false
+	changes:
+		for {
+			name, data = next()
+			switch name {
+			case "mode":
+				if sawView {
+					t.Fatalf("a mode event after the view: %s", data)
+				}
+			case "view":
+				var v struct {
+					View  string `json:"view"`
+					Shown *int   `json:"shown"`
+					Total *int   `json:"total"`
+				}
+				if _ = json.Unmarshal(data, &v); !sawView && ((v.View != "agent" && v.View != "user") || v.Shown == nil || v.Total == nil) {
+					t.Fatalf("the snapshot's view: %s", data)
+				}
+				sawView = true
+			case "desktop":
+				var d struct {
+					State   string `json:"state"`
+					Mission string `json:"mission"`
+				}
+				_ = json.Unmarshal(data, &d)
+				if sawDesktop || sawMirror || (d.State != "idle" && d.State != "asking" && d.State != "active") || (d.State == "active" && d.Mission == "") {
+					t.Fatalf("the snapshot's desktop event (once, before the mirror; idle, asking or active with a mission): %s", data)
+				}
+				sawDesktop = true
+			case "mirror":
+				if sawMirror || !sawDesktop {
+					t.Fatalf("the snapshot's mirror event must come once, after the desktop event: %s", data)
+				}
+				if err := checkMirrorEvent(data); err != nil {
+					t.Fatalf("the snapshot's mirror event: %v: %s", err, data)
+				}
+				sawMirror = true
+			case "card":
+				var cd struct {
+					ID     string `json:"id"`
+					Change string `json:"change"`
+				}
+				_ = json.Unmarshal(data, &cd)
+				if cd.Change == "new" && cd.ID != id {
+					t.Fatalf("a card new for %s after the snapshot, before the new card %s", cd.ID, id)
+				}
+				if cd.ID == id && cd.Change == "new" {
+					if !sawDesktop || !sawMirror {
+						t.Fatalf("the new card came before the snapshot's desktop and mirror events (desktop %v, mirror %v)", sawDesktop, sawMirror)
+					}
+					break changes
+				}
+			}
+		}
+
+		// fleet.events starts with the whole fleet.
+		f, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.close()
+		if err := f.call(ctx, "fleet.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = f.nc.SetDeadline(dl)
+		}
+		for {
+			l, err := f.read()
+			if err != nil {
+				t.Fatalf("fleet.events' first event: %v", err)
+			}
+			if l.Event == "" {
+				continue
+			}
+			var fl struct {
+				Agents []json.RawMessage `json:"agents"`
+				Taken  string            `json:"taken"`
+			}
+			if l.Event != "fleet" || json.Unmarshal(l.Data, &fl) != nil || fl.Agents == nil || fl.Taken == "" {
+				t.Fatalf("fleet.events' first event: %s %s, want the whole fleet", l.Event, l.Data)
+			}
+			break
+		}
+	})
+
+	// The conversation mirror (DREY-API.md, "Conversation mirror"): the mirror event says whether
+	// the conversation is shown in this console; conversation.history answers forbidden while it
+	// is not, and the entries, newest first, while it is.
+	run("console mirror", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		bare, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bare.close()
+		wantCode(t, "conversation.history before any proof", bare.call(ctx, "conversation.history", map[string]int{"limit": 10}, nil), codeForbidden)
+
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		state := mirrorEventAfter(t, c, "")
+		checkHistory := func(state string) {
+			t.Helper()
+			var res struct {
+				Entries []json.RawMessage `json:"entries"`
+			}
+			err := c.call(ctx, "conversation.history", map[string]int{"limit": 200}, &res)
+			if state != "on" {
+				wantCode(t, "conversation.history while the mirror is "+state, err, codeForbidden)
+				return
+			}
+			if err != nil {
+				t.Fatalf("conversation.history while the mirror is on: %v", err)
+			}
+			if len(res.Entries) > 200 {
+				t.Errorf("conversation.history gave %d entries, the most is 200", len(res.Entries))
+			}
+			var last int64 = 1<<62 - 1
+			for _, raw := range res.Entries {
+				e, err := checkConversationEntry(raw)
+				if err != nil {
+					t.Errorf("history entry %s: %v", raw, err)
+					continue
+				}
+				if e.ID >= last {
+					t.Errorf("history is newest first: id %d after %d", e.ID, last)
+				}
+				last = e.ID
+			}
+		}
+		checkHistory(state)
+		if state == "on" {
+			checkLimit(t, ctx, c)
+		}
+		if co.Mirror == nil {
+			return
+		}
+		// each switch is to a state the server is not in (a server sends an event on a change only)
+		seq := []string{"on", "off", "on", "off"}
+		if state == "on" {
+			seq = []string{"off", "on", "off"}
+		}
+		for _, want := range seq {
+			if err := co.Mirror(ctx, want); err != nil {
+				t.Fatalf("setting the mirror %s: %v", want, err)
+			}
+			if got := mirrorEventAfter(t, c, want); got != want {
+				t.Fatalf("the mirror event after switching to %s says %s", want, got)
+			}
+			checkHistory(want)
+			if want == "on" {
+				checkLimit(t, ctx, c)
+			}
+		}
+	})
+
+	run("conversation entry", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil, co != nil && co.Mirror != nil && co.Conversation != nil)
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := co.Mirror(ctx, "on"); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = co.Mirror(ctx, "off") }()
+		if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		if got := mirrorEventAfter(t, c, "on"); got != "on" {
+			t.Fatalf("the snapshot says the mirror is %s after it was switched on", got)
+		}
+		if err := co.Conversation(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var live conversationEntry
+		for {
+			l, err := c.read()
+			if err != nil {
+				t.Fatalf("waiting for a conversation event: %v", err)
+			}
+			if l.Event != "conversation" {
+				continue
+			}
+			if live, err = checkConversationEntry(l.Data); err != nil {
+				t.Fatalf("the conversation event %s: %v", l.Data, err)
+			}
+			break
+		}
+		var res struct {
+			Entries []json.RawMessage `json:"entries"`
+		}
+		if err := c.call(ctx, "conversation.history", map[string]int{"limit": 200}, &res); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, raw := range res.Entries {
+			if e, err := checkConversationEntry(raw); err == nil && e.ID == live.ID {
+				found = true
+				if e.Text != live.Text {
+					t.Errorf("entry %d: history %q, event %q", e.ID, e.Text, live.Text)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the entry %d of the event is not in conversation.history", live.ID)
+		}
+	})
+
+	// doing (DREY-API.md, the fleet): what an agent is doing now, in Den's words, only for the paired
+	// console's own proved connections; every other connection gets it empty.
+	run("fleet doing", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		type agentDoing struct {
+			ID    string          `json:"id"`
+			Doing json.RawMessage `json:"doing"`
+		}
+		var app struct {
+			Agents []agentDoing `json:"agents"`
+		}
+		if err := cl.call(ctx, "fleet.snapshot", nil, &app); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range app.Agents {
+			if len(a.Doing) == 0 {
+				continue
+			}
+			if text, err := checkDoing(a.Doing); err != nil {
+				t.Errorf("an app connection's doing for %s: %v", a.ID, err)
+			} else if text != "" {
+				t.Errorf("an app connection got doing %q for %s: only the paired console's connections do", text, a.ID)
+			}
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		var con struct {
+			Agents []agentDoing `json:"agents"`
+		}
+		if err := c.call(ctx, "fleet.snapshot", nil, &con); err != nil {
+			t.Fatal(err)
+		}
+		if len(con.Agents) == 0 {
+			t.Skip("the server has no agent to say what it is doing")
+		}
+		any := false
+		for _, a := range con.Agents {
+			if len(a.Doing) == 0 {
+				t.Errorf("agent %s has no doing on the console's connection", a.ID)
+				continue
+			}
+			text, err := checkDoing(a.Doing)
+			if err != nil {
+				t.Errorf("agent %s: %v", a.ID, err)
+			}
+			if text != "" {
+				any = true
+			}
+		}
+		if !any {
+			t.Error("no agent has a doing on the console's own connection")
+		}
+	})
+
+	run("view.hide keeps a waiting card", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, events != nil, co != nil && co.Card != nil, co != nil && co.View)
+		id, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if rec, err := cardGet(ctx, events, id); err == nil {
+				_ = events.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+			}
+		}()
+		type viewResult struct {
+			View   string `json:"view"`
+			Shown  int    `json:"shown"`
+			Total  int    `json:"total"`
+			Reason string `json:"reason"`
+		}
+		var res viewResult
+		if err := events.call(ctx, "view.hide", nil, &res); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = events.call(ctx, "view.show", nil, nil) }()
+		if res.View != "user" || res.Total < 1 || res.Shown < 1 || res.Shown > res.Total || res.Reason == "" {
+			t.Errorf("view.hide with a card waiting: %+v; want view user, Den's own window counted in shown, and a reason", res)
+		}
+	})
+
+	// A console speaks to the orchestrator as a paired app does
+	// (DREY-API.md, "Speaking to the orchestrator"): orch.say needs
+	// pair.auth or console.auth, one app turn runs on the machine at a
+	// time (else unavailable, not a queue), every chunk carries its turn,
+	// and closing the connection ends the turn. A Den from before console
+	// turns (forbidden on a proved console) lists it in Options.Skip.
+	run("console orch.say", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		bare, in, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bare.close()
+		if in.Control != "on" {
+			t.Skipf("hello's control is %q: orch.say is refused until control is on", in.Control)
+		}
+		const text = "Say hello to the console, in a few plain words, and name nothing that runs."
+		wantCode(t, "orch.say before any proof", bare.call(ctx, "orch.say", map[string]string{"text": text}, nil), codeForbidden)
+
+		proved := func() *conn {
+			t.Helper()
+			c, _, err := open(ctx, o.Dial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := co.prove(ctx, c, p); err != nil {
+				c.close()
+				t.Fatal(err)
+			}
+			return c
+		}
+		var turn struct {
+			Turn string `json:"turn"`
+		}
+		c := proved()
+		defer c.close()
+		if err := c.call(ctx, "orch.say", map[string]string{"text": text}, &turn); err != nil {
+			t.Fatalf("orch.say on a proved console: %v", err)
+		}
+		if !turnRe.MatchString(turn.Turn) {
+			t.Fatalf("orch.say's turn %q is not t- and 32 hex digits", turn.Turn)
+		}
+		// One app turn on the machine: a second, from another proved
+		// connection of the same console, is refused while it runs.
+		c2 := proved()
+		wantCode(t, "a second orch.say while a turn runs", c2.call(ctx, "orch.say", map[string]string{"text": text}, nil), codeUnavailable)
+		c2.close()
+		for {
+			raw, err := nextEvent(ctx, c, "orch")
+			if err != nil {
+				t.Fatalf("the turn's orch events: %v", err)
+			}
+			var ch struct {
+				Type string `json:"type"`
+				Turn string `json:"turn"`
+			}
+			if err := json.Unmarshal(raw, &ch); err != nil {
+				t.Fatalf("an orch event: %s", raw)
+			}
+			if ch.Turn != turn.Turn {
+				t.Fatalf("an orch event for turn %q during turn %q: %s", ch.Turn, turn.Turn, raw)
+			}
+			if !slices.Contains([]string{"text", "status", "needs_approval", "done", "error"}, ch.Type) {
+				t.Fatalf("an orch event of type %q: %s", ch.Type, raw)
+			}
+			if ch.Type == "done" || ch.Type == "error" {
+				break
+			}
+		}
+		// Closing the connection ends the turn: soon after, another
+		// console connection may start one. Two tries at most, so the
+		// console's six a minute hold.
+		// A turn is free before its done goes out (Den cb06e63, #88), so a
+		// say sent the moment done arrives is accepted.
+		c3 := proved()
+		if err := c3.call(ctx, "orch.say", map[string]string{"text": text}, &turn); err != nil {
+			t.Fatalf("orch.say after the first turn ended: %v", err)
+		}
+		c3.close()
+		c4 := proved()
+		defer c4.close()
+		var after error
+		for try := 0; try < 2; try++ {
+			time.Sleep(time.Duration(500+1500*try) * time.Millisecond)
+			if after = c4.call(ctx, "orch.say", map[string]string{"text": text}, &turn); codeOf(after) != codeUnavailable {
+				break
+			}
+		}
+		if after != nil {
+			t.Fatalf("orch.say after the asking connection closed: %v; closing it must end its turn", after)
+		}
+	})
+
 	run("console connections", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t, p != nil, events != nil)
 		// Connections earlier subtests closed may still count for a moment,
@@ -767,29 +1399,18 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			events.close()
 		}
 		events = ec
-		if _, err := nextEvent(ctx, ec, "console"); err != nil { // connected, about us
+		if _, err := nextConsoleKind(ctx, ec, "connected", "restored"); err != nil { // about us
 			t.Fatal(err)
 		}
 		self, _, err := co.identities(ec)
 		if err != nil {
 			t.Fatal(err)
 		}
-		//nolint:gosec // re-running this test binary is the point; ThiefTest is the server's own test name, from its own Options
-		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+co.ThiefTest+"$", "-test.v")
-		cmd.Env = append(os.Environ(),
-			"DENCONFORMANCE_THIEF_AS="+self, // the real console's identity, public in Den's header
-			"DENCONFORMANCE_THIEF_SOCK="+co.SocketPath,
-			"DENCONFORMANCE_THIEF_PAIRING="+tp.pairing,
-			"DENCONFORMANCE_THIEF_KEY="+hex.EncodeToString(tp.priv), // a test key only
-			"DENCONFORMANCE_THIEF_DEN="+tp.denPubHex())
-		out, err := cmd.CombinedOutput()
+		pid, err := co.thief(ctx, tp, self, false)
 		if err != nil {
-			t.Fatalf("the thief process failed: %v\n%s", err, out)
+			t.Fatal(err)
 		}
-		if !strings.Contains(string(out), "thief refused") {
-			t.Fatalf("the thief process did not report its refusal:\n%s", out)
-		}
-		ev, err := nextEvent(ctx, ec, "console")
+		ev, err := nextConsoleKind(ctx, ec, "refused")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -798,9 +1419,218 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			PID  int    `json:"pid"`
 		}
 		_ = json.Unmarshal(ev, &d)
-		if d.Kind != "refused" || d.PID != cmd.Process.Pid {
-			t.Fatalf("after the thief: want a refused console event with pid %d, got %s", cmd.Process.Pid, ev)
+		if d.Kind != "refused" || d.PID != pid {
+			t.Fatalf("after the thief: want a refused console event with pid %d, got %s", pid, ev)
 		}
+	})
+
+	// console.request: a console paired without a code (DREY-API.md,
+	// console.request), from a fresh key, once Confirm answers its card.
+	// The reply names Den's key as hello does, and the pairing proves.
+	run("console.request", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, co != nil && co.Request, co != nil && co.Confirm != nil)
+		rp, err := requestConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = rp
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, rp); err != nil {
+			t.Fatalf("console.auth with the requested pairing: %v", err)
+		}
+	})
+
+	// console.reconnect: a dock whose service restarted with a fresh key
+	// gets a new pairing, signed by Den's console key over its own nonce
+	// (DREY-API.md, console.reconnect). It may come before hello.
+	run("console.reconnect", func(t *testing.T, ctx context.Context, cl *client) {
+		// The suite's own verify against Den's known answer.
+		seed := bytes.Repeat([]byte{0x01}, ed25519.SeedSize)
+		kaKey := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+		if hex.EncodeToString(kaKey) != reconnectVectorDen {
+			t.Fatalf("the known answer's Den key: %x", kaKey)
+		}
+		kaSig, _ := hex.DecodeString(reconnectVectorSig)
+		kaNonce, kaPairing, kaDock := strings.Repeat("5a", 32), strings.Repeat("0a", 16), strings.Repeat("0b", 32)
+		if !verifyReconnect(kaKey, kaNonce, kaPairing, kaDock, kaSig) {
+			t.Fatal("the suite's verify fails Den's known answer")
+		}
+		if verifyReconnect(kaKey, strings.Repeat("5b", 32), kaPairing, kaDock, kaSig) {
+			t.Fatal("the suite's verify passes the known answer with another nonce")
+		}
+		need(t, p != nil, co != nil && co.Reconnect)
+
+		pub, priv, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pk := hex.EncodeToString(pub)
+		// raw dials a connection that says nothing yet: a reconnect may
+		// be its first request.
+		raw := func() *conn {
+			t.Helper()
+			nc, err := o.Dial(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return &conn{nc: nc, r: bufio.NewReaderSize(nc, 64*1024)}
+		}
+		// A nonce that is missing or not 64 hex digits is bad_request,
+		// each on its own connection (one reconnect a second on each).
+		for _, nonce := range []string{"", "xyz", strings.Repeat("A", 64), strings.Repeat("5a", 31)} {
+			c := raw()
+			params := map[string]string{"public_key": pk}
+			if nonce != "" {
+				params["nonce"] = nonce
+			}
+			wantCode(t, fmt.Sprintf("console.reconnect with nonce %q", nonce), c.call(ctx, "console.reconnect", params, nil), CodeBadRequest)
+			c.close()
+		}
+
+		var rep struct {
+			Pairing string `json:"pairing"`
+			DenSig  string `json:"den_sig"`
+			Powers  *bool  `json:"powers"`
+		}
+		// The console being rejoined, watched: a silent repair supersedes
+		// it, so it hears unpaired with cause replaced.
+		old, err := co.watch(ctx, o.Dial, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer old.close()
+		nonce := randHex(32)
+		c := raw()
+		defer c.close()
+		params := map[string]string{"public_key": pk, "nonce": nonce}
+		if p.pages != "" {
+			params["pages_sha256"] = p.pages // the same pages as at pairing: nothing changed
+		}
+		err = c.call(ctx, "console.reconnect", params, &rep)
+		var we *WireError
+		if errors.As(err, &we) && we.Code == codeForbidden && (strings.HasPrefix(we.Message, "not drey-host.service") || strings.HasPrefix(we.Message, "pair again")) {
+			t.Skipf("the server refuses this process's reconnect: %v", err)
+		}
+		if err != nil {
+			t.Fatalf("console.reconnect before hello: %v", err)
+		}
+		sig, _ := hex.DecodeString(rep.DenSig)
+		if !hex32Re.MatchString(rep.Pairing) || !hex128Re.MatchString(rep.DenSig) || rep.Powers == nil {
+			t.Fatalf("console.reconnect's reply: %+v", rep)
+		}
+		// A reconnect answered at once has powers unless the server holds
+		// them back (Den: locked, or God mode on; an older Den: until a
+		// Ctrl+Y). With PowersLocked it must say false.
+		if co.PowersLocked && *rep.Powers {
+			t.Error("console.reconnect came with powers while the server's powers are locked")
+		}
+		h, in, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.close()
+		denKey, err := hex.DecodeString(in.ConsolePublicKey)
+		if err != nil || len(denKey) != ed25519.PublicKeySize || !bytes.Equal(denKey, p.denPub) {
+			t.Fatalf("hello's console_public_key %q is not the key pinned at pairing (%s)", in.ConsolePublicKey, p.denPubHex())
+		}
+		if !verifyReconnect(denKey, nonce, rep.Pairing, pk, sig) {
+			t.Fatal("den_sig does not verify under hello's console_public_key")
+		}
+		if verifyReconnect(denKey, randHex(32), rep.Pairing, pk, sig) {
+			t.Fatal("den_sig verifies over another nonce")
+		}
+		if cause, reason, err := nextUnpaired(ctx, old); err != nil {
+			t.Errorf("the superseded console heard no unpaired: %v", err)
+		} else if cause != "replaced" || utf8.RuneCountInString(reason) > 40 {
+			t.Errorf("the superseded console's unpaired: cause %q, reason %q; want cause replaced", cause, reason)
+		}
+		// The new pairing is the console now: it proves as always.
+		p = &consolePairing{pub: pub, priv: priv, pairing: rep.Pairing, denPub: p.denPub, pages: p.pages}
+		pc, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pc.close()
+		if err := co.prove(ctx, pc, p); err != nil {
+			t.Fatalf("console.auth with the reconnected pairing: %v", err)
+		}
+	})
+
+	// Why a console was unpaired (DREY-API.md, Events): each cause the
+	// suite can bring about, on a fresh console watched on one proved
+	// connection subscribed to console.events. The event names exactly
+	// that cause, and its reason is at most 40 characters.
+	fresh := func(t *testing.T, ctx context.Context) (*consolePairing, *conn) {
+		t.Helper()
+		pp, err := claimConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p = pp
+		w, err := co.watch(ctx, o.Dial, pp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(w.close)
+		return pp, w
+	}
+	wantCause := func(t *testing.T, ctx context.Context, w *conn, cause string) {
+		t.Helper()
+		got, reason, err := nextUnpaired(ctx, w)
+		if err != nil {
+			t.Fatalf("waiting for unpaired with cause %q: %v", cause, err)
+		}
+		if got != cause {
+			t.Errorf("unpaired with cause %q, want %q", got, cause)
+		}
+		if utf8.RuneCountInString(reason) > 40 {
+			t.Errorf("unpaired's reason is over 40 characters: %q", reason)
+		}
+		p = nil
+	}
+	var lastAll time.Time // the last console.unpair {all}: one each 10 s
+	claims := func(t *testing.T) {
+		t.Helper()
+		need(t, co != nil && co.Offer != nil, co != nil && co.Confirm != nil)
+	}
+
+	// After the console unpaired itself, a request is refused until a
+	// pairing is started in Den; then it pairs again.
+	run("console.request after an unpairing", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, co != nil && co.Request && co.RequestRefusals, co != nil && co.Offer != nil && co.Confirm != nil)
+		rp, err := requestConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, rp); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.call(ctx, "console.unpair", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		p = nil
+		_, err = requestConsole(ctx, o.Dial, co)
+		var we *WireError
+		if !errors.As(err, &we) || we.Code != codeForbidden || !strings.HasPrefix(we.Message, "unpaired in Den") {
+			t.Fatalf(`console.request after the console unpaired itself: want forbidden "unpaired in Den: …", got %v`, err)
+		}
+		if _, err := co.Offer(ctx); err != nil { // a pairing started in Den
+			t.Fatal(err)
+		}
+		np, err := requestConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatalf("console.request once a pairing was started in Den: %v", err)
+		}
+		p = np
 	})
 
 	run("console.unpair unproved", func(t *testing.T, ctx context.Context, cl *client) {
@@ -815,6 +1645,11 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 
 	run("console.unpair all", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t, p != nil)
+		w, err := co.watch(ctx, o.Dial, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.close()
 		c, _, err := open(ctx, o.Dial) // hello'd, never proved
 		if err != nil {
 			t.Fatal(err)
@@ -823,9 +1658,14 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		var rep struct {
 			Unpaired int `json:"unpaired"`
 		}
+		lastAll = time.Now()
 		if err := c.call(ctx, "console.unpair", map[string]bool{"all": true}, &rep); err != nil {
 			t.Fatalf("console.unpair {all} without a proof: %v", err)
 		}
+		// Another program's unpair of every pairing: cause other.
+		pp := p
+		wantCause(t, ctx, w, "other")
+		p = pp
 		if rep.Unpaired < 1 {
 			t.Errorf("console.unpair {all}: unpaired %d, want at least the console", rep.Unpaired)
 		}
@@ -842,6 +1682,190 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Error("the console still proves after console.unpair {all}")
 		}
 		p = nil
+	})
+
+	run("unpaired cause self", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		pp, w := fresh(t, ctx)
+		// From another proved connection of the console, so w reads only
+		// events (call skips them while it waits for its reply).
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, pp); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.call(ctx, "console.unpair", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "self")
+	})
+
+	run("unpaired cause replaced", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		_, w := fresh(t, ctx)
+		np, err := claimConsole(ctx, o.Dial, co)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "replaced")
+		p = np
+	})
+
+	run("unpaired cause proofs", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		pp, w := fresh(t, ctx)
+		_, otherKey, _ := ed25519.GenerateKey(rand.Reader)
+		for i := range 3 {
+			c, _, err := open(ctx, o.Dial)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch, err := getChallenge(ctx, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			self, _, err := co.identities(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			na := randHex(32)
+			sig := hex.EncodeToString(ed25519.Sign(otherKey, signedText("app-to-den", ch.Conn, pp.pairing, pp.pubHex(), pp.denPubHex(), ch.Nonce, na, self)))
+			if err := c.call(ctx, "console.auth", map[string]string{"pairing": pp.pairing, "nonce": na, "sig": sig}, nil); err == nil {
+				t.Fatalf("wrong proof %d accepted", i+1)
+			}
+			c.close()
+		}
+		wantCause(t, ctx, w, "proofs")
+	})
+
+	run("unpaired cause intruders", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.ThiefTest != "" && co.SocketPath != "")
+		pp, w := fresh(t, ctx)
+		self, _, err := co.identities(w)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Three thief processes of two tries each: the third refused try
+		// unpairs (a server striking per try, as Den does, on the second
+		// run; one striking per program, on the third), and any try after
+		// it may find no pairing.
+		for range 3 {
+			if _, err := co.thief(ctx, pp, self, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantCause(t, ctx, w, "intruders")
+		// For ten minutes after, a request is refused; a code still pairs.
+		if co.Request && co.RequestRefusals {
+			_, err := requestConsole(ctx, o.Dial, co)
+			if codeOf(err) != codeUnavailable {
+				t.Errorf("console.request after an unpairing for intruders: want unavailable, got %v", err)
+			}
+		}
+	})
+
+	run("unpaired cause burst", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.Card != nil, co != nil && co.Burst != nil)
+		pp, w := fresh(t, ctx)
+		restore, err := co.Burst(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restore()
+		// The answers go on their own connection, so w reads only events.
+		a, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer a.close()
+		if err := co.prove(ctx, a, pp); err != nil {
+			t.Fatal(err)
+		}
+		for i := range 5 {
+			id, err := co.Card(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, err := cardGet(ctx, a, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = a.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+			if err != nil && i < 4 {
+				t.Fatalf("answer %d: %v", i+1, err)
+			}
+		}
+		wantCause(t, ctx, w, "burst")
+	})
+
+	run("unpaired cause den", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.Unpair != nil)
+		_, w := fresh(t, ctx)
+		if err := co.Unpair(ctx); err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "den")
+	})
+
+	// An end of file with no unpaired event is not an unpairing: the
+	// pairing stands and proves again.
+	run("unpaired: not at end of file", func(t *testing.T, ctx context.Context, cl *client) {
+		claims(t)
+		need(t, co != nil && co.Disconnect != nil)
+		pp, w := fresh(t, ctx)
+		if err := co.Disconnect(ctx); err != nil {
+			t.Fatal(err)
+		}
+		// The watching connection ends: an end of file or a closed
+		// connection, soon, and no unpaired before it.
+		dctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		cause, _, err := nextUnpaired(dctx, w)
+		cancel()
+		switch {
+		case err == nil:
+			t.Fatalf("a disconnect sent unpaired with cause %q", cause)
+		case errors.Is(err, os.ErrDeadlineExceeded):
+			t.Fatal("Disconnect did not end the console's connection within 2 s")
+		case !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, syscall.ECONNRESET):
+			t.Fatalf("the console's connection after Disconnect: want an end of file, got %v", err)
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, pp); err != nil {
+			t.Fatalf("the pairing did not stand after a disconnect: %v", err)
+		}
+		p = pp
+	})
+
+	// console.unpair {all} from a connection that is not the console's:
+	// cause other. One each 10 s, so the wait for the last runs first.
+	run("unpaired cause other", func(t *testing.T, _ context.Context, cl *client) {
+		claims(t)
+		if wait := 10*time.Second + 200*time.Millisecond - time.Since(lastAll); !lastAll.IsZero() && wait > 0 {
+			time.Sleep(wait)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), o.Timeout)
+		defer cancel()
+		_, w := fresh(t, ctx)
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		lastAll = time.Now()
+		if err := c.call(ctx, "console.unpair", map[string]bool{"all": true}, nil); err != nil {
+			t.Fatal(err)
+		}
+		wantCause(t, ctx, w, "other")
 	})
 
 	run("console cooldown", func(t *testing.T, ctx context.Context, cl *client) {
@@ -889,6 +1913,157 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 
 // claimConsole pairs a new console: Offer, a claim with the code proof,
 // Confirm, and the bind checked. A new console replaces the old one.
+// watch opens a connection proved as pp and subscribed to console.events,
+// past its first console event (connected, about itself).
+func (o *ConsoleOptions) watch(ctx context.Context, dial Dialer, pp *consolePairing) (*conn, error) {
+	c, _, err := open(ctx, dial)
+	if err != nil {
+		return nil, err
+	}
+	if err := o.prove(ctx, c, pp); err != nil {
+		c.close()
+		return nil, err
+	}
+	if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+		c.close()
+		return nil, err
+	}
+	if _, err := nextConsoleKind(ctx, c, "connected", "restored"); err != nil {
+		c.close()
+		return nil, err
+	}
+	return c, nil
+}
+
+// nextConsoleKind reads console events on c until one of the kinds, and
+// returns its data. Other kinds pass: a server may send ones the suite
+// does not wait for (Den's paired, reconnected, powers), and a client
+// ignores a kind it does not know.
+func nextConsoleKind(ctx context.Context, c *conn, kinds ...string) (json.RawMessage, error) {
+	for {
+		raw, err := nextEvent(ctx, c, "console")
+		if err != nil {
+			return nil, err
+		}
+		var d struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(raw, &d) == nil && slices.Contains(kinds, d.Kind) {
+			return raw, nil
+		}
+	}
+}
+
+// thief runs this test binary again as ThiefTest: another process proves
+// with pp's key as self, and must be refused. With mayUnpair, any of its
+// tries may come after the strike that unpairs the console, and find none
+// (not_found). It returns that process's pid.
+func (o *ConsoleOptions) thief(ctx context.Context, pp *consolePairing, self string, mayUnpair bool) (int, error) {
+	//nolint:gosec // re-running this test binary is the point; ThiefTest is the server's own test name, from its own Options
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+o.ThiefTest+"$", "-test.v")
+	cmd.Env = append(os.Environ(),
+		"DENCONFORMANCE_THIEF_AS="+self, // the real console's identity, public in Den's header
+		"DENCONFORMANCE_THIEF_SOCK="+o.SocketPath,
+		"DENCONFORMANCE_THIEF_PAIRING="+pp.pairing,
+		"DENCONFORMANCE_THIEF_KEY="+hex.EncodeToString(pp.priv), // a test key only
+		"DENCONFORMANCE_THIEF_DEN="+pp.denPubHex())
+	if mayUnpair {
+		cmd.Env = append(cmd.Env, "DENCONFORMANCE_THIEF_MAY_UNPAIR=1")
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("the thief process failed: %w\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "thief refused") {
+		return 0, fmt.Errorf("the thief process did not report its refusal:\n%s", out)
+	}
+	return cmd.Process.Pid, nil
+}
+
+// nextUnpaired reads console events on c until an unpaired one, and
+// returns its cause and reason.
+func nextUnpaired(ctx context.Context, c *conn) (cause, reason string, err error) {
+	for {
+		raw, err := nextEvent(ctx, c, "console")
+		if err != nil {
+			return "", "", err
+		}
+		var d struct {
+			Kind   string `json:"kind"`
+			Cause  string `json:"cause"`
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal(raw, &d) == nil && d.Kind == "unpaired" {
+			return d.Cause, d.Reason, nil
+		}
+	}
+}
+
+// requestConsole pairs a console by console.request: a fresh key and a
+// pages hash. A Den that pairs its console's service by itself (Den
+// auto-console) replies at once, with no card: then Confirm is not
+// pressed. Otherwise (an older Den raises a card) Confirm answers the card
+// after requestCardWait, and a reply so confirmed must come with powers.
+// Either way the reply's den_public_key must be the console_public_key
+// hello named.
+func requestConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*consolePairing, error) {
+	c, in, err := open(ctx, dial)
+	if err != nil {
+		return nil, err
+	}
+	defer c.close()
+	if !hex64Re.MatchString(in.ConsolePublicKey) {
+		return nil, fmt.Errorf("hello names no console_public_key (%q): a request's reply cannot be checked", in.ConsolePublicKey)
+	}
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	pages := randHex(32)
+	var rep struct {
+		Pairing      string `json:"pairing"`
+		DenPublicKey string `json:"den_public_key"`
+		Console      bool   `json:"console"`
+		Powers       *bool  `json:"powers"`
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- c.call(ctx, "console.request", map[string]string{"public_key": hex.EncodeToString(pub), "pages_sha256": pages}, &rep)
+	}()
+	confirmed := false
+	select {
+	case err := <-done: // paired at once: no card was raised
+		if err != nil {
+			return nil, err
+		}
+	case <-time.After(requestCardWait):
+		// No answer yet: a card waits (or a slow reply). A Confirm that
+		// finds no card is not the suite's failure; the reply decides.
+		confirmed = true
+		cerr := co.Confirm(ctx)
+		if err := <-done; err != nil {
+			if cerr != nil {
+				return nil, fmt.Errorf("%w (Confirm: %v)", err, cerr) //nolint:errorlint // both are reported; the request's error is the one to match
+			}
+			return nil, err
+		}
+	}
+	if !hex32Re.MatchString(rep.Pairing) || !hex64Re.MatchString(rep.DenPublicKey) || !rep.Console || rep.Powers == nil {
+		return nil, fmt.Errorf("console.request's reply not as pinned: %+v", rep)
+	}
+	if rep.DenPublicKey != in.ConsolePublicKey {
+		return nil, fmt.Errorf("console.request's den_public_key %s is not hello's console_public_key %s", rep.DenPublicKey, in.ConsolePublicKey)
+	}
+	// Paired by the human's Ctrl+Y: with powers. Paired at once, powers
+	// may be off (Den locked, or God mode on), with a card in Den for
+	// them; with PowersLocked they must be.
+	if confirmed && !*rep.Powers {
+		return nil, errors.New("console.request confirmed in Den came without powers")
+	}
+	if !confirmed && co.PowersLocked && *rep.Powers {
+		return nil, errors.New("console.request answered at once came with powers while the server's powers are locked")
+	}
+	den, _ := hex.DecodeString(rep.DenPublicKey)
+	return &consolePairing{pub: pub, priv: priv, pairing: rep.Pairing, denPub: den, pages: pages}, nil
+}
+
 func claimConsole(ctx context.Context, dial Dialer, co *ConsoleOptions) (*consolePairing, error) {
 	code, err := co.Offer(ctx)
 	if err != nil {
@@ -1066,9 +2241,268 @@ func ConsoleThiefHelper(t *testing.T) {
 		co := &ConsoleOptions{Identity: as}
 		err = co.prove(ctx, c, p)
 		c.close()
+		// For "unpaired cause intruders": the third refused try in ten
+		// minutes unpairs the console, and every try after it finds none.
+		if os.Getenv("DENCONFORMANCE_THIEF_MAY_UNPAIR") == "1" && codeOf(err) == CodeNotFound {
+			continue
+		}
 		if codeOf(err) != codeForbidden {
 			t.Fatalf("a proof with the console's key from another process, signed as %q: want forbidden, got %v", as, err)
 		}
 	}
 	fmt.Println("thief refused")
+}
+
+// The conversation mirror's wire shapes (DREY-API.md). They are checked strictly: a field the
+// document does not list, a value outside a closed set, or a character a screen must not get fails.
+
+var (
+	mirrorStates = map[string]bool{"off": true, "asking": true, "on": true}
+	// origin and speaker, as Den's text pairs them: `you` speaks the human's words (origin you or console),
+	// `den` only Den's own fixed lines (a report, a mission run, a desktop agent's report), `orchestrator` its
+	// completed reply to any of them.
+	convPairs = map[string]map[string]bool{
+		"you":     {"you": true, "orchestrator": true},
+		"console": {"you": true, "orchestrator": true},
+		"report":  {"den": true, "orchestrator": true},
+		"mission": {"den": true, "orchestrator": true},
+		"desktop": {"den": true, "orchestrator": true},
+	}
+	reservedAgents = []string{"den", "drey", "you", "orchestrator"}
+	doingLeadWords = []string{"waiting for you", "stalled", "idle", "editing", "writing", "reading", "running", "searching", "fetching", "delegating", "working on", "working"}
+)
+
+// cutMark is how Den ends a text it cut.
+const cutMark = "(cut: the rest is in Den)"
+
+// strictDecode decodes JSON into v and refuses any field v does not have, and trailing data.
+func strictDecode(raw json.RawMessage, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if dec.More() {
+		return errors.New("trailing data")
+	}
+	return nil
+}
+
+// badRune reports a character a screen must not be given: a control (a newline only when
+// newline is true), DEL, a C1 control, the line and paragraph separators, an Arabic letter mark, every bidi and
+// zero-width or invisible format character, the interlinear annotation characters, and the tag characters.
+func badRune(r rune, newline bool) bool {
+	switch {
+	case r == '\n':
+		return !newline
+	case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+		return true
+	case r == 0x061c, r >= 0x200b && r <= 0x200f, r == 0x2028, r == 0x2029, r >= 0x202a && r <= 0x202e, r >= 0x2060 && r <= 0x2069, r == 0xfeff:
+		return true
+	case r >= 0xfff9 && r <= 0xfffb, r >= 0xe0000 && r <= 0xe007f:
+		return true
+	}
+	return false
+}
+
+// checkLine: one line, at most max runes, no character badRune refuses.
+func checkLine(s string, max int) error {
+	if utf8.RuneCountInString(s) > max {
+		return fmt.Errorf("%d runes, the most is %d", utf8.RuneCountInString(s), max)
+	}
+	if !utf8.ValidString(s) {
+		return errors.New("not valid UTF-8")
+	}
+	for _, r := range s {
+		if badRune(r, false) {
+			return fmt.Errorf("the character U+%04X", r)
+		}
+	}
+	return nil
+}
+
+// checkMirrorEvent: `mirror {state, since?}`, nothing else, state off, asking or on, and since (RFC3339 UTC) with on only.
+func checkMirrorEvent(data json.RawMessage) error {
+	var d struct {
+		State string `json:"state"`
+		Since string `json:"since"`
+	}
+	if err := strictDecode(data, &d); err != nil {
+		return err
+	}
+	if !mirrorStates[d.State] {
+		return fmt.Errorf("state %q is not off, asking or on", d.State)
+	}
+	if d.State == "on" {
+		if tm, err := time.Parse(time.RFC3339, d.Since); err != nil || !strings.HasSuffix(d.Since, "Z") || tm.Location() != time.UTC {
+			return fmt.Errorf("on needs since in RFC3339 UTC, got %q", d.Since)
+		}
+	} else if d.Since != "" {
+		return fmt.Errorf("since belongs to on only, got it with %s", d.State)
+	}
+	return nil
+}
+
+// mirrorEventAfter reads events on a subscribed connection until a mirror event, and returns its
+// state. want is the state a change is waiting for ("" for the snapshot's: the first); events
+// of other states are let pass while waiting for it.
+func mirrorEventAfter(t *testing.T, c *conn, want string) string {
+	t.Helper()
+	for {
+		l, err := c.read()
+		if err != nil {
+			t.Fatalf("waiting for a mirror event: %v", err)
+		}
+		if l.Event != "mirror" {
+			continue
+		}
+		if err := checkMirrorEvent(l.Data); err != nil {
+			t.Fatalf("the mirror event %s: %v", l.Data, err)
+		}
+		var d struct {
+			State string `json:"state"`
+		}
+		_ = json.Unmarshal(l.Data, &d)
+		if want == "" || d.State == want {
+			return d.State
+		}
+	}
+}
+
+type conversationEntry struct {
+	ID   int64
+	Text string
+}
+
+// checkConversationEntry: `{id, at, turn?, origin, speaker, agent?, console?, text}` and no other field. id above 0,
+// at RFC3339 UTC, origin and speaker a pair Den's text allows (speaker den never speaks for origin you or console),
+// console {label, self} exactly with origin console (and nothing else in it), agent exactly with report or desktop
+// (one plain line of at most 64 runes, never Den, Drey, You or Orchestrator), text of at most 20 lines and 2000
+// runes (Den's cut mark aside) with none of badRune's characters.
+func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
+	var e struct {
+		ID      int64  `json:"id"`
+		At      string `json:"at"`
+		Turn    string `json:"turn"`
+		Origin  string `json:"origin"`
+		Speaker string `json:"speaker"`
+		Agent   string `json:"agent"`
+		Console *struct {
+			Label string `json:"label"`
+			Self  *bool  `json:"self"`
+		} `json:"console"`
+		Text string `json:"text"`
+	}
+	if err := strictDecode(raw, &e); err != nil {
+		return conversationEntry{}, err
+	}
+	speakers, known := convPairs[e.Origin]
+	switch {
+	case e.ID <= 0:
+		return conversationEntry{}, fmt.Errorf("id %d", e.ID)
+	case !known:
+		return conversationEntry{}, fmt.Errorf("origin %q is not one of you, console, report, mission, desktop", e.Origin)
+	case !speakers[e.Speaker]:
+		return conversationEntry{}, fmt.Errorf("speaker %q does not go with origin %s", e.Speaker, e.Origin)
+	case e.Origin == "console" && (e.Console == nil || e.Console.Self == nil):
+		return conversationEntry{}, errors.New("origin console without console {label, self}")
+	case e.Origin != "console" && e.Console != nil:
+		return conversationEntry{}, errors.New("console with an origin other than console")
+	case e.Origin != "console" && e.Turn != "":
+		return conversationEntry{}, errors.New("turn with an origin other than console")
+	case (e.Origin == "report" || e.Origin == "desktop") && e.Agent == "":
+		return conversationEntry{}, fmt.Errorf("origin %s without its agent", e.Origin)
+	case e.Origin != "report" && e.Origin != "desktop" && e.Agent != "":
+		return conversationEntry{}, fmt.Errorf("agent with origin %s", e.Origin)
+	}
+	if e.Agent != "" {
+		if strings.TrimSpace(e.Agent) == "" {
+			return conversationEntry{}, fmt.Errorf("agent %q is only spaces", e.Agent)
+		}
+		if err := checkLine(e.Agent, 64); err != nil {
+			return conversationEntry{}, fmt.Errorf("agent %q: %w", e.Agent, err)
+		}
+		for _, r := range reservedAgents {
+			if strings.EqualFold(e.Agent, r) {
+				return conversationEntry{}, fmt.Errorf("agent %q is a reserved name: Den shows it as an agent", e.Agent)
+			}
+		}
+	}
+	if e.Console != nil {
+		if strings.TrimSpace(e.Console.Label) == "" {
+			return conversationEntry{}, fmt.Errorf("console label %q is empty or only spaces", e.Console.Label)
+		}
+		if err := checkLine(e.Console.Label, 64); err != nil {
+			return conversationEntry{}, fmt.Errorf("console label %q: %w", e.Console.Label, err)
+		}
+	}
+	if e.Turn != "" && !regexp.MustCompile(`^t-[0-9a-f]{32}$`).MatchString(e.Turn) {
+		return conversationEntry{}, fmt.Errorf("turn %q is not t- and 32 hex digits", e.Turn)
+	}
+	if tm, err := time.Parse(time.RFC3339, e.At); err != nil || tm.Location() != time.UTC {
+		return conversationEntry{}, fmt.Errorf("at %q is not RFC3339 UTC", e.At)
+	}
+	// Den's cut mark ends a text it cut, on a line of its own or not; the limits are for the words before it
+	text := strings.TrimSuffix(e.Text, cutMark)
+	if len(text) != len(e.Text) {
+		text = strings.TrimSuffix(text, "\n")
+	}
+	switch {
+	case strings.TrimSpace(text) == "":
+		return conversationEntry{}, errors.New("empty text")
+	case utf8.RuneCountInString(text) > 2000:
+		return conversationEntry{}, fmt.Errorf("text of %d runes, the most is 2000", utf8.RuneCountInString(text))
+	case strings.Count(text, "\n") >= 20:
+		return conversationEntry{}, fmt.Errorf("text of %d lines, the most is 20", strings.Count(text, "\n")+1)
+	case !utf8.ValidString(e.Text):
+		return conversationEntry{}, errors.New("text is not valid UTF-8")
+	}
+	for _, r := range e.Text {
+		if badRune(r, true) {
+			return conversationEntry{}, fmt.Errorf("text holds the character U+%04X", r)
+		}
+	}
+	return conversationEntry{ID: e.ID, Text: e.Text}, nil
+}
+
+// checkDoing: `doing {text, at}` and no other field; text one plain line of at most 80 runes, empty or starting with one of
+// Den's lead phrases; at RFC3339.
+func checkDoing(raw json.RawMessage) (text string, err error) {
+	var d struct {
+		Text string `json:"text"`
+		At   string `json:"at"`
+	}
+	if err := strictDecode(raw, &d); err != nil {
+		return "", err
+	}
+	if _, err := time.Parse(time.RFC3339, d.At); err != nil {
+		return "", fmt.Errorf("doing.at %q is not RFC3339", d.At)
+	}
+	if err := checkLine(d.Text, 80); err != nil {
+		return "", fmt.Errorf("doing.text %q: %w", d.Text, err)
+	}
+	if d.Text == "" {
+		return "", nil
+	}
+	for _, l := range doingLeadWords {
+		if d.Text == l || strings.HasPrefix(d.Text, l+" ") || strings.HasPrefix(d.Text, l+":") {
+			return d.Text, nil
+		}
+	}
+	return "", fmt.Errorf("doing.text %q does not start with one of Den's lead phrases", d.Text)
+}
+
+// checkLimit: a history limit above 200 is refused (bad_request) or capped at 200 entries, never more.
+func checkLimit(t *testing.T, ctx context.Context, c *conn) {
+	t.Helper()
+	var res struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	err := c.call(ctx, "conversation.history", map[string]int{"limit": 201}, &res)
+	switch {
+	case err == nil && len(res.Entries) > 200:
+		t.Errorf("conversation.history with limit 201 gave %d entries: the most is 200", len(res.Entries))
+	case err != nil && codeOf(err) != "bad_request":
+		t.Errorf("conversation.history with limit 201: want entries (at most 200) or bad_request, got %v", err)
+	}
 }

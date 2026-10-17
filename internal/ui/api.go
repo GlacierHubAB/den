@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -34,6 +35,8 @@ type apiState struct {
 	grants  map[*inbox.Item]string // open grant cards → grant id
 	lastKey time.Time              // the human's last key in Den: no focus from outside right after it
 	warned  bool                   // the second socket replacement was noted
+	view    string                 // the view Den is in (viewswitch.go), "" when it cannot switch
+	raised  bool                   // Den's own window was brought back for a card, with no dock to ask (viewswitch.go)
 }
 
 // focusQuiet is how long after the human's last key in Den an app may not
@@ -65,14 +68,25 @@ func waitAPIAct(srv *api.Server) tea.Cmd {
 // applyAPIAct puts an app's grant card in the inbox, or settles the cards
 // of grants whose app is gone.
 func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
+	if act.GodOff != "" {
+		m.godOff(act.GodOff)
+	}
 	if act.CardAnswer != nil {
 		return m.answerFromDock(act.CardAnswer)
 	}
 	if act.Command != nil {
 		return m.runFromDock(act.Command)
 	}
+	if act.ModeSet != nil {
+		cmd := m.modeFromDock(act.ModeSet)
+		m.refresh()
+		return cmd
+	}
 	if isConsoleAct(act) {
 		return m.applyConsoleAct(act)
+	}
+	if act.View != nil {
+		return m.applyView(act.View)
 	}
 	if act.Pair != nil || act.CodeGone || act.PairDone != "" || act.Paired || act.Say != nil {
 		return m.applyControlAct(act)
@@ -222,16 +236,24 @@ func (m *Model) startAPI() tea.Cmd {
 	}
 	os.Chmod(lane, 0o700)
 	cfg := m.cfg
+	// Den's console key never changes in silence: a dock pins it at
+	// pairing. A new one, or none, is said in the chat.
+	_, statErr := os.Lstat(filepath.Join(state, consoleKeyFile))
+	fresh := errors.Is(statErr, fs.ErrNotExist)
 	key, kerr := loadConsoleKey(state)
 	m.con.keyErr = ""
 	if kerr != nil {
 		key, m.con.keyErr = nil, sanitize.Label(kerr.Error(), 160)
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Console pairing is off: Den's console key does not read (" + m.con.keyErr + "). Den makes no new one in its place; a paired dock stays as it is until you fix or remove the file.", at: time.Now()}))
+	} else if fresh {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den made a new console key (" + consoleKeyFile + "): a dock paired with an earlier one sees Den's key changed and must pair again.", at: time.Now()}))
 	}
 	srv, err := api.Listen(api.Options{
-		Version:      Version,
-		ConsoleKey:   key,
-		ConsoleStore: filepath.Join(state, "consoles.json"),
-		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
+		Version:             Version,
+		ConsoleKey:          key,
+		ConsoleStore:        filepath.Join(state, "consoles.json"),
+		ConsolePowersAlways: cfg.API.ConsolePowers == "always",
+		ChatLog:             filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,
@@ -245,6 +267,15 @@ func (m *Model) startAPI() tea.Cmd {
 		return nil
 	}
 	m.api.srv, m.api.err = srv, ""
+	m.api.view = viewSwitcher().Current()
+	m.publishDesktop() // a mission that started before the API did
+	// God mode as it is now, and how the server asks later: from its own
+	// record (SetGod), under its own lock, never from the model.
+	if m.god.on {
+		srv.SetGod(true, m.god.since)
+		lockConsolePowers(m, "God mode is on")
+	}
+	srv.SetGodMode(func() bool { return srv.GodNow().On })
 	m.publishAPI()
 	return tea.Batch(waitAPINote(srv), waitAPIAct(srv))
 }
@@ -290,15 +321,27 @@ func (m *Model) publishAPI() {
 		FullHosts: map[string]bool{},
 		Roster:    m.laneRoster(),
 		Guidance:  m.guide.active,
+		View:      m.api.view,
+
+		HooksInstalled: m.hooksReady,
+		HookSeen:       map[string]bool{},
+	}
+	for sid := range m.att.lastHook {
+		if hostOf(sid) == "" {
+			snap.HookSeen[sid] = true
+		}
 	}
 	snap.Colors = map[string]string{}
+	snap.Modes = map[string]string{}
 	for _, a := range m.agents {
 		snap.Agents = append(snap.Agents, a)
 		snap.Names[a.Session.SessionID] = a.Name
 		if a.Host == "" {
 			snap.Colors[a.Session.SessionID] = m.colorFor(a.Session.SessionID)
+			snap.Modes[a.Session.SessionID] = m.modeOfAgent(a.Session.SessionID)
 		}
 	}
+	snap.Mode = api.ModeInfo{Global: m.agentMode(), Mixed: len(m.modeDiffers()) > 0}
 	snap.AgentProcs = m.agentProcs()
 	snap.Cards = m.dockCards()
 	snap.Settled = m.dockSettled()
@@ -333,15 +376,24 @@ func (m Model) laneRoster() []orch.RosterAgent {
 }
 
 // apiCommand is /api, /api on, /api off, /api disconnect, /api resume,
-// /api pair and /api unpair.
+// /api pair, /api unpair and /api lock.
 func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 	sub := ""
 	if len(args) > 0 {
 		sub = strings.ToLower(args[0])
 	}
 	switch sub {
+	case "mirror":
+		arg := ""
+		if len(args) > 1 {
+			arg = strings.ToLower(args[1])
+		}
+		note, isErr := m.mirrorCommand(arg)
+		return m.say(note, isErr)
 	case "console":
 		return m.consoleCommand()
+	case "lock":
+		return m.consoleLockCommand()
 	case "pair", "unpair":
 		return m.controlCommand(sub)
 	case "disallow", "control":
@@ -532,31 +584,29 @@ func (m Model) apiChipParts() []string {
 			paired = append(paired, appName(p.Exe)+" pid "+strconv.Itoa(p.PID))
 		}
 	}
-	if len(paired) > 0 {
-		return []string{m.st.attn.Render("paired: " + strings.Join(paired, ", "))}
+	var console *api.Console
+	if c, ok := srv.CurrentConsole(); ok {
+		console = &c
 	}
-	names := map[string]bool{}
-	unidentified := map[int]bool{}
-	asking := false
-	for _, c := range srv.Clients() {
-		if c.Agent {
-			continue
+	chips, asking := connectedChips(srv.Clients(), console)
+	if len(paired) > 0 {
+		parts := []string{m.st.attn.Render("paired: " + strings.Join(paired, ", "))}
+		if console != nil {
+			parts = append(parts, m.st.attn.Render(chips[0])) // the console's segment comes first
 		}
-		if api.Unidentified(c.Exe) {
-			unidentified[c.PID] = true
-		} else {
-			names[sanitize.Label(c.Label, 20)] = true
-		}
-		asking = asking || c.Asking
+		return parts
 	}
 	lane := laneChip(srv.LaneState())
-	if len(names) == 0 && len(unidentified) == 0 {
+	if len(chips) == 0 {
 		if lane != "" {
 			return []string{"API on", lane}
 		}
 		return []string{"API on"}
 	}
-	parts := []string{m.st.attn.Render(connectedChip(sortedKeys(names), len(unidentified)))}
+	var parts []string
+	for _, c := range chips {
+		parts = append(parts, m.st.attn.Render(c))
+	}
 	if asking {
 		parts = append(parts, m.st.attn.Render("asking"))
 	}
@@ -576,6 +626,53 @@ func connectedChip(names []string, unidentified int) string {
 		return "⇄ " + strings.Join(names, ", ") + " connected"
 	}
 	return "⇄ " + strings.Join(names, ", ") + ", " + strconv.Itoa(unidentified) + " unidentified connected"
+}
+
+// connectedChips are the header's words for what is connected, and
+// whether any of it is asking. The paired console (console, nil for none)
+// is one segment: "Drey" only when Den read it clean as Drey's unit for
+// this pairing itself, else "console", from Den's own words, never from
+// what the program says; "connected" while a connection of it is proved,
+// else "paired"; and "^Y for powers" while it has none. Which program and
+// pid it is stay in /api and Den's chat. Every other app keeps its own
+// words (connectedChip).
+func connectedChips(clients []api.Client, console *api.Console) ([]string, bool) {
+	names := map[string]bool{}
+	unidentified := map[int]bool{}
+	asking, connected := false, false
+	for _, c := range clients {
+		if c.Agent {
+			continue
+		}
+		asking = asking || c.Asking
+		switch {
+		case c.Console:
+			connected = true
+		case api.Unidentified(c.Exe):
+			unidentified[c.PID] = true
+		default:
+			names[sanitize.Label(c.Label, 20)] = true
+		}
+	}
+	var out []string
+	if console != nil {
+		name, state := consoleWord, "paired"
+		if console.Verified {
+			name = api.ConsoleUnitName
+		}
+		if connected {
+			state = "connected"
+		}
+		seg := "⇄ " + name + " " + state
+		if !console.Powers {
+			seg += " · ^Y for powers"
+		}
+		out = append(out, seg)
+	}
+	if len(names) > 0 || len(unidentified) > 0 {
+		out = append(out, connectedChip(sortedKeys(names), len(unidentified)))
+	}
+	return out, asking
 }
 
 // appCount is "1 app" or "N apps".

@@ -292,6 +292,12 @@ func (s *Server) StartPairing() []string {
 	s.ctl.mu.Lock()
 	s.ctl.code = &pairCode{words: words, until: time.Now().Add(pairCodeLife)}
 	s.ctl.mu.Unlock()
+	s.con.mu.Lock()
+	if s.con.autoOff {
+		s.con.autoOff = false // the human acts in Den: the dock may pair by itself again
+		s.saveConsoleLocked()
+	}
+	s.con.mu.Unlock()
 	return append([]string(nil), words...)
 }
 
@@ -387,7 +393,8 @@ func (s *Server) Unpair(id, why string) {
 	if why != "" {
 		s.note(why)
 	}
-	s.act(Act{Paired: true})
+	// An unpair also ends God mode: both are lowerings.
+	s.act(Act{Paired: true, GodOff: "an app pairing was revoked"})
 }
 
 // act hands Den an Act, dropping it when Den is too busy to take it.
@@ -778,6 +785,9 @@ type Say struct {
 }
 
 func (y *Say) push(ch Chunk) bool {
+	if y.c == nil {
+		return false // a turn no connection asked for (tests make them)
+	}
 	ch.Turn = y.Turn
 	return y.c.push(Event{Event: EventOrch, Data: ch}, true)
 }
@@ -821,6 +831,12 @@ func (y *Say) Fail(why string) { y.end(why) }
 // Cancelled is closed when the app's connection goes.
 func (y *Say) Cancelled() <-chan struct{} { return y.cancel }
 
+// end ends the turn once. The turn is freed (Den's one app turn, the
+// connection's count) before its last chunk goes out, so an app that says
+// again the moment it reads done or error is not refused as busy. Once
+// ended is set under mu no other chunk of the turn is pushed, so the last
+// one still comes last; it is pushed outside mu, as mu is never held with
+// ctl.mu or the connection's.
 func (y *Say) end(why string) {
 	y.mu.Lock()
 	if y.ended {
@@ -829,11 +845,6 @@ func (y *Say) end(why string) {
 	}
 	y.ended = true
 	close(y.fin)
-	if why == "" {
-		y.push(Chunk{Type: "done"})
-	} else {
-		y.push(Chunk{Type: "error", Message: why})
-	}
 	y.mu.Unlock()
 	y.s.ctl.mu.Lock()
 	if y.s.ctl.turn == y {
@@ -843,6 +854,11 @@ func (y *Say) end(why string) {
 	y.c.mu.Lock()
 	y.c.asks--
 	y.c.mu.Unlock()
+	if why == "" {
+		y.push(Chunk{Type: "done"})
+	} else {
+		y.push(Chunk{Type: "error", Message: why})
+	}
 }
 
 // say is orch.say: from a connection that passed pair.auth, or one proved

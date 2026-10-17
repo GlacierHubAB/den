@@ -9,8 +9,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/GlacierHubAB/den/internal/permmode"
 )
 
 // Config is everything Den lets you tune.
@@ -23,6 +26,16 @@ type Config struct {
 		// (shipped with Den) or the absolute path of a file of your own. Off
 		// when empty. It loads only once you approve its SHA-256 in Den.
 		Guidance string
+	}
+	// Agents is how Den starts agents.
+	Agents struct {
+		// PermissionMode is the global mode new agents start in
+		// (claude --permission-mode): one of permmode.Modes(), never
+		// bypassPermissions; permmode.Shipped (auto) when unset. A value
+		// Den refuses keeps that, and ModeRefused holds it, for Den's
+		// note. Den takes it only up to permmode.Shipped: the file asks.
+		PermissionMode string
+		ModeRefused    string
 	}
 	Inbox struct {
 		History int // finished turns kept as history
@@ -53,6 +66,21 @@ type Config struct {
 	Events struct {
 		Log bool // den hook appends metadata-only events to events.jsonl
 	}
+	// Team is the small-team process Den keeps.
+	Team struct {
+		// MaxAgents is how many live agents one repository's team has
+		// before spawn_agent needs a stated reason (the orchestrator not
+		// counted); 1 to 20.
+		MaxAgents int
+		// BranchHours and BehindMax: an agent's branch older than this
+		// many hours, or this many commits behind its integration branch,
+		// gets a nudge; 0 turns that one off.
+		BranchHours int
+		BehindMax   int
+		// IdleMinutes: an agent on a mission with no turn for this long
+		// and nothing open counts as idle to the orchestrator; 0 off.
+		IdleMinutes int
+	}
 	Usage struct {
 		// StopPercent stops the fleet at that share of the weekly limit:
 		// "USAGE STOP" to every agent, and no new agents or mission runs
@@ -67,6 +95,14 @@ type Config struct {
 	API struct {
 		Enabled      bool
 		AskBudgetUSD float64 // what apps' questions may spend a day
+		// ConsolePowers is when the dock, pairing by itself, comes with
+		// its powers: "unchanged" (the program, unit and pins Den last gave
+		// them to in this run) or "always".
+		ConsolePowers string
+		// MirrorConversation is whether the paired console with its powers
+		// shows the human's orchestrator conversation: "ask" (a card in
+		// Den once per pairing), "always" or "off".
+		MirrorConversation string
 	}
 	// On holds a shell command per event kind, run by Den with the event's
 	// metadata. Empty runs nothing.
@@ -108,6 +144,7 @@ func Defaults() Config {
 	c.Orchestrator.Model = "sonnet"
 	c.Orchestrator.Name = "den-orchestrator"
 	c.Orchestrator.Spawn = true
+	c.Agents.PermissionMode = permmode.Shipped
 	c.Inbox.History = 100
 	c.Detail.Recent = 20
 	c.Hooks.PermissionWait = 580
@@ -119,6 +156,9 @@ func Defaults() Config {
 	c.Stuck.ToolFailures = 3
 	c.Events.Log = true
 	c.API.AskBudgetUSD = 2
+	c.API.ConsolePowers, c.API.MirrorConversation = "unchanged", "ask"
+	c.Team.MaxAgents = 3
+	c.Team.BranchHours, c.Team.BehindMax, c.Team.IdleMinutes = 24, 30, 30
 	return c
 }
 
@@ -147,6 +187,33 @@ func Load() Config {
 	return c
 }
 
+// GodKeys are the config keys that look like God mode settings: a [god]
+// section, or a key with "god" in its name. Den reads none of them (God
+// mode is turned on only in Den's own window); it names them loudly.
+func GodKeys() []string {
+	var out []string
+	for k := range parse(Path()) {
+		if strings.HasPrefix(k, "god.") || strings.Contains(strings.ToLower(k), "god") {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TeamKeysSet are the [team] keys the human's config file sets, by their
+// full name (team.max_agents): the orchestrator's tuning never overrides
+// one of them.
+func TeamKeysSet() map[string]bool {
+	out := map[string]bool{}
+	for k := range parse(Path()) {
+		if strings.HasPrefix(k, "team.") {
+			out[k] = true
+		}
+	}
+	return out
+}
+
 // Prices is the [prices] section: a model-id prefix to "input, output,
 // cache write, cache read" in dollars per million tokens, overriding the
 // cost estimate's built-in table.
@@ -158,6 +225,61 @@ func Prices() map[string]string {
 		}
 	}
 	return out
+}
+
+// DesktopApps is the [desktop.apps.<name>] sections: the apps the human
+// allows desktop missions to use, as raw values by app name and key
+// (command = ["zen-browser", "--new-instance"], class = "zen", ...).
+// internal/desktop reads them; nothing here interprets them.
+func DesktopApps() map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for k, v := range parse(Path()) {
+		rest, ok := strings.CutPrefix(k, "desktop.apps.")
+		if !ok {
+			continue
+		}
+		name, key, ok := strings.Cut(rest, ".")
+		if !ok || name == "" || key == "" {
+			continue
+		}
+		if out[name] == nil {
+			out[name] = map[string]string{}
+		}
+		out[name][key] = v
+	}
+	return out
+}
+
+// DesktopAgentView reports whether a desktop agent runs in a terminal of
+// its own that shows its steps ([desktop] agent_view = true). Off by
+// default: the agent runs with no window, and its steps show in Den's
+// chat.
+func DesktopAgentView() bool {
+	v, err := strconv.ParseBool(parse(Path())["desktop.agent_view"])
+	return err == nil && v
+}
+
+// Task mission limits when the [desktop] section sets none.
+const (
+	DefaultTaskMinutes = 20
+	DefaultTaskActions = 300
+)
+
+// DesktopTask is a task mission's limits from the [desktop] section:
+// task_minutes of wall time and task_actions forwarded desktop calls. They
+// are the human's alone: read from this file when a task starts, with no
+// environment override and nothing an agent or tool can set. A value that
+// is not a positive whole number keeps the default.
+func DesktopTask() (minutes, actions int) {
+	minutes, actions = DefaultTaskMinutes, DefaultTaskActions
+	kv := parse(Path())
+	if n, err := strconv.Atoi(kv["desktop.task_minutes"]); err == nil && n > 0 {
+		minutes = n
+	}
+	if n, err := strconv.Atoi(kv["desktop.task_actions"]); err == nil && n > 0 {
+		actions = n
+	}
+	return minutes, actions
 }
 
 func (c *Config) apply(kv map[string]string) {
@@ -192,6 +314,13 @@ func (c *Config) apply(kv map[string]string) {
 	str(&c.Orchestrator.Name, "orchestrator.name")
 	boolean(&c.Orchestrator.Spawn, "orchestrator.spawn")
 	str(&c.Orchestrator.Guidance, "orchestrator.guidance")
+	if v, ok := kv["agents.permission_mode"]; ok {
+		if mode, ok := permmode.Parse(v); ok {
+			c.Agents.PermissionMode = mode
+		} else {
+			c.Agents.ModeRefused = v
+		}
+	}
 	num(&c.Inbox.History, "inbox.history")
 	num(&c.Detail.Recent, "detail.recent")
 	num(&c.Hooks.PermissionWait, "hooks.permission_wait")
@@ -207,6 +336,26 @@ func (c *Config) apply(kv map[string]string) {
 	count(&c.Stuck.Stalled, "stuck.stalled")
 	count(&c.Stuck.ToolFailures, "stuck.tool_failures")
 	boolean(&c.Events.Log, "events.log")
+	if v, ok := kv["team.max_agents"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 20 {
+			c.Team.MaxAgents = n
+		}
+	}
+	if v, ok := kv["team.branch_hours"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 24*30 {
+			c.Team.BranchHours = n
+		}
+	}
+	if v, ok := kv["team.behind_max"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 10000 {
+			c.Team.BehindMax = n
+		}
+	}
+	if v, ok := kv["team.idle_minutes"]; ok {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 24*60 {
+			c.Team.IdleMinutes = n
+		}
+	}
 	if v, ok := kv["usage.stop_percent"]; ok {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 100 {
 			c.Usage.StopPercent = n
@@ -222,6 +371,12 @@ func (c *Config) apply(kv map[string]string) {
 		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
 			c.API.AskBudgetUSD = f
 		}
+	}
+	if v := kv["api.console_powers"]; v == "always" || v == "unchanged" {
+		c.API.ConsolePowers = v
+	}
+	if v := kv["api.mirror_conversation"]; v == "ask" || v == "always" || v == "off" {
+		c.API.MirrorConversation = v
 	}
 	for key, dst := range map[string]*string{
 		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
@@ -341,6 +496,34 @@ func GuidanceSetting() (string, error) {
 	return kv["orchestrator.guidance"], nil
 }
 
+// ModeSetting reads agents.permission_mode from the file as it is now, for
+// Den's watch on it: the mode (Default when the key or the file is gone),
+// or the value as written when it is not a mode the global mode may take.
+// A file that is there but does not read is an error. No environment
+// variable sets it.
+func ModeSetting() (mode, refused string, err error) {
+	f, err := os.Open(Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return permmode.Shipped, "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+	kv, err := parseFrom(f)
+	if err != nil {
+		return "", "", err
+	}
+	v, ok := kv["agents.permission_mode"]
+	if !ok {
+		return permmode.Shipped, "", nil
+	}
+	if mode, ok := permmode.Parse(v); ok {
+		return mode, "", nil
+	}
+	return "", v, nil
+}
+
 // parse reads a flat TOML subset: [section] headers and key = value lines
 // with string, integer or boolean values. Keys come back as section.key.
 func parse(path string) map[string]string {
@@ -394,6 +577,10 @@ spawn = true                # may open terminals and start agents on the workspa
 guidance = ""               # off; "i-have-adhd" or /abs/path/to/your.md: text that shapes its answers, at most
                             # 8192 bytes after frontmatter, loaded only once you approve its SHA-256 in the inbox
 
+[agents]
+permission_mode = "auto"    # the mode agents Den starts run in: auto, acceptEdits, plan, default or dontAsk;
+                            # /mode in Den changes it, and a change to a mode that asks less waits for your ^Y
+
 [inbox]
 history = 100               # finished turns kept as history
 
@@ -423,6 +610,12 @@ tool_failures = 3           # tool calls failing in a row before the inbox says 
 [events]
 log = true                  # den hook appends metadata-only events to ~/.local/state/den/events.jsonl
 
+[team]
+max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
+branch_hours = 24           # nudge an agent whose branch is older than this; 0 off
+behind_max = 30             # nudge an agent whose branch is this many commits behind dev, main or master; 0 off
+idle_minutes = 30           # an agent on a mission with no turn for this long and nothing open is idle to the orchestrator; 0 off
+
 [usage]
 stop_percent = 0            # off; e.g. 95 sends "USAGE STOP" to every agent at 95% of the weekly limit and holds new work
 weekly_usd = 0              # none; a weekly $ budget to estimate usage against when Claude Code reports none
@@ -430,6 +623,8 @@ weekly_usd = 0              # none; a weekly $ budget to estimate usage against 
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
+mirror_conversation = "ask" # show your orchestrator conversation in the paired dock: "ask" (a card once per pairing), "always" or "off"
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

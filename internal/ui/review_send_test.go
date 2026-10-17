@@ -28,21 +28,28 @@ type fakePeer struct {
 	mu   sync.Mutex
 	got  map[string][]string // socket → texts
 	fail map[string]error
+	// framed is each text as the agent sees it, with its header: the
+	// human's (peer.Header) or Den's own (peer.DenHeader).
+	framed map[string][]string
 }
 
 func useFakePeer(t *testing.T) *fakePeer {
-	f := &fakePeer{got: map[string][]string{}, fail: map[string]error{}}
-	old := sendPeer
-	sendPeer = func(socket, text string) error {
-		f.mu.Lock()
-		defer f.mu.Unlock()
-		if err := f.fail[socket]; err != nil {
-			return err
+	f := &fakePeer{got: map[string][]string{}, fail: map[string]error{}, framed: map[string][]string{}}
+	record := func(compose func(string) string) func(socket, text string) error {
+		return func(socket, text string) error {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			if err := f.fail[socket]; err != nil {
+				return err
+			}
+			f.got[socket] = append(f.got[socket], text)
+			f.framed[socket] = append(f.framed[socket], compose(text))
+			return nil
 		}
-		f.got[socket] = append(f.got[socket], text)
-		return nil
 	}
-	t.Cleanup(func() { sendPeer = old })
+	oldPeer, oldDen, oldUsage := sendPeer, sendDen, sendUsage
+	sendPeer, sendDen, sendUsage = record(peer.Compose), record(peer.ComposeDen), record(peer.ComposeUsage)
+	t.Cleanup(func() { sendPeer, sendDen, sendUsage = oldPeer, oldDen, oldUsage })
 	return f
 }
 

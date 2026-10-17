@@ -476,3 +476,84 @@ func TestConsoleSays(t *testing.T) {
 		t.Errorf("a seventh turn in a minute: %+v", l)
 	}
 }
+
+// An app that says again the moment it reads its turn's done is not
+// refused: the turn, and the connection's count, are freed before done
+// goes out.
+func TestSayAgainOnDone(t *testing.T) {
+	h := newHarness(t, 2)
+	c, _, _ := paired(t, h)
+	for _, end := range []string{"done", "error"} {
+		if l := c.call("orch.say", map[string]string{"text": "one"}); !l.OK {
+			t.Fatalf("say: %+v", l.Error)
+		}
+		y := ctlAct(t, h.s, func(a Act) bool { return a.Say != nil }).Say
+		go func() {
+			if end == "done" {
+				y.Done()
+			} else {
+				y.Fail("stopped")
+			}
+		}()
+		for {
+			e := c.next()
+			var ch Chunk
+			if e.Event != EventOrch || json.Unmarshal(e.Data, &ch) != nil || ch.Type != end {
+				continue
+			}
+			break
+		}
+		// Sent on receipt of the last chunk, before anything else.
+		l := c.call("orch.say", map[string]string{"text": "again"})
+		if !l.OK {
+			t.Fatalf("orch.say on reading %s: %+v", end, l.Error)
+		}
+		ctlAct(t, h.s, func(a Act) bool { return a.Say != nil }).Say.Done()
+	}
+}
+
+// The order inside end: while Den's turn record is held, the last chunk
+// does not go out; once it does, the turn and the connection's count are
+// already free.
+func TestSayEndFreesBeforeItsLastChunk(t *testing.T) {
+	h := newHarness(t, 2)
+	c, _, _ := paired(t, h)
+	if l := c.call("orch.say", map[string]string{"text": "one"}); !l.OK {
+		t.Fatalf("say: %+v", l.Error)
+	}
+	y := ctlAct(t, h.s, func(a Act) bool { return a.Say != nil }).Say
+	got := make(chan Chunk, 4)
+	go func() {
+		for {
+			e := c.next()
+			var ch Chunk
+			if e.Event == EventOrch && json.Unmarshal(e.Data, &ch) == nil {
+				got <- ch
+				if ch.Type == "done" {
+					return
+				}
+			}
+		}
+	}()
+	h.s.ctl.mu.Lock()
+	go y.Done()
+	select {
+	case ch := <-got:
+		h.s.ctl.mu.Unlock()
+		t.Fatalf("%s went out while the turn was still Den's", ch.Type)
+	case <-time.After(200 * time.Millisecond):
+	}
+	h.s.ctl.mu.Unlock()
+	if ch := <-got; ch.Type != "done" {
+		t.Fatalf("the last chunk: %+v", ch)
+	}
+	h.s.ctl.mu.Lock()
+	turn := h.s.ctl.turn
+	h.s.ctl.mu.Unlock()
+	y.c.mu.Lock()
+	asks := y.c.asks
+	y.c.mu.Unlock()
+	if turn != nil || asks != 0 {
+		t.Errorf("at done: turn %v, the connection's asks %d", turn, asks)
+	}
+}

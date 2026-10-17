@@ -188,7 +188,7 @@ func (m Model) closeTarget(a fleet.Agent) closer.Target {
 func (m Model) closeSelf() closer.Self {
 	orc := ""
 	if m.orch.proc != nil {
-		orc = m.orch.proc.SessionID
+		orc = m.orch.proc.SessionID()
 	}
 	window := ""
 	if wo, ok := closeOps.(closer.WindowOps); ok {

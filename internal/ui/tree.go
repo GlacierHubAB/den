@@ -515,8 +515,8 @@ func (m Model) childLines(id string, w int, guides bool) []string {
 // the bright text colour before it has one.
 func (m Model) orchStyle() lipgloss.Style {
 	c := m.st.pal.Bright
-	if m.orch.proc != nil && m.orch.proc.SessionID != "" {
-		c = m.colorFor(m.orch.proc.SessionID)
+	if m.orch.proc != nil && m.orch.proc.SessionID() != "" {
+		c = m.colorFor(m.orch.proc.SessionID())
 	}
 	return lipgloss.NewStyle().Foreground(lipgloss.Color(c))
 }

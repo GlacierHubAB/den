@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
@@ -25,12 +26,11 @@ import (
 // with the pairing and go to the orchestrator for each app turn; taking one
 // back reaches the turn that is running at once.
 
-// askingModes are the permission modes in which a session asks before it
-// acts, so Den sees what a message makes it do: only then is a standing
-// send_message to it offered or used. Only default: plan runs Bash its
-// classifier approves without asking, as auto does, and acceptEdits
-// writes files without asking.
-var askingModes = map[string]bool{"default": true}
+// A standing send_message to a session is offered or used only while it
+// asks before it acts (permmode.AsksFirst: default alone), so Den sees
+// what a message makes it do. plan runs Bash its classifier approves
+// without asking, as auto does, and acceptEdits writes files without
+// asking.
 
 // standingOffer is the allowance /always on a card for this request would
 // give, or why there is none.
@@ -55,7 +55,7 @@ func (m Model) standingOffer(ev orch.Event) (api.Rule, string) {
 	if why != "" {
 		return api.Rule{}, why
 	}
-	if mode := m.modeOf(to.Session.SessionID); !askingModes[mode] {
+	if mode := m.modeOf(to.Session.SessionID); !permmode.AsksFirst(mode) {
 		if mode == "" {
 			mode = "unknown to Den (none seen from its own hooks in the last 15 minutes)"
 		}
@@ -83,10 +83,16 @@ func (m Model) standingLines(app string, r api.Rule, why string) []string {
 			a = x
 		}
 	}
+	// The human knows the agent by its critter name: that first, the peer
+	// name (the rule's key) beside it once, then the short name.
+	full, short := m.peerWithCritter(r.Peer), sanitize.Label(r.Peer, 60)
+	if c := m.critterOf(r.Peer); c != "" {
+		short = c
+	}
 	return []string{
-		"/always: " + app + " may have the orchestrator message " + r.Peer + " in its turns without asking you: any message it writes.",
-		"That lets " + app + " give " + r.Peer + " any instruction: in effect " + app + " can make " + r.Peer + " do whatever " + r.Peer + " may do without asking you.",
-		r.Peer + " works in " + sanitize.Label(a.Session.CWD, 120) + ", permission mode " + sanitize.Label(m.modeOf(r.SessionID), 30) + " (as the session reports it, through its own hooks); the allowance is for this session only, never another that takes its name.",
+		"/always: " + app + " may have the orchestrator message " + full + " in its turns without asking you: any message it writes.",
+		"That lets " + app + " give " + short + " any instruction: in effect " + app + " can make " + short + " do whatever " + short + " may do without asking you.",
+		short + " works in " + sanitize.Label(a.Session.CWD, 120) + ", permission mode " + sanitize.Label(m.modeOf(r.SessionID), 30) + " (as the session reports it, through its own hooks); the allowance is for this session only, never another that takes its name.",
 	}
 }
 
@@ -115,7 +121,7 @@ func (m Model) standingFor(pairing string) []string {
 // now, the same process, in a mode that asks.
 func (m Model) ruleSession(r api.Rule) bool {
 	to, why := m.sendTarget(r.Peer)
-	if why != "" || to.Session.SessionID != r.SessionID || !askingModes[m.modeOf(r.SessionID)] {
+	if why != "" || to.Session.SessionID != r.SessionID || !permmode.AsksFirst(m.modeOf(r.SessionID)) {
 		return false
 	}
 	p, ok := sessionProc(to.Session.PID, to.Session.StartedAt, "")
@@ -190,7 +196,7 @@ func (m Model) standingReport() string {
 	for _, r := range m.api.srv.AllRules() {
 		what := "update_mission"
 		if r.Tool == orch.SendMessageTool {
-			what = "send_message to " + sanitize.Label(r.Peer, 60) + " (this session only)"
+			what = "send_message to " + sanitize.Label(m.peerWithCritter(r.Peer), 100) + " (this session only)"
 		}
 		b.WriteString("\nstanding " + strconv.Itoa(r.N) + ": " + appName(r.Exe) + " · " + what + " · since " + r.At.Format("15:04") + " · /api disallow " + strconv.Itoa(r.N))
 	}
@@ -245,7 +251,7 @@ func (m *Model) noteMode(r *bridge.Request) {
 		return
 	}
 	delete(m.ctl.watch, r.SessionID)
-	if askingModes[r.Input.PermissionMode] || m.api.srv == nil {
+	if permmode.AsksFirst(r.Input.PermissionMode) || m.api.srv == nil {
 		return
 	}
 	if n := m.api.srv.RemoveRulesFor(r.SessionID); n > 0 {

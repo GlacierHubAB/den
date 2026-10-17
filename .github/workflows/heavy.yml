@@ -120,4 +120,35 @@ jobs:
           GIT_CONFIG_NOSYSTEM: "1"
           GOPROXY: "off"
           GOFLAGS: -mod=readonly
-        run: XDG_STATE_HOME="$(mktemp -d)" taskset -c 0,1 go test -race -count=3 -timeout 100m ./...
+        run: |
+          set -o pipefail
+          XDG_STATE_HOME="$(mktemp -d)" taskset -c 0,1 go test -race -count=3 -timeout 100m -json ./... \
+            | tee "$RUNNER_TEMP/race3.json" | jq -rj 'select(.Action=="output") | .Output'
+      # Which tests failed, how many of the three counts each, and how many
+      # data races were reported: in the job summary, and the whole record as
+      # an artifact, so the nightly runs show how often each test fails.
+      - name: Record the failures per test
+        if: always()
+        run: |
+          f="$RUNNER_TEMP/race3.json"
+          [ -s "$f" ] || { echo "no test record" >> "$GITHUB_STEP_SUMMARY"; exit 0; }
+          {
+            echo "### race x3 on 2 CPUs: $(jq -rs '[.[]|select(.Action=="pass" and .Test!=null)]|length' "$f") test passes, $(jq -rs '[.[]|select(.Action=="fail" and .Test!=null)]|length' "$f") test failures"
+            echo "Data races reported: $(jq -rs '[.[]|select(.Action=="output" and ((.Output // "")|test("WARNING: DATA RACE")))]|length' "$f")"
+            echo
+            echo "| package | test | failed counts |"
+            echo "| --- | --- | --- |"
+            jq -rs '[.[]|select(.Action=="fail" and .Test!=null)|[.Package,.Test]]|group_by(.)|map({p:.[0][0],t:.[0][1],n:length})|sort_by(-.n)|.[]|"| \(.p) | \(.t) | \(.n) |"' "$f"
+          } >> "$GITHUB_STEP_SUMMARY"
+          jq -rs '[.[]|select(.Action=="fail" and .Test!=null)|[.Package,.Test]]|unique|.[]|@tsv' "$f" | head -20 | while IFS=$'\t' read -r pkg test; do
+            echo "::group::$pkg $test"
+            jq -r --arg p "$pkg" --arg t "$test" 'select(.Package==$p and .Test==$t and .Action=="output")|.Output' "$f" | head -80
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: race3-record
+          path: ${{ runner.temp }}/race3.json
+          if-no-files-found: ignore
+          retention-days: 30

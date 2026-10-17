@@ -143,6 +143,9 @@ func (s *Server) setIdentify(f func(Peer) Peer) {
 	s.idHook.Store(&f)
 }
 
+// setAskHook runs f between an ask's reply and its queueing.
+func (s *Server) setAskHook(f func(string)) { s.askHook.Store(&f) }
+
 // setPairHook runs f between a claim's bookkeeping and its card.
 func (s *Server) setPairHook(f func(string)) { s.pairHook.Store(&f) }
 
@@ -1063,5 +1066,50 @@ func TestUnverifiedClaudeGetsNoTurn(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("no note saying the release is not verified")
 		}
+	}
+}
+
+// An ask.cancel sent the moment the ask's reply is read, before Den has
+// queued the ask, finds it: it is cancelled, and its stream ends with
+// "cancelled". The cancel comes from another connection of the same app,
+// at exactly that point.
+func TestAskCancelRightAfterItsReply(t *testing.T) {
+	h := newHarness(t, 2)
+	ctl := h.dial()
+	ctl.hello()
+	got := make(chan line, 1)
+	h.s.setAskHook(func(id string) {
+		got <- ctl.call("ask.cancel", map[string]string{"ask": id})
+	})
+	c := h.dial()
+	c.hello()
+	if l := c.call("ask", map[string]string{"text": "what did this week cost?"}); !l.OK {
+		t.Fatalf("ask: %+v", l.Error)
+	}
+	if l := <-got; !l.OK || !strings.Contains(string(l.Result), `"cancelled":true`) {
+		t.Fatalf("ask.cancel right after the reply: %+v %s", l.Error, l.Result)
+	}
+	if ch := waitChunk(t, c, "error"); ch.Message != "cancelled" {
+		t.Errorf("its stream ended with %q", ch.Message)
+	}
+	h.s.setAskHook(func(string) {})
+}
+
+// An ask Den refuses once it has told the app its id (here: no budget
+// left) ends with why, and is not left findable.
+func TestAskRefusedAfterItsReplyIsForgotten(t *testing.T) {
+	h := newHarness(t, 0)
+	c := h.dial()
+	c.hello()
+	l := c.call("ask", map[string]string{"text": "what did this week cost?"})
+	var r struct{ Ask string }
+	if !l.OK || json.Unmarshal(l.Result, &r) != nil || r.Ask == "" {
+		t.Fatalf("ask: %+v %s", l.Error, l.Result)
+	}
+	if ch := waitChunk(t, c, "error"); !strings.Contains(ch.Message, "budget") {
+		t.Errorf("its stream ended with %q", ch.Message)
+	}
+	if l := c.call("ask.cancel", map[string]string{"ask": r.Ask}); code(l) != CodeNotFound {
+		t.Errorf("a refused ask is still findable: %+v", l)
 	}
 }

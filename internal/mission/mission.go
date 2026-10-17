@@ -101,10 +101,57 @@ type Mission struct {
 	Budget      Budget    `json:"budget,omitzero"`
 
 	Template string `json:"template,omitempty"` // the template it was seeded from
+
+	// V is the record's version: 2 has the criteria and sub-goals.
+	V int `json:"v,omitempty"`
+	// Criteria are the definition of done, frozen once the human starts the
+	// mission; Goals are the smaller goals with their owners.
+	Criteria []Criterion `json:"criteria,omitempty"`
+	Goals    []SubGoal   `json:"goals,omitempty"`
 	// Assigned are the sessions Den put on the mission, oldest first;
 	// History is what happened to the mission itself, the last few.
 	Assigned []Assignment `json:"assigned,omitempty"`
 	History  []Event      `json:"history,omitempty"`
+	// Merges are the mission's branches Den saw land on the integration
+	// branch, oldest first: Den reads them from git, never an agent's word.
+	Merges []Merge `json:"merges,omitempty"`
+	// Stats count what Den told the mission's agents about the process;
+	// MetricsAt is when Den recorded the mission's figures as it ended.
+	Stats     Stats     `json:"stats,omitzero"`
+	MetricsAt time.Time `json:"metrics_at,omitzero"`
+}
+
+// Stats are Den's counts of its own process messages to a mission's agents.
+type Stats struct {
+	Overlaps int `json:"overlaps,omitempty"` // overlap pairs told
+	Nudges   int `json:"nudges,omitempty"`   // branch nudges
+}
+
+// Merge is one branch Den saw land: its tip when Den last saw it ahead,
+// the branch's name then, and the agent working on it.
+type Merge struct {
+	Tip     string    `json:"tip"`
+	Branch  string    `json:"branch,omitempty"`
+	Session string    `json:"session,omitempty"`
+	At      time.Time `json:"at"`
+	// Since is the branch's oldest commit of its own, by commit time: how
+	// long the branch lived is At less Since.
+	Since time.Time `json:"since,omitzero"`
+}
+
+// AddMerge records a landed tip once; it reports whether it was new.
+func (m *Mission) AddMerge(g Merge) bool {
+	for _, o := range m.Merges {
+		if o.Tip == g.Tip {
+			return false
+		}
+	}
+	g.Branch = sanitize.Label(g.Branch, maxLabel)
+	m.Merges = append(m.Merges, g)
+	if n := len(m.Merges) - maxMerges; n > 0 {
+		m.Merges = append([]Merge(nil), m.Merges[n:]...)
+	}
+	return true
 }
 
 // Assignment is one session Den put on a mission: a dispatch to it, or a
@@ -131,6 +178,7 @@ type Event struct {
 const (
 	maxAssigned = 200
 	maxHistory  = 50
+	maxMerges   = 500
 	maxLabel    = 80
 )
 
@@ -258,12 +306,19 @@ func (m *Mission) CurrentRun() *Run {
 	return nil
 }
 
-// StartRun opens a new run.
+// StartRun opens a new run. A schedule mission's criteria say what each
+// run must achieve, so they open again.
 func (m *Mission) StartRun(now time.Time) *Run {
+	if m.Shape == Schedule && len(m.Runs) > 0 {
+		m.ResetCriteria()
+	}
 	m.Runs = append(m.Runs, Run{N: len(m.Runs) + 1, StartedAt: now})
 	m.Updated = now
 	return &m.Runs[len(m.Runs)-1]
 }
+
+// recordVersion is what a record written now carries.
+const recordVersion = 2
 
 // Store keeps the missions and the record on disk.
 type Store struct {
@@ -274,7 +329,15 @@ type Store struct {
 // New returns an empty store that records to path ("" keeps it in memory).
 func New(path string) *Store { return &Store{path: path} }
 
-// Load replays the record; the last line for an id wins.
+// Compaction: a record over compactSize holding more than compactRatio
+// lines per mission is rewritten on load with one line per mission.
+const (
+	compactSize  = 256 << 10
+	compactRatio = 4
+)
+
+// Load replays the record; the last line for an id wins. The file is made
+// private if it was not, and rewritten whole when it has grown long.
 func Load(path string) *Store {
 	s := New(path)
 	f, err := os.Open(path)
@@ -282,9 +345,14 @@ func Load(path string) *Store {
 		return s
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err == nil && fi.Mode().Perm()&0o077 != 0 {
+		_ = f.Chmod(0o600)
+	}
+	lines := 0
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
+		lines++
 		var m Mission
 		if json.Unmarshal(sc.Bytes(), &m) != nil || m.ID == "" {
 			continue
@@ -294,9 +362,49 @@ func Load(path string) *Store {
 			// written with the name on its next save.
 			m.ProjectName = ProjectLabel(m.Project)
 		}
+		m.resanitize()
+		m.migrate()
 		s.put(&m)
 	}
+	if fi, err := f.Stat(); err == nil && fi.Size() > compactSize && lines > compactRatio*len(s.items) {
+		_ = s.compact()
+	}
 	return s
+}
+
+// compact rewrites the record with one line per mission: a temporary file
+// beside it, synced, then renamed over it.
+func (s *Store) compact() error {
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".missions-*.jsonl")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	w := bufio.NewWriter(tmp)
+	for _, m := range s.items {
+		raw, err := json.Marshal(m)
+		if err != nil {
+			tmp.Close()
+			return err
+		}
+		w.Write(append(raw, '\n'))
+	}
+	if err := w.Flush(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), s.path)
 }
 
 func (s *Store) put(m *Mission) {
@@ -314,14 +422,16 @@ func (s *Store) Save(m *Mission) {
 	if s == nil {
 		return
 	}
+	m.V = recordVersion
+	m.clip()
 	s.put(m)
 	if s.path == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return
 	}
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -410,44 +520,11 @@ func NewID(now time.Time) string {
 
 var fence = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")
 
-// Proposal is the orchestrator's answer to "propose a mission".
-type Proposal struct {
-	Name        string   `json:"name"`
-	Mission     string   `json:"mission"`
-	DoneWhen    string   `json:"done_when"`
-	Constraints []string `json:"constraints"`
-	Shape       Shape    `json:"shape"`
-	Cadence     string   `json:"cadence"`
-	Reason      string   `json:"reason"`
-	Agents      []string `json:"agents"`
-	Team        []Member `json:"team"`
-}
-
 // Update is the orchestrator's word on a running mission.
 type Update struct {
 	ID      string `json:"id"`
 	State   string `json:"state"` // done, continue, waiting, failed
 	Summary string `json:"summary"`
-}
-
-// ParseProposal finds a {"mission": {...}} block in the orchestrator's text.
-func ParseProposal(text string) (Proposal, bool) {
-	for _, m := range fence.FindAllStringSubmatch(text, -1) {
-		var wrap struct {
-			Mission *Proposal `json:"mission"`
-		}
-		if json.Unmarshal([]byte(m[1]), &wrap) == nil && wrap.Mission != nil && wrap.Mission.Mission != "" {
-			p := *wrap.Mission
-			p.Shape = Shape(strings.ToLower(strings.ReplaceAll(string(p.Shape), "-", "")))
-			switch p.Shape {
-			case Once, Loop, FanOut, Schedule:
-			default:
-				p.Shape = Once
-			}
-			return p, true
-		}
-	}
-	return Proposal{}, false
 }
 
 // ParseUpdate finds a {"mission_update": {...}} block.
@@ -469,31 +546,11 @@ func Strip(text string) string {
 	return strings.TrimSpace(fence.ReplaceAllString(text, ""))
 }
 
-// Apply fills the mission from a proposal.
-func (m *Mission) Apply(p Proposal) {
-	if p.Name != "" {
-		m.Name = p.Name
-	}
-	m.Mission, m.DoneWhen, m.Constraints = p.Mission, p.DoneWhen, p.Constraints
-	m.Shape, m.Cadence, m.Reason, m.Agents, m.Team = p.Shape, p.Cadence, p.Reason, p.Agents, p.Team
-	if m.Name == "" {
-		m.Name = shortName(m.Mission)
-	}
-}
-
-func shortName(s string) string {
-	words := strings.Fields(s)
-	if len(words) > 6 {
-		words = words[:6]
-	}
-	return strings.TrimRight(strings.Join(words, " "), ".,;:")
-}
-
 // Describe is the mission as the orchestrator is told it.
 func (m *Mission) Describe() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Mission %s (%q) on project %s\n", m.ID, m.Name, m.Project)
-	fmt.Fprintf(&b, "- mission: %s\n", m.Mission)
+	fmt.Fprintf(&b, "- goal: %s\n", m.Mission)
 	if m.DoneWhen != "" {
 		fmt.Fprintf(&b, "- done when: %s\n", m.DoneWhen)
 	}
@@ -507,6 +564,22 @@ func (m *Mission) Describe() string {
 	b.WriteString("\n")
 	if len(m.Agents) > 0 {
 		fmt.Fprintf(&b, "- agents: %s\n", strings.Join(m.Agents, ", "))
+	}
+	// The criteria and sub-goals as the human and the orchestrator set them:
+	// never a sub-goal's note or a claim's evidence, which may carry what an
+	// agent said, since this goes unfenced into Den's own turns.
+	for _, c := range m.Criteria {
+		fmt.Fprintf(&b, "- done criterion %s: %s (%s)\n", c.ID, c.Text, c.State)
+	}
+	for _, g := range m.Goals {
+		owner := "unassigned"
+		switch {
+		case g.Name != "":
+			owner = "owner " + g.Name
+		case g.Role != "":
+			owner = "role to start " + g.Role
+		}
+		fmt.Fprintf(&b, "- sub-goal %s: %s · %s · %s\n", g.ID, g.Text, owner, g.State)
 	}
 	for _, t := range m.Team {
 		line := "- team: " + t.Role
@@ -525,7 +598,9 @@ func (m *Mission) Describe() string {
 		}
 		b.WriteString(line + "\n")
 	}
-	return b.String()
+	// It goes unfenced into Den's own turns, beside <agent_report> fences:
+	// no < or > in it, so no value can pass for a tag.
+	return strings.NewReplacer("<", "‹", ">", "›").Replace(b.String())
 }
 
 // ---- cadences ----

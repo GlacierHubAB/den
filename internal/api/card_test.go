@@ -13,6 +13,7 @@ import (
 func provedConsole(t *testing.T) (*harness, *client) {
 	t.Helper()
 	h, _ := consoleHarness(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), View: ViewAgent}))
 	d := newDock(t, h)
 	p := d.pair(h.s.StartConsoleCode())
 	c := h.dial()
@@ -21,8 +22,48 @@ func provedConsole(t *testing.T) (*harness, *client) {
 		t.Fatalf("%+v %s", l.Error, l.Result)
 	}
 	c.call("console.events", nil)
-	c.next() // connected
+	skipSnapshot(t, h.s, c)
 	return h, c
+}
+
+// skipSnapshot reads what Den says first on console.events, where each
+// stateful kind stands (the console, each waiting card, its powers, God
+// mode, then the mode and the view while Den has published them, and the
+// desktop), checks
+// its order, and returns the first, console event and the cards.
+func skipSnapshot(t *testing.T, s *Server, c *client) (ConsoleEvent, []CardEvent) {
+	t.Helper()
+	want := []string{EventConsole}
+	if v := s.view.Load(); v != nil {
+		for range v.Cards {
+			want = append(want, EventCard)
+		}
+	}
+	want = append(want, EventConsole, EventGod)
+	if v := s.view.Load(); v != nil && v.Mode.Global != "" {
+		want = append(want, EventMode)
+	}
+	if _, ok := s.viewNow(); ok {
+		want = append(want, EventView)
+	}
+	want = append(want, EventDesktop, EventMirror)
+	var first ConsoleEvent
+	var cards []CardEvent
+	for i, kind := range want {
+		l := c.next()
+		if l.Event != kind {
+			t.Fatalf("snapshot event %d is %q, want %q: %s", i, l.Event, kind, l.Data)
+		}
+		switch {
+		case i == 0:
+			json.Unmarshal(l.Data, &first)
+		case kind == EventCard:
+			var ev CardEvent
+			json.Unmarshal(l.Data, &ev)
+			cards = append(cards, ev)
+		}
+	}
+	return first, cards
 }
 
 func card(id string, lines int, dock bool) Card {
@@ -153,10 +194,9 @@ func TestConsoleEventsReplayPendingCards(t *testing.T) {
 	if l := c.call("console.events", nil); !l.OK || string(l.Result) != `{"cards":["w-1"],"ok":true}` {
 		t.Errorf("console.events reply %+v %s", l.Error, l.Result)
 	}
-	c.next() // connected
-	var ev CardEvent
-	if e := c.next(); e.Event != EventCard || json.Unmarshal(e.Data, &ev) != nil || ev.ID != "w-1" || ev.Change != "new" || ev.NeedsDenScreen {
-		t.Errorf("no replay of the waiting card: %+v", e)
+	_, cards := skipSnapshot(t, h.s, c)
+	if len(cards) != 1 || cards[0].ID != "w-1" || cards[0].Change != "new" || cards[0].NeedsDenScreen {
+		t.Errorf("no replay of the waiting card: %+v", cards)
 	}
 }
 

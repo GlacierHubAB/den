@@ -139,7 +139,7 @@ func TestClickOnACommandBlockCopiesTheWholeBlock(t *testing.T) {
 func TestDragSelectsOnlyTheMissionPane(t *testing.T) {
 	m := copyModel(t)
 	recordCopies(t)
-	// An open mission whose thread shows the chat, next to the agents pane.
+	// An open mission, full width under the project strip.
 	ms := &mission.Mission{ID: "m1", Project: "/home/x/tasklog", Name: "Tests", Mission: "Keep tests green", Shape: mission.Once, State: mission.Running, Created: time.Now()}
 	m.missions.Save(ms)
 	m.proj.list = []project{{Root: "/home/x/tasklog", Name: "tasklog", Agents: []string{"mossy-lemur"}}}
@@ -170,7 +170,7 @@ func TestDragSelectsOnlyTheMissionPane(t *testing.T) {
 	mm, cmd := m.Update(tea.MouseReleaseMsg{X: pane.x1, Y: y1, Button: tea.MouseLeft})
 	m = mm.(Model)
 	runCmds(cmd)
-	if !strings.Contains(m.sel.copied, "Keep tests green") || !strings.Contains(m.sel.copied, "shape") {
+	if !strings.Contains(m.sel.copied, "Keep tests green") || !strings.Contains(m.sel.copied, "DONE WHEN") {
 		t.Errorf("copied %q", m.sel.copied)
 	}
 	for _, l := range strings.Split(m.sel.copied, "\n") {

@@ -1,6 +1,9 @@
 package ui
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +15,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	denpeer "github.com/GlacierHubAB/den/internal/peer"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/GlacierHubAB/den/internal/usage"
 )
@@ -109,6 +113,66 @@ func TestUsageNeverStopsByDefault(t *testing.T) {
 	m.checkUsage(time.Now())
 	if m.use.st.Stopped || len(items(m, inbox.Sent)) != 0 {
 		t.Errorf("stopped %v, %d messages", m.use.st.Stopped, len(items(m, inbox.Sent)))
+	}
+}
+
+// The stop reaches each local agent framed as Den enforcing the human's
+// own rule, with the share the human set: binding, but never claiming the
+// human typed it. A stop the human ordered says so.
+func TestUsageStopIsFramedAsDensEnforcement(t *testing.T) {
+	peer := useFakePeer(t)
+	m := usageModel(t, 96, time.Minute, 95)
+	runCmds(m.checkUsage(time.Now()))
+	var framed []string
+	for _, f := range peer.framed {
+		framed = append(framed, f...)
+	}
+	if len(framed) == 0 {
+		t.Fatal("nothing sent")
+	}
+	for _, f := range framed {
+		if !strings.HasPrefix(f, denpeer.UsageHeader+"\n\nUSAGE STOP: your human set a usage stop at 95% of the weekly limit, and it is reached.") || strings.Contains(f, "typed by your human") {
+			t.Errorf("framed %q", f)
+		}
+	}
+	if got := m.usageStopText("stopped by you"); !strings.HasPrefix(got, "USAGE STOP: your human stopped the fleet in Den.") {
+		t.Errorf("a stop the human ordered: %q", got)
+	}
+}
+
+// The human's frame (peer.Header, "typed by your human") is only for text
+// the human typed: m.sender() is called only inside the functions that send
+// it (submit, flushQueue for the messages it held, sendReview) and
+// usageSender's branch for agents on a host, named here one by one, so no
+// automatic message can borrow it, in any file.
+func TestOnlyTypedTextUsesTheHumansFrame(t *testing.T) {
+	names, _ := filepath.Glob("*.go")
+	fset := token.NewFileSet()
+	allowed := map[string]bool{"compose.go/submit": true, "compose.go/flushQueue": true, "review_send.go/sendReview": true, "compose.go/usageSender": true}
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "sender" && !allowed[name+"/"+fn.Name.Name] {
+					t.Errorf("%s (%s) calls sender(): Den's own messages use denSender or usageSender", fset.Position(call.Pos()), fn.Name.Name)
+				}
+				return true
+			})
+		}
 	}
 }
 
