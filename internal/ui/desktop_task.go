@@ -280,8 +280,11 @@ func (m *Model) deskTaskCheck(dm *deskMission) tea.Cmd {
 			msg.gone = why
 			return msg
 		}
-		w, _ := snap.Window(view)
-		msg.pinErr = deskKeepOnTop(view, w.Floating, w.Pinned)
+		// A headless agent has no window of its own to keep on top.
+		if view != "" {
+			w, _ := snap.Window(view)
+			msg.pinErr = deskKeepOnTop(view, w.Floating, w.Pinned)
+		}
 		return msg
 	}
 }

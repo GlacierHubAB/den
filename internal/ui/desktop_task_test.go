@@ -641,3 +641,30 @@ func TestDesktopStartCardIsAnnounced(t *testing.T) {
 		t.Fatalf("still asking after the card was answered: %v", asking)
 	}
 }
+
+// A headless agent has no window of its own: the check never tries to pin
+// one, and says nothing about it.
+func TestHeadlessTaskIsNeverPinned(t *testing.T) {
+	m, _, _ := taskMission(t)
+	dm := m.deskMission("m1")
+	dm.view = ""
+	dm.Protected = map[string]bool{"0xden": true}
+	pinned := false
+	deskKeepOnTop = func(string, bool, bool) error { pinned = true; return errors.New("no window address") }
+	for _, msg := range runBatch(m.deskTaskCheck(dm)) {
+		if c, ok := msg.(deskTaskCheckMsg); ok {
+			runBatch(m.finishTaskCheck(c))
+		}
+	}
+	if pinned {
+		t.Fatal("tried to pin a headless agent's window")
+	}
+	for _, e := range m.orch.chat {
+		if strings.Contains(e.text, "keep the agent view on top") {
+			t.Fatalf("a note about a view that does not exist: %q", e.text)
+		}
+	}
+	if dm.Ended != "" {
+		t.Fatalf("the task ended: %q", dm.Ended)
+	}
+}
