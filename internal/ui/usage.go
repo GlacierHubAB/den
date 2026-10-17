@@ -112,9 +112,20 @@ func (m *Model) checkUsage(now time.Time) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// usageStopText is the stop as an agent reads it, under peer.UsageHeader:
+// "USAGE STOP" first, then the human's own rule in Den's words (the share
+// is Den's config, never anything an agent sent), then what to do.
+func (m Model) usageStopText(why string) string {
+	rule := "your human stopped the fleet in Den"
+	if why != "stopped by you" && m.cfg.Usage.StopPercent > 0 {
+		rule = fmt.Sprintf("your human set a usage stop at %d%% of the weekly limit, and it is reached", m.cfg.Usage.StopPercent)
+	}
+	return usageText + ": " + rule + ". Stop now: finish no further work and wait for your human."
+}
+
 // stopFleet stops the fleet: "USAGE STOP" to every agent Den can reach,
-// through the same path as a message the human sends, and no new agents or
-// mission runs until the human lets the fleet go on.
+// framed as Den enforcing the human's rule (usageSender), and no new agents
+// or mission runs until the human lets the fleet go on.
 func (m *Model) stopFleet(why string) tea.Cmd {
 	now := time.Now()
 	g := &m.use
@@ -122,7 +133,7 @@ func (m *Model) stopFleet(why string) tea.Cmd {
 	g.save()
 	var cmds []tea.Cmd
 	var sent, unreachable []string
-	send := m.sender()
+	send := m.usageSender()
 	for _, a := range m.agents {
 		if a.Status == fleet.Gone || a.Stale || !a.Session.Alive && a.Host == "" {
 			continue
@@ -135,7 +146,7 @@ func (m *Model) stopFleet(why string) tea.Cmd {
 			}
 		}
 		it := m.sentItem(a, usageText, "sending…")
-		cmds = append(cmds, deliver(send, a, usageText, it))
+		cmds = append(cmds, deliver(send, a, m.usageStopText(why), it))
 		sent = append(sent, a.Name)
 	}
 	body := []string{"why: " + why}

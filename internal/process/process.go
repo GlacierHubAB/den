@@ -149,6 +149,10 @@ type Work struct {
 	Base   string
 	Since  time.Time
 	Behind int
+	// Trunk: the checkout is on the repository's trunk (main, dev, ...).
+	// Its commits are not its own work: Files are only what it has not
+	// committed, and Den never nudges it.
+	Trunk bool
 }
 
 // Read is the Work of the checkout at dir, for key.
@@ -180,7 +184,62 @@ func Read(ctx context.Context, key, dir string) (Work, error) {
 	if out, err := git(ctx, dir, "rev-list", "--count", "HEAD.."+w.Base); err == nil {
 		w.Behind, _ = strconv.Atoi(strings.TrimSpace(string(out)))
 	}
+	// Only a feature branch's commits are its own work: on the trunk, only
+	// what is not committed yet counts.
+	w.Trunk = IsTrunk(ctx, dir, w.Branch)
+	if w.Trunk {
+		w.Files = Uncommitted(ctx, dir)
+	}
 	return w, nil
+}
+
+// trunkNames are the branches Den never takes for a feature branch.
+var trunkNames = map[string]bool{"main": true, "master": true, "dev": true, "develop": true, "trunk": true}
+
+// IsTrunk reports whether branch is the repository's trunk: one of
+// trunkNames, or the branch origin's HEAD names.
+func IsTrunk(ctx context.Context, dir, branch string) bool {
+	if trunkNames[branch] {
+		return true
+	}
+	if branch == "" || branch == "HEAD" {
+		return false
+	}
+	out, err := git(ctx, dir, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return false
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "origin/") == branch
+}
+
+// Uncommitted are the files the checkout at dir changes and has not
+// committed: staged, unstaged and untracked (not ignored), sorted, at most
+// MaxFiles.
+func Uncommitted(ctx context.Context, dir string) []string {
+	seen := map[string]bool{}
+	for _, args := range [][]string{
+		{"diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", "HEAD", "--"},
+		{"ls-files", "--others", "--exclude-standard", "-z"},
+	} {
+		out, err := git(ctx, dir, args...)
+		if err != nil {
+			continue
+		}
+		for _, name := range bytes.Split(out, []byte{0}) {
+			if len(name) > 0 && utf8.Valid(name) {
+				seen[string(name)] = true
+			}
+		}
+	}
+	files := make([]string, 0, len(seen))
+	for f := range seen {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	if len(files) > MaxFiles {
+		files = files[:MaxFiles]
+	}
+	return files
 }
 
 // Overlap is two agents in one repository whose branches change the same

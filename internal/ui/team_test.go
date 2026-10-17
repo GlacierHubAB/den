@@ -13,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	denpeer "github.com/GlacierHubAB/den/internal/peer"
 	"github.com/GlacierHubAB/den/internal/process"
 )
 
@@ -61,6 +62,12 @@ func TestOverlapWarnings(t *testing.T) {
 	toA, toB := peer.got["/sock/s1"], peer.got["/sock/s2"]
 	if len(toA) != 1 || len(toB) != 1 || len(peer.got["/sock/s3"]) != 0 {
 		t.Fatalf("messages %v", peer.got)
+	}
+	// Den's own check, framed as Den's: never as the human's words.
+	for _, f := range append(peer.framed["/sock/s1"], peer.framed["/sock/s2"]...) {
+		if !strings.HasPrefix(f, denpeer.DenHeader) || strings.Contains(f, "typed by your human") {
+			t.Errorf("overlap framed as %q", f)
+		}
 	}
 	for _, want := range []string{"Den, an automatic check (not the human)", "Snug Capybara's", `"den-b"`, `"a.go", "b.go"`, "the orchestrator, which decides"} {
 		if !strings.Contains(toA[0], want) {
@@ -291,6 +298,12 @@ func TestBranchNudges(t *testing.T) {
 	if len(peer.got["/sock/s3"]) != 0 {
 		t.Errorf("a guarded agent was messaged: %v", peer.got["/sock/s3"])
 	}
+	// Den's own check, framed as Den's: never as the human's words.
+	for _, f := range peer.framed["/sock/s1"] {
+		if !strings.HasPrefix(f, denpeer.DenHeader) || strings.Contains(f, "typed by your human") {
+			t.Errorf("nudge framed as %q", f)
+		}
+	}
 	var notes []string
 	for _, e := range m.orch.chat {
 		notes = append(notes, e.text)
@@ -319,5 +332,24 @@ func TestBranchNudges(t *testing.T) {
 	m.cfg.Team.BranchHours, m.cfg.Team.BehindMax = 0, 0
 	if why := branchOver(works[0], now, 0, 0); why != "" {
 		t.Errorf("off: %q", why)
+	}
+}
+
+// Only a feature branch with work of its own is ever nudged: never the
+// trunk (a checkout of main five days behind), or one with no commits
+// beyond its base.
+func TestNudgeOnlyFeatureBranches(t *testing.T) {
+	now := time.Now()
+	old := now.Add(-5 * 24 * time.Hour)
+	for name, w := range map[string]process.Work{
+		"the trunk":      {Branch: "main", Trunk: true, Since: old, Behind: 400},
+		"no own commits": {Branch: "idle", Behind: 400},
+	} {
+		if why := branchOver(w, now, 24, 30); why != "" {
+			t.Errorf("%s nudged: %q", name, why)
+		}
+	}
+	if why := branchOver(process.Work{Branch: "feature", Since: old, Behind: 3}, now, 24, 30); why == "" {
+		t.Error("an old feature branch was not nudged")
 	}
 }

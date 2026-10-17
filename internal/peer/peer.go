@@ -29,6 +29,43 @@ func Compose(text string) string {
 	return Header + "\n\n" + strings.TrimSpace(text)
 }
 
+// DenHeader introduces a message Den sends on its own, from a check it
+// runs: nobody typed it, so it never carries the human's weight.
+const DenHeader = "Automatic message from Den (sent by Den itself; your human did not type it):"
+
+// ComposeDen wraps Den's own text with DenHeader.
+func ComposeDen(text string) string {
+	return DenHeader + "\n\n" + strings.TrimSpace(text)
+}
+
+// SendFromDen posts Den's own message (an automatic check's) to the
+// socket, framed with DenHeader, never Header; the checks are Send's.
+func SendFromDen(socketPath, text string) error {
+	return post(socketPath, map[string]any{
+		"type":    "user",
+		"message": map[string]any{"role": "user", "content": ComposeDen(text)},
+	})
+}
+
+// UsageHeader introduces the usage stop: Den sends it on its own, but it
+// enforces a limit the human set, so it is binding; it never claims the
+// human typed it.
+const UsageHeader = "Automatic message from Den, enforcing a usage stop your human set (your human did not type this; the stop is theirs and binding):"
+
+// ComposeUsage wraps the usage stop's text with UsageHeader.
+func ComposeUsage(text string) string {
+	return UsageHeader + "\n\n" + strings.TrimSpace(text)
+}
+
+// SendUsage posts the usage stop to the socket, framed with UsageHeader;
+// the checks are Send's.
+func SendUsage(socketPath, text string) error {
+	return post(socketPath, map[string]any{
+		"type":    "user",
+		"message": map[string]any{"role": "user", "content": ComposeUsage(text)},
+	})
+}
+
 // Envelope is how Claude Code's SendMessage frames a message: the
 // receiving session shows it from the session at from (its inbox socket,
 // "uds:<path>"), named fromName, and a reply goes back there.

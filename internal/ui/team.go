@@ -126,7 +126,7 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		// A God-mode guarded agent takes messages only as Den mediates
 		// them, and its hook would block this one: the orchestrator, which
 		// sees the overlap in its roster, tells it instead.
-		send := m.sender()
+		send := m.denSender() // framed as Den's, never the human's
 		var to []fleet.Agent
 		var guarded []string
 		for _, x := range []fleet.Agent{a, b} {
@@ -168,7 +168,7 @@ func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
 		m.team.nudged = map[string]time.Time{}
 	}
 	m.team.branches = map[string]process.Work{}
-	send := m.sender()
+	send := m.denSender()
 	type nudge struct {
 		agent fleet.Agent
 		text  string
@@ -212,6 +212,11 @@ func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
 // branchOver says how a branch is over the thresholds ("is 2 days old",
 // "is 41 commits behind origin/dev", or both), "" when it is not.
 func branchOver(w process.Work, now time.Time, hours, behind int) string {
+	// Only a feature branch with work of its own: never the trunk, or a
+	// checkout with no commits beyond its base.
+	if w.Trunk || w.Since.IsZero() {
+		return ""
+	}
 	var why []string
 	if hours > 0 && !w.Since.IsZero() && now.Sub(w.Since) > time.Duration(hours)*time.Hour {
 		why = append(why, "is "+age(now.Sub(w.Since))+" old")
