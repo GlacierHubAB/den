@@ -201,6 +201,19 @@ func GodKeys() []string {
 	return out
 }
 
+// TeamKeysSet are the [team] keys the human's config file sets, by their
+// full name (team.max_agents): the orchestrator's tuning never overrides
+// one of them.
+func TeamKeysSet() map[string]bool {
+	out := map[string]bool{}
+	for k := range parse(Path()) {
+		if strings.HasPrefix(k, "team.") {
+			out[k] = true
+		}
+	}
+	return out
+}
+
 // Prices is the [prices] section: a model-id prefix to "input, output,
 // cache write, cache read" in dollars per million tokens, overriding the
 // cost estimate's built-in table.

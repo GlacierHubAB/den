@@ -174,6 +174,11 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 	}
 	m.team.overlaps = by
+	for _, w := range msg.works {
+		if w.Repo != "" {
+			m.tuneFile(w.Repo) // the project's tuning, read once
+		}
+	}
 	m.applyLanded(msg.landed, now)
 	m.notePending(msg.works, now)
 	cmds = append(cmds, m.nudgeBranches(msg.works, now))
@@ -197,7 +202,8 @@ func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
 	var out []nudge
 	for _, w := range works {
 		m.team.branches[w.Key] = w
-		why := branchOver(w, now, m.cfg.Team.BranchHours, m.cfg.Team.BehindMax)
+		_, hours, behind, _ := m.teamFor(w.Repo)
+		why := branchOver(w, now, hours, behind)
 		key := w.Key + "\x00" + w.Branch
 		if why == "" || now.Sub(m.team.nudged[key]) < teamNudgeEvery {
 			continue
@@ -271,7 +277,8 @@ func (m Model) branchLine(sessionID string, now time.Time) string {
 	if !ok {
 		return ""
 	}
-	why := branchOver(w, now, m.cfg.Team.BranchHours, m.cfg.Team.BehindMax)
+	_, hours, behind, _ := m.teamFor(w.Repo)
+	why := branchOver(w, now, hours, behind)
 	if why == "" {
 		return ""
 	}
@@ -392,7 +399,10 @@ func (m *Model) handleTeamQuery(r *bridge.Request) tea.Cmd {
 // Den shows the human in its chat, quoted, with who gave it. Leads' spawns
 // count as the orchestrator's do, and God mode does not lift the cap.
 func (m *Model) applyTeamCap(msg teamCapMsg, now time.Time) {
-	limit := m.cfg.Team.MaxAgents
+	if msg.repo != "" {
+		m.tuneFile(msg.repo)
+	}
+	limit, _, _, _ := m.teamFor(msg.repo)
 	if limit <= 0 {
 		limit = 3
 	}

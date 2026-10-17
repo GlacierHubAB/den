@@ -122,6 +122,7 @@ var held = map[string]bool{
 	DesktopStopEvent:    true,
 	GodOffEvent:         true,
 	AgentInboundEvent:   true,
+	TuneEvent:           true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

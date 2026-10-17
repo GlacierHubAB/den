@@ -69,6 +69,9 @@ var godTTYKinds = map[inbox.Kind]bool{
 	inbox.MissionCriteria: true, inbox.MissionDone: true,
 	// What the console may read of the human's own conversation.
 	inbox.MirrorAsk: true,
+	// The orchestrator's tuning, and its proposed change to its own
+	// instructions, are the human's to keep or undo.
+	inbox.ProcessTuned: true, inbox.PromptProposal: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

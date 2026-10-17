@@ -206,6 +206,27 @@ type TeamQueryInput struct {
 	Lead   string `json:"lead,omitempty"`
 }
 
+// TuneEvent is not a hook event: `den mcp` sends it for the
+// orchestrator's tune_process call, with TuneInput. Den applies each change
+// within its bounds and puts a notice card to the human, who can undo it;
+// a prompt proposal only shows on a card. Den answers allow with what it
+// did, or deny with why.
+const TuneEvent = "TuneProcess"
+
+// TuneInput is a TuneEvent's payload: the project's directory, the
+// changes in order, and one line on why.
+type TuneInput struct {
+	Dir     string       `json:"dir"`
+	Changes []TuneChange `json:"changes"`
+	Reason  string       `json:"reason,omitempty"`
+}
+
+// TuneChange is one key and its new value.
+type TuneChange struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 // OrchSendEvent is not a hook event: `den mcp --control` sends it for the
 // orchestrator's send_message call, which control gives it in place of
 // SendMessage. Den delivers the message the way SendMessage would and

@@ -60,6 +60,8 @@ const (
 	MissionCriteria             // Den asks: change a mission's done criteria, as the orchestrator asks? y/n, in Den only
 	MissionDone                 // Den asks: every done criterion is claimed; is the mission done? y/n, in Den only
 	MirrorAsk                   // Den asks: show your orchestrator conversation in the paired console? y/n, in Den only
+	ProcessTuned                // Den says: the orchestrator tuned a project's process; y keeps it, n undoes it, in Den only
+	PromptProposal              // Den shows: the orchestrator proposes a change to its own instructions; Den applies nothing, in Den only
 )
 
 func (k Kind) String() string {
@@ -134,6 +136,10 @@ func (k Kind) String() string {
 		return "your turn"
 	case MissionCriteria:
 		return "mission criteria"
+	case ProcessTuned:
+		return "process tuned"
+	case PromptProposal:
+		return "prompt proposal"
 	case MissionDone:
 		return "mission done"
 	case MirrorAsk:
@@ -207,7 +213,7 @@ func (it *Item) AsksInDen() bool {
 func (it *Item) DenAsks() bool {
 	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
 		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
-		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk
+		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -942,6 +948,18 @@ func (s *Store) AddMissionCriteria(sessionID, title string, body []string) *Item
 // conversation in the paired console?
 func (s *Store) AddMirrorAsk(title string, body []string) *Item {
 	return s.add(&Item{SessionID: "den:mirror", Kind: MirrorAsk, Tool: "mirror", Title: title, Body: body})
+}
+
+// AddProcessTuned adds Den's notice: the orchestrator tuned a project's
+// process, already applied; y keeps it, n undoes it.
+func (s *Store) AddProcessTuned(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: ProcessTuned, Tool: "tune_process", Title: title, Body: body})
+}
+
+// AddPromptProposal adds the orchestrator's proposed change to its own
+// instructions, for the human to read; Den applies nothing from it.
+func (s *Store) AddPromptProposal(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: PromptProposal, Tool: "tune_process", Title: title, Body: body})
 }
 
 // AddMissionDone adds Den's question: every criterion is claimed; is the

@@ -198,8 +198,7 @@ type idleAgent struct {
 // [team] idle_minutes, no live card and no inbox item waiting: work the
 // orchestrator could give the next sub-goal, or close.
 func (m Model) idleAgents(ms *mission.Mission, byCard map[string]string, now time.Time) []idleAgent {
-	limit := time.Duration(m.cfg.Team.IdleMinutes) * time.Minute
-	if limit <= 0 || !ms.Live() {
+	if !ms.Live() {
 		return nil
 	}
 	busy := map[string]bool{}
@@ -221,7 +220,9 @@ func (m Model) idleAgents(ms *mission.Mission, byCard map[string]string, now tim
 		if a.Host != "" || !a.Session.Alive || a.Status != fleet.Idle || m.isOrchestrator(a) || busy[id] {
 			continue
 		}
-		if d, ok := idleFor(a, now); ok && d >= limit && m.missionVia(id, byCard) == ms.ID {
+		_, _, _, minutes := m.teamFor(m.team.branches[id].Repo)
+		limit := time.Duration(minutes) * time.Minute
+		if d, ok := idleFor(a, now); ok && limit > 0 && d >= limit && m.missionVia(id, byCard) == ms.ID {
 			out = append(out, idleAgent{a, d})
 		}
 	}
