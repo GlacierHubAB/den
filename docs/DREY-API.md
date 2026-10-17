@@ -782,7 +782,7 @@ Each connection proves once, at its start:
 | `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, at once |
 | `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once |
 | `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view, the desktop), then `console`, `god`, `mode`, `card`, `view` and `desktop` events as they change, and `conversation` entries while the conversation is shown here |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view, the desktop, the mirror), then `console`, `god`, `mode`, `card`, `view` and `desktop` events as they change, `mirror` events, and `conversation` entries while the conversation is shown here |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
 | `conversation.history` | `{limit?}`, at most 200 | `{entries}`, newest first: the conversation entries since it was shown in this console (see Conversation mirror); `forbidden` while it is not |
 | `card.get` | `{id}` | the card and a `nonce` |
@@ -809,7 +809,7 @@ order: a `console` event (`connected`, or `restored` after Den
 restarted), a `card` event, `new`, for each card waiting (the ones the
 reply lists), a `console` event of kind `powers` with `on`, a `god`
 event, a `mode` event (once Den knows the mode), a `view` event (once
-Den has a view), and a `desktop` event. Everything after it is a change. `fleet.events` starts with the whole fleet in the
+Den has a view), a `desktop` event, and a `mirror` event. Everything after it is a change. `fleet.events` starts with the whole fleet in the
 same way. A later kind that carries state joins the snapshot.
 
 - `console {kind, pid, start_ticks, started?, program?, reason?, on?, cause?, unit?, program_sha256?, changes?}`: `kind`
@@ -871,6 +871,14 @@ same way. A later kind that carries state joins the snapshot.
   these only while the conversation is shown in this console (see Conversation
   mirror). They are not part of the snapshot: backfill with
   `conversation.history`.
+- `mirror {state, since?}`: whether the conversation is shown in this
+  console. `state` is `off`, `asking` (Den's card asking the human to
+  show it here waits in Den's own window: say "Allow it in Den's
+  window"), or `on`, with `since` (RFC3339 UTC), the moment
+  `conversation.history` reaches back to. It comes on every change and
+  in the snapshot. On `on`, backfill with `conversation.history`; on
+  `off`, clear the conversation at once. Treat an unknown `state` as
+  `off`.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
   of cards waiting: one you knew that is not in it is gone. The `new`
   events that follow are those cards.
@@ -1062,6 +1070,9 @@ local socket open to this user only.
   `orch.say`'s `done` for a console's own turn). Reports are limited to 6 a
   minute per agent and 30 a minute in all; past that, one Den line says more
   are in Den.
+- A `mirror` event says when it starts and stops (see Events).
+  `conversation.history` answers `forbidden` while it is not shown, and a
+  Den without the verb answers `unsupported`.
 - `conversation.history` returns only entries since the conversation was last
   shown in this console, at most 200, newest first. Drop an unknown field, and
   skip an entry whose origin or speaker you do not know.

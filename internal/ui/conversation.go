@@ -47,6 +47,7 @@ func (m *Model) mirrorTick() {
 		return
 	}
 	cur, ok := srv.CurrentConsole()
+	defer m.syncMirrorAsking()
 	id, on := srv.Mirroring()
 	if !ok || !cur.Powers {
 		if on {
@@ -78,6 +79,27 @@ func (m *Model) mirrorTick() {
 		m.mirror.item = it.ID
 		m.refresh()
 	}
+}
+
+// syncMirrorAsking tells den-api whether Den's ask card waits for the
+// paired console now: the console then shows "asking". Den-api sends the
+// console only a change.
+func (m *Model) syncMirrorAsking() {
+	srv := m.api.srv
+	if srv == nil {
+		return
+	}
+	cur, ok := srv.CurrentConsole()
+	id, on := srv.Mirroring()
+	asking := ""
+	if ok && cur.Powers && m.mirror.asked == cur.ID && !(on && id == cur.ID) {
+		for _, it := range m.store.Items() {
+			if it.ID == m.mirror.item && it.Answerable() {
+				asking = cur.ID
+			}
+		}
+	}
+	srv.SetMirrorAsking(asking)
 }
 
 // mirrorOn turns the mirror on for console cur and says so in Den's chat.
