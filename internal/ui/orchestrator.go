@@ -476,6 +476,9 @@ func (m *Model) handleOrchEvent(ev orch.Event) tea.Cmd {
 	if only {
 		return tea.Batch(ctlCmd, waitOrch(m.orch.proc))
 	}
+	if ev.Kind == orch.Result || ev.Kind == orch.Blocked {
+		m.ctl.finishedAt = time.Now()
+	}
 	cmd := m.orchEvent(ev)
 	switch ev.Kind {
 	case orch.Started:
@@ -911,6 +914,9 @@ func (m Model) closeOrchestrator() {
 // once and owed messages are resent. A stuck API connection looks exactly
 // like deep thought from outside, so the thresholds are generous.
 func (m *Model) watchOrchestrator() tea.Cmd {
+	if cmd := m.watchAppTurn(); cmd != nil {
+		return cmd
+	}
 	if !m.orch.thinking || m.orch.proc == nil {
 		return nil
 	}
@@ -924,6 +930,32 @@ func (m *Model) watchOrchestrator() tea.Cmd {
 		m.orch.status = fmt.Sprintf("thinking… no reply for %s · /orch restart", humanAge(quiet))
 	}
 	return nil
+}
+
+// appTurnGrace is how long Den waits, after Claude Code finished a turn
+// and with nothing from it since, before it closes an app turn still open.
+var appTurnGrace = 2 * time.Minute
+
+// watchAppTurn closes an app's turn whose end Den missed: Claude Code
+// finished a turn after the app's was sent, nothing came since, and the
+// app's turn is still open. Without it, a turn Den mistook for another's
+// would hold every later message (the app's, the human's, reports) for
+// good. A turn still running (a tool waiting on a card) has not finished,
+// so it is never closed here.
+func (m *Model) watchAppTurn() tea.Cmd {
+	if m.ctl.turn == nil || !m.ctl.sent || m.orch.proc == nil || len(m.ctl.asks) > 0 {
+		return nil
+	}
+	if m.ctl.finishedAt.IsZero() || !m.ctl.finishedAt.After(m.ctl.sentAt) || time.Since(m.orch.lastEvent) < appTurnGrace || time.Since(m.ctl.finishedAt) < appTurnGrace {
+		return nil
+	}
+	m.orch.proc.CloseAppTurn()
+	if m.turnOrigin() == originApp {
+		m.turnDone()
+	}
+	m.orch.thinking = len(m.orch.origins) > 0
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "The orchestrator finished, but Den missed the end of the app's turn; Den closed it, and sends what waited behind it.", at: time.Now()}))
+	return m.appTurnOver()
 }
 
 // restartOrchestrator kills the process, resumes the same session and

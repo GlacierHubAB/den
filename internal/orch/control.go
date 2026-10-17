@@ -246,6 +246,25 @@ func (o *Orchestrator) AppTurn() string {
 	return o.ctl.app.id
 }
 
+// CloseAppTurn closes the open app turn whose result Den missed, and
+// denies the permissions it still holds; it returns the turn's id, "" when
+// none was open. Den's watchdog calls it when Claude Code has finished its
+// turns and the app turn is still open.
+func (o *Orchestrator) CloseAppTurn() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	c := o.ctl
+	if c == nil || !c.app.open {
+		return ""
+	}
+	id := c.app.id
+	c.app = appTurn{}
+	for rid := range c.perms {
+		o.answerLocked(rid, false, "the turn ended")
+	}
+	return id
+}
+
 // Interrupt asks Claude Code to stop the turn it is on; its result follows.
 func (o *Orchestrator) Interrupt() error {
 	return o.ControlRequest("den-interrupt-"+time.Now().Format("150405.000000000"), "interrupt")

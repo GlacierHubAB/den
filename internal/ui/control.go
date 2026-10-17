@@ -39,11 +39,16 @@ type controlState struct {
 	asks      map[*inbox.Item]string // open tool cards → permission request id
 	turn      *api.Say               // the app's turn, queued or running
 	sent      bool                   // it went to the orchestrator
-	ended     bool                   // the app was told it ended; Den waits for its result
-	started   time.Time
-	last      time.Time // when the orchestrator last said anything in it
-	held      []heldTurn
-	noControl string // why the orchestrator runs without control, "" when it does or need not
+	sentAt    time.Time              // when it did
+	// finishedAt is when Claude Code last finished a turn (a result or a
+	// refused prompt): with the app's turn still open after it and
+	// nothing since, Den missed that turn's end (watchAppTurn).
+	finishedAt time.Time
+	ended      bool // the app was told it ended; Den waits for its result
+	started    time.Time
+	last       time.Time // when the orchestrator last said anything in it
+	held       []heldTurn
+	noControl  string // why the orchestrator runs without control, "" when it does or need not
 	// modes is each local session's last permission mode, from its own
 	// hooks; always the standing allowance /always on a tool card would
 	// give; watch the sessions a message reached under a standing
@@ -328,6 +333,7 @@ func (m *Model) tryAppTurn() tea.Cmd {
 	}
 	m.ctl.sent = true
 	m.ctl.last = time.Now()
+	m.ctl.sentAt = time.Now()
 	m.orch.origins = append(m.orch.origins, originApp)
 	m.orch.thinking = true
 	m.orch.status = "thinking… (" + sayFrom(y) + ")"

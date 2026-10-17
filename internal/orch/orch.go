@@ -117,6 +117,18 @@ const (
 	PermissionStanding
 )
 
+// refusedResult reports whether a result is that of a prompt the inbound
+// hook refused, by the result itself: Claude Code takes no turn for it
+// (num_turns 0), and its text is the hook's notice. The text counts only
+// after a refusal notice (noticed), since a model's own reply could
+// begin with the same words.
+func refusedResult(numTurns *int, isError bool, text string, noticed bool) bool {
+	if isError {
+		return false
+	}
+	return numTurns != nil && *numTurns == 0 || noticed && strings.HasPrefix(text, "UserPromptSubmit operation blocked by hook")
+}
+
 // SystemPrompt is appended to Claude Code's default prompt.
 const SystemPrompt = `You are the orchestrator inside Den, a terminal UI the human uses to watch and steer every coding agent running on this machine. The human types to you when they do not want to address one agent directly.
 
@@ -906,13 +918,19 @@ func (o *Orchestrator) readStdout(r io.Reader) error {
 				}
 			}
 		case "result":
-			// A refused prompt's turn: the notice before it, or no turn
-			// taken at all (num_turns 0).
-			if o.blocked || (l.NumTurns != nil && *l.NumTurns == 0 && !l.IsError) {
-				// The turn of a prompt the hook refused: not an answer.
+			// A refused prompt's own result says so: no turn taken
+			// (num_turns 0), or the hook's notice as its text.
+			if refusedResult(l.NumTurns, l.IsError, l.Result, o.blocked) {
 				o.blocked = false
 				o.emit(Event{Kind: Blocked, Peer: o.blockedPeer, CostUSD: l.CostUSD})
 				break
+			}
+			// A prompt refused while it was queued behind a running turn
+			// has no result of its own: this is that turn's, a real answer.
+			// The refusal is still reported, before it.
+			if o.blocked {
+				o.blocked = false
+				o.emit(Event{Kind: Blocked, Peer: o.blockedPeer})
 			}
 			o.emit(Event{Kind: Result, Text: l.Result, IsError: l.IsError, CostUSD: l.CostUSD, Turn: o.controlResult()})
 		case "control_request":
