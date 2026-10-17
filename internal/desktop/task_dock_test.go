@@ -1,6 +1,9 @@
 package desktop
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Drey's dock (the console, pid 1500) is off limits to a task like Den's
 // own windows: its window, and its bar on the top layer. Its pointer
@@ -80,5 +83,42 @@ func TestConsoleSurfacesRefuseClicksInEveryMode(t *testing.T) {
 	m.Console = console
 	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1200, "y": 600}, m, s); v.Kind != Allow {
 		t.Errorf("the console's outline blocked a click: %+v", v)
+	}
+}
+
+// Drey #59: the pointer outline (exempt, empty input) covers every monitor
+// on the overlay level, above the confirm strip. Den refuses where any
+// protected surface of the console covers the point, never by the topmost
+// surface alone: a click in the strip under the outline is refused, in a
+// task and in an app mission; a click elsewhere under it is allowed in a
+// task.
+func TestExemptOutlineAboveTheStripStillRefuses(t *testing.T) {
+	console := map[int]bool{1500: true}
+	layers := func() []Layer {
+		return []Layer{
+			{Monitor: "DP-1", Level: OverlayLevel, X: 0, Y: 0, W: 600, H: 80, Namespace: "drey-confirm", PID: 1500},
+			{Monitor: "DP-1", Level: OverlayLevel, X: 0, Y: 0, W: 2000, H: 1000, Namespace: PointerNamespace, PID: 1500},
+		}
+	}
+
+	m, s := taskDesk()
+	s.Layers = layers()
+	s.ExemptConsole(console)
+	m.Console = console
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 300, "y": 40}, m, s); v.Kind != Deny {
+		t.Errorf("task: a click in the strip under the outline: %+v", v)
+	}
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1200, "y": 600}, m, s); v.Kind != Allow {
+		t.Errorf("task: a click under the outline alone: %+v", v)
+	}
+
+	am, as := fixture()
+	as.Layers = layers()
+	as.ExemptConsole(console)
+	if v := Decide("pointer", []byte(`{"action":"click","x":300,"y":40,"window":"0xb"}`), am, as); v.Kind == Allow {
+		t.Errorf("app mission: a click in the strip under the outline: %+v", v)
+	}
+	if v := Decide("pointer", []byte(`{"action":"click","x":300,"y":600,"window":"0xb"}`), am, as); v.Kind == Deny && strings.Contains(v.Reason, PointerNamespace) {
+		t.Errorf("app mission: the outline blocked a click: %+v", v)
 	}
 }

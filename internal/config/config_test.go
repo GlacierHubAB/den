@@ -269,3 +269,20 @@ func TestDesktopTaskLimits(t *testing.T) {
 		t.Fatalf("nonsense: %d %d", m, a)
 	}
 }
+
+// The agent's terminal is off unless [desktop] agent_view says true.
+func TestDesktopAgentView(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	if DesktopAgentView() {
+		t.Fatal("on with no file")
+	}
+	os.WriteFile(p, []byte("[desktop]\nagent_view = true\n"), 0o600)
+	if !DesktopAgentView() {
+		t.Fatal("off when asked for")
+	}
+	os.WriteFile(p, []byte("[desktop]\nagent_view = maybe\n"), 0o600)
+	if DesktopAgentView() {
+		t.Fatal("on for nonsense")
+	}
+}

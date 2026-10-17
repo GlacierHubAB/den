@@ -23,15 +23,16 @@ func View(in io.Reader, out io.Writer, mission string) error {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 64<<10), MaxMessage)
 	for sc.Scan() {
-		for _, l := range viewLines(sc.Bytes()) {
+		for _, l := range ViewLines(sc.Bytes()) {
 			fmt.Fprintln(out, l)
 		}
 	}
 	return sc.Err()
 }
 
-// viewLines is what one stream-json event shows, none for the rest.
-func viewLines(raw []byte) []string {
+// ViewLines is what one stream-json event shows, none for the rest: the
+// agent's terminal prints them, and a headless agent's go to Den's chat.
+func ViewLines(raw []byte) []string {
 	var ev struct {
 		Type    string   `json:"type"`
 		Subtype string   `json:"subtype"`

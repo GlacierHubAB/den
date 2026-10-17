@@ -1001,10 +1001,12 @@ if_running = "refuse"              # or "warn": joining an instance already runn
 with a plan, app names and the steps only you do ("sign in to Gmail"). A card
 shows the plan, each app, and what the agent will and will not have. On
 `Ctrl+Y` Den picks an empty workspace (9 down to 5), opens the apps there
-itself, and starts the agent in a terminal on your workspace. The agent has
-only the desktop tools: no shell, files, web, messages, app launching,
-keybinds or clipboard. Its terminal shows what it says and does; `Ctrl+C`
-there stops it.
+itself, and starts the agent. The agent has only the desktop tools: no
+shell, files, web, messages, app launching, keybinds or clipboard. It runs
+with no window of its own, so nothing opens in front of the work: what it
+says and does shows in Den's chat, and Drey's overlay shows
+it at work on the screen. To watch it in a terminal of its own instead, set
+`agent_view = true` in the `[desktop]` section; `Ctrl+C` there stops it.
 
 **A task: the whole desktop.** The orchestrator can instead call
 `desktop_mission` with one task and no apps. The card reads "Control your
@@ -1019,14 +1021,16 @@ you can at the keyboard.** That includes running commands as you in a
 terminal, typing into other agents' terminals (their permission prompts
 too), the clipboard, everything on the screen, and every app you are signed
 in to. Den refuses only a short fixed list: anything on Den's own window,
-the agent's view or a paired console's dock (Drey's); exiting or reloading Hyprland, or running `hyprctl` or
+the agent's terminal when you turned it on, or a paired console's dock
+(Drey's); exiting or reloading Hyprland, or running `hyprctl` or
 `den` through a bind or a launch; closing or killing Den's window; binds
 that send keys to another window by name; and `ctrl+alt+Delete`,
 `Backspace` and `F1`–`F12`. Your levers are these:
 
 - **The panic stop.** `/desktop stop` or `den desktop stop` (bind it to a
-  key, below). The agent also stops when Den quits: its terminal watches Den,
-  and `den desktop stop` still works from Den's records if that fails.
+  key, below). The agent also stops when Den quits, however Den ends: it is
+  Den's own child, signalled when Den goes (with `agent_view`, its terminal
+  watches Den), and `den desktop stop` still works from Den's records.
 - **The per-task limit.** Den stops the task after `task_minutes` of wall
   time or `task_actions` desktop calls, whichever comes first. Den counts
   them itself, and only your config sets them:

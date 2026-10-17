@@ -735,6 +735,10 @@ var inherited = []string{
 	"DEN_ORCHESTRATOR=", "DEN_PEER=",
 }
 
+// ChildEnv is childEnv for agents Den starts without a terminal (a
+// headless desktop agent).
+func ChildEnv(environ, extra []string) []string { return childEnv(environ, extra) }
+
 // childEnv is the environment for the new terminal: the current one
 // without what a parent session set, plus extra.
 func childEnv(environ, extra []string) []string {
