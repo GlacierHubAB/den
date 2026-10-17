@@ -772,7 +772,8 @@ orchestrator, which sees the overlap in its view of the fleet, decides. Den
 notes it in its chat and never stops anyone over it. An agent hears it at most
 once every ten minutes. Den runs nothing the checkout's own git config names
 while it reads. On the trunk (`main`, `dev`, `master`, or origin's default
-branch) only what is uncommitted counts. These messages, and the branch nudges
+branch), or once a branch's commits have landed (a squash merge, say), only
+what is uncommitted counts. These messages, and the branch nudges
 below, reach the agent framed as Den's own ("Automatic message from Den … your
 human did not type it"), never as words you typed.
 
@@ -794,8 +795,8 @@ than a day (from its oldest commit since it left the integration branch;
 (`behind_max`), Den tells the agent to merge or rebase soon, notes it in its
 chat (the dock sees it too), and the orchestrator sees it in its view of the
 fleet. It repeats once a day while the branch stays over. 0 turns either check
-off. Only feature branches are nudged: never the trunk, or a branch with no
-commits of its own.
+off. Only feature branches are nudged: never the trunk, a branch with no
+commits of its own, or one whose commits already landed.
 
 ### Cost per merged change and idle agents
 

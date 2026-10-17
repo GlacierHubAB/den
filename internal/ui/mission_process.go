@@ -100,7 +100,7 @@ func (m *Model) notePending(works []process.Work, now time.Time) {
 	}
 	byCard := m.cardMissions()
 	for _, w := range works {
-		if w.Since.IsZero() || w.Tip == "" || w.Repo == "" || w.Branch == "" || w.Branch == "HEAD" {
+		if w.Trunk || w.Since.IsZero() || w.Tip == "" || w.Repo == "" || w.Branch == "" || w.Branch == "HEAD" {
 			continue
 		}
 		ms := m.missions.Get(m.missionVia(w.Key, byCard))
