@@ -203,6 +203,7 @@ func Project(s Snapshot) *View {
 		default:
 			ag.State, ag.Waiting = StateWaiting, w
 		}
+		ag.Doing.Text = doingText(a, ag.State, ag.Waiting)
 		if a.Window != nil && a.Host == "" {
 			c := a.Window.Client
 			ag.Window = sanitize.Label(c.Address, labelMax)

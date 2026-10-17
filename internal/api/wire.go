@@ -222,6 +222,9 @@ type Agent struct {
 	// when none did; a mode Den does not know is "unknown". Only for
 	// agents on this machine.
 	PermissionMode string `json:"permission_mode,omitempty"`
+	// Doing is what the agent is doing now, in one short line from Den's
+	// own facts (see Doing).
+	Doing Doing `json:"doing"`
 }
 
 // Window is a terminal window Den matched to an agent.

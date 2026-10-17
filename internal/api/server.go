@@ -123,6 +123,7 @@ type Server struct {
 	mu        sync.Mutex
 	conns     map[*conn]bool
 	lastFleet []byte
+	doing     map[string]doingSeen // each agent's published Doing, under mu
 	seenExe   map[string]bool
 	// connectNotes are when programs Den cannot identify earned a connect
 	// note (firstConnect).
@@ -500,6 +501,14 @@ func (s *Server) Clients() []Client {
 // pushes fleet and inbox events to subscribers. It never blocks on a
 // client.
 func (s *Server) Publish(v *View) {
+	// Each agent's Doing is settled before the view is shared: readers
+	// never see it change under them.
+	s.mu.Lock()
+	if s.doing == nil {
+		s.doing = map[string]doingSeen{}
+	}
+	settleDoing(v.Fleet.Agents, s.doing, time.Now())
+	s.mu.Unlock()
 	old := s.view.Swap(v)
 	var oldCards map[string]Card
 	if old != nil {
