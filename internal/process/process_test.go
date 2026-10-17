@@ -223,6 +223,30 @@ func TestReadTrunkCountsOnlyUncommitted(t *testing.T) {
 	}
 }
 
+// A checkout whose own commits landed (squash-merged, then left detached
+// on its old commit) counts only what it has not committed; before the
+// merge it counted its commits.
+func TestReadLandedCountsOnlyUncommitted(t *testing.T) {
+	main, one, _ := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "README.md"), "docs")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "docs")
+	if w, _ := Read(ctx, "s1", one); w.Landed || !reflect.DeepEqual(w.Files, []string{"README.md"}) {
+		t.Errorf("before the merge: %+v", w)
+	}
+	sh(t, main, "merge", "-q", "--squash", "a")
+	sh(t, main, "commit", "-q", "-m", "squash a")
+	sh(t, one, "checkout", "-q", "--detach")
+	if w, _ := Read(ctx, "s1", one); !w.Landed || len(w.Files) != 0 {
+		t.Errorf("landed and left detached: %+v", w)
+	}
+	write(t, filepath.Join(one, "new.go"), "x")
+	if w, _ := Read(ctx, "s1", one); !reflect.DeepEqual(w.Files, []string{"new.go"}) {
+		t.Errorf("landed, with new work: %+v", w)
+	}
+}
+
 // A branch has landed when dev has its tip (a merge or a fast-forward) or
 // every file it changes as it has them (a squash merge); not before.
 func TestLanded(t *testing.T) {

@@ -155,6 +155,10 @@ type Work struct {
 	Trunk bool
 	// Tip is the checkout's HEAD commit, the full id.
 	Tip string
+	// Landed: its own commits are already on Base (Landed), say squash-
+	// merged and left on its old commit. As on the trunk, Files are only
+	// what it has not committed, and Den never nudges it.
+	Landed bool
 }
 
 // Read is the Work of the checkout at dir, for key.
@@ -189,10 +193,14 @@ func Read(ctx context.Context, key, dir string) (Work, error) {
 	if out, err := git(ctx, dir, "rev-list", "--count", "HEAD.."+w.Base); err == nil {
 		w.Behind, _ = strconv.Atoi(strings.TrimSpace(string(out)))
 	}
-	// Only a feature branch's commits are its own work: on the trunk, only
-	// what is not committed yet counts.
+	// Only a feature branch's commits are its own work: on the trunk, or
+	// once they have landed (a squash merge, a checkout left on an old
+	// merged commit), only what is not committed yet counts.
 	w.Trunk = IsTrunk(ctx, dir, w.Branch)
-	if w.Trunk {
+	if !w.Since.IsZero() && w.Tip != "" {
+		w.Landed, _ = Landed(ctx, dir, w.Tip)
+	}
+	if w.Trunk || w.Landed {
 		w.Files = Uncommitted(ctx, dir)
 	}
 	return w, nil

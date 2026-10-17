@@ -342,8 +342,10 @@ func TestNudgeOnlyFeatureBranches(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-5 * 24 * time.Hour)
 	for name, w := range map[string]process.Work{
-		"the trunk":      {Branch: "main", Trunk: true, Since: old, Behind: 400},
-		"no own commits": {Branch: "idle", Behind: 400},
+		"the trunk":        {Branch: "main", Trunk: true, Since: old, Behind: 400},
+		"no own commits":   {Branch: "idle", Behind: 400},
+		"landed (squash)":  {Branch: "done", Since: old, Landed: true, Behind: 400},
+		"detached, landed": {Branch: "HEAD", Since: old, Landed: true},
 	} {
 		if why := branchOver(w, now, 24, 30); why != "" {
 			t.Errorf("%s nudged: %q", name, why)

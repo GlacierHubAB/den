@@ -231,9 +231,10 @@ func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
 // branchOver says how a branch is over the thresholds ("is 2 days old",
 // "is 41 commits behind origin/dev", or both), "" when it is not.
 func branchOver(w process.Work, now time.Time, hours, behind int) string {
-	// Only a feature branch with work of its own: never the trunk, or a
-	// checkout with no commits beyond its base.
-	if w.Trunk || w.Since.IsZero() {
+	// Only a feature branch with work of its own not yet landed: never the
+	// trunk, a checkout with no commits beyond its base, or one whose
+	// commits are already merged.
+	if w.Trunk || w.Landed || w.Since.IsZero() {
 		return ""
 	}
 	var why []string

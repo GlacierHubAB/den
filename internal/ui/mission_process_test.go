@@ -105,6 +105,15 @@ func TestMissionMergesCountOnce(t *testing.T) {
 	if out := strings.Join(m.costLines(m.missions.Get(ms.ID), 100), "\n"); !strings.Contains(out, "2 merged changes · ") || !strings.Contains(out, " each") {
 		t.Errorf("view:\n%s", out)
 	}
+	// A checkout of the trunk is never tracked: its tip is on dev already,
+	// and would count as a change the mission landed.
+	m.team.pending = nil
+	trunk := ahead("mossy-lemur", "main", 'e')
+	trunk.Trunk = true
+	m.notePending([]process.Work{trunk}, now)
+	if len(m.team.pending) != 0 {
+		t.Errorf("a trunk checkout was tracked: %+v", m.team.pending)
+	}
 	// A tip Den has not seen for two weeks is dropped unchecked.
 	m.notePending([]process.Work{ahead("mossy-lemur", "fix-3", 'd')}, now)
 	if checks := m.tipChecks(now.Add(pendingTipFor + time.Minute)); len(checks) != 0 || len(m.team.pending) != 0 {
