@@ -146,7 +146,7 @@ no transcript, and no request body outside `inbox.body`.
 
 - **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?, view?}`. An agent is
   `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
-  remote?, costUsd, turns, lastSeen, color?, permission_mode?}`; `state` is `idle`, `working`, `waiting`
+  remote?, costUsd, turns, lastSeen, color?, permission_mode?, doing}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
   `plan`. `hooks` says whether Den can see the agent's prompts (see
   "Switching views"): `on` when Den has had a hook event from the session since
@@ -164,7 +164,25 @@ no transcript, and no request body outside `inbox.body`.
   runs in as its own hooks last reported it (`default`, `acceptEdits`,
   `plan`, `auto`, `dontAsk`, `bypassPermissions`, or `unknown` for a value
   Den does not know); it is absent when none reported one. The fleet's
-  `mode` is the same as hello's.
+  `mode` is the same as hello's. `doing` `{text, at}` says what an agent is doing
+  now, in at most 80 runes, from Den's own facts. Only the paired console's
+  connections get it; every other app gets it empty (`{"text": "", "at":
+  "0001-01-01T00:00:00Z"}`), and a change in it alone sends such an app nothing. Its state comes first: `waiting
+  for you` (with `: permission`, `: question` or `: plan`), `stalled` or `idle`.
+  For a working agent of this machine, its latest tool comes next: `editing`,
+  `writing` or `reading` with the file's base name, `running` with the command's
+  name, and a plain sub-command for tools known to take one (`running go test`,
+  but `running echo`), or `searching`, `fetching` or `delegating`. With none of
+  those, it is `working on` and the task label Den was given for the agent (never
+  its window title), with every word that could be a path, address or id dropped,
+  or just `working`. An agent on another machine only ever shows its state or `working`:
+  its host's text is never used. Every `text` starts with one of these lead
+  phrases, a closed set: `waiting for you`, `stalled`, `idle`, `editing`,
+  `writing`, `reading`, `running`, `searching`, `fetching`, `delegating`,
+  `working on`, `working`. Style by the lead phrase, and show a text with an
+  unknown lead plainly. `at` (RFC3339, Den's clock) is when `text` last changed.
+  It changes at most once every 10 seconds per agent and arrives with the usual
+  fleet changes.
 - **Item** `{id, kind, agent, since, title, digest, host?}`. A **digest** is
   `{firstLine, bytes, hash}`, with `hash` `"sha256:"` + the hex SHA-256 of the
   body; `inbox.body` returns the same hash. For a request from another machine
