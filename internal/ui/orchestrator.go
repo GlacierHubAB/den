@@ -414,7 +414,7 @@ func (m *Model) sendToOrchestrator(text, origin string) tea.Cmd {
 		text = m.orch.replay + "\n\nNow the human says:\n" + text
 		m.orch.replay = ""
 	}
-	content := orch.ComposeAll(m.roster(), m.templateInfos(), m.missionInfos(), text)
+	content := orch.ComposeAll(m.roster(), m.templateInfos(), m.missionInfos(), m.takeMetrics(), text)
 	proc := m.orch.proc
 	return func() tea.Msg {
 		if err := proc.Send(content); err != nil {

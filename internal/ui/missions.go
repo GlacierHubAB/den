@@ -289,6 +289,7 @@ func (m *Model) settleMissions() tea.Cmd {
 	}
 	now := time.Now()
 	m.settleCosts()
+	m.settleMetrics(now)
 	var cmds []tea.Cmd
 	for _, ms := range m.missions.All() {
 		if !ms.Live() {

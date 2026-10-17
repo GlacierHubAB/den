@@ -827,6 +827,13 @@ before. Den itself closes no one. The count reads the repository's own
 branches, which agents can move, so the cost per merged change is a guide,
 never evidence that a mission's work is done.
 
+Den also records each mission's figures when it ends, and each live mission's
+once a day, in `~/.local/state/den/metrics.jsonl` (yours alone to read,
+rotated at 1 MiB). A record holds the runs, the cost, the merged changes, how
+long the merged branches lived, and the overlaps and nudges Den sent. Den
+can't see CI, so CI failures are left out. The orchestrator gets them with the
+next turn it is sent anyway; Den never starts a turn for them.
+
 ### When you are asked
 
 Once you start a mission, the orchestrator keeps it moving without asking you.

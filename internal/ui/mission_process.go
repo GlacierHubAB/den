@@ -24,7 +24,7 @@ import (
 // pendingTipFor has passed since Den last saw it.
 type pendingTip struct {
 	Tip, Mission, Branch, Session, Repo, Dir string
-	Seen                                     time.Time
+	Seen, Since                              time.Time // Since: the branch's oldest commit of its own
 }
 
 const (
@@ -107,7 +107,7 @@ func (m *Model) notePending(works []process.Work, now time.Time) {
 		if ms == nil || !ms.Live() || hasMerge(ms, w.Tip) {
 			continue
 		}
-		m.team.pending[w.Repo+"\x00"+w.Branch] = pendingTip{Tip: w.Tip, Mission: ms.ID, Branch: w.Branch, Session: w.Key, Repo: w.Repo, Dir: w.Tree, Seen: now}
+		m.team.pending[w.Repo+"\x00"+w.Branch] = pendingTip{Tip: w.Tip, Mission: ms.ID, Branch: w.Branch, Session: w.Key, Repo: w.Repo, Dir: w.Tree, Seen: now, Since: w.Since}
 	}
 	for len(m.team.pending) > maxPendingTips {
 		oldest := ""
@@ -139,7 +139,7 @@ func (m *Model) applyLanded(tips []string, now time.Time) {
 			}
 			delete(m.team.pending, key)
 			ms := m.missions.Get(p.Mission)
-			if ms == nil || !ms.AddMerge(mission.Merge{Tip: p.Tip, Branch: p.Branch, Session: p.Session, At: now}) {
+			if ms == nil || !ms.AddMerge(mission.Merge{Tip: p.Tip, Branch: p.Branch, Session: p.Session, At: now, Since: p.Since}) {
 				continue
 			}
 			branch := strconv.Quote(sanitize.Label(p.Branch, 80))

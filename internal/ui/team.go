@@ -12,6 +12,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/mission"
 	"github.com/GlacierHubAB/den/internal/process"
 	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -140,6 +141,7 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 		m.team.warned[key] = true
 		m.team.lastWarn[o.A], m.team.lastWarn[o.B] = now, now
+		m.countProcess(func(s *mission.Stats) { s.Overlaps++ }, o.A, o.B)
 		// A God-mode guarded agent takes messages only as Den mediates
 		// them, and its hook would block this one: the orchestrator, which
 		// sees the overlap in its roster, tells it instead.
@@ -205,6 +207,7 @@ func (m *Model) nudgeBranches(works []process.Work, now time.Time) tea.Cmd {
 			continue
 		}
 		m.team.nudged[key] = now
+		m.countProcess(func(s *mission.Stats) { s.Nudges++ }, w.Key)
 		branch := strconv.Quote(sanitize.Label(w.Branch, 80))
 		// What the human can do about it from here, in Den or the dock.
 		act := " You can tell it yourself (@" + a.Name + " merge or rebase now), or ask the orchestrator to split the work."

@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -321,31 +322,84 @@ func TestNoCodeSetsCriteriaDirectly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			as, ok := n.(*ast.AssignStmt)
-			if !ok {
-				return true
-			}
-			for _, lhs := range as.Lhs {
-				for e := lhs; e != nil; {
-					switch x := e.(type) {
-					case *ast.SelectorExpr:
-						// info is the orchestrator's view (orch.MissionInfo),
-						// built from a mission's criteria, never one.
-						if id, _ := x.X.(*ast.Ident); x.Sel.Name == "Criteria" && (id == nil || id.Name != "info") {
-							t.Errorf("%s assigns Criteria", fset.Position(x.Pos()))
-						}
-						e = nil
-					case *ast.IndexExpr:
-						e = x.X // m.Criteria[i] = …
-					default:
-						e = nil
-					}
-				}
-			}
-			return true
-		})
+		for _, p := range criteriaWrites(f) {
+			t.Errorf("%s writes Criteria", fset.Position(p))
+		}
 	}
+}
+
+// The pin above catches every way of writing under Criteria: the field,
+// an element, a field of an element, ++, and a pointer taken into it; the
+// orchestrator's info view, and reads, are not writes.
+func TestCriteriaWritesCatchesEveryForm(t *testing.T) {
+	src := `package p
+func f(m *M, info *I) {
+	m.Criteria = nil
+	m.Criteria[0] = c
+	m.Criteria[0].Text = "x"
+	(m.Criteria[1]).State = "met"
+	m.Criteria[2].N++
+	p := &m.Criteria[3]
+	info.Criteria = nil
+	x := m.Criteria[0].Text
+	_, _ = p, x
+}`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []int
+	for _, p := range criteriaWrites(f) {
+		lines = append(lines, fset.Position(p).Line)
+	}
+	if want := []int{3, 4, 5, 6, 7, 8}; !reflect.DeepEqual(lines, want) {
+		t.Errorf("caught lines %v, want %v", lines, want)
+	}
+}
+
+// criteriaWrites are the places in f that write a mission's Criteria or
+// anything under it, or take a pointer into it.
+func criteriaWrites(f *ast.File) []token.Pos {
+	var out []token.Pos
+	writes := func(e ast.Expr) {
+		for e != nil {
+			switch x := e.(type) {
+			case *ast.SelectorExpr:
+				// info is the orchestrator's view (orch.MissionInfo),
+				// built from a mission's criteria, never one.
+				if id, _ := x.X.(*ast.Ident); x.Sel.Name == "Criteria" && (id == nil || id.Name != "info") {
+					out = append(out, x.Pos())
+					return
+				}
+				e = x.X
+			case *ast.IndexExpr:
+				e = x.X
+			case *ast.ParenExpr:
+				e = x.X
+			case *ast.StarExpr:
+				e = x.X
+			default:
+				e = nil
+			}
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range x.Lhs {
+				writes(lhs)
+			}
+		case *ast.IncDecStmt:
+			writes(x.X)
+		case *ast.UnaryExpr:
+			if x.Op == token.AND {
+				writes(x.X) // a pointer into the criteria could be written through
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // Only the human's paths mark a criterion met or change its text: the
