@@ -1534,6 +1534,10 @@ func diffLines(oldS, newS string) []string {
 
 // Summarize turns an assistant reply into one plain sentence for a notice:
 // no code blocks, no markdown furniture, cut at the first sentence end.
+// summaryMax bounds a summary only against a runaway sentence: Den shows
+// the summary whole, wrapped, never cut to a line.
+const summaryMax = 1200
+
 func Summarize(text string) string {
 	text = strings.TrimSpace(sanitize.Text(text))
 	if text == "" {
@@ -1571,8 +1575,14 @@ func Summarize(text string) string {
 			break
 		}
 	}
-	if r := []rune(flat); len(r) > 160 {
-		flat = strings.TrimSpace(string(r[:159])) + "…"
+	// Whole, for Den wraps it to the pane; only a runaway sentence is cut,
+	// at a word.
+	if r := []rune(flat); len(r) > summaryMax {
+		cut := string(r[:summaryMax-1])
+		if i := strings.LastIndexByte(cut, ' '); i > summaryMax/2 {
+			cut = cut[:i]
+		}
+		flat = strings.TrimSpace(cut) + "…"
 	}
 	return flat
 }
