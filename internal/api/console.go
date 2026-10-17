@@ -953,8 +953,12 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	}
 	// Whether a desktop mission runs, and which.
 	s.replayDesktop(c)
-	// Whether the conversation is shown here (off, asking or on).
+	// Whether the conversation is shown here (off, asking or on), worked
+	// out and queued under the mirror's push lock, so that a switch racing
+	// this subscribe is queued after it, never before.
+	s.conv.pushMu.Lock()
 	c.push(Event{Event: EventMirror, Data: s.mirrorFor(id)}, true)
+	s.conv.pushMu.Unlock()
 	// Then what happened: an automatic pairing, told to the connection
 	// that subscribes first.
 	if auto != nil {
