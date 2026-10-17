@@ -275,7 +275,7 @@ func TestBranchNudges(t *testing.T) {
 	m.cfg.Team.BranchHours, m.cfg.Team.BehindMax = 24, 30
 	m.agents = []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), teamAgent("Snug Capybara", "s2", "den-b", "/w/two"), teamAgent("Fuzzy Sprite", "s3", "den-c", "/w/three")}
 	m.med.guards = map[string]*agentGuard{"s3": {}}
-	now := time.Date(2026, 10, 16, 15, 0, 0, 0, time.UTC)
+	now := time.Now() // the roster line reads the real clock
 	works := []process.Work{
 		{Key: "s1", Branch: "old\x1b[31m-one", Base: "refs/remotes/origin/dev", Since: now.Add(-50 * time.Hour), Behind: 3},
 		{Key: "s2", Branch: "fresh", Base: "refs/heads/main", Since: now.Add(-2 * time.Hour), Behind: 41},
