@@ -67,6 +67,8 @@ var godTTYKinds = map[inbox.Kind]bool{
 	// saying it is done, are yours. Never Den's by rule: Den answers a
 	// MissionUpdate only because no update can meet or change a criterion.
 	inbox.MissionCriteria: true, inbox.MissionDone: true,
+	// What the console may read of the human's own conversation.
+	inbox.MirrorAsk: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

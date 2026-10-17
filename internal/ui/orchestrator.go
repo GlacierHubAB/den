@@ -334,6 +334,7 @@ func (m *Model) tell(mission, shown, prompt string) tea.Cmd {
 		origin = originHuman
 	}
 	m.orch.nextOrigin = ""
+	m.mirrorTurn(origin, shown)
 	if m.orch.proc == nil {
 		m.orch.pending = append(m.orch.pending, prompt)
 		m.orch.pendingOrigins = append(m.orch.pendingOrigins, origin)
@@ -514,6 +515,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 		}
 	case orch.Text:
 		m.orch.said = true
+		m.mirrorText(ev.Text)
 		text := m.missionReply(strings.TrimSpace(ev.Text))
 		if i := m.orch.streaming(); i >= 0 {
 			m.orch.chat[i].text = text
@@ -597,6 +599,11 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 	case orch.Backstop:
 		return m.onBackstop(ev.Text, ev.Trip)
 	case orch.Result:
+		// The mirror hears the reply as the turn it answers: the oldest in
+		// flight, and the console's turn that ends, if it is one.
+		if len(m.orch.origins) > 0 {
+			m.mirrorReply(m.orch.origins[0], strings.TrimSpace(ev.Text))
+		}
 		m.turnDone()
 		if ev.IsError && !m.orch.said && authTrouble(ev.Text) {
 			m.addChat(chatEntry{role: "note", text: authNote(ev.Text), at: now})
@@ -975,6 +982,9 @@ func (m *Model) restartOrchestrator() tea.Cmd {
 		m.orch.pendingOrigins = append(m.orch.pendingOrigins, originDen)
 	}
 	m.orch.origins, m.peers.inFlight, m.peers.envelopes = nil, 0, 0
+	// The turns in flight are gone: what the mirror kept for their replies
+	// goes with them, so no later reply is named for a stale report.
+	m.mirror.reports, m.mirror.reply = nil, nil
 	m.orch.started = false
 	m.orch.starting = true
 	m.orch.status = "restarting…"

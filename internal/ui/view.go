@@ -813,6 +813,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "change the criteria")+"  "+key("^N", "keep them"))
 	case it.Answerable() && it.Kind == inbox.MissionDone:
 		out = append(out, key("^Y", "mission done")+"  "+key("^N", "not done yet"))
+	case it.Answerable() && it.Kind == inbox.MirrorAsk:
+		out = append(out, key("^Y", "show it there")+"  "+key("^N", "keep it in Den"))
 	case it.Answerable() && it.Kind == inbox.MissionMove:
 		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
@@ -1102,6 +1104,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.MissionDone {
 			acts = key("^Y", "mission done") + sp + sp + key("^N", "not done yet")
+		}
+		if it.Kind == inbox.MirrorAsk {
+			acts = key("^Y", "show it there") + sp + sp + key("^N", "keep it in Den")
 		}
 		if it.Kind == inbox.MissionMove {
 			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")

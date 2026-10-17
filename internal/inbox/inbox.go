@@ -59,6 +59,7 @@ const (
 	GuardNote                   // Den says: it blocked a message to a guarded agent that Den did not deliver
 	MissionCriteria             // Den asks: change a mission's done criteria, as the orchestrator asks? y/n, in Den only
 	MissionDone                 // Den asks: every done criterion is claimed; is the mission done? y/n, in Den only
+	MirrorAsk                   // Den asks: show your orchestrator conversation in the paired console? y/n, in Den only
 )
 
 func (k Kind) String() string {
@@ -135,6 +136,8 @@ func (k Kind) String() string {
 		return "mission criteria"
 	case MissionDone:
 		return "mission done"
+	case MirrorAsk:
+		return "conversation mirror"
 	}
 	return "?"
 }
@@ -204,7 +207,7 @@ func (it *Item) AsksInDen() bool {
 func (it *Item) DenAsks() bool {
 	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
 		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
-		it.Kind == MissionCriteria || it.Kind == MissionDone
+		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -933,6 +936,12 @@ const HostPrefix = "host:"
 // as the orchestrator asks? Answered in Den only.
 func (s *Store) AddMissionCriteria(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: MissionCriteria, Tool: "update_mission", Title: title, Body: body})
+}
+
+// AddMirrorAsk adds Den's question: show the human's orchestrator
+// conversation in the paired console?
+func (s *Store) AddMirrorAsk(title string, body []string) *Item {
+	return s.add(&Item{SessionID: "den:mirror", Kind: MirrorAsk, Tool: "mirror", Title: title, Body: body})
 }
 
 // AddMissionDone adds Den's question: every criterion is claimed; is the

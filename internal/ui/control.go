@@ -332,6 +332,7 @@ func (m *Model) tryAppTurn() tea.Cmd {
 		return nil
 	}
 	m.ctl.sent = true
+	m.mirrorAppTurn(y)
 	m.ctl.last = time.Now()
 	m.ctl.sentAt = time.Now()
 	m.orch.origins = append(m.orch.origins, originApp)

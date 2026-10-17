@@ -75,6 +75,8 @@ type Server struct {
 	// when console pairing is off.
 	con  consoleState
 	ckey *consoleKey
+	// conv is the conversation mirror (conversation.go).
+	conv convState
 	// stopWatch ends the console record's watch; closeOnce makes Close's
 	// clean-exit mark once.
 	stopWatch chan struct{}
@@ -1094,6 +1096,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.consoleEvents(c, req)
 	case "console.unpair":
 		s.consoleUnpair(c, req)
+	case "conversation.history":
+		s.conversationHistory(c, req)
 	case "card.get":
 		s.cardGet(c, req)
 	case "card.answer":
