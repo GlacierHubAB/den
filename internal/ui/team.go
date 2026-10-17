@@ -84,6 +84,7 @@ var teamRead = func(targets []teamTarget) []process.Work {
 // teamTick starts a read of the local agents' branches, at most one a
 // teamEvery and one at a time: their overlaps, and their age.
 func (m *Model) teamTick(now time.Time) tea.Cmd {
+	m.memStartup() // once a run: each project's rules.md against Den's record
 	if m.team.scanning || now.Before(m.team.next) {
 		return nil
 	}

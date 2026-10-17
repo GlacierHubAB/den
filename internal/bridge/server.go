@@ -123,6 +123,9 @@ var held = map[string]bool{
 	GodOffEvent:         true,
 	AgentInboundEvent:   true,
 	TuneEvent:           true,
+	NoteEvent:           true,
+	NotesEvent:          true,
+	RuleEvent:           true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

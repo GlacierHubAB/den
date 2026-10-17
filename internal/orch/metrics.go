@@ -3,6 +3,8 @@ package orch
 import (
 	"strconv"
 	"strings"
+
+	"github.com/GlacierHubAB/den/internal/memory"
 )
 
 // MetricsInfo is one mission's figures as the <den_metrics> block carries
@@ -54,5 +56,26 @@ func metricsBlock(ms []MetricsInfo) string {
 		b.WriteString(line)
 	}
 	b.WriteString(tail)
+	return b.String()
+}
+
+// RulesInfo is one project's rules in force, as the human approved them.
+type RulesInfo struct {
+	Project string
+	Rules   []string
+}
+
+// rulesBlocks are the projects' <den_rules> blocks, every rule quoted,
+// at most memory.MaxRulesBytes together.
+func rulesBlocks(rs []RulesInfo) string {
+	var b strings.Builder
+	for i, r := range rs {
+		block := memory.RulesBlock(r.Project, r.Rules)
+		if b.Len()+len(block) > memory.MaxRulesBytes {
+			b.WriteString("(the rules of " + strconv.Itoa(len(rs)-i) + " more projects not shown: the rules are full)\n")
+			break
+		}
+		b.WriteString(block)
+	}
 	return b.String()
 }

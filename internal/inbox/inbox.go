@@ -62,6 +62,8 @@ const (
 	MirrorAsk                   // Den asks: show your orchestrator conversation in the paired console? y/n, in Den only
 	ProcessTuned                // Den says: the orchestrator tuned a project's process; y keeps it, n undoes it, in Den only
 	PromptProposal              // Den shows: the orchestrator proposes a change to its own instructions; Den applies nothing, in Den only
+	RulesPick                   // Den asks: which proposed rules become the project's rules? 1-9 pick, y writes the picked, n drops them, in Den only
+	RulesEdited                 // Den asks: rules.md changed outside Den; take it as the rules again? y/n, in Den only
 )
 
 func (k Kind) String() string {
@@ -140,6 +142,10 @@ func (k Kind) String() string {
 		return "process tuned"
 	case PromptProposal:
 		return "prompt proposal"
+	case RulesPick:
+		return "rules proposed"
+	case RulesEdited:
+		return "rules changed"
 	case MissionDone:
 		return "mission done"
 	case MirrorAsk:
@@ -213,7 +219,8 @@ func (it *Item) AsksInDen() bool {
 func (it *Item) DenAsks() bool {
 	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
 		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
-		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal
+		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal ||
+		it.Kind == RulesPick || it.Kind == RulesEdited
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -960,6 +967,18 @@ func (s *Store) AddProcessTuned(sessionID, title string, body []string) *Item {
 // instructions, for the human to read; Den applies nothing from it.
 func (s *Store) AddPromptProposal(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: PromptProposal, Tool: "tune_process", Title: title, Body: body})
+}
+
+// AddRulesPick adds Den's question: which of these proposed rules
+// become the project's rules?
+func (s *Store) AddRulesPick(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: RulesPick, Tool: "propose_rule", Title: title, Body: body})
+}
+
+// AddRulesEdited adds Den's question: rules.md changed outside Den; take
+// it as the rules again?
+func (s *Store) AddRulesEdited(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: RulesEdited, Tool: "rules", Title: title, Body: body})
 }
 
 // AddMissionDone adds Den's question: every criterion is claimed; is the

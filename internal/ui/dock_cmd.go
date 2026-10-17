@@ -176,6 +176,15 @@ var dockVerbs = []dockVerb{
 		return api.DockCard, ""
 	}},
 	{"/budget", nil, "/budget", "the open mission's budget", always(api.DockDenScreen, whyScreen)},
+	{"/memory", nil, "/memory [rm <id>|rules]", "the project's notes and rules", func(a []string) (string, string) {
+		switch {
+		case len(a) > 0 && a[0] == "rm":
+			return api.DockOK, "" // deleting a note only lowers
+		case len(a) > 0 && a[0] == "rules":
+			return api.DockRefused, "the project's rules are for Den's own window"
+		}
+		return api.DockDenScreen, whyScreen
+	}},
 	{"/orchestrator", []string{"/orch"}, "/orchestrator [new|restart]", "the orchestrator", func(a []string) (string, string) {
 		if len(a) > 0 && (a[0] == "new" || a[0] == "restart") {
 			return api.DockOK, ""
@@ -189,7 +198,7 @@ var dockVerbs = []dockVerb{
 // dockJudged is how many leading words each verb's verdict judges: they
 // run in the form judged (lowercased), so what runs is what was checked;
 // the words after (names, notes, paths) run as typed.
-var dockJudged = map[string]int{"/god": 1, "/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1}
+var dockJudged = map[string]int{"/god": 1, "/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1, "/memory": 1}
 
 // dockVerbOf is the verb a command word names, by its name or an alias.
 func dockVerbOf(word string) (dockVerb, bool) {

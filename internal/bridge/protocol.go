@@ -227,6 +227,27 @@ type TuneChange struct {
 	Value string `json:"value"`
 }
 
+// NoteEvent, NotesEvent and RuleEvent are not hook events: `den mcp` sends
+// them for the note, notes and propose_rule tools, with MemoryInput. Den
+// reads who asks from the asking process, never from the payload, and
+// answers allow with the result or deny with why.
+const (
+	NoteEvent  = "NoteWrite"
+	NotesEvent = "NotesRead"
+	RuleEvent  = "RulePropose"
+)
+
+// MemoryInput is the payload of NoteEvent (Title, Text), NotesEvent
+// (Query) and RuleEvent (Text, From). Dir names the project; Den uses it
+// only for the orchestrator, an agent's project being its own checkout's.
+type MemoryInput struct {
+	Dir   string   `json:"dir,omitempty"`
+	Title string   `json:"title,omitempty"`
+	Text  string   `json:"text,omitempty"`
+	Query string   `json:"query,omitempty"`
+	From  []string `json:"from,omitempty"`
+}
+
 // OrchSendEvent is not a hook event: `den mcp --control` sends it for the
 // orchestrator's send_message call, which control gives it in place of
 // SendMessage. Den delivers the message the way SendMessage would and

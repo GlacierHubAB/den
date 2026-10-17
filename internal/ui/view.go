@@ -819,6 +819,10 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "keep it")+"  "+key("^N", "undo it"))
 	case it.Answerable() && it.Kind == inbox.PromptProposal:
 		out = append(out, key("^Y", "noted")+"  "+key("^N", "dismiss"))
+	case it.Answerable() && it.Kind == inbox.RulesPick:
+		out = append(out, key("1-9", "pick")+"  "+key("^Y", "make the picked rules")+"  "+key("^N", "drop them"))
+	case it.Answerable() && it.Kind == inbox.RulesEdited:
+		out = append(out, key("^Y", "they are my rules")+"  "+key("^N", "leave it a note"))
 	case it.Answerable() && it.Kind == inbox.MissionMove:
 		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
@@ -1117,6 +1121,12 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.PromptProposal {
 			acts = key("^Y", "noted") + sp + sp + key("^N", "dismiss")
+		}
+		if it.Kind == inbox.RulesPick {
+			acts = key("1-9", "pick") + sp + sp + key("^Y", "make the picked rules") + sp + sp + key("^N", "drop them")
+		}
+		if it.Kind == inbox.RulesEdited {
+			acts = key("^Y", "they are my rules") + sp + sp + key("^N", "leave it a note")
 		}
 		if it.Kind == inbox.MissionMove {
 			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")
