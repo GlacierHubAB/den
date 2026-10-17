@@ -953,6 +953,8 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	}
 	// Whether a desktop mission runs, and which.
 	s.replayDesktop(c)
+	// Whether the conversation is shown here (off, asking or on).
+	c.push(Event{Event: EventMirror, Data: s.mirrorFor(id)}, true)
 	// Then what happened: an automatic pairing, told to the connection
 	// that subscribes first.
 	if auto != nil {

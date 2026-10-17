@@ -102,6 +102,59 @@ func TestConversationMirror(t *testing.T) {
 	}
 }
 
+// nextMirror reads c's events to the next mirror state.
+func nextMirror(t *testing.T, c *client) MirrorState {
+	t.Helper()
+	for {
+		l := c.next()
+		if l.Event == EventMirror {
+			var m MirrorState
+			if err := json.Unmarshal(l.Data, &m); err != nil {
+				t.Fatal(err)
+			}
+			return m
+		}
+	}
+}
+
+// The console hears every switch of the mirror, once: asking while Den's
+// card waits, on with since (where history reaches back to), off; a state
+// told again is not sent twice; an asking card for another console is off
+// here.
+func TestMirrorStateEvents(t *testing.T) {
+	h, con := provedConsole(t)
+	cur, _ := h.s.CurrentConsole()
+	if !cur.Powers {
+		h.s.ConsolePowersAnswered(cur.ID, true)
+	}
+	h.s.SetMirrorAsking(cur.ID)
+	h.s.SetMirrorAsking(cur.ID) // no change, no event
+	if m := nextMirror(t, con); m.State != MirrorAsking || m.Since != nil {
+		t.Fatalf("asking: %+v", m)
+	}
+	h.s.SetMirror(cur.ID, true)
+	on := nextMirror(t, con)
+	if on.State != MirrorOn || on.Since == nil || on.Since.Location() != time.UTC {
+		t.Fatalf("on: %+v", on)
+	}
+	h.s.Converse(Converse{Origin: OriginYou, Speaker: SpeakerYou, Text: "hello"})
+	if e := nextConversation(t, con); e.At.Before(*on.Since) {
+		t.Errorf("an entry before since: %+v %v", e, on.Since)
+	}
+	h.s.SetMirror("", false)
+	if m := nextMirror(t, con); m.State != MirrorOff || m.Since != nil {
+		t.Errorf("off: %+v", m)
+	}
+	h.s.SetMirrorAsking("another-console")
+	h.s.SetMirrorAsking(cur.ID)
+	if m := nextMirror(t, con); m.State != MirrorAsking {
+		t.Errorf("asking again: %+v (another console's card must read off here, and off was already told)", m)
+	}
+	if got := h.s.mirrorFor("another-console"); got.State != MirrorOff {
+		t.Errorf("a console that is not paired: %+v", got)
+	}
+}
+
 // Den's own lines are built from the checked name, never from what the
 // caller or the agent wrote: an agent named "Den", "den " or with a
 // sentence in its name is "an agent", in the report line and in the

@@ -99,6 +99,10 @@ type convState struct {
 	reports map[string][]time.Time
 	all     []time.Time
 	told    map[string]time.Time
+	// askingID is the console Den's ask card is for, "" for none; heard
+	// what the console last heard of the mirror's state.
+	askingID string
+	heard    mirrorTold
 }
 
 type convStored struct {
@@ -108,15 +112,105 @@ type convStored struct {
 
 // SetMirror turns the mirror on for console id (the human's choice, made
 // in Den) or off. On, entries from now on reach that console; a new
-// pairing starts with it off.
+// pairing starts with it off. The console hears the change (EventMirror).
 func (s *Server) SetMirror(id string, on bool) {
 	st := &s.conv
 	st.mu.Lock()
 	st.on, st.forID = on && id != "", id
 	if st.on {
 		st.since = time.Now()
+		st.askingID = ""
 	}
 	st.mu.Unlock()
+	s.pushMirror()
+}
+
+// SetMirrorAsking says whether Den's card asking the human to show the
+// conversation in console id waits in Den's own window ("" for none).
+func (s *Server) SetMirrorAsking(id string) {
+	st := &s.conv
+	st.mu.Lock()
+	st.askingID = id
+	st.mu.Unlock()
+	s.pushMirror()
+}
+
+// EventMirror says whether the conversation is shown in this console:
+// MirrorState, sent on every change and in console.events' snapshot.
+const EventMirror = "mirror"
+
+// Mirror states, a closed set.
+const (
+	MirrorOff    = "off"
+	MirrorAsking = "asking" // Den's card for it waits in Den's own window
+	MirrorOn     = "on"
+)
+
+// MirrorState is the mirror as the console sees it; Since only when on,
+// the moment conversation.history reaches back to.
+type MirrorState struct {
+	State string     `json:"state"`
+	Since *time.Time `json:"since,omitempty"`
+}
+
+// mirrorFor is the mirror's state for the console with proof id now.
+func (s *Server) mirrorFor(id string) MirrorState {
+	s.con.mu.Lock()
+	current := id != "" && s.con.cur != nil && s.con.cur.ID == id
+	powered := current && s.con.cur.powers
+	s.con.mu.Unlock()
+	st := &s.conv
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	switch {
+	case powered && st.on && st.forID == id:
+		since := st.since.UTC()
+		return MirrorState{State: MirrorOn, Since: &since}
+	case current && st.askingID == id:
+		return MirrorState{State: MirrorAsking}
+	}
+	return MirrorState{State: MirrorOff}
+}
+
+// pushMirror sends the current console's connections the mirror's state
+// when it changed since they last heard it.
+func (s *Server) pushMirror() {
+	s.con.mu.Lock()
+	id := ""
+	if s.con.cur != nil {
+		id = s.con.cur.ID
+	}
+	s.con.mu.Unlock()
+	if id == "" {
+		return
+	}
+	now := s.mirrorFor(id)
+	st := &s.conv
+	st.mu.Lock()
+	changed := st.heard != (mirrorTold{id, now.State, timeOf(now.Since)})
+	st.heard = mirrorTold{id, now.State, timeOf(now.Since)}
+	st.mu.Unlock()
+	if !changed {
+		return
+	}
+	for _, c := range s.consoleConns(id) {
+		if c.subscribed(EventConsole) {
+			c.push(Event{Event: EventMirror, Data: now}, true)
+		}
+	}
+}
+
+// mirrorTold is what the console last heard of the mirror.
+type mirrorTold struct {
+	id, state string
+	since     time.Time
+}
+
+func timeOf(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
 }
 
 // Mirroring reports whether the mirror is on now, and for which console.

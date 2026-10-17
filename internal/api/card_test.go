@@ -46,7 +46,7 @@ func skipSnapshot(t *testing.T, s *Server, c *client) (ConsoleEvent, []CardEvent
 	if _, ok := s.viewNow(); ok {
 		want = append(want, EventView)
 	}
-	want = append(want, EventDesktop)
+	want = append(want, EventDesktop, EventMirror)
 	var first ConsoleEvent
 	var cards []CardEvent
 	for i, kind := range want {

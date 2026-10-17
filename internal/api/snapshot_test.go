@@ -34,11 +34,12 @@ func TestConsoleEventsSnapshotFirst(t *testing.T) {
 		var view ViewChange
 		var cd CardEvent
 		var desk Desktop
+		var mir MirrorState
 		for i, want := range []struct {
 			event string
 			into  any
 		}{
-			{EventConsole, &con}, {EventCard, &cd}, {EventConsole, &pw}, {EventGod, &god}, {EventMode, &mode}, {EventView, &view}, {EventDesktop, &desk},
+			{EventConsole, &con}, {EventCard, &cd}, {EventConsole, &pw}, {EventGod, &god}, {EventMode, &mode}, {EventView, &view}, {EventDesktop, &desk}, {EventMirror, &mir},
 		} {
 			l := c.next()
 			if l.Event != want.event || json.Unmarshal(l.Data, want.into) != nil {
@@ -48,7 +49,7 @@ func TestConsoleEventsSnapshotFirst(t *testing.T) {
 		if con.Kind != "connected" || pw.Kind != "powers" || pw.On == nil || *pw.On == locked {
 			t.Errorf("locked %v: console %+v, powers %+v", locked, con, pw)
 		}
-		if !god.On || god.Since != "2026-10-16T09:00:00Z" || mode.Global != "plan" || view != (ViewChange{View: ViewAgent, Shown: 3, Total: 4}) || cd.ID != "w-1" || cd.Change != "new" || desk != (Desktop{State: DesktopIdle}) {
+		if !god.On || god.Since != "2026-10-16T09:00:00Z" || mode.Global != "plan" || view != (ViewChange{View: ViewAgent, Shown: 3, Total: 4}) || cd.ID != "w-1" || cd.Change != "new" || desk != (Desktop{State: DesktopIdle}) || mir.State != MirrorOff || mir.Since != nil {
 			t.Errorf("locked %v: god %+v, mode %+v, view %+v, card %+v, desktop %+v", locked, god, mode, view, cd, desk)
 		}
 		// Then changes only.
