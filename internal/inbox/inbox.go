@@ -189,6 +189,10 @@ func (it *Item) Answerable() bool {
 		!(it.req.Host != "" && it.req.HungUp()) // a remote one let go: its link is lost or its hook gave up
 }
 
+// AskerGone reports whether the request behind the item no longer waits
+// for its answer (the asker hung up or gave up).
+func (it *Item) AskerGone() bool { return it.req != nil && it.req.HungUp() }
+
 // AsksInDen reports whether the item is an agent's question that Den holds
 // and the human can answer here, one question at a time.
 func (it *Item) AsksInDen() bool {

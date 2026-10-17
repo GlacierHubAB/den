@@ -85,3 +85,53 @@ func TestDesktopEventOnTheWire(t *testing.T) {
 		t.Errorf("console processes after unpair: %v", procs)
 	}
 }
+
+// A start card waiting shows as asking, only while no mission runs: a
+// running mission stays active, and always ends with idle first; a card
+// answered or gone goes back to idle; console.events' snapshot says
+// asking too.
+func TestDesktopAskingOnTheWire(t *testing.T) {
+	h, _ := consoleHarness(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), View: ViewAgent}))
+	d := newDock(t, h)
+	p := d.pair(h.s.StartConsoleCode())
+	sub := func() *client {
+		c := h.dial()
+		c.hello()
+		if l, _, _, _ := d.auth(c, p); !l.OK {
+			t.Fatalf("%+v", l.Error)
+		}
+		c.call("console.events", nil)
+		return c
+	}
+	c := sub()
+	nextDesktop(t, c) // the snapshot: idle
+	h.s.SetDesktopAsking(true)
+	if got := nextDesktop(t, c); got != (Desktop{State: DesktopAsking}) {
+		t.Fatalf("a card waits: %+v", got)
+	}
+	h.s.SetDesktopAsking(true) // nothing new
+	c2 := sub()
+	if got := nextDesktop(t, c2); got != (Desktop{State: DesktopAsking}) {
+		t.Errorf("snapshot while asking: %+v", got)
+	}
+	// The card's yes: the mission starts, active.
+	h.s.SetDesktop("m1")
+	if got := nextDesktop(t, c); got != (Desktop{State: DesktopActive, Mission: "m1"}) {
+		t.Fatalf("start: %+v", got)
+	}
+	// A card while it runs (never expected): still active, nothing sent.
+	h.s.SetDesktopAsking(true)
+	h.s.SetDesktopAsking(false)
+	h.s.SetDesktop("")
+	if got := nextDesktop(t, c); got != (Desktop{State: DesktopIdle, Mission: "m1"}) {
+		t.Fatalf("the end, with nothing between: %+v", got)
+	}
+	// A card answered no, or dropped: back to idle.
+	h.s.SetDesktopAsking(true)
+	nextDesktop(t, c)
+	h.s.SetDesktopAsking(false)
+	if got := nextDesktop(t, c); got != (Desktop{State: DesktopIdle}) {
+		t.Errorf("answered: %+v", got)
+	}
+}

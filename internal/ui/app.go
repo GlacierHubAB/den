@@ -555,6 +555,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript()
 		m.restartForGuidance()
 		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
+		m.deskAskSync()
 		if cmd := m.reconcileView(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}

@@ -138,6 +138,12 @@ var (
 			m.api.srv.SetDesktop(mission)
 		}
 	}
+	// deskSetAsking tells the console whether a desktop start card waits.
+	deskSetAsking = func(m *Model, asking bool) {
+		if m.api.srv != nil {
+			m.api.srv.SetDesktopAsking(asking)
+		}
+	}
 )
 
 // deskSnapMsg is the desktop as read for one call.

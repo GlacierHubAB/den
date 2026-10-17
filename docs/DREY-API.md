@@ -959,12 +959,24 @@ While a desktop agent controls the desktop, the console may draw that on
 screen: an outline at the agent's pointer, a glow. Den tells it when, and
 where the pointer is.
 
-- `desktop {state, mission}`, on the console's `console.events`
-  connections: `state` is `active` when a desktop mission starts and
-  `idle` when it ends, however it ends. `mission` is Den's id for it, an
-  opaque string. The snapshot of `console.events` ends with one, `active`
-  or `idle`, where it stands. A Den from before this event sends none, which
-  means idle; ignore a `state` you do not know.
+- `desktop {state, mission?}`, on the console's `console.events`
+  connections:
+  - `asking`: no desktop mission runs, and a desktop start card waits for
+    the human in Den's own window. Den sends no card text; show a line
+    such as "Den asks to control the desktop: answer in Den's window". It
+    comes only from `idle`.
+  - `active`, with `mission`: a desktop mission runs; `mission` is Den's id
+    for it, an opaque string.
+  - `idle`: neither. Sent when a mission ends, however it ends, and when a
+    waiting card is answered no, dropped or expires. After a yes it is
+    `idle` until the mission starts (Den may install hypruse first), then
+    `active`.
+
+  Den never sends `asking` while a mission is `active`: a running mission
+  always ends with `idle` first. The snapshot of `console.events` ends with
+  one desktop event, where it stands. A Den from before this event sends
+  none, which means idle, and a Den from before `asking` never sends it;
+  ignore a `state` you do not know.
 - The pointer: `$XDG_RUNTIME_DIR/den-agent-pointer`, mode 0600, one line,
   `x y` or `x y hidden`, in global logical pixels (the space of `hyprctl
   cursorpos` and the clients' `at`). Den replaces it by an atomic rename
