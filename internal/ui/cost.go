@@ -307,17 +307,31 @@ func (m *Model) budgetCommand(args []string) (note string, isErr bool) {
 func (m Model) costLines(ms *mission.Mission, w int) []string {
 	s := m.st
 	tot := m.missionSpent(ms)
-	if tot.Tokens == 0 && !ms.Budget.Set() {
+	idle := m.idleAgents(ms, m.cardMissions(), time.Now())
+	if tot.Tokens == 0 && !ms.Budget.Set() && len(ms.Merges) == 0 && len(idle) == 0 {
 		return nil
 	}
 	label := func(k string) string { return s.dim.Render(fmt.Sprintf("  %-12s", k)) }
-	out := []string{label("used") + s.fg.Render(tot.line()) + s.dim.Render(" estimate")}
+	var out []string
+	if tot.Tokens > 0 || ms.Budget.Set() {
+		out = append(out, label("used")+s.fg.Render(tot.line())+s.dim.Render(" estimate"))
+	}
 	if ms.Budget.Set() {
 		line := budgetLabel(ms.Budget)
 		if ms.Budget.Waived {
 			line += " · passed, kept going"
 		}
 		out = append(out, label("budget")+s.fg.Render(line))
+	}
+	if len(ms.Merges) > 0 {
+		out = append(out, label("merged")+s.fg.Render(m.mergeLine(ms)))
+	}
+	if len(idle) > 0 {
+		var names []string
+		for _, d := range idle {
+			names = append(names, d.agent.Name+" "+idleText(d.idle))
+		}
+		out = append(out, label("idle")+s.fg.Render(strings.Join(names, ", "))+s.dim.Render(" no turn, nothing open"))
 	}
 	for i := range out {
 		out[i] = ansi.Truncate(out[i], w, "…")

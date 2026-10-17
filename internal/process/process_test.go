@@ -223,6 +223,65 @@ func TestReadTrunkCountsOnlyUncommitted(t *testing.T) {
 	}
 }
 
+// A branch has landed when dev has its tip (a merge or a fast-forward) or
+// every file it changes as it has them (a squash merge); not before.
+func TestLanded(t *testing.T) {
+	main, one, two := repo(t)
+	ctx := context.Background()
+	landed := func(dir, tip string) bool {
+		t.Helper()
+		ok, err := Landed(ctx, dir, tip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	write(t, filepath.Join(one, "a.go"), "a")
+	write(t, filepath.Join(one, "shared.go"), "package p // a\n")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "one")
+	w, err := Read(ctx, "s1", one)
+	if err != nil || len(w.Tip) != 40 {
+		t.Fatalf("tip %q %v", w.Tip, err)
+	}
+	if landed(one, w.Tip) {
+		t.Error("landed before any merge")
+	}
+	// Dev moving on elsewhere changes nothing.
+	write(t, filepath.Join(main, "dev.go"), "d")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "dev")
+	if landed(one, w.Tip) {
+		t.Error("landed on an unrelated dev commit")
+	}
+	// Half of it on dev is not landed; all of it, squashed, is.
+	write(t, filepath.Join(main, "a.go"), "a")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "half")
+	if landed(one, w.Tip) {
+		t.Error("landed with half its files")
+	}
+	sh(t, main, "merge", "-q", "--squash", "a")
+	sh(t, main, "commit", "-q", "-m", "squash")
+	if !landed(one, w.Tip) {
+		t.Error("a squash merge did not land it")
+	}
+	// A real merge lands it too.
+	write(t, filepath.Join(two, "b.go"), "b")
+	sh(t, two, "add", ".")
+	sh(t, two, "commit", "-q", "-m", "two")
+	tip := sh(t, two, "rev-parse", "HEAD")
+	sh(t, main, "merge", "-q", "--no-ff", "-m", "merge b", "b")
+	if !landed(two, tip) {
+		t.Error("a merge did not land it")
+	}
+	for _, bad := range []string{"", "HEAD", "--output=x", tip[:12], strings.ToUpper(tip)} {
+		if _, err := Landed(ctx, two, bad); err == nil {
+			t.Errorf("Landed took %q", bad)
+		}
+	}
+}
+
 // Two branches of one repository that change a file in common overlap,
 // once, on exactly the common files; other repositories never do.
 func TestOverlaps(t *testing.T) {

@@ -153,6 +153,8 @@ type Work struct {
 	// Its commits are not its own work: Files are only what it has not
 	// committed, and Den never nudges it.
 	Trunk bool
+	// Tip is the checkout's HEAD commit, the full id.
+	Tip string
 }
 
 // Read is the Work of the checkout at dir, for key.
@@ -172,6 +174,9 @@ func Read(ctx context.Context, key, dir string) (Work, error) {
 	w := Work{Key: key, Repo: repo, Tree: strings.TrimSpace(string(top)), Files: files, Base: Base(ctx, dir)}
 	if out, err := git(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		w.Branch = strings.TrimSpace(string(out))
+	}
+	if out, err := git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}"); err == nil && isCommitID(strings.TrimSpace(string(out))) {
+		w.Tip = strings.TrimSpace(string(out))
 	}
 	// The oldest commit on the branch since it left Base, by commit time.
 	if out, err := git(ctx, dir, "log", "--format=%ct", "--reverse", "HEAD", "--not", w.Base); err == nil {
@@ -287,4 +292,73 @@ func Overlaps(works []Work) []Overlap {
 		return out[i].B < out[j].B
 	})
 	return out
+}
+
+// Landed reports whether the commit tip, read in the checkout at dir, is in
+// that repository's integration branch: reachable from it, as a merge or a
+// fast-forward leaves it, or with every file it changes since the merge base
+// the same in the integration branch as at tip, as a squash merge leaves
+// it. Den asks only about a tip it saw ahead of the integration branch (a
+// branch with commits of its own): any commit already on it is reachable,
+// and so counts as landed here. A changed file may differ
+// again once later work on the integration branch touches it, so Den checks
+// a branch while it is fresh and remembers what it saw.
+func Landed(ctx context.Context, dir, tip string) (bool, error) {
+	if !isCommitID(tip) {
+		return false, errors.New("not a commit id")
+	}
+	base := Base(ctx, dir)
+	if base == "" {
+		return false, ErrNoBase
+	}
+	if err := gitsafe.Command(ctx, dir, "merge-base", "--is-ancestor", tip, base).Run(); err == nil {
+		return true, nil
+	}
+	mb, err := git(ctx, dir, "merge-base", tip, base)
+	if err != nil {
+		return false, err
+	}
+	changed, err := names(ctx, dir, strings.TrimSpace(string(mb)), tip)
+	if err != nil || len(changed) == 0 {
+		return false, err
+	}
+	differ, err := names(ctx, dir, tip, base)
+	if err != nil {
+		return false, err
+	}
+	for f := range changed {
+		if differ[f] {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// isCommitID is a full commit id as git prints it: 40 or 64 lowercase hex
+// digits, so it can never read as an option or a range.
+func isCommitID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// names are the files that differ between two commits, as a set.
+func names(ctx context.Context, dir, from, to string) (map[string]bool, error) {
+	out, err := git(ctx, dir, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-only", "-z", from, to, "--")
+	if err != nil {
+		return nil, err
+	}
+	set := map[string]bool{}
+	for _, name := range bytes.Split(out, []byte{0}) {
+		if len(name) > 0 {
+			set[string(name)] = true
+		}
+	}
+	return set, nil
 }

@@ -61,11 +61,19 @@ func (m Model) missionInfos() []orch.MissionInfo {
 		return nil
 	}
 	var out []orch.MissionInfo
+	byCard, now := m.cardMissions(), time.Now()
 	for _, ms := range m.missions.All() {
 		if !ms.Live() && ms.State != mission.Proposed {
 			continue
 		}
 		info := orch.MissionInfo{ID: ms.ID, Name: ms.Name, Project: ms.ProjectName, State: string(m.missionState(ms)), Shape: ms.Shape.Label(), Goal: ms.Mission}
+		if s := m.missionSpent(ms); s.Tokens > 0 {
+			info.Cost = s.line()
+		}
+		info.Merged, info.PerMerge = len(ms.Merges), m.perMerge(ms)
+		for _, d := range m.idleAgents(ms, byCard, now) {
+			info.Idle = append(info.Idle, orch.MissionIdle{Owner: d.agent.Name, Peer: d.agent.Session.Name, Minutes: int(d.idle.Minutes())})
+		}
 		if r := ms.CurrentRun(); r != nil {
 			info.Run = r.N
 		}

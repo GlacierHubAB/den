@@ -50,6 +50,9 @@ type teamState struct {
 	// nudged.
 	branches map[string]process.Work
 	nudged   map[string]time.Time
+	// pending are the mission branches' tips to check until they land,
+	// by repository and branch.
+	pending map[string]pendingTip
 }
 
 // teamNudgeEvery is how often a branch that stays over a threshold is
@@ -59,7 +62,10 @@ const teamNudgeEvery = 24 * time.Hour
 // teamTarget is one agent's checkout to read.
 type teamTarget struct{ key, dir string }
 
-type teamScanMsg struct{ works []process.Work }
+type teamScanMsg struct {
+	works  []process.Work
+	landed []string // pending tips that landed
+}
 
 // teamRead reads every target's branch; tests replace it.
 var teamRead = func(targets []teamTarget) []process.Work {
@@ -88,12 +94,23 @@ func (m *Model) teamTick(now time.Time) tea.Cmd {
 		targets = append(targets, teamTarget{key: a.Session.SessionID, dir: a.Session.CWD})
 	}
 	m.team.next = now.Add(teamEvery)
+	// A tip is checked after its agent has gone too: a worktree is often
+	// closed right after its branch merged.
+	checks := m.tipChecks(now)
 	if len(targets) == 0 {
 		m.team.overlaps, m.team.branches = nil, nil
-		return nil
+		if len(checks) == 0 {
+			return nil
+		}
 	}
 	m.team.scanning = true
-	return func() tea.Msg { return teamScanMsg{works: teamRead(targets)} }
+	return func() tea.Msg {
+		var works []process.Work
+		if len(targets) > 0 {
+			works = teamRead(targets)
+		}
+		return teamScanMsg{works: works, landed: teamLanded(checks)}
+	}
 }
 
 // applyTeamScan records the overlaps a read found and tells each new pair,
@@ -155,6 +172,8 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 	}
 	m.team.overlaps = by
+	m.applyLanded(msg.landed, now)
+	m.notePending(msg.works, now)
 	cmds = append(cmds, m.nudgeBranches(msg.works, now))
 	return tea.Batch(cmds...)
 }

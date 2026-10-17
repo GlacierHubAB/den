@@ -797,6 +797,20 @@ fleet. It repeats once a day while the branch stays over. 0 turns either check
 off. Only feature branches are nudged: never the trunk, or a branch with no
 commits of its own.
 
+### Cost per merged change and idle agents
+
+Den counts what a mission's branches land. While an agent on a mission has
+commits of its own, Den remembers its branch's tip. Once that tip is on the
+integration branch, or every file the branch changes reads there as it does at
+the tip (a squash merge), the change counts once for the mission. It counts
+even if the agent's worktree is gone. Den notes each one in its chat. An agent
+on a mission with no turn for 30 minutes (`idle_minutes` under `[team]`, 0
+off), no live card and nothing waiting in the inbox is idle. An open mission
+shows its cost, its merged changes with the cost of each, and its idle agents.
+The orchestrator sees the same in its missions block, and may give an idle
+agent its next sub-goal or close it with close_agent, which asks you as
+before. Den itself closes no one.
+
 ### Permission mode
 
 Every agent Den starts or reopens runs in one permission mode, passed as
@@ -1607,6 +1621,7 @@ log = true                  # den hook appends metadata-only events to ~/.local/
 max_agents = 3              # live agents per repository before spawn_agent needs a stated reason (the orchestrator not counted)
 branch_hours = 24           # nudge an agent whose branch is older than this; 0 off
 behind_max = 30             # nudge an agent whose branch is this many commits behind dev, main or master; 0 off
+idle_minutes = 30           # an agent on a mission with no turn for this long and nothing open is idle to the orchestrator; 0 off
 
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den

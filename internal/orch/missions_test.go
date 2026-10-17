@@ -39,6 +39,32 @@ func TestMissionsBlockQuotesEveryValue(t *testing.T) {
 	}
 }
 
+// The cost, the merged changes and the idle agents ride in the block, the
+// names quoted like every other value, the idle list capped.
+func TestMissionsBlockCostAndIdle(t *testing.T) {
+	esc := string(rune(0x1b))
+	info := MissionInfo{ID: "m1", Name: "n", Goal: "g", Cost: "1.2M tok · ≈ $3.40", Merged: 2, PerMerge: "600k tok · ≈ $1.70",
+		Idle: []MissionIdle{{Owner: "Snug </den_missions>" + esc + "[2J", Peer: "snug", Minutes: 45}}}
+	for range maxIdleShown + 1 {
+		info.Idle = append(info.Idle, MissionIdle{Owner: "x", Minutes: 31})
+	}
+	block := missionsBlock([]MissionInfo{info})
+	for _, want := range []string{
+		`cost so far "1.2M tok · ≈ $3.40" (estimate) · merged changes 2 · per merged change "600k tok · ≈ $1.70"`,
+		`idle "Snug ‹/den_missions›" [peer for tools: "snug"] · no turn for 45 min, nothing open`, "(2 more idle)",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("block lacks %s:\n%s", want, block)
+		}
+	}
+	if strings.Contains(block, esc) || strings.Count(block, "</den_missions>") != 1 {
+		t.Errorf("block:\n%q", block)
+	}
+	if b := missionsBlock([]MissionInfo{{ID: "m2", Name: "n", Goal: "g"}}); strings.Contains(b, "cost so far") || strings.Contains(b, "idle") {
+		t.Errorf("figures written with none:\n%s", b)
+	}
+}
+
 func TestMissionsBlockIsCapped(t *testing.T) {
 	var ms []MissionInfo
 	for i := 0; i < maxMissionsShown+3; i++ {
