@@ -696,7 +696,9 @@ With `api.mirror_conversation = "ask"` (the default), Den asks once per pairing
 on a card in its own window. `"always"` skips the question and `"off"` never
 shows it. Den says in its chat when it starts showing it. `/api mirror off`
 stops it, `/api mirror on` starts it, and unpairing ends it. Only the paired
-dock with its powers receives it, from that moment on.
+dock with its powers receives it, from that moment on. As with
+`console_powers`, anyone who can write Den's config could set `"always"`. The
+chat note each time it starts is how you would notice.
 
 Any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console

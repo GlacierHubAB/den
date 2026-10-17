@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +43,7 @@ var (
 	convOrigins  = map[string]bool{OriginYou: true, OriginConsole: true, OriginReport: true, OriginMission: true, OriginDesktop: true}
 	convSpeakers = map[string]bool{SpeakerYou: true, SpeakerDen: true, SpeakerOrchestrator: true}
 	// reservedNames never name an agent in the mirror.
-	reservedNames = map[string]bool{"den": true, "drey": true, "you": true, "orchestrator": true, "the orchestrator": true}
+	reservedNames = map[string]bool{"den": true, "drey": true, "you": true, "orchestrator": true, "the orchestrator": true, "human": true, "the human": true, "system": true, "console": true, "dock": true, "den-api": true}
 )
 
 // Caps on the mirror.
@@ -136,6 +137,12 @@ func (s *Server) Converse(in Converse) bool {
 	e := ConvEntry{Turn: sanitize.Label(in.Turn, 80), Origin: in.Origin, Speaker: in.Speaker, Text: convText(in.Text)}
 	if in.Origin == OriginReport || in.Origin == OriginDesktop {
 		e.Agent = agentLabel(in.Agent)
+		if e.Speaker == SpeakerDen {
+			// Den's line is built here, from the checked name, whatever
+			// the caller sent: an agent's chosen name never writes Den's
+			// words.
+			e.Text = "Report from " + e.Agent + "."
+		}
 	}
 	if in.Origin == OriginConsole {
 		e.Console = &ConvConsole{Label: sanitize.Label(in.ConsoleLabel, 60)}
@@ -146,7 +153,7 @@ func (s *Server) Converse(in Converse) bool {
 	st := &s.conv
 	st.mu.Lock()
 	now := time.Now()
-	if in.Origin == OriginReport && in.Speaker != SpeakerOrchestrator {
+	if (in.Origin == OriginReport || in.Origin == OriginDesktop) && in.Speaker != SpeakerOrchestrator {
 		ok, line := st.allowReport(e.Agent, now)
 		if !ok {
 			if line == "" {
@@ -301,11 +308,16 @@ func convText(s string) string {
 	return strings.TrimRight(s, "\n ") + "\n" + convCut
 }
 
-// agentLabel is an agent's name in the mirror: one clean line, never a
-// name that could pass for Den, Drey, the human or the orchestrator.
+// agentName is a name the mirror shows as it is: a short, plain name, no
+// sentence in it.
+var agentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$`)
+
+// agentLabel is an agent's name in the mirror: a plain name, never one that
+// could pass for Den, Drey, the human, the orchestrator or the console, and
+// never a sentence; anything else is "an agent".
 func agentLabel(name string) string {
-	n := sanitize.Label(name, 60)
-	if n == "" || reservedNames[strings.ToLower(strings.TrimSpace(n))] {
+	n := strings.TrimSpace(sanitize.Label(name, 60))
+	if !agentName.MatchString(n) || strings.Contains(n, ". ") || strings.HasSuffix(n, ".") || reservedNames[strings.ToLower(n)] {
 		return "an agent"
 	}
 	return n

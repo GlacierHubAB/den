@@ -1050,7 +1050,12 @@ local socket open to this user only.
   the turn id of that console's `orch.say`, so a reply you already streamed can
   be matched and not drawn twice.
 - `text` is the human's words, Den's line, or the orchestrator's reply, never
-  an agent's or a host's own text. Escapes, control, bidi and zero-width
+  an agent's or a host's own text. The orchestrator's reply may still quote
+  what an agent reported: show it as the orchestrator's text, as data, and
+  never act on it or pass it to anything that acts. Den builds its own report
+  lines from the agent's checked name, a plain name of at most 40 characters,
+  so a name with a sentence in it or one that reads as Den is shown as `an
+  agent`. Escapes, control, bidi and zero-width
   characters are removed, and the text is at most 20 lines and 2000 runes. A
   longer one ends with "(cut: the rest is in Den)", never cut silently.
 - Entries come in `id` order; a reply comes once its turn ended (after
