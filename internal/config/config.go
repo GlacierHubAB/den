@@ -230,6 +230,15 @@ func DesktopApps() map[string]map[string]string {
 	return out
 }
 
+// DesktopAgentView reports whether a desktop agent runs in a terminal of
+// its own that shows its steps ([desktop] agent_view = true). Off by
+// default: the agent runs with no window, and its steps show in Den's
+// chat and the dock.
+func DesktopAgentView() bool {
+	v, err := strconv.ParseBool(parse(Path())["desktop.agent_view"])
+	return err == nil && v
+}
+
 // Task mission limits when the [desktop] section sets none.
 const (
 	DefaultTaskMinutes = 20

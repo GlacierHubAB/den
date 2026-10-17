@@ -437,6 +437,17 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 	dm.Claude = claude
 	missionID := dm.ID
 	launch := desktop.AgentLaunch{SessionID: dm.SessionID, Mission: dm.ID, Den: den, Socket: sock, Settings: settings, Model: p.offer.in.Model, Prompt: prompt, Claude: claude, Task: task}
+	if !deskShowView() {
+		// No window of its own: Den's child, its steps in Den's chat, and
+		// ended with Den by a parent-death signal (P4).
+		launch.Name = "desktop"
+		argv, err := desktop.AgentArgv(launch)
+		if err != nil {
+			m.endDeskMission(dm, err.Error())
+			return fail(err.Error())
+		}
+		return m.startHeadless(p.itemID, missionID, p.focused, p.offer.in.Dir, filepath.Join(p.dir, "agent.log"), argv)
+	}
 	// The agent's view stops it when this Den ends (P4).
 	owner := ""
 	if start := deskStart(os.Getpid()); start != "" {

@@ -327,7 +327,7 @@ func (m *Model) deskPurge(now time.Time) bool {
 		}
 		dm.purged = true
 		files, _ := filepath.Glob(filepath.Join(dm.Dir, "crop-*.png"))
-		for _, f := range append(files, filepath.Join(dm.Dir, "journal.ndjson"), filepath.Join(dm.Dir, "desktop.log")) {
+		for _, f := range append(files, filepath.Join(dm.Dir, "journal.ndjson"), filepath.Join(dm.Dir, "desktop.log"), filepath.Join(dm.Dir, "agent.log")) {
 			os.Remove(f)
 		}
 	}

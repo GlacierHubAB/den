@@ -75,6 +75,11 @@ func missionRig(t *testing.T, joined bool) (*Model, *[]spawn.Request, *[]string)
 	oldClaude, oldSame := deskClaude, deskSameExe
 	t.Cleanup(func() { deskClaude, deskSameExe = oldClaude, oldSame })
 	deskClaude = func() (string, error) { return "/opt/claude/claude", nil }
+	// These tests drive the agent view ([desktop] agent_view = true);
+	// desktop_headless_test.go drives the default, no window.
+	oldView := deskShowView
+	t.Cleanup(func() { deskShowView = oldView })
+	deskShowView = func() bool { return true }
 	deskSameExe = func(pid int, path string) bool { return pid == 500 && path == "/opt/claude/claude" }
 	_ = moved
 	return &m, &spawned, &closed

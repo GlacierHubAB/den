@@ -2,6 +2,8 @@ package desktop
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,5 +124,26 @@ func TestTaskSteps(t *testing.T) {
 	b := TaskBrief("open mail", []string{"sign in to Gmail"})
 	if !strings.Contains(b, "Steps only the human does") || !strings.Contains(b, "- sign in to Gmail\n") || !strings.HasSuffix(b, "\nopen mail") {
 		t.Fatalf("brief:\n%s", b)
+	}
+}
+
+// A task's proxy writes where the pointer is as soon as it starts, so the
+// overlay's outline shows even when the agent never moves the pointer
+// (the human's first task only typed); a restricted mission's does not.
+func TestProxyShowsThePointerAtATasksStart(t *testing.T) {
+	for _, task := range []bool{true, false} {
+		file := filepath.Join(t.TempDir(), "den-agent-pointer")
+		send, _, _ := rigProxy(t, policyGate(), func(p *Proxy) {
+			p.Task, p.Pointer = task, file
+			p.Cursor = func() (float64, float64, bool) { return 640, 360, true }
+		})
+		send("initialize", map[string]any{})
+		raw, err := os.ReadFile(file)
+		switch {
+		case task && (err != nil || strings.TrimSpace(string(raw)) != "640 360"):
+			t.Errorf("task: pointer file %q %v", raw, err)
+		case !task && err == nil:
+			t.Errorf("a restricted mission wrote the pointer at start: %q", raw)
+		}
 	}
 }

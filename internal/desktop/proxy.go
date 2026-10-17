@@ -101,6 +101,13 @@ func (p *Proxy) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go p.readChild()
+	// A task may never move the pointer (typing, launching): the
+	// overlay's outline shows where the pointer is from the start.
+	if p.Task && p.Cursor != nil {
+		if x, y, ok := p.Cursor(); ok {
+			p.writePointer(x, y, false)
+		}
+	}
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	sc := bufio.NewScanner(p.Client)
