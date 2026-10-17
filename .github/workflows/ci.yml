@@ -75,6 +75,14 @@ jobs:
           go mod verify
       - name: THIRD_PARTY_LICENSES is up to date
         run: go run ./internal/tools/thirdparty -check
+      # The release ships these two targets (see `make release`); CI otherwise
+      # builds only for the runner's amd64, so a call that arm64 lacks
+      # (syscall.Dup2) would first fail in the release build.
+      - name: builds for every release target
+        run: |
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build ./...
+          done
       - name: actionlint
         run: |
           curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" \

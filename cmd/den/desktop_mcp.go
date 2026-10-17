@@ -84,8 +84,9 @@ func runDesktopMCP(args []string) {
 			child.Stderr = filter
 			logTo = f
 			// A crash anywhere in the proxy writes its trace to fd 2:
-			// into the log too, where it can be read.
-			syscall.Dup2(int(f.Fd()), 2)
+			// into the log too, where it can be read. Dup3, not Dup2:
+			// linux/arm64 has no dup2 system call.
+			syscall.Dup3(int(f.Fd()), 2, 0)
 			defer func() {
 				if r := recover(); r != nil {
 					fmt.Fprintf(f, "%s den desktop-mcp: panic: %v\n", time.Now().Format(time.RFC3339), r)
