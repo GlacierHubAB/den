@@ -211,6 +211,37 @@ func (m Model) sender() sendFunc {
 	}
 }
 
+// sendDen delivers Den's own automatic message; tests replace it.
+var sendDen = peer.SendFromDen
+
+// denSender is how Den's own checks (overlaps, branch nudges) message a
+// local agent: framed as Den's, never as the human's words. They run on
+// local agents only.
+func (m Model) denSender() sendFunc {
+	return func(a fleet.Agent, text string) error {
+		if a.Host != "" {
+			return fmt.Errorf("%s is on another host; Den's checks message local agents only", a.Name)
+		}
+		return sendDen(a.Session.Socket, text)
+	}
+}
+
+// sendUsage delivers the usage stop; tests replace it.
+var sendUsage = peer.SendUsage
+
+// usageSender is how the usage stop reaches agents: on this machine framed
+// as Den enforcing the human's limit (binding, never typed by the human);
+// on a host through the host's own delivery, as any message.
+func (m Model) usageSender() sendFunc {
+	remote := m.sender()
+	return func(a fleet.Agent, text string) error {
+		if a.Host != "" {
+			return remote(a, text)
+		}
+		return sendUsage(a.Session.Socket, text)
+	}
+}
+
 // say shows a short message on the top bar without leaving compose mode.
 func (m Model) say(text string, isErr bool) (tea.Model, tea.Cmd) {
 	m.flash, m.flashErr = text, isErr

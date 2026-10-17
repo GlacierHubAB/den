@@ -199,6 +199,30 @@ func TestReadBranchAge(t *testing.T) {
 	}
 }
 
+// A checkout of the trunk itself (behind, with commits dev lacks) counts
+// only what it has not committed; a feature branch counts its commits.
+func TestReadTrunkCountsOnlyUncommitted(t *testing.T) {
+	_, one, two := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "README.md"), "docs")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "docs")
+	if w, _ := Read(ctx, "s1", one); w.Trunk || !reflect.DeepEqual(w.Files, []string{"README.md"}) {
+		t.Errorf("feature branch: %+v", w)
+	}
+	sh(t, two, "checkout", "-q", "-b", "main")
+	write(t, filepath.Join(two, "release.txt"), "r")
+	sh(t, two, "add", ".")
+	sh(t, two, "commit", "-q", "-m", "release")
+	write(t, filepath.Join(two, "wip.go"), "w")
+	if w, _ := Read(ctx, "s2", two); !w.Trunk || !reflect.DeepEqual(w.Files, []string{"wip.go"}) {
+		t.Errorf("trunk: %+v", w)
+	}
+	if IsTrunk(ctx, two, "feature") || !IsTrunk(ctx, two, "dev") || IsTrunk(ctx, two, "HEAD") {
+		t.Error("trunk names")
+	}
+}
+
 // Two branches of one repository that change a file in common overlap,
 // once, on exactly the common files; other repositories never do.
 func TestOverlaps(t *testing.T) {

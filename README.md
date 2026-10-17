@@ -771,7 +771,10 @@ whom, so they agree who goes first or how to split the work, and the
 orchestrator, which sees the overlap in its view of the fleet, decides. Den
 notes it in its chat and never stops anyone over it. An agent hears it at most
 once every ten minutes. Den runs nothing the checkout's own git config names
-while it reads.
+while it reads. On the trunk (`main`, `dev`, `master`, or origin's default
+branch) only what is uncommitted counts. These messages, and the branch nudges
+below, reach the agent framed as Den's own ("Automatic message from Den … your
+human did not type it"), never as words you typed.
 
 ### Team size
 
@@ -791,7 +794,8 @@ than a day (from its oldest commit since it left the integration branch;
 (`behind_max`), Den tells the agent to merge or rebase soon, notes it in its
 chat (the dock sees it too), and the orchestrator sees it in its view of the
 fleet. It repeats once a day while the branch stays over. 0 turns either check
-off.
+off. Only feature branches are nudged: never the trunk, or a branch with no
+commits of its own.
 
 ### Permission mode
 
@@ -1542,9 +1546,11 @@ At 80% and again at 90% Den puts a card in the inbox and sends a desktop
 notification, once each per weekly reset. Nothing stops on its own unless you
 set `stop_percent` under `[usage]` (off by default). Then, at that share,
 or at once with `/usage stop`, Den sends `USAGE STOP` to every agent on this
-machine through the same path as a message you send, and to agents on hosts
-whose policy lets Den act on them (the others are listed as not reachable for
-stop). The header turns red (`usage stop`), and no agent is started (by the
+machine, and to agents on hosts whose policy lets Den act on them (the others
+are listed as not reachable for stop). On this machine it arrives framed as
+Den enforcing your rule: an automatic message from Den, binding because the
+stop is yours, naming the share you set, and never claiming you typed it. On
+a host it still arrives as that host's Den delivers any message. The header turns red (`usage stop`), and no agent is started (by the
 orchestrator or by a lead) and no mission run goes until you let the fleet go
 on: `/usage resume` puts the question in the inbox, and only your `Ctrl+Y`
 there answers it. Den's cost estimate never triggers a stop; Claude Code's
