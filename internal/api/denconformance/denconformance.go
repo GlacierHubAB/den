@@ -514,6 +514,13 @@ func Run(t *testing.T, o Options) {
 		if len(hist) < 2 || hist[0].Role != "user" {
 			t.Errorf("history must hold the user's turn and the reply: %+v", hist)
 		}
+		// Den's chat has two roles, and the host shows no other: a message of another role is a
+		// message a page must not draw as a turn (a tool, a system line).
+		for _, m := range hist {
+			if m.Role != "user" && m.Role != "orchestrator" {
+				t.Errorf("chat.history holds a message of role %q: Den's roles are user and orchestrator", m.Role)
+			}
+		}
 	})
 
 	run("mission.list", func(t *testing.T, ctx context.Context, cl *client) {

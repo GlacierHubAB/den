@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Exported at Drey commit `369bb84ea07da747f8c1acb66b357af9f3f3905b`, package SHA-256 `1f00a4f83a080b5f4a8220dac7ef4ae0be882e30e7d5118bd512fd1d7ecde34e`.
+Package SHA-256 `142805e2064377221ecb667bdcb092692413fe433a3e4e7d588636101eb872f6`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -109,10 +109,51 @@ What only the server's own test can do is passed in:
   a `console` event of kind `powers` with `on` (equal to `console.auth`'s
   `powers` on that connection, when it sent one), a `god` event with `on`,
   then `mode` and `view`, each optional and in that order; a new card
-  raised after must come after them. One-shot console kinds (`paired`,
-  `reconnected`) pass. `fleet.events` must start with the whole fleet. A
-  kind the suite does not know may join the snapshot later (such as a
-  desktop state); it is let pass.
+  raised after must come after them. The snapshot then ends with a
+  `desktop` event (`state` idle, asking or active, with `mission` for
+  active) and a `mirror` event (`state` off, asking or on, with `since` in
+  RFC3339 UTC for on only), each once and in that order. One-shot console
+  kinds (`paired`, `reconnected`) pass. `fleet.events` must start with the
+  whole fleet. A kind the suite does not know may join the snapshot later;
+  it is let pass.
+- The conversation, mirror and doing shapes are checked strictly: a field
+  the document does not list fails (`mirror`, an entry and its `console`,
+  `doing`); origin and speaker must be a pair the document allows (`den`
+  speaks only for origin report, mission or desktop, `you` only for origin
+  you or console, `orchestrator` for any); `agent` is required for report
+  and desktop and for no other origin, one plain line of at most 64 runes,
+  never Den, Drey, You or Orchestrator in any case; `turn` only with origin
+  console, as t- and 32 hex digits; text and `doing.text` hold none of
+  these characters: a control (a newline only in an entry's text), DEL, a C1
+  control, U+2028 and U+2029, U+061C, the zero-width and bidi characters
+  (U+200B to U+200F, U+202A to U+202E, U+2060 to U+2069, U+FEFF), U+FFF9 to
+  U+FFFB, and the tag characters U+E0000 to U+E007F; a text has at most 19
+  newlines (20 lines) and 2000 runes before Den's cut mark; `doing.text` is
+  one line of at most 80 runes. `conversation.history` with a limit of 201
+  is refused with `bad_request` or answers at most 200 entries.
+- `console mirror`: `conversation.history` is `forbidden` before any
+  proof; on a proved console it is `forbidden` while the snapshot's mirror
+  state is not on, and `{entries}`, newest first (ids falling), while it
+  is on, each entry `{id, at, turn?, origin, speaker, agent?, console?,
+  text}` with origin and speaker from their closed sets, `console` only
+  with origin console, `agent` only with report or desktop, and text of at
+  most 20 lines and 2000 runes with no control, bidi or zero-width
+  character. With `Mirror` set, the subtest switches the mirror on and
+  off, wants a `mirror` event for each change, and checks the history
+  after each.
+- `Mirror` switches the server's mirror (state on, asking or off) as the
+  human's answer in the server does. Left nil, `console mirror` only reads
+  the snapshot's state. `Conversation` adds one entry of the human's
+  conversation while the mirror is on; with both set, `conversation entry`
+  wants a live `conversation` event whose entry is also in the history
+  with the same id and text. Left nil, it is skipped.
+- `fleet doing`: an app connection's fleet carries every agent's `doing`
+  empty; the proved console's own connection carries it, `text` empty or
+  at most 80 runes and starting with one of Den's lead phrases (waiting for
+  you, stalled, idle, editing, writing, reading, running, searching,
+  fetching, delegating, working on, working), `at` in RFC3339, and at least
+  one agent non-empty. Skipped when the server has no agent.
+- `chat.history` holds only Den's two roles, user and orchestrator.
 - Console events of a kind a subtest is not waiting for (Den's `paired`,
   `reconnected`, `powers`) are skipped, as a client ignores kinds it does
   not know.
