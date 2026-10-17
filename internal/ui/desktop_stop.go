@@ -212,7 +212,11 @@ func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 	m.endDeskMission(dm, why)
 	dm.save()
 	deskNotify(notify.Note{Summary: "Desktop control ended", Body: why})
-	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop mission ended: " + why + "; " + r.Line() + ". Its journal, screenshots and log are deleted in 10 minutes; /desktop keep keeps them.", at: time.Now()}))
+	ended := "Desktop mission ended: " + why + "; " + r.Line() + ". Its journal, screenshots and log are deleted in 10 minutes; /desktop keep keeps them."
+	if dm.stepsHidden > 0 {
+		ended += fmt.Sprintf(" (%d more steps of the agent's not shown.)", dm.stepsHidden)
+	}
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: ended, at: time.Now()}))
 	m.refresh()
 	if m.orch.proc == nil {
 		return nil

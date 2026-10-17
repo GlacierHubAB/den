@@ -1004,7 +1004,7 @@ shows the plan, each app, and what the agent will and will not have. On
 itself, and starts the agent. The agent has only the desktop tools: no
 shell, files, web, messages, app launching, keybinds or clipboard. It runs
 with no window of its own, so nothing opens in front of the work: what it
-says and does shows in Den's chat (and the dock), and Drey's overlay shows
+says and does shows in Den's chat, and Drey's overlay shows
 it at work on the screen. To watch it in a terminal of its own instead, set
 `agent_view = true` in the `[desktop]` section; `Ctrl+C` there stops it.
 

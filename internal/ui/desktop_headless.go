@@ -22,7 +22,7 @@ import (
 // A desktop agent runs with no window by default: no terminal opens in
 // front of the work. Den starts it as a child of its own, and shows its
 // steps (its words and tool calls, as the agent view would print them,
-// sanitised) in Den's chat, which the dock shows too; Drey's overlay shows
+// sanitised) in Den's own chat, which den-api never serves; Drey's overlay shows
 // it at work on the desktop. It ends with Den (a parent-death signal), and
 // /desktop stop or den desktop stop ends it at once. [desktop] agent_view =
 // true brings the terminal back.
@@ -124,16 +124,37 @@ func waitDeskLine(mission string, lines chan string) tea.Cmd {
 	}
 }
 
+// Limits on a headless agent's steps in Den's chat: they are the agent's
+// own words and can carry screen text, so an agent printing in a loop
+// cannot flood the chat or the dock.
+const (
+	deskStepsPerMinute = 30
+	deskStepRunes      = 200
+)
+
 // showDeskLine puts a step in Den's chat: the agent's words and its tool
 // calls, and a failed call; a call that went fine says no more than the
-// call already did. It keeps reading until the stream ends, so the agent
+// call already did. Each is cut to deskStepRunes, and at most
+// deskStepsPerMinute show; the rest are counted, and the mission's end
+// says how many. It keeps reading until the stream ends, so the agent
 // never blocks on its output.
 func (m *Model) showDeskLine(msg deskLineMsg) tea.Cmd {
 	l := msg.line
-	if dm := m.deskMission(msg.mission); dm != nil && dm.Ended == "" && strings.TrimSpace(l) != "" && !strings.HasPrefix(l, "  ✓ ") {
-		m.addUnthreaded(chatEntry{role: "note", text: "desktop agent: " + sanitize.Line(l), at: time.Now()})
-		m.refresh()
+	dm := m.deskMission(msg.mission)
+	if dm == nil || dm.Ended != "" || strings.TrimSpace(l) == "" || strings.HasPrefix(l, "  ✓ ") {
+		return waitDeskLine(msg.mission, msg.lines)
 	}
+	now := time.Now()
+	if now.Sub(dm.stepsSince) >= time.Minute {
+		dm.stepsSince, dm.stepsShown = now, 0
+	}
+	if dm.stepsShown >= deskStepsPerMinute {
+		dm.stepsHidden++
+		return waitDeskLine(msg.mission, msg.lines)
+	}
+	dm.stepsShown++
+	m.addUnthreaded(chatEntry{role: "note", text: "desktop agent: " + sanitize.Label(l, deskStepRunes), at: now})
+	m.refresh()
 	return waitDeskLine(msg.mission, msg.lines)
 }
 

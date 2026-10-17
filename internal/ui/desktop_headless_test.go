@@ -138,3 +138,37 @@ func TestDesktopHeadlessStartFails(t *testing.T) {
 		t.Fatalf("a stranger process: asker %+v, ran %q", dv, *ran)
 	}
 }
+
+// The agent's steps are its own words and may carry screen text: an agent
+// printing in a loop shows at most deskStepsPerMinute a minute, each cut
+// to deskStepRunes, and the mission's end says how many were left out.
+func TestDesktopStepsAreCapped(t *testing.T) {
+	m, _, _ := taskMission(t)
+	lines := make(chan string)
+	long := strings.Repeat("screen text ", 60)
+	for i := 0; i < deskStepsPerMinute+10; i++ {
+		m.showDeskLine(deskLineMsg{mission: "m1", line: "  " + long, lines: lines})
+	}
+	shown := 0
+	for _, e := range m.orch.chat {
+		if strings.HasPrefix(e.text, "desktop agent: ") {
+			shown++
+			if n := len([]rune(strings.TrimPrefix(e.text, "desktop agent: "))); n > deskStepRunes {
+				t.Fatalf("a step of %d runes was shown", n)
+			}
+		}
+	}
+	if shown != deskStepsPerMinute {
+		t.Fatalf("%d steps shown, want %d", shown, deskStepsPerMinute)
+	}
+	m.finishDeskMission(m.deskMission("m1"), "the agent finished")
+	ended := false
+	for _, e := range m.orch.chat {
+		if strings.Contains(e.text, "Desktop mission ended") && strings.Contains(e.text, "(10 more steps of the agent's not shown.)") {
+			ended = true
+		}
+	}
+	if !ended {
+		t.Error("the end does not say how many steps were left out")
+	}
+}

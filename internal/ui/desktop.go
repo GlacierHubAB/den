@@ -63,15 +63,19 @@ type deskMission struct {
 	// A task mission: view is the agent view's address, placed says it is
 	// recorded (no call is answered before), and the limits from the
 	// human's config with the calls forwarded so far.
-	view                string
-	viewPID             int  // the agent view's process: the agent's own terminal
-	viewChecked         bool // the agent was found running under it
-	placed              bool
-	limitActions        int
-	actions             int
-	deadline            time.Time
-	checking, pinWarned bool
-	checkedAt           time.Time
+	view        string
+	viewPID     int  // the agent view's process: the agent's own terminal
+	viewChecked bool // the agent was found running under it
+	placed      bool
+	// A headless agent's steps in the chat (desktop_headless.go): shown
+	// in the current minute, since when, and those left out.
+	stepsShown, stepsHidden int
+	stepsSince              time.Time
+	limitActions            int
+	actions                 int
+	deadline                time.Time
+	checking, pinWarned     bool
+	checkedAt               time.Time
 }
 
 // deskToken lets the proxy forward the rest of an allowed typed text.
