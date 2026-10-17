@@ -72,6 +72,13 @@ type ConsoleOptions struct {
 	// LongCard raises a pending card like Card's whose body has more than
 	// ten lines, for the read timer. Left nil, "card read timer" is skipped.
 	LongCard func(ctx context.Context) (id string, err error)
+	// Mirror makes the server show the conversation in the console (state "on"), ask the human in
+	// its own window (the server's card; "asking") or not show it ("off"), as the human's answer
+	// in the server does. Left nil, the subtests that change the mirror are skipped.
+	Mirror func(ctx context.Context, state string) error
+	// Conversation adds one entry of the human's conversation (the human types a line in the server's
+	// own input, say) while the mirror is on. Left nil, "conversation entry" is skipped.
+	Conversation func(ctx context.Context) error
 	// View says the server switches views (view.show, view.hide) and can
 	// identify its own window, so "view.hide keeps a waiting card" runs:
 	// with a card from Card waiting, a hide leaves Den's own window up,
@@ -135,7 +142,7 @@ type ConsoleOptions struct {
 var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
-	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console.events snapshot", "view.hide keeps a waiting card", "console orch.say", "console connections",
+	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console.events snapshot", "console mirror", "conversation entry", "fleet doing", "view.hide keeps a waiting card", "console orch.say", "console connections",
 	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.request after an unpairing", "console.unpair unproved", "console.unpair all",
 	"unpaired cause self", "unpaired cause replaced", "unpaired cause proofs", "unpaired cause intruders",
 	"unpaired cause burst", "unpaired cause den", "unpaired: not at end of file", "unpaired cause other", "console cooldown",
@@ -848,8 +855,9 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Fatalf("the snapshot after powers: %s %s, want god with on", name, data)
 		}
 
-		// mode and view may follow, in that order; then the changes. A
-		// change now (a new card) must come after them.
+		// mode and view may follow, in that order, then the desktop and the
+		// mirror (each once, in that order, last in the snapshot); then the
+		// changes. A change now (a new card) must come after them.
 		id, err := co.Card(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -861,7 +869,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 				}
 			}
 		}()
-		sawView := false
+		sawView, sawDesktop, sawMirror := false, false, false
 	changes:
 		for {
 			name, data = next()
@@ -880,6 +888,24 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 					t.Fatalf("the snapshot's view: %s", data)
 				}
 				sawView = true
+			case "desktop":
+				var d struct {
+					State   string `json:"state"`
+					Mission string `json:"mission"`
+				}
+				_ = json.Unmarshal(data, &d)
+				if sawDesktop || sawMirror || (d.State != "idle" && d.State != "asking" && d.State != "active") || (d.State == "active" && d.Mission == "") {
+					t.Fatalf("the snapshot's desktop event (once, before the mirror; idle, asking or active with a mission): %s", data)
+				}
+				sawDesktop = true
+			case "mirror":
+				if sawMirror || !sawDesktop {
+					t.Fatalf("the snapshot's mirror event must come once, after the desktop event: %s", data)
+				}
+				if err := checkMirrorEvent(data); err != nil {
+					t.Fatalf("the snapshot's mirror event: %v: %s", err, data)
+				}
+				sawMirror = true
 			case "card":
 				var cd struct {
 					ID     string `json:"id"`
@@ -890,6 +916,9 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 					t.Fatalf("a card new for %s after the snapshot, before the new card %s", cd.ID, id)
 				}
 				if cd.ID == id && cd.Change == "new" {
+					if !sawDesktop || !sawMirror {
+						t.Fatalf("the new card came before the snapshot's desktop and mirror events (desktop %v, mirror %v)", sawDesktop, sawMirror)
+					}
 					break changes
 				}
 			}
@@ -923,6 +952,208 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 				t.Fatalf("fleet.events' first event: %s %s, want the whole fleet", l.Event, l.Data)
 			}
 			break
+		}
+	})
+
+	// The conversation mirror (DREY-API.md, "Conversation mirror"): the mirror event says whether
+	// the conversation is shown in this console; conversation.history answers forbidden while it
+	// is not, and the entries, newest first, while it is.
+	run("console mirror", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		bare, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bare.close()
+		wantCode(t, "conversation.history before any proof", bare.call(ctx, "conversation.history", map[string]int{"limit": 10}, nil), codeForbidden)
+
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		state := mirrorEventAfter(t, c, "")
+		checkHistory := func(state string) {
+			t.Helper()
+			var res struct {
+				Entries []json.RawMessage `json:"entries"`
+			}
+			err := c.call(ctx, "conversation.history", map[string]int{"limit": 200}, &res)
+			if state != "on" {
+				wantCode(t, "conversation.history while the mirror is "+state, err, codeForbidden)
+				return
+			}
+			if err != nil {
+				t.Fatalf("conversation.history while the mirror is on: %v", err)
+			}
+			if len(res.Entries) > 200 {
+				t.Errorf("conversation.history gave %d entries, the most is 200", len(res.Entries))
+			}
+			var last int64 = 1<<62 - 1
+			for _, raw := range res.Entries {
+				e, err := checkConversationEntry(raw)
+				if err != nil {
+					t.Errorf("history entry %s: %v", raw, err)
+					continue
+				}
+				if e.ID >= last {
+					t.Errorf("history is newest first: id %d after %d", e.ID, last)
+				}
+				last = e.ID
+			}
+		}
+		checkHistory(state)
+		if state == "on" {
+			checkLimit(t, ctx, c)
+		}
+		if co.Mirror == nil {
+			return
+		}
+		// each switch is to a state the server is not in (a server sends an event on a change only)
+		seq := []string{"on", "off", "on", "off"}
+		if state == "on" {
+			seq = []string{"off", "on", "off"}
+		}
+		for _, want := range seq {
+			if err := co.Mirror(ctx, want); err != nil {
+				t.Fatalf("setting the mirror %s: %v", want, err)
+			}
+			if got := mirrorEventAfter(t, c, want); got != want {
+				t.Fatalf("the mirror event after switching to %s says %s", want, got)
+			}
+			checkHistory(want)
+			if want == "on" {
+				checkLimit(t, ctx, c)
+			}
+		}
+	})
+
+	run("conversation entry", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil, co != nil && co.Mirror != nil && co.Conversation != nil)
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		if err := co.Mirror(ctx, "on"); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = co.Mirror(ctx, "off") }()
+		if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		if got := mirrorEventAfter(t, c, "on"); got != "on" {
+			t.Fatalf("the snapshot says the mirror is %s after it was switched on", got)
+		}
+		if err := co.Conversation(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var live conversationEntry
+		for {
+			l, err := c.read()
+			if err != nil {
+				t.Fatalf("waiting for a conversation event: %v", err)
+			}
+			if l.Event != "conversation" {
+				continue
+			}
+			if live, err = checkConversationEntry(l.Data); err != nil {
+				t.Fatalf("the conversation event %s: %v", l.Data, err)
+			}
+			break
+		}
+		var res struct {
+			Entries []json.RawMessage `json:"entries"`
+		}
+		if err := c.call(ctx, "conversation.history", map[string]int{"limit": 200}, &res); err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, raw := range res.Entries {
+			if e, err := checkConversationEntry(raw); err == nil && e.ID == live.ID {
+				found = true
+				if e.Text != live.Text {
+					t.Errorf("entry %d: history %q, event %q", e.ID, e.Text, live.Text)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the entry %d of the event is not in conversation.history", live.ID)
+		}
+	})
+
+	// doing (DREY-API.md, the fleet): what an agent is doing now, in Den's words, only for the paired
+	// console's own proved connections; every other connection gets it empty.
+	run("fleet doing", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		type agentDoing struct {
+			ID    string          `json:"id"`
+			Doing json.RawMessage `json:"doing"`
+		}
+		var app struct {
+			Agents []agentDoing `json:"agents"`
+		}
+		if err := cl.call(ctx, "fleet.snapshot", nil, &app); err != nil {
+			t.Fatal(err)
+		}
+		for _, a := range app.Agents {
+			if len(a.Doing) == 0 {
+				continue
+			}
+			if text, err := checkDoing(a.Doing); err != nil {
+				t.Errorf("an app connection's doing for %s: %v", a.ID, err)
+			} else if text != "" {
+				t.Errorf("an app connection got doing %q for %s: only the paired console's connections do", text, a.ID)
+			}
+		}
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		var con struct {
+			Agents []agentDoing `json:"agents"`
+		}
+		if err := c.call(ctx, "fleet.snapshot", nil, &con); err != nil {
+			t.Fatal(err)
+		}
+		if len(con.Agents) == 0 {
+			t.Skip("the server has no agent to say what it is doing")
+		}
+		any := false
+		for _, a := range con.Agents {
+			if len(a.Doing) == 0 {
+				t.Errorf("agent %s has no doing on the console's connection", a.ID)
+				continue
+			}
+			text, err := checkDoing(a.Doing)
+			if err != nil {
+				t.Errorf("agent %s: %v", a.ID, err)
+			}
+			if text != "" {
+				any = true
+			}
+		}
+		if !any {
+			t.Error("no agent has a doing on the console's own connection")
 		}
 	})
 
@@ -2020,4 +2251,258 @@ func ConsoleThiefHelper(t *testing.T) {
 		}
 	}
 	fmt.Println("thief refused")
+}
+
+// The conversation mirror's wire shapes (DREY-API.md). They are checked strictly: a field the
+// document does not list, a value outside a closed set, or a character a screen must not get fails.
+
+var (
+	mirrorStates = map[string]bool{"off": true, "asking": true, "on": true}
+	// origin and speaker, as Den's text pairs them: `you` speaks the human's words (origin you or console),
+	// `den` only Den's own fixed lines (a report, a mission run, a desktop agent's report), `orchestrator` its
+	// completed reply to any of them.
+	convPairs = map[string]map[string]bool{
+		"you":     {"you": true, "orchestrator": true},
+		"console": {"you": true, "orchestrator": true},
+		"report":  {"den": true, "orchestrator": true},
+		"mission": {"den": true, "orchestrator": true},
+		"desktop": {"den": true, "orchestrator": true},
+	}
+	reservedAgents = []string{"den", "drey", "you", "orchestrator"}
+	doingLeadWords = []string{"waiting for you", "stalled", "idle", "editing", "writing", "reading", "running", "searching", "fetching", "delegating", "working on", "working"}
+)
+
+// cutMark is how Den ends a text it cut.
+const cutMark = "(cut: the rest is in Den)"
+
+// strictDecode decodes JSON into v and refuses any field v does not have, and trailing data.
+func strictDecode(raw json.RawMessage, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if dec.More() {
+		return errors.New("trailing data")
+	}
+	return nil
+}
+
+// badRune reports a character a screen must not be given: a control (a newline only when
+// newline is true), DEL, a C1 control, the line and paragraph separators, an Arabic letter mark, every bidi and
+// zero-width or invisible format character, the interlinear annotation characters, and the tag characters.
+func badRune(r rune, newline bool) bool {
+	switch {
+	case r == '\n':
+		return !newline
+	case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f:
+		return true
+	case r == 0x061c, r >= 0x200b && r <= 0x200f, r == 0x2028, r == 0x2029, r >= 0x202a && r <= 0x202e, r >= 0x2060 && r <= 0x2069, r == 0xfeff:
+		return true
+	case r >= 0xfff9 && r <= 0xfffb, r >= 0xe0000 && r <= 0xe007f:
+		return true
+	}
+	return false
+}
+
+// checkLine: one line, at most max runes, no character badRune refuses.
+func checkLine(s string, max int) error {
+	if utf8.RuneCountInString(s) > max {
+		return fmt.Errorf("%d runes, the most is %d", utf8.RuneCountInString(s), max)
+	}
+	if !utf8.ValidString(s) {
+		return errors.New("not valid UTF-8")
+	}
+	for _, r := range s {
+		if badRune(r, false) {
+			return fmt.Errorf("the character U+%04X", r)
+		}
+	}
+	return nil
+}
+
+// checkMirrorEvent: `mirror {state, since?}`, nothing else, state off, asking or on, and since (RFC3339 UTC) with on only.
+func checkMirrorEvent(data json.RawMessage) error {
+	var d struct {
+		State string `json:"state"`
+		Since string `json:"since"`
+	}
+	if err := strictDecode(data, &d); err != nil {
+		return err
+	}
+	if !mirrorStates[d.State] {
+		return fmt.Errorf("state %q is not off, asking or on", d.State)
+	}
+	if d.State == "on" {
+		if tm, err := time.Parse(time.RFC3339, d.Since); err != nil || !strings.HasSuffix(d.Since, "Z") || tm.Location() != time.UTC {
+			return fmt.Errorf("on needs since in RFC3339 UTC, got %q", d.Since)
+		}
+	} else if d.Since != "" {
+		return fmt.Errorf("since belongs to on only, got it with %s", d.State)
+	}
+	return nil
+}
+
+// mirrorEventAfter reads events on a subscribed connection until a mirror event, and returns its
+// state. want is the state a change is waiting for ("" for the snapshot's: the first); events
+// of other states are let pass while waiting for it.
+func mirrorEventAfter(t *testing.T, c *conn, want string) string {
+	t.Helper()
+	for {
+		l, err := c.read()
+		if err != nil {
+			t.Fatalf("waiting for a mirror event: %v", err)
+		}
+		if l.Event != "mirror" {
+			continue
+		}
+		if err := checkMirrorEvent(l.Data); err != nil {
+			t.Fatalf("the mirror event %s: %v", l.Data, err)
+		}
+		var d struct {
+			State string `json:"state"`
+		}
+		_ = json.Unmarshal(l.Data, &d)
+		if want == "" || d.State == want {
+			return d.State
+		}
+	}
+}
+
+type conversationEntry struct {
+	ID   int64
+	Text string
+}
+
+// checkConversationEntry: `{id, at, turn?, origin, speaker, agent?, console?, text}` and no other field. id above 0,
+// at RFC3339 UTC, origin and speaker a pair Den's text allows (speaker den never speaks for origin you or console),
+// console {label, self} exactly with origin console (and nothing else in it), agent exactly with report or desktop
+// (one plain line of at most 64 runes, never Den, Drey, You or Orchestrator), text of at most 20 lines and 2000
+// runes (Den's cut mark aside) with none of badRune's characters.
+func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
+	var e struct {
+		ID      int64  `json:"id"`
+		At      string `json:"at"`
+		Turn    string `json:"turn"`
+		Origin  string `json:"origin"`
+		Speaker string `json:"speaker"`
+		Agent   string `json:"agent"`
+		Console *struct {
+			Label string `json:"label"`
+			Self  *bool  `json:"self"`
+		} `json:"console"`
+		Text string `json:"text"`
+	}
+	if err := strictDecode(raw, &e); err != nil {
+		return conversationEntry{}, err
+	}
+	speakers, known := convPairs[e.Origin]
+	switch {
+	case e.ID <= 0:
+		return conversationEntry{}, fmt.Errorf("id %d", e.ID)
+	case !known:
+		return conversationEntry{}, fmt.Errorf("origin %q is not one of you, console, report, mission, desktop", e.Origin)
+	case !speakers[e.Speaker]:
+		return conversationEntry{}, fmt.Errorf("speaker %q does not go with origin %s", e.Speaker, e.Origin)
+	case e.Origin == "console" && (e.Console == nil || e.Console.Self == nil):
+		return conversationEntry{}, errors.New("origin console without console {label, self}")
+	case e.Origin != "console" && e.Console != nil:
+		return conversationEntry{}, errors.New("console with an origin other than console")
+	case e.Origin != "console" && e.Turn != "":
+		return conversationEntry{}, errors.New("turn with an origin other than console")
+	case (e.Origin == "report" || e.Origin == "desktop") && e.Agent == "":
+		return conversationEntry{}, fmt.Errorf("origin %s without its agent", e.Origin)
+	case e.Origin != "report" && e.Origin != "desktop" && e.Agent != "":
+		return conversationEntry{}, fmt.Errorf("agent with origin %s", e.Origin)
+	}
+	if e.Agent != "" {
+		if strings.TrimSpace(e.Agent) == "" {
+			return conversationEntry{}, fmt.Errorf("agent %q is only spaces", e.Agent)
+		}
+		if err := checkLine(e.Agent, 64); err != nil {
+			return conversationEntry{}, fmt.Errorf("agent %q: %w", e.Agent, err)
+		}
+		for _, r := range reservedAgents {
+			if strings.EqualFold(e.Agent, r) {
+				return conversationEntry{}, fmt.Errorf("agent %q is a reserved name: Den shows it as an agent", e.Agent)
+			}
+		}
+	}
+	if e.Console != nil {
+		if strings.TrimSpace(e.Console.Label) == "" {
+			return conversationEntry{}, fmt.Errorf("console label %q is empty or only spaces", e.Console.Label)
+		}
+		if err := checkLine(e.Console.Label, 64); err != nil {
+			return conversationEntry{}, fmt.Errorf("console label %q: %w", e.Console.Label, err)
+		}
+	}
+	if e.Turn != "" && !regexp.MustCompile(`^t-[0-9a-f]{32}$`).MatchString(e.Turn) {
+		return conversationEntry{}, fmt.Errorf("turn %q is not t- and 32 hex digits", e.Turn)
+	}
+	if tm, err := time.Parse(time.RFC3339, e.At); err != nil || tm.Location() != time.UTC {
+		return conversationEntry{}, fmt.Errorf("at %q is not RFC3339 UTC", e.At)
+	}
+	// Den's cut mark ends a text it cut, on a line of its own or not; the limits are for the words before it
+	text := strings.TrimSuffix(e.Text, cutMark)
+	if len(text) != len(e.Text) {
+		text = strings.TrimSuffix(text, "\n")
+	}
+	switch {
+	case strings.TrimSpace(text) == "":
+		return conversationEntry{}, errors.New("empty text")
+	case utf8.RuneCountInString(text) > 2000:
+		return conversationEntry{}, fmt.Errorf("text of %d runes, the most is 2000", utf8.RuneCountInString(text))
+	case strings.Count(text, "\n") >= 20:
+		return conversationEntry{}, fmt.Errorf("text of %d lines, the most is 20", strings.Count(text, "\n")+1)
+	case !utf8.ValidString(e.Text):
+		return conversationEntry{}, errors.New("text is not valid UTF-8")
+	}
+	for _, r := range e.Text {
+		if badRune(r, true) {
+			return conversationEntry{}, fmt.Errorf("text holds the character U+%04X", r)
+		}
+	}
+	return conversationEntry{ID: e.ID, Text: e.Text}, nil
+}
+
+// checkDoing: `doing {text, at}` and no other field; text one plain line of at most 80 runes, empty or starting with one of
+// Den's lead phrases; at RFC3339.
+func checkDoing(raw json.RawMessage) (text string, err error) {
+	var d struct {
+		Text string `json:"text"`
+		At   string `json:"at"`
+	}
+	if err := strictDecode(raw, &d); err != nil {
+		return "", err
+	}
+	if _, err := time.Parse(time.RFC3339, d.At); err != nil {
+		return "", fmt.Errorf("doing.at %q is not RFC3339", d.At)
+	}
+	if err := checkLine(d.Text, 80); err != nil {
+		return "", fmt.Errorf("doing.text %q: %w", d.Text, err)
+	}
+	if d.Text == "" {
+		return "", nil
+	}
+	for _, l := range doingLeadWords {
+		if d.Text == l || strings.HasPrefix(d.Text, l+" ") || strings.HasPrefix(d.Text, l+":") {
+			return d.Text, nil
+		}
+	}
+	return "", fmt.Errorf("doing.text %q does not start with one of Den's lead phrases", d.Text)
+}
+
+// checkLimit: a history limit above 200 is refused (bad_request) or capped at 200 entries, never more.
+func checkLimit(t *testing.T, ctx context.Context, c *conn) {
+	t.Helper()
+	var res struct {
+		Entries []json.RawMessage `json:"entries"`
+	}
+	err := c.call(ctx, "conversation.history", map[string]int{"limit": 201}, &res)
+	switch {
+	case err == nil && len(res.Entries) > 200:
+		t.Errorf("conversation.history with limit 201 gave %d entries: the most is 200", len(res.Entries))
+	case err != nil && codeOf(err) != "bad_request":
+		t.Errorf("conversation.history with limit 201: want entries (at most 200) or bad_request, got %v", err)
+	}
 }

@@ -225,10 +225,40 @@ func TestDreyInterface(t *testing.T) {
 			})
 			return code, err
 		},
-		Confirm:    func(ctx context.Context) error { return answerConsole(ctx, 'y') },
-		Decline:    func(ctx context.Context) error { return answerConsole(ctx, 'n') },
-		Card:       func(ctx context.Context) (string, error) { return permissionCard(ctx, 1) },
-		LongCard:   func(ctx context.Context) (string, error) { return permissionCard(ctx, 12) },
+		Confirm:  func(ctx context.Context) error { return answerConsole(ctx, 'y') },
+		Decline:  func(ctx context.Context) error { return answerConsole(ctx, 'n') },
+		Card:     func(ctx context.Context) (string, error) { return permissionCard(ctx, 1) },
+		LongCard: func(ctx context.Context) (string, error) { return permissionCard(ctx, 12) },
+		// The mirror as the human switches it in Den: /api mirror on|off,
+		// and the ask card mirror_conversation = "ask" puts up.
+		Mirror: func(ctx context.Context, state string) error {
+			return onModel(ctx, func() error {
+				switch state {
+				case "on":
+					if note, isErr := m.mirrorCommand("on"); isErr {
+						return errors.New(note)
+					}
+				case "off":
+					m.mirrorCommand("off")
+				case "asking":
+					m.mirrorCommand("off")
+					m.cfg.API.MirrorConversation = "ask"
+					m.mirror.asked, m.mirror.declined = "", ""
+					m.mirrorTick()
+				default:
+					return errors.New("no such mirror state: " + state)
+				}
+				m.syncMirrorAsking()
+				return nil
+			})
+		},
+		// A line the human types in Den, as the mirror hears it.
+		Conversation: func(ctx context.Context) error {
+			return onModel(ctx, func() error {
+				m.mirrorTurn(originHuman, "a line typed in Den")
+				return nil
+			})
+		},
 		ThiefTest:  "TestConsoleThief",
 		SocketPath: path,
 		View:       true,
