@@ -30,9 +30,8 @@ var DoingLeads = []string{
 
 // Caps on a Doing text.
 const (
-	doingMax   = 80
-	targetMax  = 40
-	doingEvery = 10 * time.Second // the least time between two changes
+	doingMax  = 80
+	targetMax = 40
 )
 
 // doingText is an agent's Doing text from Den's facts. A remote agent's
@@ -62,7 +61,8 @@ func doingText(a fleet.Agent, state, waiting string) string {
 		}
 		break
 	}
-	if task := cleanTask(a.Task()); task != "" {
+	// Only the task label: a window title is the model's own words.
+	if task := cleanTask(a.Labels.Task); task != "" {
 		return clip("working on " + task)
 	}
 	return "working"
@@ -101,6 +101,14 @@ func withTarget(lead, target string) string {
 // plainWord is a sub-command: lower-case letters and hyphens only.
 var plainWord = regexp.MustCompile(`^[a-z][a-z-]{0,19}$`)
 
+// subCommands are the programs whose second word is a sub-command worth
+// showing ("go test"); for any other, the program alone ("echo").
+var subCommands = map[string]bool{
+	"git": true, "go": true, "npm": true, "pnpm": true, "yarn": true, "bun": true, "cargo": true,
+	"make": true, "docker": true, "podman": true, "kubectl": true, "systemctl": true, "gh": true,
+	"pip": true, "uv": true, "poetry": true, "mise": true, "den": true, "terraform": true,
+}
+
 // fileName is a base name that says nothing beyond itself.
 var fileName = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,40}$`)
 
@@ -128,7 +136,7 @@ func commandWords(cmd string) string {
 	if prog == "" || strings.Contains(f[0], "=") {
 		return ""
 	}
-	if len(f) > 1 && plainWord.MatchString(f[1]) {
+	if len(f) > 1 && subCommands[prog] && plainWord.MatchString(f[1]) {
 		return prog + " " + f[1]
 	}
 	return prog
@@ -159,6 +167,10 @@ func clip(s string) string {
 	}
 	return string([]rune(s)[:doingMax-1]) + "…"
 }
+
+// doingEvery is the least time between two changes of an agent's Doing;
+// tests shorten it.
+var doingEvery = 10 * time.Second
 
 // doingSeen is the Doing Den last published for an agent.
 type doingSeen struct {

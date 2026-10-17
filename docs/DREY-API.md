@@ -165,14 +165,17 @@ no transcript, and no request body outside `inbox.body`.
   `plan`, `auto`, `dontAsk`, `bypassPermissions`, or `unknown` for a value
   Den does not know); it is absent when none reported one. The fleet's
   `mode` is the same as hello's. `doing` `{text, at}` says what an agent is doing
-  now, in at most 80 runes, from Den's own facts. Its state comes first: `waiting
+  now, in at most 80 runes, from Den's own facts. Only the paired console's
+  connections get it; every other app gets it empty (`{"text": "", "at":
+  "0001-01-01T00:00:00Z"}`), and a change in it alone sends such an app nothing. Its state comes first: `waiting
   for you` (with `: permission`, `: question` or `: plan`), `stalled` or `idle`.
   For a working agent of this machine, its latest tool comes next: `editing`,
   `writing` or `reading` with the file's base name, `running` with the command's
-  name and a plain sub-command (`running go test`), or `searching`, `fetching` or
-  `delegating`. With none of those, it is `working on` and the agent's task
-  label, with every word that could be a path, address or id dropped, or just
-  `working`. An agent on another machine only ever shows its state or `working`:
+  name, and a plain sub-command for tools known to take one (`running go test`,
+  but `running echo`), or `searching`, `fetching` or `delegating`. With none of
+  those, it is `working on` and the task label Den was given for the agent (never
+  its window title), with every word that could be a path, address or id dropped,
+  or just `working`. An agent on another machine only ever shows its state or `working`:
   its host's text is never used. Every `text` starts with one of these lead
   phrases, a closed set: `waiting for you`, `stalled`, `idle`, `editing`,
   `writing`, `reading`, `running`, `searching`, `fetching`, `delegating`,

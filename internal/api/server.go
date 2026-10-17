@@ -123,8 +123,11 @@ type Server struct {
 	mu        sync.Mutex
 	conns     map[*conn]bool
 	lastFleet []byte
-	doing     map[string]doingSeen // each agent's published Doing, under mu
-	seenExe   map[string]bool
+	// lastAppFleet is the fleet as an app other than the console sees it,
+	// with no doing.
+	lastAppFleet []byte
+	doing        map[string]doingSeen // each agent's published Doing, under mu
+	seenExe      map[string]bool
 	// connectNotes are when programs Den cannot identify earned a connect
 	// note (firstConnect).
 	connectNotes []time.Time
@@ -515,10 +518,17 @@ func (s *Server) Publish(v *View) {
 		oldCards = old.Cards
 	}
 	s.pushCards(oldCards, v.Cards, v.Settled)
+	// Whether the fleet changed, as the console sees it and as any other
+	// app does (no doing): a change in doing alone tells an app nothing,
+	// not even by when its fleet event comes.
 	fleetRaw, _ := json.Marshal(v.Fleet)
+	appFleet := v.Fleet
+	appFleet.Agents = blankDoing(v.Fleet.Agents)
+	appRaw, _ := json.Marshal(appFleet)
 	s.mu.Lock()
 	fleetChanged := !bytes.Equal(fleetRaw, s.lastFleet)
-	s.lastFleet = fleetRaw
+	appChanged := !bytes.Equal(appRaw, s.lastAppFleet)
+	s.lastFleet, s.lastAppFleet = fleetRaw, appRaw
 	conns := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
 		conns = append(conns, c)
@@ -545,8 +555,10 @@ func (s *Server) Publish(v *View) {
 	}
 	modeChanged := v.Mode.Global != "" && (old == nil || old.Mode != v.Mode)
 	for _, c := range conns {
-		if fleetChanged && c.subscribed(EventFleet) {
-			c.pushFleet(s.fleetFor(c))
+		if c.subscribed(EventFleet) {
+			if console := s.isConsole(c); console && fleetChanged || !console && appChanged {
+				c.pushFleet(s.fleetFor(c))
+			}
 		}
 		if modeChanged && c.subscribed(EventConsole) {
 			c.push(Event{Event: EventMode, Data: v.Mode}, true)
@@ -588,7 +600,36 @@ func (s *Server) fleetFor(c *conn) Fleet {
 	scope := c.scope
 	c.mu.Unlock()
 	f.Asks = s.lane.Asks(scope)
+	if !s.isConsole(c) {
+		f.Agents = blankDoing(f.Agents)
+	}
 	return f
+}
+
+// isConsole reports whether c is a connection of the paired console, by
+// its proof (c.console is set only once it proved itself), never by
+// anything the client sends.
+func (s *Server) isConsole(c *conn) bool {
+	c.mu.Lock()
+	id := c.console
+	c.mu.Unlock()
+	if id == "" {
+		return false
+	}
+	s.con.mu.Lock()
+	defer s.con.mu.Unlock()
+	return s.con.cur != nil && s.con.cur.ID == id
+}
+
+// blankDoing is agents with every Doing empty, on a copy: the shared view
+// is never written. What an agent is doing goes to the console alone.
+func blankDoing(agents []Agent) []Agent {
+	out := make([]Agent, len(agents))
+	copy(out, agents)
+	for i := range out {
+		out[i].Doing = Doing{}
+	}
+	return out
 }
 
 func (s *Server) accept(b *bound) {

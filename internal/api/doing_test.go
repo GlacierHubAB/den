@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,8 @@ func TestDoingText(t *testing.T) {
 		{"go test", StateWorking, "", toolAgent("Bash", "go test -count=1 ./internal/ui/"), "running go test"},
 		{"git by path", StateWorking, "", toolAgent("Bash", "/usr/bin/git push origin main"), "running git push"},
 		{"url", StateWorking, "", toolAgent("Bash", "curl https://example.com/?token=abc"), "running curl"},
+		{"no sub-command", StateWorking, "", toolAgent("Bash", "echo hunter"), "running echo"},
+		{"title is not used", StateWorking, "", fleet.Agent{Title: "model words"}, "working"},
 		{"assignment", StateWorking, "", toolAgent("Bash", "API_KEY=sk-123 deploy"), "running"},
 		{"odd name", StateWorking, "", toolAgent("Edit", "/x/evil\x1b[2J"+string(rune(0x202e))+".go"), "editing"},
 		{"search", StateWorking, "", toolAgent("Grep", "password"), "searching"},
@@ -59,6 +62,65 @@ func TestDoingText(t *testing.T) {
 	long := doingText(fleet.Agent{Labels: badge.Labels{Task: strings.Repeat("word ", 40)}}, StateWorking, "")
 	if len([]rune(long)) != doingMax || !strings.HasSuffix(long, "…") {
 		t.Errorf("not capped: %q", long)
+	}
+}
+
+// What an agent is doing goes to the console alone: another app's fleet
+// carries none, a change in it alone pushes that app nothing, and the
+// shared view keeps it for the console.
+func TestDoingOnlyForTheConsole(t *testing.T) {
+	old := doingEvery
+	doingEvery = 0
+	t.Cleanup(func() { doingEvery = old })
+	h, con := provedConsole(t)
+	app := h.dial()
+	app.hello()
+	// One Taken for every publish, so that only what changes in the agent
+	// can make a fleet event.
+	taken := time.Now()
+	agent := func(state fleet.Status, tool, code string) Snapshot {
+		a := fleet.Agent{Name: "Mossy Lemur", Status: state, Tail: []transcript.Entry{{Kind: "tool", Tool: tool, Code: code}}}
+		a.Session.SessionID = "s1"
+		return Snapshot{Taken: taken, View: ViewAgent, Agents: []fleet.Agent{a}}
+	}
+	fleetEvent := func(c *client) Fleet {
+		t.Helper()
+		for {
+			l := c.next()
+			if l.Event == EventFleet {
+				var f Fleet
+				json.Unmarshal(l.Data, &f)
+				return f
+			}
+		}
+	}
+	h.s.Publish(Project(agent(fleet.Working, "Edit", "/src/team.go")))
+	for _, c := range []*client{con, app} {
+		if l := c.call("fleet.events", nil); !l.OK {
+			t.Fatal(l.Error)
+		}
+	}
+	if f := fleetEvent(con); len(f.Agents) != 1 || f.Agents[0].Doing.Text != "editing team.go" {
+		t.Fatalf("console: %+v", f.Agents)
+	}
+	if f := fleetEvent(app); len(f.Agents) != 1 || f.Agents[0].Doing.Text != "" || !f.Agents[0].Doing.At.IsZero() {
+		t.Fatalf("app: %+v", f.Agents)
+	}
+	// Only doing changes: the console hears it, the app does not; the next
+	// thing the app hears is the state change after it.
+	h.s.Publish(Project(agent(fleet.Working, "Read", "/src/b.go")))
+	if f := fleetEvent(con); f.Agents[0].Doing.Text != "reading b.go" {
+		t.Errorf("console after the change: %+v", f.Agents[0].Doing)
+	}
+	h.s.Publish(Project(agent(fleet.Idle, "Read", "/src/b.go")))
+	if f := fleetEvent(app); f.Agents[0].State != StateIdle || f.Agents[0].Doing.Text != "" {
+		t.Errorf("app heard %+v first", f.Agents[0])
+	}
+	if v := h.s.view.Load(); v.Fleet.Agents[0].Doing.Text != "idle" {
+		t.Errorf("the shared view lost doing: %+v", v.Fleet.Agents[0].Doing)
+	}
+	if f := app.call("fleet.snapshot", nil); strings.Contains(string(f.Result), `"text":"idle"`) {
+		t.Errorf("snapshot to an app: %s", f.Result)
 	}
 }
 
