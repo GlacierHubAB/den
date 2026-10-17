@@ -687,6 +687,17 @@ powers card after a change; with `api.console_powers = "always"` it gets
 them with no question at all. Your levers are `/api lock`, `/api unpair`, and
 God mode staying off.
 
+The dock can also show your whole orchestrator conversation:
+- what you type in Den, and the orchestrator's replies;
+- its answers to agents' reports and mission runs. An agent's own report text
+  is never shown, only Den's line saying who reported.
+
+With `api.mirror_conversation = "ask"` (the default), Den asks once per pairing
+on a card in its own window. `"always"` skips the question and `"off"` never
+shows it. Den says in its chat when it starts showing it. `/api mirror off`
+stops it, `/api mirror on` starts it, and unpairing ends it. Only the paired
+dock with its powers receives it, from that moment on.
+
 Any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
 answers for you, within the limits above, so pair only an app you trust,
@@ -1628,6 +1639,7 @@ idle_minutes = 30           # an agent on a mission with no turn for this long a
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
 console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
+mirror_conversation = "ask" # show your orchestrator conversation in the paired dock: "ask" (a card once per pairing), "always" or "off"
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

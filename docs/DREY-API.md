@@ -782,8 +782,9 @@ Each connection proves once, at its start:
 | `console.request` | `{public_key, pages_sha256?}` | `{pairing, den_public_key, console, powers}`, at once |
 | `console.reconnect` | `{public_key, nonce, pages_sha256?}`, before `hello` too | `{pairing, den_sig, powers}`, at once |
 | `console.auth` | `{pairing, nonce, sig}` | `{paired, sig, god, view?, powers}` |
-| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view, the desktop), then `console`, `god`, `mode`, `card`, `view` and `desktop` events as they change |
+| `console.events` | | `{ok, cards}`, `cards` the ids of every card waiting; then the snapshot (see Events: the console, a `card` event for each waiting card, its powers, God mode, the mode, the view, the desktop), then `console`, `god`, `mode`, `card`, `view` and `desktop` events as they change, and `conversation` entries while the conversation is shown here |
 | `console.unpair` | `{}` or `{all: true}` | `{ok, unpaired}` |
+| `conversation.history` | `{limit?}`, at most 200 | `{entries}`, newest first: the conversation entries since it was shown in this console (see Conversation mirror); `forbidden` while it is not |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
 | `cmd.list` | | `[{name, usage, help, dock}]` |
@@ -865,6 +866,11 @@ same way. A later kind that carries state joins the snapshot.
   mode); in the snapshot, the mode in force, once Den has one.
 - `desktop {state, mission}`: a desktop agent's mission started or ended
   (see Desktop overlay); in the snapshot, whether one runs now.
+- `conversation {id, at, turn?, origin, speaker, agent?, console?, text}`: one
+  entry of the human's orchestrator conversation, as Den shows it. Den sends
+  these only while the conversation is shown in this console (see Conversation
+  mirror). They are not part of the snapshot: backfill with
+  `conversation.history`.
 - After a re-dial, `cards` in the `console.events` reply is the whole set
   of cards waiting: one you knew that is not in it is gone. The `new`
   events that follow are those cards.
@@ -1014,6 +1020,46 @@ where the pointer is.
   the console's is ever let through: a click under the dock or any other
   window of yours is refused. Draw the glow on the bottom layer, which
   never blocks a click.
+
+### Conversation mirror
+
+The human's orchestrator conversation can be shown in the console, so that its
+command bar reads like Den's own input. It is the human's choice, made in Den:
+`[api] mirror_conversation` is `ask` (a card in Den's own window once per
+pairing, the default), `always` or `off`, and `/api mirror off` or unpairing
+stops it. Den says in its chat when it starts. Only the paired console with its
+powers receives it, and every console is on this machine: den-api.sock is a
+local socket open to this user only.
+
+- Each `conversation` entry is `{id, at, turn?, origin, speaker, agent?,
+  console?, text}`. `id` rises with each entry and is the same in
+  `conversation.history`, so merge the backfill and the live entries by it.
+  `at` is RFC3339 UTC, Den's clock.
+- `origin` (a closed set): `you` (the human typed it in Den), `console` (a
+  console or app sent the turn), `report` (an agent reported), `mission` (Den
+  drives a mission run), `desktop` (a desktop mission's agent reported).
+- `speaker` (a closed set): `you`, `den` (Den's own fixed lines only: "Report
+  from Mossy Lemur.", a mission run's line, "More reports from … are in Den."),
+  or `orchestrator` (its completed reply).
+- `agent` is set for `report` and `desktop`, from Den's fleet, never from the
+  report. It is never `Den`, `Drey`, `You` or `orchestrator` (those show as `an
+  agent`).
+- `console` `{label, self}` is set for origin `console`. `self` is true only on
+  the connection of the console that sent that turn: show plain "you" for
+  origin `you` and for `self`, else "you, from" and the label. `turn` is then
+  the turn id of that console's `orch.say`, so a reply you already streamed can
+  be matched and not drawn twice.
+- `text` is the human's words, Den's line, or the orchestrator's reply, never
+  an agent's or a host's own text. Escapes, control, bidi and zero-width
+  characters are removed, and the text is at most 20 lines and 2000 runes. A
+  longer one ends with "(cut: the rest is in Den)", never cut silently.
+- Entries come in `id` order; a reply comes once its turn ended (after
+  `orch.say`'s `done` for a console's own turn). Reports are limited to 6 a
+  minute per agent and 30 a minute in all; past that, one Den line says more
+  are in Den.
+- `conversation.history` returns only entries since the conversation was last
+  shown in this console, at most 200, newest first. Drop an unknown field, and
+  skip an entry whose origin or speaker you do not know.
 
 ### Console limits
 

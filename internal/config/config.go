@@ -99,6 +99,10 @@ type Config struct {
 		// its powers: "unchanged" (the program, unit and pins Den last gave
 		// them to in this run) or "always".
 		ConsolePowers string
+		// MirrorConversation is whether the paired console with its powers
+		// shows the human's orchestrator conversation: "ask" (a card in
+		// Den once per pairing), "always" or "off".
+		MirrorConversation string
 	}
 	// On holds a shell command per event kind, run by Den with the event's
 	// metadata. Empty runs nothing.
@@ -152,7 +156,7 @@ func Defaults() Config {
 	c.Stuck.ToolFailures = 3
 	c.Events.Log = true
 	c.API.AskBudgetUSD = 2
-	c.API.ConsolePowers = "unchanged"
+	c.API.ConsolePowers, c.API.MirrorConversation = "unchanged", "ask"
 	c.Team.MaxAgents = 3
 	c.Team.BranchHours, c.Team.BehindMax, c.Team.IdleMinutes = 24, 30, 30
 	return c
@@ -357,6 +361,9 @@ func (c *Config) apply(kv map[string]string) {
 	}
 	if v := kv["api.console_powers"]; v == "always" || v == "unchanged" {
 		c.API.ConsolePowers = v
+	}
+	if v := kv["api.mirror_conversation"]; v == "ask" || v == "always" || v == "off" {
+		c.API.MirrorConversation = v
 	}
 	for key, dst := range map[string]*string{
 		"session_start": &c.On.SessionStart, "session_end": &c.On.SessionEnd, "turn_start": &c.On.TurnStart,
@@ -604,6 +611,7 @@ weekly_usd = 0              # none; a weekly $ budget to estimate usage against 
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
 console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
+mirror_conversation = "ask" # show your orchestrator conversation in the paired dock: "ask" (a card once per pairing), "always" or "off"
 
 # A shell command per event kind, run by Den with the event's metadata as
 # DEN_* variables and as JSON on stdin. Nothing runs unless you add one.

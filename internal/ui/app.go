@@ -160,6 +160,7 @@ type Model struct {
 	desktopInstalls map[string]desktop.Plan    // hypruse install questions in the inbox, by item id
 	desk            deskState                  // desktop missions
 	team            teamState                  // the small-team process: overlapping branches
+	mirror          mirrorState                // the conversation mirror (conversation.go)
 	sends           map[string]askedSend       // den send questions in the inbox, by item id
 	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
@@ -554,6 +555,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		m.refreshTranscript()
 		m.restartForGuidance()
+		m.mirrorTick()
 		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
 		m.deskAskSync()
 		if cmd := m.reconcileView(); cmd != nil {
@@ -1555,6 +1557,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.MissionCriteria {
 		return m.decideMissionCriteria(it, verb)
+	}
+	if it.Kind == inbox.MirrorAsk {
+		return m.decideMirror(it, verb)
 	}
 	if it.Kind == inbox.MissionDone {
 		return m.decideMissionDone(it, verb)

@@ -383,6 +383,13 @@ func (m Model) apiCommand(args []string) (tea.Model, tea.Cmd) {
 		sub = strings.ToLower(args[0])
 	}
 	switch sub {
+	case "mirror":
+		arg := ""
+		if len(args) > 1 {
+			arg = strings.ToLower(args[1])
+		}
+		note, isErr := m.mirrorCommand(arg)
+		return m.say(note, isErr)
 	case "console":
 		return m.consoleCommand()
 	case "lock":
