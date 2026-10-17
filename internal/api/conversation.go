@@ -103,6 +103,10 @@ type convState struct {
 	// what the console last heard of the mirror's state.
 	askingID string
 	heard    mirrorTold
+	// pushMu orders every mirror state a console is sent, live or in the
+	// snapshot, so that the newest always arrives last. It is taken before
+	// con.mu and mu, never while either is held.
+	pushMu sync.Mutex
 }
 
 type convStored struct {
@@ -175,6 +179,8 @@ func (s *Server) mirrorFor(id string) MirrorState {
 // pushMirror sends the current console's connections the mirror's state
 // when it changed since they last heard it.
 func (s *Server) pushMirror() {
+	s.conv.pushMu.Lock()
+	defer s.conv.pushMu.Unlock()
 	s.con.mu.Lock()
 	id := ""
 	if s.con.cur != nil {
