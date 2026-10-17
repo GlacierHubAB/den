@@ -647,7 +647,7 @@ func TestDesktopStartCardIsAnnounced(t *testing.T) {
 func TestHeadlessTaskIsNeverPinned(t *testing.T) {
 	m, _, _ := taskMission(t)
 	dm := m.deskMission("m1")
-	dm.view = ""
+	dm.view, dm.headless = "", true
 	dm.Protected = map[string]bool{"0xden": true}
 	pinned := false
 	deskKeepOnTop = func(string, bool, bool) error { pinned = true; return errors.New("no window address") }
@@ -666,5 +666,73 @@ func TestHeadlessTaskIsNeverPinned(t *testing.T) {
 	}
 	if dm.Ended != "" {
 		t.Fatalf("the task ended: %q", dm.Ended)
+	}
+}
+
+// Only a mission headless by design skips the pin: a windowed one whose
+// view went missing still tries, and says it could not.
+func TestWindowedTaskWithoutItsViewStillSaysSo(t *testing.T) {
+	m, _, _ := taskMission(t)
+	dm := m.deskMission("m1")
+	dm.view = ""
+	dm.Protected = map[string]bool{"0xden": true}
+	deskKeepOnTop = func(string, bool, bool) error { return errors.New("no window address") }
+	for _, msg := range runBatch(m.deskTaskCheck(dm)) {
+		if c, ok := msg.(deskTaskCheckMsg); ok {
+			runBatch(m.finishTaskCheck(c))
+		}
+	}
+	noted := false
+	for _, e := range m.orch.chat {
+		if strings.Contains(e.text, "keep the agent view on top") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Fatal("a windowed mission lost its view's pin without a word")
+	}
+}
+
+// After the human declines a start card, Den takes no new desktop request
+// for a while: plainly refused, no card, no notification.
+func TestDesktopCooldownAfterADecline(t *testing.T) {
+	m, _, _, _, _ := taskRig(t)
+	notes := 0
+	deskNotify = func(notify.Note) { notes++ }
+	runBatch(m.handleRequest(taskReq("open x.com")))
+	*m = answerDeskCard(t, *m, desktopCard(*m, inbox.DesktopMission), "deny")
+	notes = 0
+	r := taskReq("open x.com")
+	runBatch(m.handleRequest(r))
+	if dv, done := r.Decided(); !done || dv.Behavior != "deny" || !strings.Contains(dv.Message, "declined a desktop mission a moment ago") {
+		t.Fatalf("a request right after a decline: %+v", dv)
+	}
+	if desktopCard(*m, inbox.DesktopMission) != nil || notes != 0 {
+		t.Fatalf("a card or a notification during the cooldown (%d)", notes)
+	}
+	m.desk.declinedAt = time.Now().Add(-deskCooldown - time.Second)
+	r = taskReq("open x.com")
+	runBatch(m.handleRequest(r))
+	if desktopCard(*m, inbox.DesktopMission) == nil {
+		t.Fatal("no card after the cooldown")
+	}
+}
+
+// The card says where the request came from as Den saw it, not only as
+// the asker names itself.
+func TestDesktopCardSaysWhereItCameFrom(t *testing.T) {
+	m, _, _, _, _ := taskRig(t)
+	runBatch(m.handleRequest(taskReq("open x.com")))
+	it := desktopCard(*m, inbox.DesktopMission)
+	if it == nil {
+		t.Fatal("no card")
+	}
+	body := strings.Join(it.Body, "\n")
+	if !strings.Contains(body, "Asked by another program") || !strings.Contains(body, "as Den checked") || strings.Contains(body, "den-orchestrator") {
+		t.Fatalf("card shows the asker's own claim, or not Den's check:\n%s", body)
+	}
+	// Answered only in Den's window: never the dock, never God mode.
+	if dockMayAnswer(it) || !godTTYKinds[inbox.DesktopMission] {
+		t.Fatal("the dock or God mode may answer the start card")
 	}
 }

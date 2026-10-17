@@ -65,6 +65,7 @@ type deskMission struct {
 	// human's config with the calls forwarded so far.
 	view        string
 	viewPID     int  // the agent view's process: the agent's own terminal
+	headless    bool // started with no window of its own, by design
 	viewChecked bool // the agent was found running under it
 	placed      bool
 	// A headless agent's steps in the chat (desktop_headless.go): shown
@@ -103,6 +104,9 @@ type deskState struct {
 	// install runs: the question stays open until the install's own result
 	// settles it, which is what answers `den install-hypruse`.
 	installing string
+	// declinedAt is when the human last declined a desktop start card, or
+	// one expired unanswered: new requests wait deskCooldown after it.
+	declinedAt time.Time
 	// title is Den's terminal title when Den sets one: a task's handshake
 	// token while Den finds its own window, then restingTitle.
 	title string

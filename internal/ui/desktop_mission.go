@@ -138,6 +138,9 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 	if m.desk.installing != "" {
 		return deny("hypruse is installing now; ask again when it is done")
 	}
+	if !m.desk.declinedAt.IsZero() && time.Since(m.desk.declinedAt) < deskCooldown {
+		return deny("the human declined a desktop mission a moment ago; do not ask again for a few minutes")
+	}
 	// Not installed, or not as installed: the card offers to install it,
 	// or reinstall it, before it starts.
 	var setup *deskSetup
@@ -200,7 +203,7 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 			return deny(why)
 		}
 	}
-	body := []string{"Asked by " + sanitize.Label(in.AskedBy, 60) + " (as it says). The plan, in its words:"}
+	body := []string{m.deskOrigin(r) + ". The plan, in its words:"}
 	for _, l := range strings.Split(sanitize.Text(strings.TrimSpace(in.Plan)), "\n") {
 		body = append(body, "  "+l)
 	}
@@ -269,6 +272,7 @@ func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea
 		return m.say("That mission is stale; nothing started.", true)
 	}
 	if verb != "allow" {
+		m.desk.declinedAt = time.Now()
 		m.store.Settle(it, false, "declined in Den; nothing started")
 		m.refresh()
 		return m.say("Declined the desktop mission.", false)

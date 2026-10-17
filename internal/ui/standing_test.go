@@ -377,4 +377,17 @@ func TestDesktopMissionNeedsNoToolCard(t *testing.T) {
 			}
 		}
 	}
+	// Any other tool in the same turn still asks.
+	consolePowered = func(Model, string) bool { return false }
+	m.ctl.turn = &api.Say{Turn: "t-1"}
+	m.askControlTool(orch.Event{Kind: orch.PermissionAsk, RequestID: "r-spawn", Tool: orch.SpawnAgentTool, Input: json.RawMessage(`{"dir":"/tmp","brief":"x"}`)})
+	n := 0
+	for _, it := range m.store.Items() {
+		if it.Kind == inbox.ControlAsk && it.Answerable() {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d cards for another tool in the turn, want 1", n)
+	}
 }

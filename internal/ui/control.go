@@ -486,6 +486,7 @@ func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
 		// (the whole task, answered there only, one at a time), so it
 		// raises no tool card of its own.
 		m.orch.proc.AnswerPermission(ev.RequestID, true, "")
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den let the orchestrator's desktop request through with no tool card: if Den takes it, its start card waits for you in Den's window.", at: time.Now()}))
 		return nil
 	}
 	if m.consoleRuns(ev) {
