@@ -941,6 +941,15 @@ const inboxAvatarW = 8
 
 // inboxBlock is one inbox item as the Inbox pane draws it, w wide, without
 // the blank row that follows it.
+// wrapLines is s wrapped at word boundaries to w columns (a word longer
+// than w is the only thing broken), as lines.
+func wrapLines(s string, w int) []string {
+	if w < 1 {
+		w = 1
+	}
+	return strings.Split(ansi.Wrap(s, w, ""), "\n")
+}
+
 func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	s := m.st
 	const avatarW = inboxAvatarW
@@ -991,11 +1000,14 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	textW := w - 4 - avatarW - 1
 	var text []string
 	text = append(text, head)
+	// Prose wraps at word boundaries to the pane, never cut short.
 	if via := m.viaLine(itemKey(it)); via != "" {
-		text = append(text, ansi.Truncate(via, textW, "…"))
+		text = append(text, wrapLines(via, textW)...)
 	}
 	if twin := m.twinNote(itemKey(it)); twin != "" {
-		text = append(text, attn.Render(ansi.Truncate(twin, textW, "…")))
+		for _, l := range wrapLines(twin, textW) {
+			text = append(text, attn.Render(l))
+		}
 	}
 	body := fg
 	if it.State == inbox.Resolved || it.Kind >= inbox.Done {
@@ -1005,19 +1017,18 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	// everything else, what is being asked. Then the one-line gist.
 	switch {
 	case it.Kind == inbox.Done && it.Task != "":
-		text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
-		text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
+		for _, l := range wrapLines(it.Task, textW) {
+			text = append(text, fg.Render(l))
+		}
+		for _, l := range wrapLines(it.Title, textW) {
+			text = append(text, dim.Render(l))
+		}
 	default:
 		title := it.Title
 		if it.Kind == inbox.Idle {
 			title = m.idleTitle(itemKey(it), title)
 		}
-		lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
-		if len(lines) > 2 {
-			lines = lines[:2]
-			lines[1] = ansi.Truncate(lines[1], textW-2, "…")
-		}
-		for _, l := range lines {
+		for _, l := range wrapLines(title, textW) {
 			text = append(text, body.Render(l))
 		}
 	}
@@ -1038,10 +1049,19 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 			text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(itemKey(it))).st.code)...)
 			continue
 		}
-		text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
+		for _, wl := range wrapLines(l, textW) {
+			text = append(text, dim.Render(wl))
+		}
 	}
 	for j, o := range it.Options {
-		text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
+		// The number, then the option wrapped under its own first word.
+		for k, l := range wrapLines(o, textW-2) {
+			lead := bright.Render(fmt.Sprint(j+1)) + sp
+			if k > 0 {
+				lead = sp + sp
+			}
+			text = append(text, lead+fg.Render(l))
+		}
 	}
 	key := func(k, label string) string {
 		if label == "" {

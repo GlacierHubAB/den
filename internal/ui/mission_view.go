@@ -110,11 +110,20 @@ func (m Model) criterionLines(ms *mission.Mission, w int) []string {
 		if c.State == mission.CritMet {
 			box = "☑"
 		}
-		line := s.fg.Render(box+" "+c.ID+" ") + s.fg.Render(c.Text)
+		lead := box + " " + c.ID + " "
+		text := s.fg.Render(c.Text)
 		if c.State == mission.CritClaimed {
-			line += s.fg.Render(" · claimed: ") + s.dim.Render(c.Evidence)
+			text += s.fg.Render(" · claimed: ") + s.dim.Render(c.Evidence)
 		}
-		out = append(out, m.ovLine(ansi.Truncate(line, body, "…"), w))
+		// The criterion wraps under its own text, never cut short.
+		indent := strings.Repeat(" ", ansi.StringWidth(lead))
+		for k, l := range wrapLines(text, max(8, body-ansi.StringWidth(lead))) {
+			if k == 0 {
+				out = append(out, m.ovLine(s.fg.Render(lead)+l, w))
+			} else {
+				out = append(out, m.ovLine(s.fg.Render(indent)+l, w))
+			}
+		}
 	}
 	return out
 }
