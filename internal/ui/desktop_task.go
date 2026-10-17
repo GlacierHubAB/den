@@ -107,6 +107,7 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 		body = append(body, setup.lines()...)
 	}
 	it := m.store.AddDesktopMission(sanitize.Label(sentence, 120), body, r)
+	m.deskAsked()
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}

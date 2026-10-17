@@ -239,6 +239,7 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 		body = append(body, setup.lines()...)
 	}
 	it := m.store.AddDesktopMission("Start a desktop mission for "+sanitize.Label(in.AskedBy, 40)+"?", body, r)
+	m.deskAsked()
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}

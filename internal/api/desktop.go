@@ -12,11 +12,17 @@ const EventDesktop = "desktop"
 // Desktop states.
 const (
 	DesktopActive = "active"
+	// DesktopAsking: no mission runs, and a desktop start card waits for
+	// the human in Den's own window. It comes only from idle: Den takes
+	// no new desktop request while a mission runs, and a running mission
+	// always ends with idle first.
+	DesktopAsking = "asking"
 	DesktopIdle   = "idle"
 )
 
 // Desktop is a desktop event's data: active while a desktop agent's
-// mission runs, with its id, idle once it has ended.
+// mission runs, with its id; asking while a start card waits and none
+// runs; idle otherwise.
 type Desktop struct {
 	State   string `json:"state"`
 	Mission string `json:"mission,omitempty"`
@@ -25,28 +31,37 @@ type Desktop struct {
 type desktopState struct {
 	mu      sync.Mutex
 	mission string // the running mission's id, "" for none
+	asking  bool   // a start card waits for the human
 }
 
-// state is the state as the wire carries it; d.mu is held.
+// state is the state as the wire carries it; d.mu is held. A running
+// mission wins over a card: asking never shows while one runs.
 func (d *desktopState) state() Desktop {
-	if d.mission == "" {
-		return Desktop{State: DesktopIdle}
+	switch {
+	case d.mission != "":
+		return Desktop{State: DesktopActive, Mission: d.mission}
+	case d.asking:
+		return Desktop{State: DesktopAsking}
 	}
-	return Desktop{State: DesktopActive, Mission: d.mission}
+	return Desktop{State: DesktopIdle}
 }
 
 // SetDesktop records the running desktop mission, "" when none runs, from
-// Den, and tells the console's subscribed connections when it changed.
-// The pushes happen under the state's lock, as console.events' replay
-// does (replayDesktop), so a connection's last desktop event is always the
+// Den, and tells the console's subscribed connections when it changed. A
+// mission that starts answers the card that asked for it. The pushes
+// happen under the state's lock, as console.events' replay does
+// (replayDesktop), so a connection's last desktop event is always the
 // state as it is.
 func (s *Server) SetDesktop(mission string) {
 	s.desk.mu.Lock()
 	defer s.desk.mu.Unlock()
 	prev := s.desk.mission
-	s.desk.mission = mission
 	if prev == mission {
 		return
+	}
+	s.desk.mission = mission
+	if mission != "" {
+		s.desk.asking = false
 	}
 	var evs []Desktop
 	if prev != "" && mission != "" {
@@ -55,9 +70,31 @@ func (s *Server) SetDesktop(mission string) {
 	}
 	if mission == "" {
 		evs = append(evs, Desktop{State: DesktopIdle, Mission: prev})
+		if s.desk.asking {
+			evs = append(evs, s.desk.state())
+		}
 	} else {
-		evs = append(evs, Desktop{State: DesktopActive, Mission: mission})
+		evs = append(evs, s.desk.state())
 	}
+	s.pushDesktop(evs)
+}
+
+// SetDesktopAsking records whether a desktop start card waits for the
+// human, and tells the console when the state changed. While a mission
+// runs it is recorded but never shown: the state stays active.
+func (s *Server) SetDesktopAsking(asking bool) {
+	s.desk.mu.Lock()
+	defer s.desk.mu.Unlock()
+	before := s.desk.state()
+	s.desk.asking = asking
+	if after := s.desk.state(); after != before {
+		s.pushDesktop([]Desktop{after})
+	}
+}
+
+// pushDesktop sends desktop events to the console's subscribed
+// connections; s.desk.mu is held.
+func (s *Server) pushDesktop(evs []Desktop) {
 	cur, ok := s.CurrentConsole()
 	if !ok {
 		return
@@ -72,8 +109,8 @@ func (s *Server) SetDesktop(mission string) {
 }
 
 // replayDesktop tells a connection that has just subscribed to the
-// console's events where the desktop stands, active or idle, as the last
-// of console.events' snapshot.
+// console's events where the desktop stands, active, asking or idle, as
+// the last of console.events' snapshot.
 func (s *Server) replayDesktop(c *conn) {
 	s.desk.mu.Lock()
 	defer s.desk.mu.Unlock()

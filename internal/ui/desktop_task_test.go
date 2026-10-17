@@ -614,3 +614,30 @@ func TestDesktopTaskViewMustHoldTheAgent(t *testing.T) {
 		t.Fatalf("ended %q, stops %d", dm.Ended, len(*stops))
 	}
 }
+
+// A start card is announced wherever the human looks: a desktop
+// notification, and the console's asking state, which follows the inbox:
+// cleared once the card is answered.
+func TestDesktopStartCardIsAnnounced(t *testing.T) {
+	m, _, _, _, _ := taskRig(t)
+	var notes []string
+	deskNotify = func(n notify.Note) { notes = append(notes, n.Summary+": "+n.Body) }
+	var asking []bool
+	old := deskSetAsking
+	t.Cleanup(func() { deskSetAsking = old })
+	deskSetAsking = func(_ *Model, a bool) { asking = append(asking, a) }
+	r := taskReq("open a terminal and type hello from Den")
+	runBatch(m.handleRequest(r))
+	if len(notes) != 1 || !strings.Contains(notes[0], "Desktop control asked") || !strings.Contains(notes[0], "Den's window") {
+		t.Fatalf("notifications %q", notes)
+	}
+	if len(asking) == 0 || !asking[len(asking)-1] {
+		t.Fatalf("asking %v", asking)
+	}
+	it := desktopCard(*m, inbox.DesktopMission)
+	*m = answerDeskCard(t, *m, it, "deny")
+	m.deskAskSync()
+	if asking[len(asking)-1] {
+		t.Fatalf("still asking after the card was answered: %v", asking)
+	}
+}
