@@ -192,7 +192,7 @@ func (m *Model) finishHeadless(s deskHeadlessStarted) tea.Cmd {
 	dm.launchedAt = time.Now()
 	dm.AgentPID, dm.AgentStart, dm.AgentExe = s.pid, deskStart(s.pid), deskExeOf(s.pid)
 	// No agent view: nothing of its own to place or to check it runs under.
-	dm.placed, dm.viewChecked = true, true
+	dm.placed, dm.viewChecked, dm.headless = true, true, true
 	dm.save()
 	msg := fmt.Sprintf("Started the desktop agent on workspace %d with %d app window(s), with no window of its own: its steps show in Den's chat. It reports to Den when done; Den passes the report to you.", dm.Workspace, len(dm.Windows))
 	if dm.Task {

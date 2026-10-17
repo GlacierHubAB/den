@@ -89,7 +89,7 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 		// A widening says so before anything else.
 		body = append(body, note)
 	}
-	body = append(body, "Asked by "+sanitize.Label(in.AskedBy, 60)+" (as it says).", sentence)
+	body = append(body, m.deskOrigin(r)+".", sentence)
 	if len(in.HumanSteps) > 0 {
 		body = append(body, "Steps you do (the agent hands each to you with your turn and waits):")
 		for _, st := range in.HumanSteps {
@@ -262,7 +262,7 @@ func (m *Model) deskTaskCheck(dm *deskMission) tea.Cmd {
 		return nil
 	}
 	dm.checking, dm.checkedAt = true, time.Now()
-	id, view := dm.ID, dm.view
+	id, view, headless := dm.ID, dm.view, dm.headless
 	protected := make([]string, 0, len(dm.Protected))
 	for a := range dm.Protected {
 		protected = append(protected, a)
@@ -280,8 +280,12 @@ func (m *Model) deskTaskCheck(dm *deskMission) tea.Cmd {
 			msg.gone = why
 			return msg
 		}
-		w, _ := snap.Window(view)
-		msg.pinErr = deskKeepOnTop(view, w.Floating, w.Pinned)
+		// A headless agent has no window of its own to keep on top; a
+		// windowed one whose view went missing keeps its error.
+		if !headless {
+			w, _ := snap.Window(view)
+			msg.pinErr = deskKeepOnTop(view, w.Floating, w.Pinned)
+		}
 		return msg
 	}
 }

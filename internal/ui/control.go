@@ -480,6 +480,15 @@ func (m *Model) controlEvent(ev orch.Event) (tea.Cmd, bool) {
 // askControlTool puts a tool the orchestrator wants in an app's turn on an
 // inbox card, whole, and tells the app that something waits in Den.
 func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
+	if ev.Tool == orch.DesktopMissionTool {
+		// One consent for desktop control, wherever it was asked: the
+		// tool does nothing but put Den's start card in Den's own window
+		// (the whole task, answered there only, one at a time), so it
+		// raises no tool card of its own.
+		m.orch.proc.AnswerPermission(ev.RequestID, true, "")
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den let the orchestrator's desktop request through with no tool card: if Den takes it, its start card waits for you in Den's window.", at: time.Now()}))
+		return nil
+	}
 	if m.consoleRuns(ev) {
 		// Your choice: your console's chat lists and messages agents as
 		// yours in Den's chat does, with no card.
