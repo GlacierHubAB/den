@@ -90,6 +90,41 @@ func TestStopChecksIdentity(t *testing.T) {
 	if err := victim.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Fatal("the process was signalled")
 	}
+	// The pid with the recorded start still runs, but not what Den
+	// recorded: the stop failed, and says so first, never "nothing ran".
+	// The other, recorded with another start, is gone: nothing to say.
+	if r.OK() || len(r.Failed) != 1 || !strings.HasPrefix(r.Failed[0], "the agent (pid ") || !strings.HasPrefix(r.Line(), "could not stop the agent") || strings.Contains(r.Line(), "nothing of Den's was running") {
+		t.Errorf("report %+v: %s", r, r.Line())
+	}
+}
+
+// Stop still ends a process whose binary was updated in place during the
+// mission (Claude Code updates itself): it is the process recorded.
+func TestStopAfterAnUpdateInPlace(t *testing.T) {
+	src, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Skip("no sleep")
+	}
+	raw, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(bin, raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command(bin, "30")
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Process.Kill(); c.Wait() })
+	p := RecordProc(c.Process.Pid)
+	os.Remove(bin) // the update writes a new file at the path
+	os.WriteFile(bin, raw, 0o755)
+	r := Stop(Targets{Agent: p}, filepath.Join(t.TempDir(), "none.json"))
+	if len(r.Stopped) != 1 || !r.OK() || !gone(c) {
+		t.Fatalf("not stopped after the update: %+v", r)
+	}
 }
 
 // Stop still ends a process whose binary was updated in place during the
