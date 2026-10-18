@@ -38,6 +38,10 @@ const actionsProposal = "Here is the plan.\n\n```json\n" + `{"mission": {
 func actionsModel(w, h int, to, summary string) Model {
 	st := newStyles(theme.Deepharness)
 	m := Model{st: st, agents: sample(), store: inbox.New(), tab: tabOrch, width: w, height: h, orch: orchState{cardCur: -1}}
+	// One agent per peer handle: a handle two sessions share links no card.
+	for i := 1; i < len(m.agents); i++ {
+		m.agents[i].Session.Name = fmt.Sprintf("user-a%d", i)
+	}
 	m.input = newInput(st)
 	m.colors = map[string]string{}
 	m.orch.chat = append(m.orch.chat, chatEntry{role: "you", text: "plan the review pack", at: time.Date(2026, 10, 13, 5, 20, 0, 0, time.UTC)})

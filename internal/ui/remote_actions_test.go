@@ -312,10 +312,18 @@ func TestCloseWorkingRemoteNeedsForceAndFailureIsReported(t *testing.T) {
 	}
 }
 
+// A name without a host means this machine's agent; one only on hosts
+// needs the host.
 func TestCloseNameOnSeveralHostsNeedsTheHost(t *testing.T) {
 	m, _, _ := remoteModel(t)
 	mm, _ := m.closeCommand([]string{"Mossy Lemur"})
-	if g := mm.(Model); openClose(g) != nil || !strings.Contains(g.flash, "add @host") {
+	if it := openClose(mm.(Model)); it == nil || strings.Contains(strings.Join(it.Body, "\n"), "SIGTERM there") {
+		t.Errorf("an unqualified name did not mean the local agent: %+v", it)
+	}
+	m.base = nil
+	m.refresh()
+	mm, _ = m.closeCommand([]string{"Mossy Lemur"})
+	if g := mm.(Model); openClose(g) != nil || !strings.Contains(g.flash, "add the host") {
 		t.Errorf("flash = %q", g.flash)
 	}
 }
@@ -626,7 +634,10 @@ func TestProtectCoversOnlyThatSession(t *testing.T) {
 		t.Errorf("close_agent of a protected agent: %+v %v", d, ok)
 	}
 	// A flag on the host's agent holds too.
-	m.guard.Sessions = nil
+	m, feed, _ = remoteModel(t)
+	remoteIdle(m, feed)
+	m.ensureGuard()
+	m.guardPath = filepath.Join(t.TempDir(), "protected.json")
 	mm, _ = m.guardCommand("/flag", []string{"Mossy", "Lemur@devbox:", "keep"})
 	*m = mm.(Model)
 	mm, _ = m.closeCommand([]string{"idle"})
