@@ -72,6 +72,11 @@ type deskMission struct {
 	// overlayPausedAt (deskOverlayCheck).
 	overlayPaused   bool
 	overlayPausedAt time.Time
+	// overlayExpect: the task started while the console watched, and its
+	// first overlay.linked has not come; input waits for it until
+	// overlayFirstBy.
+	overlayExpect  bool
+	overlayFirstBy time.Time
 	// A headless agent's steps in the chat (desktop_headless.go): shown
 	// in the current minute, since when, and those left out.
 	stepsShown, stepsHidden int
@@ -154,6 +159,11 @@ var (
 		}
 		return m.api.srv.OverlayLink(mission)
 	}
+	// deskWatching says whether the paired console has a proved,
+	// subscribed connection (api.Server.ConsoleWatching).
+	deskWatching = func(m *Model) bool {
+		return m.api.srv != nil && m.api.srv.ConsoleWatching()
+	}
 	// deskSetAsking tells the console whether a desktop start card waits.
 	deskSetAsking = func(m *Model, asking bool) {
 		if m.api.srv != nil {
@@ -188,6 +198,11 @@ func (m *Model) addDeskMission(dm *deskMission) {
 	}
 	if dm.tokens == nil {
 		dm.tokens = map[string]deskToken{}
+	}
+	// A task that starts while the console watches expects its overlay
+	// (deskOverlayCheck).
+	if dm.Task && deskWatching(m) {
+		dm.overlayExpect = true
 	}
 	m.desk.missions[dm.ID] = dm
 	m.publishDesktop()
@@ -322,6 +337,13 @@ var deskLooks = map[string]bool{
 // console's overlay before Den ends the task.
 const deskOverlayWait = 5 * time.Minute
 
+// deskOverlayFirst is how long a task that started while the console
+// watched waits for its first overlay.linked before it runs unbacked.
+var deskOverlayFirst = 15 * time.Second
+
+// deskOverlayMissing is Den's note when that wait ran out.
+const deskOverlayMissing = "The dock did not show its overlay for this task; Den's chip and /desktop stop are the signs."
+
 // deskOverlayCheck pauses or resumes a task's input on the console's
 // overlay, and says whether input is paused now. Once the console has
 // linked its overlay to the task (overlay.linked), input goes only while
@@ -330,16 +352,31 @@ const deskOverlayWait = 5 * time.Minute
 // it linked), and Den sees the console's overlay on every monitor, a layer
 // surface of that console's process (glow, desktop.Snapshot.ConsoleGlow). Otherwise input pauses, with no grace, and a
 // pause longer than deskOverlayWait ends the task, as Den's own window
-// going does. A task the console never linked is never paused. Den's chat
-// hears each pause and resume once.
+// going does. A task that started while the console watched waits for its
+// first link, at most deskOverlayFirst, so that killing the dock early
+// cannot leave it unbacked unseen: with no link by then it runs unbacked,
+// and Den's chat says so. A task that started with no console watching is
+// never paused. Den's chat hears each pause and resume once.
 func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end tea.Cmd) {
 	if !dm.Task || dm.Ended != "" {
 		return false, nil
 	}
 	backed, linked := deskOverlay(m, dm.ID)
 	if !backed {
+		if !dm.overlayExpect {
+			return false, nil
+		}
+		if dm.overlayFirstBy.IsZero() {
+			dm.overlayFirstBy = time.Now().Add(deskOverlayFirst)
+		}
+		if time.Now().Before(dm.overlayFirstBy) {
+			return true, nil
+		}
+		dm.overlayExpect = false
+		m.deskOverlayNote(deskOverlayMissing)
 		return false, nil
 	}
+	dm.overlayExpect = false
 	if linked && glow {
 		if dm.overlayPaused {
 			dm.overlayPaused = false

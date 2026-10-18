@@ -1075,9 +1075,13 @@ where the pointer is.
   dock's overlay is down; Den resumes when it is back", says so in its
   chat, and says so again when it resumes. Down for 5 minutes, the task
   ends, as when Den's own window goes. The human's stop is never paused.
-  A console that never sends `overlay.linked` changes nothing: Den's own
-  window and its stop are the human's view of the task then. Missions
-  with apps are not paused.
+  A task that starts while you have a proved connection subscribed to
+  `console.events` waits for its first `overlay.linked`: its input is
+  paused, with the same words, for up to 15 seconds. With no link by
+  then it runs unbacked, and Den's chat says that the dock did not show
+  its overlay. A task that starts with no console watching is never
+  paused: Den's own window and its stop are the human's view of the task
+  then. Missions with apps are not paused.
 
 ### Conversation mirror
 

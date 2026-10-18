@@ -101,6 +101,22 @@ func (s *Server) overlayEnd(mission string) {
 	}
 }
 
+// ConsoleWatching reports whether the paired console has a proved
+// connection subscribed to its events: a desktop task starting now
+// expects its overlay.
+func (s *Server) ConsoleWatching() bool {
+	cur, ok := s.CurrentConsole()
+	if !ok {
+		return false
+	}
+	for _, c := range s.consoleConns(cur.ID) {
+		if c.subscribed(EventConsole) {
+			return true
+		}
+	}
+	return false
+}
+
 // OverlayLink reports whether the console has linked its overlay to the
 // mission at least once (backed), and whether that link holds now: the
 // connection that sent it is open, still a proved connection of the

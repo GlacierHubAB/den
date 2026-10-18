@@ -140,3 +140,35 @@ func TestOverlayLimit(t *testing.T) {
 		t.Fatalf("past the limit: %+v", l)
 	}
 }
+
+// The console watches once a proved connection subscribes to its events,
+// and no longer once that connection closes.
+func TestConsoleWatching(t *testing.T) {
+	h, _ := consoleHarness(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), View: ViewAgent}))
+	if h.s.ConsoleWatching() {
+		t.Fatal("watching with no console")
+	}
+	d := newDock(t, h)
+	p := d.pair(h.s.StartConsoleCode())
+	c := h.dial()
+	c.hello()
+	if l, _, _, _ := d.auth(c, p); !l.OK {
+		t.Fatalf("%+v", l.Error)
+	}
+	if h.s.ConsoleWatching() {
+		t.Fatal("watching before a subscription")
+	}
+	c.call("console.events", nil)
+	if !h.s.ConsoleWatching() {
+		t.Fatal("not watching once subscribed")
+	}
+	c.nc.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for h.s.ConsoleWatching() {
+		if time.Now().After(deadline) {
+			t.Fatal("still watching after the connection closed")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

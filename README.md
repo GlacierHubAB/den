@@ -1152,7 +1152,9 @@ that send keys to another window by name; and `ctrl+alt+Delete`,
   still look at the screen. It resumes once the dock links the overlay
   again and Den sees the overlay on every monitor, and the task ends
   after 5 minutes down.
-  A dock that never shows the overlay changes nothing.
+  A task started while the dock is connected waits up to 15 seconds for
+  the overlay before its first input; if the overlay never comes, the
+  task runs without it and Den's chat says so.
 - **The per-task limit.** Den stops the task after `task_minutes` of wall
   time or `task_actions` desktop calls, whichever comes first. Den counts
   them itself, and only your config sets them:

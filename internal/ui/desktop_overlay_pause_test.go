@@ -150,3 +150,74 @@ func TestDesktopStopWhilePaused(t *testing.T) {
 		t.Fatalf("stop while paused: %d stops, live %v", len(*p.stops)-before, p.m.deskLive() != nil)
 	}
 }
+
+// A task that started while the console watched waits for its first
+// overlay link before any input; a link in time lets input go.
+func TestDesktopTaskWaitsForTheFirstOverlayLink(t *testing.T) {
+	p := newPauseRig(t)
+	dm := p.m.deskMission("m1")
+	dm.limitActions = 100
+	dm.overlayExpect = true
+	p.backed, p.linked = false, false
+	if b, msg := p.click(); b != "deny" || !strings.Contains(msg, deskOverlayPaused) {
+		t.Fatalf("input before the first link: %s %q", b, msg)
+	}
+	if dv, _ := deskCall(p.m, "screenshot", `{}`); dv.Behavior != "allow" {
+		t.Errorf("a screenshot before the first link: %+v", dv)
+	}
+	p.backed, p.linked = true, true
+	if b, msg := p.click(); b != "allow" {
+		t.Fatalf("after the first link: %s %q", b, msg)
+	}
+	if dm.overlayExpect || p.notes(t, "paused") != 0 {
+		t.Errorf("expect %v, pause notes %d", dm.overlayExpect, p.notes(t, "paused"))
+	}
+}
+
+// With no first link by deskOverlayFirst the task runs unbacked, and Den's
+// chat says so once.
+func TestDesktopTaskRunsUnbackedWhenTheDockNeverLinks(t *testing.T) {
+	p := newPauseRig(t)
+	dm := p.m.deskMission("m1")
+	dm.limitActions = 100
+	dm.overlayExpect = true
+	p.backed, p.linked, p.glow = false, false, false
+	if b, _ := p.click(); b != "deny" {
+		t.Fatal("input went before the wait ran out")
+	}
+	dm.overlayFirstBy = time.Now().Add(-time.Second)
+	for i := 0; i < 2; i++ {
+		if b, msg := p.click(); b != "allow" {
+			t.Fatalf("after the wait: %s %q", b, msg)
+		}
+	}
+	n := 0
+	for _, e := range p.m.orch.chat {
+		if e.role == "note" && e.text == deskOverlayMissing {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d missing-overlay notes, want 1", n)
+	}
+}
+
+// A task expects its overlay only when the console watched as it started.
+func TestDesktopTaskExpectsTheOverlayOnlyWithAConsole(t *testing.T) {
+	old := deskWatching
+	t.Cleanup(func() { deskWatching = old })
+	for _, watching := range []bool{false, true} {
+		deskWatching = func(*Model) bool { return watching }
+		m := Model{}
+		dm := &deskMission{Mission: desktop.Mission{ID: "t", Task: true}}
+		m.addDeskMission(dm)
+		if dm.overlayExpect != watching {
+			t.Errorf("watching %v: expect %v", watching, dm.overlayExpect)
+		}
+		mission := &deskMission{Mission: desktop.Mission{ID: "a"}}
+		m.addDeskMission(mission)
+		if mission.overlayExpect {
+			t.Error("a mission with apps expects the overlay")
+		}
+	}
+}
