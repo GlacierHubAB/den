@@ -254,7 +254,7 @@ func TestConsoleRefusesOtherPrograms(t *testing.T) {
 		t.Fatal(l.Error)
 	}
 	mine.call("console.events", nil)
-	mine.next() // connected
+	skipSnapshot(t, h.s, mine)
 	h.s.setIdentify(func(p Peer) Peer { p.Exe = "/usr/bin/other"; return p })
 	for i := 0; i < consoleStrikesMax; i++ {
 		c := h.dial()
@@ -270,6 +270,12 @@ func TestConsoleRefusesOtherPrograms(t *testing.T) {
 			var ev ConsoleEvent
 			if e := mine.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "refused" || ev.Program != "other" {
 				t.Errorf("refused event %+v", e)
+			}
+			if i == 0 {
+				// The first refused try takes the console's powers.
+				if e := mine.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "powers" || ev.On == nil || *ev.On {
+					t.Errorf("powers event %+v", e)
+				}
 			}
 		}
 	}
@@ -334,7 +340,7 @@ func TestConsoleReplacesTheOld(t *testing.T) {
 	c.hello()
 	d.auth(c, p1)
 	c.call("console.events", nil)
-	c.next()
+	skipSnapshot(t, h.s, c)
 	ask := func() *ConsoleAsk {
 		cl := h.dial()
 		cl.hello()

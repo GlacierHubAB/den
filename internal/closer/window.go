@@ -3,6 +3,8 @@ package closer
 import (
 	"fmt"
 	"slices"
+
+	"github.com/GlacierHubAB/den/internal/hypr"
 )
 
 // Windows. An agent Den spawned runs as its terminal's command, so the
@@ -126,6 +128,10 @@ func leftOpen(r *Result, t Target, self Self, wo WindowOps) {
 		r.WindowNote = "its window is still open but is no longer the one the plan showed: close it yourself"
 		return
 	}
+	// A view switch (internal/view) moves windows under this same lock, so
+	// it and the close below never run together. A window hidden on
+	// special:den is closed like any other: it is found by its address.
+	defer hypr.LockWindows()()
 	if t.Window == wo.Focused() || t.Window == self.Window {
 		r.WindowNote = "its window is still open; Den does not close the window in front or its own: close it yourself"
 		return

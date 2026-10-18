@@ -1,0 +1,422 @@
+package process
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/GlacierHubAB/den/internal/gitenvtest"
+)
+
+// TestMain starts the tests without git's inherited variables, which would
+// send their git commands to another repository.
+func TestMain(m *testing.M) { os.Exit(gitenvtest.Main(m)) }
+
+func sh(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=Test", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func write(t *testing.T, path, body string) {
+	t.Helper()
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// repo is a repository with a dev branch and two worktrees, each on its
+// own branch from dev.
+func repo(t *testing.T) (main, one, two string) {
+	t.Helper()
+	root := t.TempDir()
+	main = filepath.Join(root, "proj")
+	sh(t, root, "init", "-q", "-b", "dev", main)
+	write(t, filepath.Join(main, "shared.go"), "package p\n")
+	write(t, filepath.Join(main, "only.go"), "package p\n")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "base")
+	one, two = filepath.Join(root, "one"), filepath.Join(root, "two")
+	sh(t, main, "worktree", "add", "-q", "-b", "a", one)
+	sh(t, main, "worktree", "add", "-q", "-b", "b", two)
+	return main, one, two
+}
+
+// A branch's files: committed since the merge base, staged, unstaged and
+// untracked, and never what dev changed after it branched.
+func TestTouched(t *testing.T) {
+	main, one, _ := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "committed.go"), "x")
+	sh(t, one, "add", "committed.go")
+	sh(t, one, "commit", "-q", "-m", "c")
+	write(t, filepath.Join(one, "staged.go"), "x")
+	sh(t, one, "add", "staged.go")
+	write(t, filepath.Join(one, "shared.go"), "package p // changed\n")
+	write(t, filepath.Join(one, "dir", "new.go"), "x")
+	write(t, filepath.Join(main, "dev-only.go"), "x")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "dev moves on")
+	got, err := Touched(ctx, one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"committed.go", "dir/new.go", "shared.go", "staged.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("touched %v, want %v", got, want)
+	}
+}
+
+// No integration branch: an error, not a guess.
+func TestTouchedNoBase(t *testing.T) {
+	dir := t.TempDir()
+	sh(t, dir, "init", "-q", "-b", "topic", dir)
+	write(t, filepath.Join(dir, "f"), "x")
+	sh(t, dir, "add", ".")
+	sh(t, dir, "commit", "-q", "-m", "c")
+	if _, err := Touched(context.Background(), dir); err != ErrNoBase {
+		t.Errorf("err %v", err)
+	}
+}
+
+// Every worktree of one repository has the same id; another repository
+// another; the name part is safe for a file name.
+func TestRepoID(t *testing.T) {
+	main, one, two := repo(t)
+	ctx := context.Background()
+	ids := map[string]bool{}
+	for _, d := range []string{main, one, two} {
+		id, err := RepoID(ctx, d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[id] = true
+	}
+	if len(ids) != 1 {
+		t.Fatalf("ids %v", ids)
+	}
+	for id := range ids {
+		if !strings.HasPrefix(id, "proj-") || len(id) != len("proj-")+12 {
+			t.Errorf("id %q", id)
+		}
+	}
+	other, _, _ := repo(t)
+	if id, _ := RepoID(ctx, other); ids[id] {
+		t.Errorf("another repository has the same id %q", id)
+	}
+	for in, want := range map[string]string{"a b/../c": "a-b-..-c", "...hidden": "hidden", "": "repo", "x\x1b[31my": "xy"} {
+		if got := safeName(in); got != want {
+			t.Errorf("safeName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// Den's reads run nothing an agent's checkout names: no fsmonitor hook,
+// no clean filter, no external diff, no text conversion.
+func TestTouchedRunsNothingTheCheckoutNames(t *testing.T) {
+	_, one, _ := repo(t)
+	marks := t.TempDir()
+	prog := filepath.Join(t.TempDir(), "mark")
+	write(t, prog, "#!/bin/sh\ntouch "+marks+"/$1\ncat\n")
+	os.Chmod(prog, 0o755)
+	sh(t, one, "config", "core.fsmonitor", prog+" fsmonitor")
+	sh(t, one, "config", "filter.evil.clean", prog+" clean")
+	sh(t, one, "config", "diff.external", prog+" extdiff")
+	sh(t, one, "config", "diff.evil.textconv", prog+" textconv")
+	write(t, filepath.Join(one, ".gitattributes"), "*.go filter=evil diff=evil\n")
+	write(t, filepath.Join(one, "shared.go"), "package p // changed\n")
+	if _, err := Touched(context.Background(), one); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := os.ReadDir(marks); len(left) != 0 {
+		t.Errorf("ran %v", left)
+	}
+}
+
+// Read, end to end: two worktrees that both change shared.go overlap on it
+// alone; the main checkout, on dev and unchanged, on nothing.
+func TestReadOverlap(t *testing.T) {
+	main, one, two := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "shared.go"), "package p // one\n")
+	write(t, filepath.Join(one, "mine.go"), "x")
+	write(t, filepath.Join(two, "shared.go"), "package p // two\n")
+	sh(t, two, "commit", "-q", "-am", "two")
+	var works []Work
+	for key, dir := range map[string]string{"s0": main, "s1": one, "s2": two} {
+		w, err := Read(ctx, key, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		works = append(works, w)
+	}
+	got := Overlaps(works)
+	if len(got) != 1 || got[0].A != "s1" || got[0].B != "s2" || !reflect.DeepEqual(got[0].Files, []string{"shared.go"}) {
+		t.Errorf("overlaps %+v", got)
+	}
+}
+
+// A branch made from main, where dev also exists and lacks a commit of
+// main's, is measured against main: that commit is not its own work, so
+// two such branches do not overlap on its file, and it is behind main,
+// not dev. A branch made from dev is measured against dev as before.
+func TestReadForkedFromMain(t *testing.T) {
+	main, _, dv := repo(t)
+	ctx := context.Background()
+	sh(t, main, "branch", "main")
+	sh(t, main, "checkout", "-q", "main")
+	write(t, filepath.Join(main, "x.go"), "package p // main only\n")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "main only")
+	root := filepath.Dir(main)
+	one, two := filepath.Join(root, "m1"), filepath.Join(root, "m2")
+	sh(t, main, "worktree", "add", "-q", "-b", "m1", one, "main")
+	sh(t, main, "worktree", "add", "-q", "-b", "m2", two, "main")
+	write(t, filepath.Join(one, "a.go"), "x")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "a")
+	write(t, filepath.Join(two, "b.go"), "x")
+	sh(t, two, "add", ".")
+	sh(t, two, "commit", "-q", "-m", "b")
+	write(t, filepath.Join(main, "later.go"), "x")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "main moves on")
+	write(t, filepath.Join(dv, "d.go"), "x")
+	sh(t, dv, "add", ".")
+	sh(t, dv, "commit", "-q", "-m", "d")
+
+	read := func(key, dir string) Work {
+		t.Helper()
+		w, err := Read(ctx, key, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	w1, w2, wd := read("s1", one), read("s2", two), read("s3", dv)
+	if w1.Base != "refs/heads/main" || !reflect.DeepEqual(w1.Files, []string{"a.go"}) || w1.Behind != 1 {
+		t.Errorf("from main: %+v", w1)
+	}
+	if w2.Base != "refs/heads/main" || !reflect.DeepEqual(w2.Files, []string{"b.go"}) {
+		t.Errorf("from main: %+v", w2)
+	}
+	if wd.Base != "refs/heads/dev" || !reflect.DeepEqual(wd.Files, []string{"d.go"}) || wd.Behind != 0 {
+		t.Errorf("from dev: %+v", wd)
+	}
+	if got := Overlaps([]Work{w1, w2, wd}); len(got) != 0 {
+		t.Errorf("overlaps %+v", got)
+	}
+	// Merged into main, a main branch has landed.
+	sh(t, main, "merge", "-q", "--no-edit", "m1")
+	if ok, err := Landed(ctx, one, w1.Tip); err != nil || !ok {
+		t.Errorf("merged into main: %v %v", ok, err)
+	}
+}
+
+// BaseOf: the base a commit lacks the fewest commits against, the first in
+// BaseRefs order on a tie, "" with none.
+func TestBaseOf(t *testing.T) {
+	main, one, _ := repo(t)
+	ctx := context.Background()
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/dev" {
+		t.Errorf("dev only: %q", got)
+	}
+	// main at the same commit as dev: a tie goes to dev, first in order.
+	sh(t, main, "branch", "main")
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/dev" {
+		t.Errorf("tie: %q", got)
+	}
+	// dev moves on, and a branch from it: dev is nearer.
+	write(t, filepath.Join(main, "dev.go"), "x")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "dev")
+	sh(t, one, "reset", "-q", "--hard", "dev")
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/dev" {
+		t.Errorf("from dev: %q", got)
+	}
+	// main gets a commit dev lacks, and the branch is main's.
+	sh(t, one, "reset", "-q", "--hard", "main")
+	write(t, filepath.Join(one, "main.go"), "x")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "main")
+	sh(t, one, "branch", "-f", "main", "HEAD")
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/main" {
+		t.Errorf("from main: %q", got)
+	}
+	dir := t.TempDir()
+	sh(t, dir, "init", "-q", "-b", "topic", dir)
+	write(t, filepath.Join(dir, "f"), "x")
+	sh(t, dir, "add", ".")
+	sh(t, dir, "commit", "-q", "-m", "c")
+	if got := BaseOf(ctx, dir, "HEAD"); got != "" {
+		t.Errorf("no base: %q", got)
+	}
+}
+
+// A branch's name, base, age (its oldest commit since leaving the base)
+// and how far behind the base it is.
+func TestReadBranchAge(t *testing.T) {
+	main, one, two := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "a.go"), "x")
+	sh(t, one, "add", ".")
+	cmd := exec.Command("git", "-C", one, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "old")
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE=2026-10-10T08:00:00Z", "GIT_AUTHOR_DATE=2026-10-10T08:00:00Z")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	write(t, filepath.Join(one, "b.go"), "x")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "new")
+	for i := 0; i < 3; i++ {
+		write(t, filepath.Join(main, "dev.go"), strings.Repeat("x", i+1))
+		sh(t, main, "add", ".")
+		sh(t, main, "commit", "-q", "-m", "dev")
+	}
+	w, err := Read(ctx, "s1", one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Branch != "a" || w.Base != "refs/heads/dev" || w.Behind != 3 || !w.Since.Equal(time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)) {
+		t.Errorf("work %+v", w)
+	}
+	// A branch with no commits of its own has no age.
+	if w, err := Read(ctx, "s2", two); err != nil || !w.Since.IsZero() || w.Behind != 3 {
+		t.Errorf("an empty branch: %+v %v", w, err)
+	}
+}
+
+// A checkout of the trunk itself (behind, with commits dev lacks) counts
+// only what it has not committed; a feature branch counts its commits.
+func TestReadTrunkCountsOnlyUncommitted(t *testing.T) {
+	_, one, two := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "README.md"), "docs")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "docs")
+	if w, _ := Read(ctx, "s1", one); w.Trunk || !reflect.DeepEqual(w.Files, []string{"README.md"}) {
+		t.Errorf("feature branch: %+v", w)
+	}
+	sh(t, two, "checkout", "-q", "-b", "main")
+	write(t, filepath.Join(two, "release.txt"), "r")
+	sh(t, two, "add", ".")
+	sh(t, two, "commit", "-q", "-m", "release")
+	write(t, filepath.Join(two, "wip.go"), "w")
+	if w, _ := Read(ctx, "s2", two); !w.Trunk || !reflect.DeepEqual(w.Files, []string{"wip.go"}) {
+		t.Errorf("trunk: %+v", w)
+	}
+	if IsTrunk(ctx, two, "feature") || !IsTrunk(ctx, two, "dev") || IsTrunk(ctx, two, "HEAD") {
+		t.Error("trunk names")
+	}
+}
+
+// A checkout whose own commits landed (squash-merged, then left detached
+// on its old commit) counts only what it has not committed; before the
+// merge it counted its commits.
+func TestReadLandedCountsOnlyUncommitted(t *testing.T) {
+	main, one, _ := repo(t)
+	ctx := context.Background()
+	write(t, filepath.Join(one, "README.md"), "docs")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "docs")
+	if w, _ := Read(ctx, "s1", one); w.Landed || !reflect.DeepEqual(w.Files, []string{"README.md"}) {
+		t.Errorf("before the merge: %+v", w)
+	}
+	sh(t, main, "merge", "-q", "--squash", "a")
+	sh(t, main, "commit", "-q", "-m", "squash a")
+	sh(t, one, "checkout", "-q", "--detach")
+	if w, _ := Read(ctx, "s1", one); !w.Landed || len(w.Files) != 0 {
+		t.Errorf("landed and left detached: %+v", w)
+	}
+	write(t, filepath.Join(one, "new.go"), "x")
+	if w, _ := Read(ctx, "s1", one); !reflect.DeepEqual(w.Files, []string{"new.go"}) {
+		t.Errorf("landed, with new work: %+v", w)
+	}
+}
+
+// A branch has landed when dev has its tip (a merge or a fast-forward) or
+// every file it changes as it has them (a squash merge); not before.
+func TestLanded(t *testing.T) {
+	main, one, two := repo(t)
+	ctx := context.Background()
+	landed := func(dir, tip string) bool {
+		t.Helper()
+		ok, err := Landed(ctx, dir, tip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	write(t, filepath.Join(one, "a.go"), "a")
+	write(t, filepath.Join(one, "shared.go"), "package p // a\n")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "one")
+	w, err := Read(ctx, "s1", one)
+	if err != nil || len(w.Tip) != 40 {
+		t.Fatalf("tip %q %v", w.Tip, err)
+	}
+	if landed(one, w.Tip) {
+		t.Error("landed before any merge")
+	}
+	// Dev moving on elsewhere changes nothing.
+	write(t, filepath.Join(main, "dev.go"), "d")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "dev")
+	if landed(one, w.Tip) {
+		t.Error("landed on an unrelated dev commit")
+	}
+	// Half of it on dev is not landed; all of it, squashed, is.
+	write(t, filepath.Join(main, "a.go"), "a")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "half")
+	if landed(one, w.Tip) {
+		t.Error("landed with half its files")
+	}
+	sh(t, main, "merge", "-q", "--squash", "a")
+	sh(t, main, "commit", "-q", "-m", "squash")
+	if !landed(one, w.Tip) {
+		t.Error("a squash merge did not land it")
+	}
+	// A real merge lands it too.
+	write(t, filepath.Join(two, "b.go"), "b")
+	sh(t, two, "add", ".")
+	sh(t, two, "commit", "-q", "-m", "two")
+	tip := sh(t, two, "rev-parse", "HEAD")
+	sh(t, main, "merge", "-q", "--no-ff", "-m", "merge b", "b")
+	if !landed(two, tip) {
+		t.Error("a merge did not land it")
+	}
+	for _, bad := range []string{"", "HEAD", "--output=x", tip[:12], strings.ToUpper(tip)} {
+		if _, err := Landed(ctx, two, bad); err == nil {
+			t.Errorf("Landed took %q", bad)
+		}
+	}
+}
+
+// Two branches of one repository that change a file in common overlap,
+// once, on exactly the common files; other repositories never do.
+func TestOverlaps(t *testing.T) {
+	got := Overlaps([]Work{
+		{Key: "s2", Repo: "r", Files: []string{"a.go", "b.go", "c.go"}},
+		{Key: "s1", Repo: "r", Files: []string{"c.go", "a.go"}},
+		{Key: "s3", Repo: "r", Files: []string{"d.go"}},
+		{Key: "s4", Repo: "other", Files: []string{"a.go"}},
+		{Key: "s5", Repo: "", Files: []string{"a.go"}},
+		{Key: "s6", Repo: "r2", Tree: "/w", Files: []string{"a.go"}},
+		{Key: "s7", Repo: "r2", Tree: "/w", Files: []string{"a.go"}},
+	})
+	want := []Overlap{{A: "s1", B: "s2", Files: []string{"a.go", "c.go"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("overlaps %+v, want %+v", got, want)
+	}
+}

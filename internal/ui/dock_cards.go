@@ -53,6 +53,9 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		body = append(body, strings.Split(it.Intent, "\n")...)
 	}
 	body = append(body, it.Body...)
+	if it.Kind == inbox.RulesPick {
+		body = withoutNotes(body)
+	}
 	return api.Card{
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
@@ -62,8 +65,30 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		Note:        m.twinNote(itemKey(it)),
 		Body:        strings.Join(body, "\n"),
 		Verbs:       verbs,
-		DockAnswers: dockMayAnswer(it),
+		DockAnswers: dockMayAnswer(it) && !m.godTTYOnly(it),
+		TTYOnly:     m.godTTYOnly(it),
 	}
+}
+
+// withoutNotes is a rules card's lines for a console: each note, fenced
+// from its "┌" line to its "└", becomes one line saying it is in Den's
+// window. The console cannot answer the card, and agents' notes reach a
+// console nowhere else; the rules and the project's rules stay.
+func withoutNotes(lines []string) []string {
+	var out []string
+	in := false
+	for _, l := range lines {
+		switch {
+		case !in && strings.HasPrefix(l, noteFenceTop):
+			in = true
+			out = append(out, "    (the agent's note is shown in Den's window)")
+		case in && strings.HasPrefix(l, noteFenceBottom):
+			in = false
+		case !in:
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // dockMayAnswer reports whether a console may answer it. Never: what makes
@@ -77,7 +102,15 @@ func dockMayAnswer(it *inbox.Item) bool {
 		return false
 	}
 	switch it.Kind {
-	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message:
+	// Every kind the dock may never answer, in one case with one return,
+	// so no merge can leave a kind in a case of its own with no return:
+	// a Go case does not fall through. Desktop control is the human's own
+	// window only; a mission's done criteria decide when it is done, so
+	// they are the human's in Den.
+	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message,
+		inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn,
+		inbox.MissionCriteria, inbox.MissionDone, inbox.MirrorAsk, inbox.ProcessTuned, inbox.PromptProposal,
+		inbox.RulesPick, inbox.RulesEdited:
 		return false
 	}
 	return true
@@ -102,6 +135,10 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 	switch {
 	case card.Hash != a.Hash:
 		return reply(api.CardResult{Code: api.CodeCardChanged, Note: "the card changed: fetch it again"})
+	case m.godTTYOnly(it) || m.god.on && a.Verb == "always":
+		// A standing allowance outlives the turn: in God mode, Den's
+		// window only.
+		return reply(api.CardResult{Code: api.CodeTTYOnly, Note: "while God mode is on, only Den's own window answers this"})
 	case !card.DockAnswers || !containsVerb(card.Verbs, a.Verb):
 		return reply(api.CardResult{Code: api.CodeRefusedFromDock, Note: "the console may not answer this card that way"})
 	case m.tab == tabInbox && m.inboxSel == it.ID:

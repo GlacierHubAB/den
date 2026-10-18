@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,9 @@ import (
 	"github.com/GlacierHubAB/den/internal/api/denconformance"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 // conformanceLane is a fake claude that behaves like the read-only lane
@@ -95,6 +98,33 @@ func TestDreyInterface(t *testing.T) {
 	m := testModel(140, 40)
 	m.base = append([]fleet.Agent(nil), m.agents...)
 	m.cfg.API.AskBudgetUSD = 2
+	// The suite's view subtest really switches views: over a window manager
+	// that holds Den's own window and nothing else, never a real desktop.
+	// The fleet's local agents each have a terminal window titled as Den
+	// titles an agent's terminal, which a hide finds when the agent has no
+	// marker: with agents running and none of their windows Den's, a hide
+	// is refused.
+	wm := &viewWM{}
+	wm.cs = append(wm.cs, viewClient("0xden", "com.mitchellh.ghostty", 900, 1))
+	chains := map[int][]procs.Proc{}
+	for i, a := range m.agents {
+		if a.Host != "" || a.Status == fleet.Gone || a.Session.PID <= 1 {
+			continue
+		}
+		// The sample agents share a process and a peer name: give each its own.
+		// A refresh builds the fleet again from base.
+		m.agents[i].Session.PID, m.agents[i].Session.Name = 6000+i, "sample-"+strconv.Itoa(i)
+		m.base[i].Session.PID, m.base[i].Session.Name = m.agents[i].Session.PID, m.agents[i].Session.Name
+		a = m.agents[i]
+		c := viewClient("0xag"+strconv.Itoa(i), "com.mitchellh.ghostty", 5000+i, 2)
+		c.Title = hypr.AgentTitle(a.Session.Name)
+		wm.cs = append(wm.cs, c)
+		chains[a.Session.PID] = []procs.Proc{{PID: a.Session.PID}, {PID: 5000 + i}}
+	}
+	useViewWM(t, wm, chains)
+	// Console turns start the orchestrator: a fake one, held and checked
+	// as conformance_orch_test.go says, and never a real claude.
+	gate := stubOrchestrator(t)
 	apiOn(t, &m)
 	// A request with a body, so inbox.body has something to serve.
 	sid := m.agents[0].Session.SessionID
@@ -195,18 +225,86 @@ func TestDreyInterface(t *testing.T) {
 			})
 			return code, err
 		},
-		Confirm:    func(ctx context.Context) error { return answerConsole(ctx, 'y') },
-		Decline:    func(ctx context.Context) error { return answerConsole(ctx, 'n') },
-		Card:       func(ctx context.Context) (string, error) { return permissionCard(ctx, 1) },
-		LongCard:   func(ctx context.Context) (string, error) { return permissionCard(ctx, 12) },
+		Confirm:  func(ctx context.Context) error { return answerConsole(ctx, 'y') },
+		Decline:  func(ctx context.Context) error { return answerConsole(ctx, 'n') },
+		Card:     func(ctx context.Context) (string, error) { return permissionCard(ctx, 1) },
+		LongCard: func(ctx context.Context) (string, error) { return permissionCard(ctx, 12) },
+		// The mirror as the human switches it in Den: /api mirror on|off,
+		// and the ask card mirror_conversation = "ask" puts up.
+		Mirror: func(ctx context.Context, state string) error {
+			return onModel(ctx, func() error {
+				switch state {
+				case "on":
+					if note, isErr := m.mirrorCommand("on"); isErr {
+						return errors.New(note)
+					}
+				case "off":
+					m.mirrorCommand("off")
+				case "asking":
+					m.mirrorCommand("off")
+					m.cfg.API.MirrorConversation = "ask"
+					m.mirror.asked, m.mirror.declined = "", ""
+					m.mirrorTick()
+				default:
+					return errors.New("no such mirror state: " + state)
+				}
+				m.syncMirrorAsking()
+				return nil
+			})
+		},
+		// A line the human types in Den, as the mirror hears it.
+		Conversation: func(ctx context.Context) error {
+			return onModel(ctx, func() error {
+				m.mirrorTurn(originHuman, "a line typed in Den")
+				return nil
+			})
+		},
 		ThiefTest:  "TestConsoleThief",
 		SocketPath: path,
+		View:       true,
+	}
+	var lastAnswer time.Time // when the last card answer is carried out
+	// The commands the model returns run on their own goroutines and what
+	// they return comes back to Update, as Bubble Tea does: a console's turn
+	// starts the orchestrator through one and hears it through more.
+	l := &loop{t: t, m: &m, msgs: make(chan tea.Msg, 64)}
+	// paced says each card answer is carried out a second after the last
+	// (below); the suite's Burst turns it off for its burst, and back on.
+	// It is read and set on the loop's goroutine only (onModel).
+	paced := true
+	apiCmd := func(args ...string) {
+		mm, cmd := m.apiCommand(args)
+		m = mm.(Model)
+		l.run(cmd)
+	}
+	// Den's /api unpair, as the human types it.
+	console.Unpair = func(ctx context.Context) error {
+		return onModel(ctx, func() error { apiCmd("unpair"); return nil })
+	}
+	// /api disconnect, then /api resume, so the pairing may prove again.
+	console.Disconnect = func(ctx context.Context) error {
+		return onModel(ctx, func() error {
+			apiCmd("disconnect")
+			apiCmd("resume")
+			return nil
+		})
+	}
+	console.Burst = func(ctx context.Context) (func(), error) {
+		if err := onModel(ctx, func() error { paced = false; return nil }); err != nil {
+			return nil, err
+		}
+		return func() {
+			onModel(context.Background(), func() error {
+				paced, lastAnswer = true, time.Now()
+				return nil
+			})
+		}, nil
 	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		denconformance.Run(t, denconformance.Options{
-			Dial: func(ctx context.Context) (net.Conn, error) {
+			Dial: gate.tap(func(ctx context.Context) (net.Conn, error) {
 				// Each subtest dials afresh while Den may not yet have seen
 				// the last one's connections close: wait for room under the
 				// per-process cap, so the cap is not what the suite
@@ -228,53 +326,73 @@ func TestDreyInterface(t *testing.T) {
 				}
 				var d net.Dialer
 				return d.DialContext(ctx, "unix", path)
-			},
+			}),
 			Focusable: sid,
 			Skip:      denconformance.D1Skip,
 			Console:   console,
 		})
 	}()
+	// handle carries out an act on the model, on this goroutine.
+	handle := func(act api.Act) {
+		if act.Focus != nil {
+			m.api.lastKey = time.Time{} // the human has not typed in Den
+		}
+		l.run(m.applyAPIAct(act))
+		if act.Grant == nil {
+			return
+		}
+		// The human answers the grant card: select it, read it to its
+		// end, ^Y. Only the app-3 request (grant.events) is answered;
+		// the others stay waiting, as a human might leave them.
+		var card *inbox.Item
+		for it, id := range m.api.grants {
+			if id == act.Grant.ID {
+				card = it
+			}
+		}
+		if card == nil || !strings.Contains(card.Title, "Stand-up board") {
+			return
+		}
+		m.tab = tabInbox
+		m.refresh()
+		m.selectItem(card)
+		for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
+			press(tea.KeyPressMsg{Code: tea.KeyDown})
+		}
+		press(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+		if card.State != inbox.Resolved {
+			t.Errorf("^Y did not answer the grant card: %q", m.flash)
+		}
+	}
+	// Den unpairs a console that answers five cards in a row less than a
+	// second apart, and the suite answers faster than a person reads. Each
+	// card answer is therefore carried out a second after the last, as a
+	// reader would take: handed back to this loop when its turn comes, so
+	// that nothing waits inside it.
+	late := make(chan api.Act, 16)
 	for {
 		select {
 		case <-done:
 			return
 		case c := <-calls:
 			c.done <- c.f()
+		case msg := <-l.msgs:
+			l.feed(msg)
+		case act := <-late:
+			handle(act)
 		case act := <-m.api.srv.Acts():
-			if act.Focus != nil {
-				m.api.lastKey = time.Time{} // the human has not typed in Den
-			}
-			// As Bubble Tea does, a command runs on its own goroutine:
-			// some are timers (a flash that clears in 4 s), and run here
-			// they would hold this loop, and with it every hook below.
-			if cmd := m.applyAPIAct(act); cmd != nil {
-				go cmd()
-			}
-			if act.Grant == nil {
-				continue
-			}
-			// The human answers the grant card: select it, read it to its
-			// end, ^Y. Only the app-3 request (grant.events) is answered;
-			// the others stay waiting, as a human might leave them.
-			var card *inbox.Item
-			for it, id := range m.api.grants {
-				if id == act.Grant.ID {
-					card = it
+			if act.CardAnswer != nil && paced {
+				at := time.Now()
+				if earliest := lastAnswer.Add(1100 * time.Millisecond); at.Before(earliest) {
+					at = earliest
+				}
+				lastAnswer = at
+				if d := time.Until(at); d > 0 {
+					time.AfterFunc(d, func() { late <- act })
+					continue
 				}
 			}
-			if card == nil || !strings.Contains(card.Title, "Stand-up board") {
-				continue
-			}
-			m.tab = tabInbox
-			m.refresh()
-			m.selectItem(card)
-			for i := 0; i < 200 && m.unreadRows(card) > 0; i++ {
-				press(tea.KeyPressMsg{Code: tea.KeyDown})
-			}
-			press(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
-			if card.State != inbox.Resolved {
-				t.Errorf("^Y did not answer the grant card: %q", m.flash)
-			}
+			handle(act)
 		case <-time.After(60 * time.Second):
 			t.Fatal("the conformance run did not finish")
 		}

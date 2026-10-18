@@ -83,6 +83,16 @@ type Act struct {
 	CardAnswer *CardAnswer
 	// Command is a console's command line, for Den to decide.
 	Command *CommandRun
+	// ModeSet is a console's mode.set, for Den to decide.
+	ModeSet *ModeSet
+	// ConsolePowers asks the human to give the console its powers again.
+	ConsolePowers *ConsolePowersAsk
+	// View is a view switch to carry out: only the UI knows the sessions
+	// and what is waiting on the human.
+	View *ViewReq
+	// GodOff asks Den to turn God mode off, and says why: god.off, or an
+	// unpair. It only lowers; nothing here turns God mode on.
+	GodOff string
 }
 
 type grants struct {

@@ -105,7 +105,13 @@ func TestSummarize(t *testing.T) {
 			t.Errorf("Summarize(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if got := Summarize(strings.Repeat("word ", 60)); len([]rune(got)) > 160 {
-		t.Errorf("long text not capped: %d", len([]rune(got)))
+	// A long first sentence stays whole; only a runaway one is cut, at a
+	// word.
+	if long := strings.TrimSpace(strings.Repeat("word ", 60)); Summarize(long) != long {
+		t.Errorf("a 300-character sentence was cut: %q", Summarize(long))
+	}
+	got := Summarize(strings.Repeat("word ", 400))
+	if r := []rune(got); len(r) > summaryMax || !strings.HasSuffix(got, "word…") {
+		t.Errorf("runaway text: %d runes, ends %q", len(r), got[len(got)-10:])
 	}
 }

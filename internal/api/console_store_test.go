@@ -18,18 +18,19 @@ func storeHarness(t *testing.T, store string, priv ed25519.PrivateKey) *harness 
 	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore = priv, store })
 }
 
-// noteWith waits for a note of Den's that contains want.
-func noteWith(t *testing.T, s *Server, want string) {
+// noteWith waits for a note of Den's that contains want, and returns it.
+func noteWith(t *testing.T, s *Server, want string) string {
 	t.Helper()
 	deadline := time.After(3 * time.Second)
 	for {
 		select {
 		case n := <-s.Notes():
 			if strings.Contains(n, want) {
-				return
+				return n
 			}
 		case <-deadline:
 			t.Fatalf("no note with %q", want)
+			return ""
 		}
 	}
 }

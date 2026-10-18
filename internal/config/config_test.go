@@ -160,6 +160,24 @@ func TestAnswerQuestionsIsOptIn(t *testing.T) {
 	}
 }
 
+// The dock's powers come only as Den gave them in this run unless the
+// human writes "always"; any other value keeps the default.
+func TestConsolePowers(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	for body, want := range map[string]string{
+		"":                                     "unchanged",
+		"[api]\nconsole_powers = \"always\"\n": "always",
+		"[api]\nconsole_powers = \"unchanged\"\n": "unchanged",
+		"[api]\nconsole_powers = \"yes\"\n":       "unchanged",
+	} {
+		os.WriteFile(p, []byte(body), 0o600)
+		if got := Load().API.ConsolePowers; got != want {
+			t.Errorf("%q: %q, want %q", body, got, want)
+		}
+	}
+}
+
 // The API is off by default; /api on writes the key and touches nothing
 // else in the file.
 func TestAPIKeysAndSetKey(t *testing.T) {
@@ -196,5 +214,75 @@ func TestAPIKeysAndSetKey(t *testing.T) {
 	SetKey("api", "enabled", "true")
 	if got, _ := os.ReadFile(p); string(got) != "[notify]\ndone = true\n\n[api]\nenabled = true\n" {
 		t.Errorf("a missing section: %q", got)
+	}
+}
+
+func TestAgentsPermissionMode(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	for in, want := range map[string][2]string{
+		`"auto"`:              {"auto", ""},
+		`"accept-edits"`:      {"acceptEdits", ""},
+		`"dontAsk"`:           {"dontAsk", ""},
+		`"bypassPermissions"`: {"auto", "bypassPermissions"},
+		`"yolo"`:              {"auto", "yolo"},
+	} {
+		os.WriteFile(p, []byte("[agents]\npermission_mode = "+in+"\n"), 0o644)
+		c := Load()
+		if c.Agents.PermissionMode != want[0] || c.Agents.ModeRefused != want[1] {
+			t.Errorf("%s: got %q refused %q, want %q refused %q", in, c.Agents.PermissionMode, c.Agents.ModeRefused, want[0], want[1])
+		}
+	}
+	if err := SetKey("agents", "permission_mode", `"plan"`); err != nil {
+		t.Fatal(err)
+	}
+	if c := Load(); c.Agents.PermissionMode != "plan" || c.Agents.ModeRefused != "" {
+		t.Errorf("after SetKey: %q refused %q", c.Agents.PermissionMode, c.Agents.ModeRefused)
+	}
+	if mode, refused, err := ModeSetting(); mode != "plan" || refused != "" || err != nil {
+		t.Errorf("ModeSetting = %q, %q, %v", mode, refused, err)
+	}
+	os.WriteFile(p, []byte("[agents]\npermission_mode = \"bypassPermissions\"\n"), 0o644)
+	if mode, refused, err := ModeSetting(); mode != "" || refused != "bypassPermissions" || err != nil {
+		t.Errorf("ModeSetting on bypass = %q, %q, %v", mode, refused, err)
+	}
+	os.Remove(p)
+	if mode, refused, err := ModeSetting(); mode != "auto" || refused != "" || err != nil {
+		t.Errorf("ModeSetting with no file = %q, %q, %v", mode, refused, err)
+	}
+}
+
+// A task mission's limits come from the [desktop] section alone, with
+// defaults; nonsense keeps the default.
+func TestDesktopTaskLimits(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	if m, a := DesktopTask(); m != DefaultTaskMinutes || a != DefaultTaskActions {
+		t.Fatalf("no file: %d %d", m, a)
+	}
+	os.WriteFile(p, []byte("[desktop]\ntask_minutes = 5\ntask_actions = 40\n"), 0o600)
+	if m, a := DesktopTask(); m != 5 || a != 40 {
+		t.Fatalf("set: %d %d", m, a)
+	}
+	os.WriteFile(p, []byte("[desktop]\ntask_minutes = 0\ntask_actions = lots\n"), 0o600)
+	if m, a := DesktopTask(); m != DefaultTaskMinutes || a != DefaultTaskActions {
+		t.Fatalf("nonsense: %d %d", m, a)
+	}
+}
+
+// The agent's terminal is off unless [desktop] agent_view says true.
+func TestDesktopAgentView(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	if DesktopAgentView() {
+		t.Fatal("on with no file")
+	}
+	os.WriteFile(p, []byte("[desktop]\nagent_view = true\n"), 0o600)
+	if !DesktopAgentView() {
+		t.Fatal("off when asked for")
+	}
+	os.WriteFile(p, []byte("[desktop]\nagent_view = maybe\n"), 0o600)
+	if DesktopAgentView() {
+		t.Fatal("on for nonsense")
 	}
 }

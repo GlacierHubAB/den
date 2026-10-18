@@ -32,6 +32,7 @@ type consoleUI struct {
 	code      []string               // the console code on Den's screen, nil for none
 	codeUntil time.Time              // when it stops being live
 	cards     map[*inbox.Item]string // open console cards → claim id
+	powers    map[*inbox.Item]string // open powers cards → the console's pairing
 	keyErr    string                 // why there is no console key, "" when there is
 }
 
@@ -97,6 +98,21 @@ func (m Model) consoleCommand() (tea.Model, tea.Cmd) {
 	return m.say("Console code shown above for two minutes. Type it only into the app's own console window.", false)
 }
 
+// consoleLockCommand is /api lock: the console keeps its pairing but
+// loses its powers (answering cards, running commands, and chat tools
+// without a card) until your Ctrl+Y on Den's powers card. It only lowers,
+// so the dock may send it too.
+func (m Model) consoleLockCommand() (tea.Model, tea.Cmd) {
+	if m.api.srv == nil {
+		return m.say("The API is not running.", true)
+	}
+	if _, ok := m.api.srv.CurrentConsole(); !ok {
+		return m.say("No console is paired.", false)
+	}
+	m.api.srv.LockConsole("you locked them in Den")
+	return m.say("The console's powers are locked: it answers no cards, runs no commands, and its chat's tools wait for you, however it pairs again. Ctrl+Y on Den's powers card gives them back.", false)
+}
+
 // startConsoleCode puts a console code on Den's screen; "" when it did, else
 // why not.
 func (m *Model) startConsoleCode() string {
@@ -126,7 +142,7 @@ func (m Model) consoleCodeLine() string {
 
 // isConsoleAct reports whether act is the console's.
 func isConsoleAct(act api.Act) bool {
-	return act.Console != nil || act.ConsoleDone != "" || act.ConsoleChanged || act.ConsoleCodeGone || act.ConsoleIntruder != nil
+	return act.Console != nil || act.ConsoleDone != "" || act.ConsoleChanged || act.ConsoleCodeGone || act.ConsoleIntruder != nil || act.ConsolePowers != nil
 }
 
 // procWhen is "started HH:MM:SS", or that Den does not know.
@@ -142,6 +158,25 @@ func (m *Model) applyConsoleAct(act api.Act) tea.Cmd {
 	if m.con.cards == nil {
 		m.con.cards = map[*inbox.Item]string{}
 	}
+	if m.con.powers == nil {
+		m.con.powers = map[*inbox.Item]string{}
+	}
+	if pw := act.ConsolePowers; pw != nil {
+		// One at a time: a newer one replaces an older.
+		for it := range m.con.powers {
+			if it.State != inbox.Resolved {
+				m.store.Settle(it, false, "replaced")
+			}
+			delete(m.con.powers, it)
+		}
+		it := m.store.AddConsole("Let your console answer cards and run commands again?", []string{
+			"Your console (pid " + strconv.Itoa(pw.PID) + ", " + procWhen(pw.Started) + ") is paired, but has no powers: " + sanitize.Label(pw.Why, 120) + ".",
+			"Until you press Ctrl+Y here, it can read, chat and show status, but not answer Den's cards or run Den's commands.",
+			"Only Den's own window answers this card. /api unpair or den unpair all ends the console instead.",
+		})
+		m.con.powers[it] = pw.ID
+		m.refresh()
+	}
 	if act.ConsoleCodeGone {
 		m.con.code = nil
 	}
@@ -156,6 +191,35 @@ func (m *Model) applyConsoleAct(act api.Act) tea.Cmd {
 			"program: " + sanitize.Label(api.ExeShown(p.Exe), 160),
 			"pid " + strconv.Itoa(p.PID) + " · " + procWhen(p.Started) + " · parent " + sanitize.Label(parent, 40),
 			"command line, as the program reports it (it can be spoofed): " + sanitize.Label(p.Cmdline, 200),
+		}
+		if p.Rejoins && !p.Codeless {
+			body = append(body, "Den read it as "+sanitize.Label(p.Unit, 60)+" through your systemd user manager: this dock pairs again by itself after a restart, with its powers; /api lock takes them, /api unpair ends it.")
+		}
+		if p.Codeless {
+			unit := sanitize.Label(p.Unit, 60)
+			title = "Pair " + unit + " (pid " + strconv.Itoa(p.PID) + ", " + procWhen(p.Started) + ") as your console?"
+			sha := p.ProgramSHA
+			if len(sha) > 16 {
+				sha = sha[:16]
+			}
+			body = []string{
+				unit + " asked to be your console, with no code. Pair it only if the dock shows this same pid, start time and both keys' fingerprints.",
+				"pid " + strconv.Itoa(p.PID) + " · " + procWhen(p.Started) + " · parent " + sanitize.Label(parent, 40),
+				"its key:   " + sanitize.Label(p.AppFP, 19),
+				"Den's key: " + sanitize.Label(p.DenFP, 19),
+				"program, as your systemd user manager runs it: " + sanitize.Label(p.Program, 160) + " (sha256 " + sanitize.Label(sha, 16) + "…)",
+				"Den checked the unit's program, settings and environment through your systemd user manager. Any program running as you could stand in for that manager, so this is a check, not proof.",
+			}
+			if p.Reconnect {
+				title = "Re-pair " + unit + " (pid " + strconv.Itoa(p.PID) + ", " + procWhen(p.Started) + ") as your console?"
+				body[0] = unit + " restarted and asks to be your console again. Den asks you because:"
+				var changes []string
+				for _, c := range p.Changes {
+					changes = append(changes, "  - "+sanitize.Label(c, 200))
+				}
+				body = append(body[:1], append(changes, body[1:]...)...)
+				body = append(body, "Ctrl+Y re-pairs it and lets it answer cards and run commands. Pair it only if the dock shows this same pid, start time and both fingerprints.")
+			}
 		}
 		if r := p.Replaces; r != nil {
 			body = append(body, "This replaces your current console ("+appName(r.Exe)+" pid "+strconv.Itoa(r.PID)+").")
@@ -190,6 +254,20 @@ func (m *Model) applyConsoleAct(act api.Act) tea.Cmd {
 // decideConsole is the human's ^Y or ^N on a console card, after the whole
 // card was shown (answer's readGate).
 func (m Model) decideConsole(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
+	if pid, ok := m.con.powers[it]; ok && m.api.srv != nil {
+		if verb == "always" {
+			return m.say("This card is answered once: ^Y gives the console its powers, ^N leaves it without.", true)
+		}
+		delete(m.con.powers, it)
+		m.api.srv.ConsolePowersAnswered(pid, verb == "allow")
+		m.store.Settle(it, verb == "allow", map[bool]string{true: "powers given", false: "no powers"}[verb == "allow"])
+		m.refresh()
+		if verb != "allow" {
+			return m.say("The console keeps reading and chat, without powers.", false)
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "the console may answer cards and run commands again", at: time.Now()}))
+		return m.say("The console has its powers again.", false)
+	}
 	id, ok := m.con.cards[it]
 	if !ok || m.api.srv == nil {
 		m.store.Settle(it, false, "stale; no console")
@@ -208,23 +286,6 @@ func (m Model) decideConsole(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "den-api.sock: a console was paired; /api unpair or den unpair all ends it", at: time.Now()}))
 	return m.say("Paired as your console.", false)
-}
-
-// consoleChip is the header's console part: who it is and since when; ""
-// for none.
-func (m Model) consoleChip() string {
-	if m.api.srv == nil {
-		return ""
-	}
-	c, ok := m.api.srv.CurrentConsole()
-	if !ok {
-		return ""
-	}
-	who := appName(c.Exe)
-	if api.Unidentified(c.Exe) {
-		who = "an unidentified app"
-	}
-	return m.st.attn.Render("console: " + who + " pid " + strconv.Itoa(c.PID) + " since " + c.Since.Local().Format("15:04"))
 }
 
 // pairCallerRefusal is why Den refuses den pair from pid: it runs under
@@ -277,6 +338,7 @@ var pairCaller = func(m Model, pid int) string { return m.pairCallerRefusal(pid)
 // handleConsoleUnpair is den unpair [all] over den.sock: it only lowers,
 // so it is never refused for who asks.
 func (m *Model) handleConsoleUnpair(r *bridge.Request) tea.Cmd {
+	m.godOff("den unpair") // a lowering too, with the API on or off
 	if m.api.srv == nil {
 		r.Reply(bridge.Decision{Behavior: "allow", Message: "Nothing was paired: the API is off."})
 		return nil
@@ -285,7 +347,7 @@ func (m *Model) handleConsoleUnpair(r *bridge.Request) tea.Cmd {
 		All bool `json:"all"`
 	}
 	json.Unmarshal(r.Envelope.Payload, &p)
-	n := m.api.srv.UnpairConsole("")
+	n := m.api.srv.UnpairConsole(api.CauseDen, "")
 	if p.All {
 		n += len(m.api.srv.Pairings())
 		m.api.srv.Unpair("", "")

@@ -44,6 +44,8 @@ var controlSends = []string{
 	"You have exactly two tools for the fleet, ListAgents and Den's send_message (" + SendMessageTool + "), and need nothing else. " + ControlNoSendMessage + " send_message is the only way to message an agent: it reaches the agent the same way, and its report comes back to you as before.",
 	"send it with SendMessage to that agent's peer name",
 	"send it with send_message (" + SendMessageTool + ") to that agent's peer name",
+	"dispatch per its shape: SendMessage to the running agents that own sub-goals",
+	"dispatch per its shape: send_message to the running agents that own sub-goals",
 }
 
 // ControlNoSendMessage is the one place the control rules name
@@ -178,13 +180,19 @@ type permission struct {
 	timer           *time.Timer
 }
 
-// humanTools are the tools Den allows outside an app's turn: the ones it
-// allows without control (Argv's allow-list), with send_message for
-// SendMessage.
-func humanTools(o Options) map[string]bool {
-	set := map[string]bool{SendMessageTool: true, MissionTool: true}
-	if o.Spawn {
-		for _, t := range []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool} {
+// humanTools are the tools Den allows outside an app's turn (HumanTurnTools).
+func humanTools(o Options) map[string]bool { return HumanTurnTools(o.Spawn) }
+
+// HumanTurnTools are the tools Den allows the orchestrator in a turn that
+// is not an app's, with control on: send_message, DenTools, and SpawnTools
+// with spawn. Without control the same lists are its --allowedTools.
+func HumanTurnTools(spawn bool) map[string]bool {
+	set := map[string]bool{SendMessageTool: true}
+	for _, t := range DenTools {
+		set[t] = true
+	}
+	if spawn {
+		for _, t := range SpawnTools {
 			set[t] = true
 		}
 	}
@@ -242,6 +250,25 @@ func (o *Orchestrator) AppTurn() string {
 		return ""
 	}
 	return o.ctl.app.id
+}
+
+// CloseAppTurn closes the open app turn whose result Den missed, and
+// denies the permissions it still holds; it returns the turn's id, "" when
+// none was open. Den's watchdog calls it when Claude Code has finished its
+// turns and the app turn is still open.
+func (o *Orchestrator) CloseAppTurn() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	c := o.ctl
+	if c == nil || !c.app.open {
+		return ""
+	}
+	id := c.app.id
+	c.app = appTurn{}
+	for rid := range c.perms {
+		o.answerLocked(rid, false, "the turn ended")
+	}
+	return id
 }
 
 // Interrupt asks Claude Code to stop the turn it is on; its result follows.

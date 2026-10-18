@@ -164,3 +164,51 @@ func TestEnvHasTheHostOnlyForRemoteEvents(t *testing.T) {
 		t.Errorf("env = %v", Env(ev))
 	}
 }
+
+// An event appended to the old file after the reader reached its end, and
+// then moved aside with it, is still read, before the new file's: the
+// reader reads the old file once more when it sees the move. The file is
+// written and moved at that exact point, from the reader's own loop.
+func TestReaderReadsTheOldFileBeforeTheNew(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "den", "events.jsonl")
+	Append(path, New(Done, "before")) // already there: skipped
+	rd := Open(path)
+	moved := false
+	rd.atEOF = func() {
+		if moved {
+			return
+		}
+		moved = true
+		Append(path, New(Done, "last-in-old"))
+		Append(path, New(Done, "half"))
+		// A line without its end, in the moved file: never completed, so
+		// never read as an event.
+		f, _ := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+		f.WriteString(`{"v":1,"kind":"done","session":"cut`)
+		f.Close()
+		os.Rename(path, path+".1")
+		Append(path, New(Done, "first-in-new"))
+	}
+	stop := make(chan struct{})
+	var got []string
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		rd.Run(stop, func(raw []byte, ev Event) {
+			got = append(got, ev.Session)
+			if ev.Session == "first-in-new" {
+				close(stop)
+			}
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		close(stop)
+		<-done
+		t.Fatalf("the new file's event never came: %v", got)
+	}
+	if strings.Join(got, ",") != "last-in-old,half,first-in-new" {
+		t.Errorf("events %v, want last-in-old, half, then first-in-new", got)
+	}
+}

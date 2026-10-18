@@ -44,7 +44,7 @@ func updateMission(t *testing.T, m *Model, state string) bridge.Decision {
 func missionItems(m Model) []*inbox.Item {
 	var out []*inbox.Item
 	for _, it := range m.store.Items() {
-		if it.Kind == inbox.MissionUpdate {
+		if it.Kind == inbox.MissionUpdate || it.Kind == inbox.MissionDone {
 			out = append(out, it)
 		}
 	}

@@ -76,6 +76,25 @@ func PeerPID(c net.Conn) (int, error) {
 	return pid, cerr
 }
 
+// Running reports the pid of this user's process listening on the Den
+// socket at path, and whether one does: a socket file with no listener,
+// or another user's, is no running Den.
+func Running(path string) (int, bool) {
+	c, err := net.DialTimeout("unix", path, 300*time.Millisecond)
+	if err != nil {
+		return 0, false
+	}
+	defer c.Close()
+	if uid, err := peerUID(c); err != nil || uid != os.Getuid() {
+		return 0, false
+	}
+	pid, err := PeerPID(c)
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
 // ErrForeign means the process at the other end of a Den socket is not
 // this user's.
 var ErrForeign = errors.New("the socket belongs to another user")

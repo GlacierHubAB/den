@@ -46,6 +46,11 @@ type Options struct {
 	// ConsoleStore is where Den keeps its side of the console across
 	// restarts (console_store.go); "" keeps it in memory only.
 	ConsoleStore string
+	// ConsolePowersAlways gives the console's service its powers whenever
+	// it pairs by itself (api.console_powers = "always"). Left false, only
+	// a program, unit and pins this Den run already gave them to come with
+	// them; anything else asks for one Ctrl+Y.
+	ConsolePowersAlways bool
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -57,6 +62,10 @@ type Client struct {
 	Streams []string
 	Asking  bool
 	Agent   bool // its ancestry runs through a Den agent: refused
+	// Console is set for a connection proved as the paired console
+	// (console.auth): Den knows it from the pairing, never from anything
+	// the program says.
+	Console bool
 }
 
 // Server serves den-api.sock.
@@ -66,16 +75,23 @@ type Server struct {
 	// when console pairing is off.
 	con  consoleState
 	ckey *consoleKey
+	// conv is the conversation mirror (conversation.go).
+	conv convState
 	// stopWatch ends the console record's watch; closeOnce makes Close's
 	// clean-exit mark once.
 	stopWatch chan struct{}
 	// cardAnswers counts the console's card answers for their limits.
 	cardAnswers answers
+	// god is God mode's state as Den last set it (god.go).
+	god godState
+	// desk is the running desktop mission as Den last set it (desktop.go).
+	desk desktopState
 	// cmdLimits counts the console's commands.
 	cmdLimits cmdLimits
 	closeOnce sync.Once
 	bp        atomic.Pointer[bound] // the socket Den bound; Rebind replaces it
 	view      atomic.Pointer[View]
+	lastView  atomic.Pointer[ViewChange] // how the last view switch ended, for a subscriber's snapshot
 	chat      *chatStore
 	lane      *lane
 	notes     chan string
@@ -93,6 +109,9 @@ type Server struct {
 	// pairHook runs between a claim's bookkeeping and its card, in tests
 	// only, to let a second claim in there.
 	pairHook atomic.Pointer[func(string)]
+	// askHook runs between an ask's reply and its queueing, with its id,
+	// in tests only, to let a cancel in there.
+	askHook atomic.Pointer[func(string)]
 
 	grants   *grants
 	acts     chan Act
@@ -100,12 +119,17 @@ type Server struct {
 	lastConn map[string]time.Time // exe -> when its last connection closed
 
 	focusLimit focusLimit
+	viewSwitch viewSwitch
 	rebound    bool // Rebind ran since the last /api resume
 
 	mu        sync.Mutex
 	conns     map[*conn]bool
 	lastFleet []byte
-	seenExe   map[string]bool
+	// lastAppFleet is the fleet as an app other than the console sees it,
+	// with no doing.
+	lastAppFleet []byte
+	doing        map[string]doingSeen // each agent's published Doing, under mu
+	seenExe      map[string]bool
 	// connectNotes are when programs Den cannot identify earned a connect
 	// note (firstConnect).
 	connectNotes []time.Time
@@ -459,12 +483,14 @@ func (s *Server) Paused() bool { return s.paused.Load() }
 
 // Clients lists the connected apps.
 func (s *Server) Clients() []Client {
+	cur, paired := s.CurrentConsole()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []Client
 	for c := range s.conns {
 		c.mu.Lock()
 		cl := Client{PID: c.peer.PID, Exe: c.peer.Exe, Label: c.peer.Label(), Since: c.since, Asking: c.asks > 0, Agent: c.agent}
+		cl.Console = paired && c.console != "" && c.console == cur.ID
 		for k := range c.subs {
 			cl.Streams = append(cl.Streams, k)
 		}
@@ -480,16 +506,31 @@ func (s *Server) Clients() []Client {
 // pushes fleet and inbox events to subscribers. It never blocks on a
 // client.
 func (s *Server) Publish(v *View) {
+	// Each agent's Doing is settled before the view is shared: readers
+	// never see it change under them.
+	s.mu.Lock()
+	if s.doing == nil {
+		s.doing = map[string]doingSeen{}
+	}
+	settleDoing(v.Fleet.Agents, s.doing, time.Now())
+	s.mu.Unlock()
 	old := s.view.Swap(v)
 	var oldCards map[string]Card
 	if old != nil {
 		oldCards = old.Cards
 	}
 	s.pushCards(oldCards, v.Cards, v.Settled)
+	// Whether the fleet changed, as the console sees it and as any other
+	// app does (no doing): a change in doing alone tells an app nothing,
+	// not even by when its fleet event comes.
 	fleetRaw, _ := json.Marshal(v.Fleet)
+	appFleet := v.Fleet
+	appFleet.Agents = blankDoing(v.Fleet.Agents)
+	appRaw, _ := json.Marshal(appFleet)
 	s.mu.Lock()
 	fleetChanged := !bytes.Equal(fleetRaw, s.lastFleet)
-	s.lastFleet = fleetRaw
+	appChanged := !bytes.Equal(appRaw, s.lastAppFleet)
+	s.lastFleet, s.lastAppFleet = fleetRaw, appRaw
 	conns := make([]*conn, 0, len(s.conns))
 	for c := range s.conns {
 		conns = append(conns, c)
@@ -514,9 +555,15 @@ func (s *Server) Publish(v *View) {
 			}
 		}
 	}
+	modeChanged := v.Mode.Global != "" && (old == nil || old.Mode != v.Mode)
 	for _, c := range conns {
-		if fleetChanged && c.subscribed(EventFleet) {
-			c.pushFleet(s.fleetFor(c))
+		if c.subscribed(EventFleet) {
+			if console := s.isConsole(c); console && fleetChanged || !console && appChanged {
+				c.pushFleet(s.fleetFor(c))
+			}
+		}
+		if modeChanged && c.subscribed(EventConsole) {
+			c.push(Event{Event: EventMode, Data: v.Mode}, true)
 		}
 		if c.subscribed(EventInbox) {
 			for _, ch := range changes {
@@ -555,7 +602,36 @@ func (s *Server) fleetFor(c *conn) Fleet {
 	scope := c.scope
 	c.mu.Unlock()
 	f.Asks = s.lane.Asks(scope)
+	if !s.isConsole(c) {
+		f.Agents = blankDoing(f.Agents)
+	}
 	return f
+}
+
+// isConsole reports whether c is a connection of the paired console, by
+// its proof (c.console is set only once it proved itself), never by
+// anything the client sends.
+func (s *Server) isConsole(c *conn) bool {
+	c.mu.Lock()
+	id := c.console
+	c.mu.Unlock()
+	if id == "" {
+		return false
+	}
+	s.con.mu.Lock()
+	defer s.con.mu.Unlock()
+	return s.con.cur != nil && s.con.cur.ID == id
+}
+
+// blankDoing is agents with every Doing empty, on a copy: the shared view
+// is never written. What an agent is doing goes to the console alone.
+func blankDoing(agents []Agent) []Agent {
+	out := make([]Agent, len(agents))
+	copy(out, agents)
+	for i := range out {
+		out[i].Doing = Doing{}
+	}
+	return out
 }
 
 func (s *Server) accept(b *bound) {
@@ -606,6 +682,7 @@ type conn struct {
 	cnonce      string
 	claimSalt   string
 	cchallenged time.Time
+	crequested  time.Time // its last console.request or console.reconnect
 	console     string
 }
 
@@ -834,6 +911,23 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 	hello, agent := c.hello, c.agent
 	c.mu.Unlock()
 	if req.Op != "hello" && !hello {
+		// A reconnecting console may ask first, so that it sends nothing
+		// before Den has proved itself (den_sig); the agent check hello
+		// makes is made here too.
+		if req.Op == "console.reconnect" && req.V == V {
+			// No view yet means Den cannot tell an agent's process: refuse.
+			v := s.view.Load()
+			if v == nil {
+				c.fail(req.ID, CodeUnavailable, "Den is starting")
+				return
+			}
+			if _, isAgent := underAgent(c.peer.PID, v.AgentProcs); isAgent {
+				c.fail(req.ID, CodeForbidden, "an agent's process may not use den-api.sock")
+				return
+			}
+			s.consoleReconnect(c, req)
+			return
+		}
 		c.fail(req.ID, CodeHelloFirst, "")
 		return
 	}
@@ -886,9 +980,22 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		} else if first {
 			s.note("an app connected to den-api.sock: " + sanitize.Label(ExeShownShort(c.peer.Exe), 120) + " (pid " + itoa(c.peer.PID) + "). /api lists apps; /api disconnect drops them.")
 		}
-		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState()}
+		g := s.god.get()
+		info := Info{Version: s.opts.Version, Versions: []int{V}, Host: host, Control: s.ControlState(), God: &g}
 		if s.ckey != nil {
 			info.Features = []string{FeatureConsole}
+			// Public: the dock shows its fingerprint while the human
+			// matches it with Den's card (console.request).
+			info.ConsolePublicKey = s.ckey.pubHex
+		}
+		if v := s.view.Load(); v != nil {
+			if v.Mode.Global != "" {
+				mode := v.Mode
+				info.Mode = &mode
+			}
+			if v.Fleet.View != "" {
+				info.View, info.ViewWorkspaces = v.Fleet.View, []string{ViewWorkspace}
+			}
 		}
 		c.reply(req.ID, info)
 	case "fleet.snapshot":
@@ -979,12 +1086,18 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.consoleChallenge(c, req)
 	case "console.claim":
 		s.consoleClaim(c, req)
+	case "console.request":
+		s.consoleRequest(c, req)
+	case "console.reconnect":
+		s.consoleReconnect(c, req)
 	case "console.auth":
 		s.consoleAuth(c, req)
 	case "console.events":
 		s.consoleEvents(c, req)
 	case "console.unpair":
 		s.consoleUnpair(c, req)
+	case "conversation.history":
+		s.conversationHistory(c, req)
 	case "card.get":
 		s.cardGet(c, req)
 	case "card.answer":
@@ -993,10 +1106,18 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.cmdList(c, req)
 	case "cmd.complete":
 		s.cmdComplete(c, req)
+	case "god.off":
+		s.godOff(c, req)
 	case "cmd.run":
 		s.cmdRun(c, req)
+	case "mode.set":
+		s.modeSet(c, req)
 	case "focus":
 		s.focus(c, req)
+	case "view.show":
+		s.viewVerb(c, req, ViewAgent)
+	case "view.hide":
+		s.viewVerb(c, req, ViewUser)
 	case "ask.cancel":
 		var p struct {
 			Ask string `json:"ask"`
@@ -1107,9 +1228,21 @@ func (s *Server) ask(c *conn, req Request) {
 		}
 		return ok
 	}
+	// Findable by its id before the app is told it: an ask.cancel sent the
+	// moment the reply is read finds it, and its stream then ends with
+	// "cancelled" once it is taken from the queue.
+	s.lane.register(j)
 	c.reply(req.ID, map[string]string{"session": session, "ask": j.id})
+	if f := s.askHook.Load(); f != nil {
+		(*f)(j.id)
+	}
 	if err := s.lane.enqueue(j); err != nil {
-		j.end(err.Error())
+		s.lane.forget(j)
+		if j.isCancelled() {
+			j.end(j.why())
+		} else {
+			j.end(err.Error())
+		}
 	}
 }
 

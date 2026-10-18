@@ -21,6 +21,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/critter"
+	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/hooks"
@@ -109,12 +110,23 @@ func flashTick(d time.Duration, text string) tea.Cmd {
 type Model struct {
 	// peers is the bookkeeping of messages other sessions send the
 	// orchestrator (inbound.go); missionUpdates are the updates waiting on
-	// the human's ^Y, by inbox item (mission_update.go).
+	// the human's ^Y, by inbox item, and missionAsks the criteria and done
+	// questions (mission_update.go).
 	peers          peerState
-	missionUpdates map[string]mission.Update
+	missionUpdates map[string]bridge.MissionInput
+	missionAsks    map[string]missionAsk
 	// use is the usage guard (usage.go).
 	use usageGuard
-	// dockFrom names the console while its command runs, "" otherwise.
+	// mode is the global permission mode agents start in (mode.go).
+	mode modeState
+	// god is God mode (god.go): in memory only, off at every start.
+	god godUI
+	// med is the mediation of messages to guarded agents (mediate.go).
+	med mediationUI
+	// fromDock is set while a console's command runs, and dockFrom names
+	// that console; what the dock may not do is decided on fromDock, never
+	// on the name, which may be empty.
+	fromDock bool
 	dockFrom string
 	// ments are the agents names in rendered text are coloured for
 	// (mention_color.go), rebuilt with the fleet.
@@ -141,27 +153,34 @@ type Model struct {
 	watch     <-chan struct{}
 	lastScan  time.Time
 
-	srv        *bridge.Server
-	closing    map[string]closer.Plan     // close questions in the inbox, by item id
-	offers     map[string]skills.Approval // skills offers in the inbox, by item id
-	installs   map[string]remote.Plan     // remote install questions in the inbox, by item id
-	sends      map[string]askedSend       // den send questions in the inbox, by item id
-	wt         map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
-	sel        selState                   // Den's own text selection on the Orchestrator and Overview views
-	guard      *closer.Guard              // agents a close must leave alone or only propose when named
-	guardPath  string
-	srvErr     error
-	store      *inbox.Store
-	inboxCur   int
-	inboxSel   string          // id of the selected inbox item: the selection follows the item, never its place in the list
-	inboxLost  bool            // the selected item left the list: nothing is selected until the human picks one
-	inboxAt    time.Time       // when the human last chose an item: requests after it are new to them
-	shown      shownTarget     // what ^Y and ^N act on now, and since when
-	bodyOff    int             // rows the selected inbox item is scrolled, when it is taller than the pane
-	bodyRead   map[string]bool // items whose whole body was scrolled through (inbox_body.go)
-	hooksReady bool
-	cfg        config.Config
-	chatLog    string // the orchestrator log on disk
+	srv             *bridge.Server
+	closing         map[string]closer.Plan     // close questions in the inbox, by item id
+	offers          map[string]skills.Approval // skills offers in the inbox, by item id
+	installs        map[string]remote.Plan     // remote install questions in the inbox, by item id
+	desktopInstalls map[string]desktop.Plan    // hypruse install questions in the inbox, by item id
+	desk            deskState                  // desktop missions
+	team            teamState                  // the small-team process: overlapping branches
+	mirror          mirrorState                // the conversation mirror (conversation.go)
+	metrics         metricsState               // figures waiting for the next orchestrator turn
+	tune            tuneState                  // the orchestrator's tuning, by project
+	mem             memState                   // each project's notes and rules
+	sends           map[string]askedSend       // den send questions in the inbox, by item id
+	wt              map[string]wtOffer         // merge and cleanup questions in the inbox, by item id
+	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
+	guard           *closer.Guard              // agents a close must leave alone or only propose when named
+	guardPath       string
+	srvErr          error
+	store           *inbox.Store
+	inboxCur        int
+	inboxSel        string          // id of the selected inbox item: the selection follows the item, never its place in the list
+	inboxLost       bool            // the selected item left the list: nothing is selected until the human picks one
+	inboxAt         time.Time       // when the human last chose an item: requests after it are new to them
+	shown           shownTarget     // what ^Y and ^N act on now, and since when
+	bodyOff         int             // rows the selected inbox item is scrolled, when it is taller than the pane
+	bodyRead        map[string]bool // items whose whole body was scrolled through (inbox_body.go)
+	hooksReady      bool
+	cfg             config.Config
+	chatLog         string // the orchestrator log on disk
 	// Images attached to the command line, and whether the terminal can
 	// draw them inline (kitty graphics, confirmed by a probe reply).
 	attachments []attachment
@@ -180,11 +199,11 @@ type Model struct {
 	detailScroll int       // lines scrolled in the detail pane
 	tree         treeState // who directs whom, and the map
 
-	proj           projectState   // the projects and the pick
-	ov             overviewState  // the Overview tab
-	missions       *mission.Store // standing goals, by project
-	turn           missionTurn    // which mission the orchestrator's turn serves
-	missionDirSent bool           // the orchestrator has had the mission vocabulary
+	proj     projectState   // the projects and the pick
+	ov       overviewState  // the Overview tab
+	missions *mission.Store // standing goals, by project
+	turn     missionTurn    // which mission the orchestrator's turn serves
+	noRoles  bool           // the agents pane is too narrow for role tags
 
 	rev reviewState // the Review view
 
@@ -239,6 +258,7 @@ func New(cfg config.Config) Model {
 	m.fitInput()
 	m.openRemote(cfg)
 	m.startGuidance(cfg.Orchestrator.Guidance)
+	m.startMode(cfg.Agents.PermissionMode, cfg.Agents.ModeRefused)
 	if cfg.API.Enabled {
 		// Only the Den that holds den.sock serves the API too.
 		if m.srv != nil {
@@ -246,6 +266,9 @@ func New(cfg config.Config) Model {
 		} else {
 			m.api.err = "another Den is running"
 		}
+	}
+	if keys := config.GodKeys(); len(keys) > 0 {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config: " + strings.Join(keys, ", ") + " ignored: God mode has no setting; it is turned on only in Den's own window, with /god on and its phrase, and is off at every start.", at: time.Now()}))
 	}
 	return m
 }
@@ -264,7 +287,12 @@ func (m Model) Close() {
 }
 
 func (m Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe()}
+	cmds := []tea.Cmd{snapshot, tick(), waitChange(m.watch), animTick(), kittyProbe(), clearNoFocus}
+	// Whatever view Den's record says it is in is checked against the
+	// windows before anyone relies on it.
+	if cmd := m.reconcileView(); cmd != nil {
+		cmds = append(cmds, cmd)
+	}
 	if m.srv != nil {
 		cmds = append(cmds, waitRequest(m.srv))
 	}
@@ -523,9 +551,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
+		m.checkGuards()
+		m.pruneDeliveries()
+		m.dropStaleGuards()
+		m.watchGuards(time.Now())
 		m.refresh()
+		m.refreshTranscript()
 		m.restartForGuidance()
-		cmds := []tea.Cmd{snapshot, tick(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.controlTick(time.Now())}
+		m.mirrorTick()
+		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
+		m.deskAskSync()
+		if cmd := m.reconcileView(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 		if m.tab == tabReview && time.Since(m.rev.loadedAt) > reviewReload {
 			cmds = append(cmds, m.loadReview())
 		}
@@ -585,12 +623,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.applyGuidance(msg)
 		m.refresh()
 		return m, cmd
+	case modeReadMsg:
+		m.applyModeRead(msg)
+		m.refresh()
+		return m, nil
 	case apiActMsg:
 		if msg.from != m.api.srv {
 			return m, nil
 		}
 		cmd := m.applyAPIAct(msg.act)
 		return m, tea.Batch(cmd, waitAPIAct(msg.from))
+	case viewDoneMsg:
+		m.api.view = msg.view
+		m.publishAPI()
+		return m, nil
+	case viewReconciledMsg:
+		return m.applyViewReconciled(msg)
+	case viewRescueMsg:
+		return m.applyViewRescue(msg)
+	case viewRaisedMsg:
+		if msg.err != nil {
+			m.api.raised = false // try again on the next tick
+		}
+		return m, nil
 	case apiNoteMsg:
 		if msg.from != m.api.srv {
 			return m, nil
@@ -600,6 +655,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cliSentMsg:
 		m.applyCLISent(msg)
 		m.refresh()
+		return m, nil
+	case teamScanMsg:
+		cmd := m.applyTeamScan(msg, time.Now())
+		return m, cmd
+	case teamCapMsg:
+		m.applyTeamCap(msg, time.Now())
+		return m, nil
+	case tuneMsg:
+		m.applyTune(msg, time.Now())
+		return m, nil
+	case memMsg:
+		m.applyMemory(msg, time.Now())
 		return m, nil
 	case sentMsg:
 		m.applySent(msg)
@@ -614,6 +681,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case installDoneMsg:
 		return m, m.finishInstall(msg)
+	case desktopInstallDoneMsg:
+		return m, m.finishDesktopInstall(msg)
+	case deskSnapMsg:
+		return m, m.decideDesktopCall(msg)
+	case deskCardTimeoutMsg:
+		m.timeoutDesktopCard(msg)
+		return m, nil
+	case deskCropMsg:
+		m.finishDeskCrop(msg)
+		return m, nil
+	case deskTickMsg:
+		return m, m.deskOnTick()
+	case deskPrepared:
+		return m, m.finishPrepare(msg)
+	case deskSpawned:
+		return m, m.finishSpawn(msg)
+	case deskHeadlessStarted:
+		return m, m.finishHeadless(msg)
+	case deskLineMsg:
+		return m, m.showDeskLine(msg)
+	case deskOwnMsg:
+		return m, m.finishOwn(msg)
+	case deskSetupDoneMsg:
+		return m.finishSetup(msg)
+	case deskTaskCheckMsg:
+		return m, m.finishTaskCheck(msg)
 	case askedSentMsg:
 		return m, m.finishAskedSend(msg)
 	case restoreDoneMsg:
@@ -677,7 +770,26 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.SendEvent {
 		return m.handleSendRequest(r)
 	}
-	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.OrchSendEvent {
+	if r.Event == bridge.DesktopInstallEvent {
+		return m.handleDesktopInstallRequest(r)
+	}
+	if r.Event == bridge.DesktopEvent {
+		return m.handleDesktop(r)
+	}
+	if r.Event == bridge.DesktopGateEvent {
+		return m.handleDesktopGate(r)
+	}
+	if r.Event == bridge.DesktopMissionEvent {
+		return m.handleDesktopMissionRequest(r)
+	}
+	if r.Event == bridge.DesktopStopEvent {
+		return m.handleDesktopStop(r)
+	}
+	var deskCmd tea.Cmd
+	if r.Event == "Stop" {
+		deskCmd = m.deskAgentStopped(r)
+	}
+	if r.Event == bridge.InboundEvent || r.Event == bridge.MissionEvent || r.Event == bridge.ProposeEvent || r.Event == bridge.OrchSendEvent || r.Event == bridge.TuneEvent {
 		// Only the orchestrator's own hook and its `den mcp` (its child
 		// processes) may ask these; any other process on the machine could
 		// otherwise speak as an agent or move a mission.
@@ -690,6 +802,10 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			return m.handleInbound(r)
 		case bridge.OrchSendEvent:
 			return m.handleOrchSend(r)
+		case bridge.ProposeEvent:
+			return m.handlePropose(r)
+		case bridge.TuneEvent:
+			return m.handleTune(r)
 		}
 		return m.handleMissionUpdate(r)
 	}
@@ -699,6 +815,22 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.ConsoleUnpairEvent {
 		return m.handleConsoleUnpair(r)
 	}
+	if r.Event == bridge.ModeEvent {
+		m.modeQuery(r)
+		return nil
+	}
+	if r.Event == bridge.TeamEvent {
+		return m.handleTeamQuery(r)
+	}
+	if r.Event == bridge.NoteEvent || r.Event == bridge.NotesEvent || r.Event == bridge.RuleEvent {
+		return m.handleMemory(r)
+	}
+	if r.Event == bridge.GodOffEvent {
+		return m.handleGodOff(r)
+	}
+	if r.Event == bridge.AgentInboundEvent {
+		return m.handleAgentInbound(r)
+	}
 	if r.Event == bridge.UsageEvent {
 		if why := m.usageStopped(); why != "" {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: m.use.st.StopWhy})
@@ -707,7 +839,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		}
 		return nil
 	}
-	if m.orch.proc != nil && r.SessionID != "" && r.SessionID == m.orch.proc.SessionID {
+	if m.fromOrchestratorSession(r) {
 		// The orchestrator's turns show on their own tab, not in the inbox.
 		if r.WantsReply() {
 			r.Reply(bridge.Decision{Behavior: "deny", Message: "den: the orchestrator may only list and message sessions"})
@@ -731,7 +863,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 			_ = inbox.AppendHistory(inbox.HistoryPath(), it) // best effort
 		}
 	}
-	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it)}
+	cmds := []tea.Cmd{m.attend(r, it), m.onHook(r, it), deskCmd}
 	switch r.Event {
 	case "SessionStart", "SessionEnd":
 		cmds = append(cmds, snapshot)
@@ -961,14 +1093,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.tab == tabOverview && strings.TrimSpace(m.input.Value()) == "" {
-			switch {
-			case m.ov.listing:
-				m.ov.listing = false
-			case m.ov.proposal != "":
-				m.ov.proposal = "" // the proposal stays in the list
-			case m.ov.open != "":
-				m.ov.open, m.ov.scroll = "", 0
-			}
+			m.backOverview()
 			return m, nil
 		}
 		if m.tab == tabReview {
@@ -1102,7 +1227,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.move(-5)
 		return m, nil
+	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+		// Picks a rule only on a selected rules card with nothing typed;
+		// else the digit is typed as usual.
+		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RulesPick {
+			if m.toggleRule(it, int(msg.String()[0]-'0')) {
+				return m, nil
+			}
+		}
 	case "ctrl+y":
+		if m.tab == tabOrch && m.selectedProposal() != nil {
+			return m.answerProposal(true)
+		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			if cmd := m.startMission(); cmd != nil {
 				return m, cmd
@@ -1111,6 +1247,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.answer("allow")
 	case "ctrl+n":
+		if m.tab == tabOrch && m.selectedProposal() != nil {
+			return m.answerProposal(false)
+		}
 		if m.tab == tabOverview && m.ov.proposal != "" {
 			m.dropMission()
 			return m, nil
@@ -1153,7 +1292,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if strings.TrimSpace(m.input.Value()) == "" {
 			if m.tab == tabOverview {
-				m.toggleMission()
+				if note := m.toggleMission(); note != "" {
+					return m.say(note, true)
+				}
 				return m, nil
 			}
 			if m.tab == tabOrch && m.toggleAction() {
@@ -1201,10 +1342,17 @@ func (m *Model) move(delta int) {
 		}
 		m.selectInbox(clamp(m.inboxCur+delta, 0, max(0, len(m.store.Items())-1)))
 	case tabOverview:
-		if m.ov.open != "" || m.ov.proposal != "" {
-			m.ov.scroll = max(0, m.ov.scroll-delta)
-		} else {
-			m.ov.cur = clamp(m.ov.cur+delta, 0, max(0, len(m.missions.ForProject(m.proj.cur))-1))
+		switch {
+		case m.ov.transcript != "":
+			m.ov.scroll = max(0, m.ov.scroll-delta) // from the bottom: it follows the tail
+		case m.ov.open != "":
+			if ms := m.missions.Get(m.ov.open); ms != nil {
+				m.ov.who = clamp(m.ov.who+delta, 0, max(0, len(m.whoRows(ms))-1))
+			}
+		case m.ov.proposal != "":
+			m.ov.scroll = max(0, m.ov.scroll+delta)
+		default:
+			m.moveMission(delta)
 		}
 	case tabOrch:
 		m.moveCard(delta)
@@ -1328,6 +1476,11 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		return m.say(msg, true)
 	}
 	if it == nil || !it.Answerable() {
+		if len(m.stripProposals()) > 0 {
+			// Never silent, and never a guess: the key may have been meant
+			// for a card, so a proposal is answered only once selected.
+			return m.say(proposalKeyHint, true)
+		}
 		return m.say("Nothing is waiting for an answer.", true)
 	}
 	if m.tab != tabInbox && verb != "deny" && !m.detailShowsWhole(it) {
@@ -1399,6 +1552,15 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.Install {
 		return m.decideInstall(it, verb)
 	}
+	if it.Kind == inbox.DesktopInstall {
+		return m.decideDesktopInstall(it, verb)
+	}
+	if it.Kind == inbox.DesktopAct || it.Kind == inbox.YourTurn {
+		return m.decideDesktopCard(it, verb)
+	}
+	if it.Kind == inbox.DesktopMission {
+		return m.decideDesktopMission(it, verb)
+	}
 	if it.Kind == inbox.APIOn {
 		return m.decideAPIOn(it, verb)
 	}
@@ -1420,11 +1582,35 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.MissionUpdate {
 		return m.decideMissionUpdate(it, verb)
 	}
+	if it.Kind == inbox.ProcessTuned {
+		return m.decideTune(it, verb)
+	}
+	if it.Kind == inbox.PromptProposal {
+		return m.decideProposal(it, verb)
+	}
+	if it.Kind == inbox.RulesPick {
+		return m.decideRules(it, verb)
+	}
+	if it.Kind == inbox.RulesEdited {
+		return m.decideRulesEdited(it, verb)
+	}
+	if it.Kind == inbox.MissionCriteria {
+		return m.decideMissionCriteria(it, verb)
+	}
+	if it.Kind == inbox.MirrorAsk {
+		return m.decideMirror(it, verb)
+	}
+	if it.Kind == inbox.MissionDone {
+		return m.decideMissionDone(it, verb)
+	}
 	if it.Kind == inbox.UsageResume {
 		return m.decideUsageResume(it, verb)
 	}
 	if it.Kind == inbox.UsageSet {
 		return m.decideUsageSet(it, verb)
+	}
+	if it.Kind == inbox.ModeSet {
+		return m.decideModeSet(it, verb)
 	}
 	if verb == "always" {
 		if why := inbox.AlwaysRefusal(it); why != "" {
@@ -1477,6 +1663,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.answerQuestion(it, text)
 	case "/api":
 		return m.apiCommand(fields[1:])
+	case "/view":
+		return m.viewCommand(fields[1:])
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":
@@ -1600,18 +1788,33 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		if len(fields) > 2 && strings.EqualFold(fields[1], "move") && m.listsProject(strings.Join(fields[2:], " ")) {
 			return m.askMove(strings.Join(fields[2:], " "))
 		}
-		m.tab = tabOverview
-		return m, m.proposeMission(strings.Join(fields[1:], " "))
+		// "/mission met c2" and "/mission unmet c2": the human's own word on
+		// a criterion, typed in Den only (the dock refuses them).
+		if len(fields) == 3 && (strings.EqualFold(fields[1], "met") || strings.EqualFold(fields[1], "unmet")) && criterionID.MatchString(strings.ToLower(fields[2])) {
+			note, isErr := m.missionMetCommand(strings.EqualFold(fields[1], "met"), fields[2])
+			return m.say(note, isErr)
+		}
+		cmd := m.requestMission(strings.Join(fields[1:], " "))
+		return m, cmd
 	case "/template", "/templates":
 		return m.templateCommand(fields[1:], text)
 	case "/pause", "/resume", "/stop":
 		if note, isErr, ok := m.missionCommand(strings.ToLower(fields[0])); ok {
 			return m.say(note, isErr)
 		}
+	case "/god":
+		return m.godCommand(fields[1:])
 	case "/usage":
 		return m.usageCommand(fields[1:])
+	case "/mode":
+		return m.modeCommand(fields[1:])
+	case "/desktop":
+		return m.desktopCommand(fields[1:])
 	case "/budget":
 		note, isErr := m.budgetCommand(fields[1:])
+		return m.say(note, isErr)
+	case "/memory":
+		note, isErr := m.memoryCommand(fields[1:])
 		return m.say(note, isErr)
 	case "/orchestrator", "/orch":
 		m.tab = tabOrch
@@ -1635,14 +1838,28 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession {
+	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession || sessionID == inbox.DesktopSession {
 		return "Den"
+	}
+	for _, dm := range m.desk.missions {
+		// A desktop agent's cards come before its session registers.
+		if dm.SessionID == sessionID && dm.AgentName != "" {
+			return dm.AgentName
+		}
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
 		if ms := m.missions.Get(id); ms != nil {
 			return ms.Name
 		}
 		return "mission"
+	}
+	if repo, ok := strings.CutPrefix(sessionID, memorySessionPrefix); ok {
+		// A project's memory card is from that project's memory, named in
+		// full, never a cut id.
+		if mt := m.mem.metas[repo]; mt != nil && mt.Name != "" {
+			return sanitize.Label(mt.Name, 60) + " memory"
+		}
+		return "project memory"
 	}
 	if a, ok := m.agentFor(sessionID); ok {
 		return a.Name

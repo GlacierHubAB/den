@@ -29,12 +29,22 @@ func Scrub() []string {
 	return gone
 }
 
-// Main is a TestMain body: scrub, then run the tests. Use it as
-// os.Exit(gitenvtest.Main(m)).
+// Main is a TestMain body: scrub, then run the tests with a state folder of
+// their own. Den keeps window markers, view records and more in the state
+// folder, and a test that sets none would write the human's own: it did,
+// and the repeated test names pushed real markers out of window-markers.json.
+// Use it as os.Exit(gitenvtest.Main(m)).
 func Main(m *testing.M) int {
 	Scrub()
+	if dir, err := os.MkdirTemp("", StatePrefix); err == nil {
+		os.Setenv("XDG_STATE_HOME", dir)
+		defer os.RemoveAll(dir)
+	}
 	return m.Run()
 }
+
+// StatePrefix starts the name of the state folder Main gives a run.
+const StatePrefix = "den-test-state-"
 
 // Without returns env without its GIT_* variables.
 func Without(env []string) []string {

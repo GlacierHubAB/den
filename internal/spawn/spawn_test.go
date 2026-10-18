@@ -1,6 +1,7 @@
 package spawn
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/procs"
+	"github.com/GlacierHubAB/den/internal/view"
 	"github.com/GlacierHubAB/den/internal/winmark"
 )
 
@@ -86,11 +89,11 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gotCmd) != 5 || gotCmd[0] != "claude" || gotCmd[1] != "--name" || gotCmd[2] != "helper" || gotCmd[3] != "--" {
+	if len(gotCmd) != 7 || strings.Join(gotCmd[:6], " ") != "claude --name helper --permission-mode default --" {
 		t.Errorf("command = %v", gotCmd)
 	}
-	if !strings.Contains(gotCmd[4], `peer "orc"`) || !strings.HasSuffix(gotCmd[4], "Fix the tests.") || strings.Contains(gotCmd[4], "spawn_agent") {
-		t.Errorf("prompt = %q", gotCmd[4])
+	if !strings.Contains(gotCmd[6], `peer "orc"`) || !strings.HasSuffix(gotCmd[6], "Fix the tests.") || strings.Contains(gotCmd[6], "spawn_agent") {
+		t.Errorf("prompt = %q", gotCmd[6])
 	}
 	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=helper" {
 		t.Errorf("env = %v", gotEnv)
@@ -113,7 +116,7 @@ func TestRunOpensTerminalThroughLauncher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "--name", "designer", "--model", "opus", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal", "--"}
+	want := []string{"claude", "--name", "designer", "--model", "opus", "--permission-mode", "default", "--mcp-config", MCPConfig("/opt/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal,mcp__den__desktop_mission", "--"}
 	if len(gotCmd) != len(want)+1 || strings.Join(gotCmd[:len(want)], " ") != strings.Join(want, " ") {
 		t.Errorf("command = %v", gotCmd)
 	}
@@ -165,13 +168,53 @@ func TestCommandGivesApprovedSkillsFolder(t *testing.T) {
 
 func TestCommandResumes(t *testing.T) {
 	got := Command(Request{Resume: "s1", Model: "claude-opus-5-5", AddDirs: []string{"/s/agents/ui-1"}, Spawner: "/bin/den"}, "ui")
-	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal"}
+	want := []string{"claude", "--resume", "s1", "--name", "ui", "--add-dir", "/s/agents/ui-1", "--model", "claude-opus-5-5", "--permission-mode", "default", "--mcp-config", MCPConfig("/bin/den"), "--allowedTools", "mcp__den__spawn_agent,mcp__den__open_terminal,mcp__den__desktop_mission"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Errorf("command = %q, want %q", got, want)
 	}
 	got = Command(Request{Resume: "s1", Fork: true}, "ui-2")
-	if strings.Join(got, " ") != "claude --resume s1 --fork-session --name ui-2" {
+	if strings.Join(got, " ") != "claude --resume s1 --fork-session --name ui-2 --permission-mode default" {
 		t.Errorf("fork command = %q", got)
+	}
+}
+
+func TestCommandPermissionMode(t *testing.T) {
+	got := Command(Request{Brief: "go", PermissionMode: "plan"}, "ui")
+	if !strings.HasPrefix(strings.Join(got, " "), "claude --name ui --permission-mode plan -- ") {
+		t.Errorf("command = %q", got)
+	}
+	got = Command(Request{Resume: "s1", PermissionMode: "acceptEdits"}, "ui")
+	if strings.Join(got, " ") != "claude --resume s1 --name ui --permission-mode acceptEdits" {
+		t.Errorf("resume command = %q", got)
+	}
+	// Never no flag, which would be auto: every agent's argv names a mode,
+	// default when none was given.
+	for _, req := range []Request{
+		{Brief: "go"}, {Resume: "s1"}, {Resume: "s1", Fork: true}, {Brief: "go", Spawner: "/bin/den"},
+		{Brief: "go", Worktree: "w"}, {Brief: "go", AddDirs: []string{"/s"}, Model: "opus"},
+	} {
+		got := strings.Join(Command(req, "ui"), " ")
+		if strings.Count(got, "--permission-mode") != 1 || (req.PermissionMode == "" && !strings.Contains(got, "--permission-mode default")) {
+			t.Errorf("%+v: %q", req, got)
+		}
+	}
+}
+
+func TestRunRefusesUnknownPermissionMode(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
+	Launch = func(d, title, marker string, command, env []string) error {
+		t.Fatalf("launched %q", command)
+		return nil
+	}
+	t.Cleanup(func() { Launch = launch })
+	for _, mode := range []string{"yolo", "Default", "auto\n"} {
+		if _, err := Run(t.Context(), Request{Dir: t.TempDir(), Agent: true, Brief: "go", PermissionMode: mode}); err == nil || !strings.Contains(err.Error(), "permission mode") {
+			t.Errorf("%q: err = %v", mode, err)
+		}
 	}
 }
 
@@ -192,7 +235,7 @@ func TestRunResumesWithoutBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(gotCmd, " ") != "claude --resume s1 --name demo-app-1a2b --model claude-sonnet-5-5" {
+	if strings.Join(gotCmd, " ") != "claude --resume s1 --name demo-app-1a2b --model claude-sonnet-5-5 --permission-mode default" {
 		t.Errorf("command = %q", gotCmd)
 	}
 	if len(gotEnv) != 1 || gotEnv[0] != "DEN_PEER=demo-app-1a2b" || res.Name != "demo-app-1a2b" {
@@ -259,7 +302,7 @@ func TestRunStartsAnAgentInItsOwnWorktree(t *testing.T) {
 	if res.Worktree != "helper" || res.WorktreeBranch != "worktree-helper" || res.WorktreePath != filepath.Join(repo, ".claude", "worktrees", "helper") {
 		t.Errorf("result = %+v", res)
 	}
-	if strings.Join(gotCmd[:5], " ") != "claude --name helper --worktree helper" || gotCmd[5] != "--" {
+	if strings.Join(gotCmd[:7], " ") != "claude --name helper --worktree helper --permission-mode default" || gotCmd[7] != "--" {
 		t.Errorf("command = %v", gotCmd)
 	}
 	prompt := gotCmd[len(gotCmd)-1]
@@ -365,5 +408,56 @@ func TestGhosttyArgs(t *testing.T) {
 	want := "/usr/bin/ghostty --gtk-single-instance=false --class=io.glacierhub.den.helper --working-directory=/w --title=den · helper -e claude --name helper"
 	if got != want {
 		t.Errorf("argv\n got %s\nwant %s", got, want)
+	}
+}
+
+// fakeView is a window manager with one window, for settleView.
+type fakeView struct {
+	cs    []hypr.Client
+	moved []string
+}
+
+func (f *fakeView) Available() bool { return true }
+func (f *fakeView) Clients(context.Context) ([]hypr.Client, error) {
+	return append([]hypr.Client(nil), f.cs...), nil
+}
+func (f *fakeView) Move(_ context.Context, addr, ws string) error {
+	f.moved = append(f.moved, addr+" "+ws)
+	for i := range f.cs {
+		if f.cs[i].Address == addr {
+			f.cs[i].Workspace.Name = ws
+		}
+	}
+	return nil
+}
+func (f *fakeView) Active(context.Context) (hypr.Workspace, bool) { return hypr.Workspace{}, false }
+
+// TestSettleViewHidesANewAgentOnlyInUserView: a new agent's bound window
+// stays where it is in Agent view and goes to special:den in User view.
+func TestSettleViewHidesANewAgentOnlyInUserView(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	const mk = "io.glacierhub.den.helper"
+	wm := &fakeView{cs: []hypr.Client{{Address: "0x1", PID: 900, InitialClass: mk}}}
+	wm.cs[0].Workspace.ID, wm.cs[0].Workspace.Name = 2, "2"
+	sw := &view.Switcher{
+		Ops:       wm,
+		Marker:    winmark.For,
+		Ancestors: func(int) []procs.Proc { return []procs.Proc{{PID: 300}, {PID: 900}} },
+		Own:       func([]hypr.Client) (hypr.Client, bool) { return hypr.Client{}, false },
+		StatePath: filepath.Join(t.TempDir(), "view.json"),
+	}
+	viewSwitcher = func() *view.Switcher { return sw }
+	t.Cleanup(func() { viewSwitcher = view.New })
+
+	settleView(t.Context(), mk, 300)
+	if len(wm.moved) != 0 {
+		t.Fatalf("moved in Agent view: %v", wm.moved)
+	}
+	if _, err := sw.Switch(t.Context(), view.Request{Want: view.User}); err != nil {
+		t.Fatal(err)
+	}
+	settleView(t.Context(), mk, 300)
+	if wm.cs[0].Workspace.Name != view.Workspace {
+		t.Errorf("window on %q in User view", wm.cs[0].Workspace.Name)
 	}
 }

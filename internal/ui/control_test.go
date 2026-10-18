@@ -22,10 +22,13 @@ import (
 // controlClaude is a fake claude for control mode: it replays each user
 // turn as Claude Code does (--replay-user-messages), and for a turn that
 // says SPAWN-PLEASE wants mcp__den__spawn_agent, asking its host and
-// waiting for the answer. Every line Den writes goes to its folder.
+// waiting for the answer. Every line Den writes goes to its folder. As
+// Claude Code in stream-json input does, it sends its init only once it
+// has read its first message, so nothing in Den may wait for an init
+// before sending one.
 const controlClaude = `#!/bin/sh
 D=$(dirname "$0")
-echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
+inited=""
 while IFS= read -r line; do
   case "$line" in
     *'"control_response"'*) printf '%s\n' "$line" >> "$D/answers"; continue ;;
@@ -33,6 +36,10 @@ while IFS= read -r line; do
       case "$line" in *'"interrupt"'*) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","num_turns":1}' ;; esac
       continue ;;
   esac
+  if [ -z "$inited" ]; then
+    echo '{"type":"system","subtype":"init","session_id":"s-ctl","model":"m","claude_code_version":"2.1.296","tools":["ListAgents"],"mcp_servers":[]}'
+    inited=1
+  fi
   printf '%s\n' "$line" >> "$D/turns"
   printf '%s\n' "$line" | sed 's/}$/,"isReplay":true}/'
   case "$line" in
@@ -302,7 +309,7 @@ func TestAppTurnInDen(t *testing.T) {
 		t.Fatalf("chunks %v", got)
 	}
 	turns, _ := os.ReadFile(filepath.Join(dir, "turns"))
-	if !strings.Contains(string(turns), "Den: the human sends this turn through") || !strings.Contains(string(turns), "who is busy? SPAWN-PLEASE") {
+	if !strings.Contains(string(turns), "Den: this turn comes through ") || !strings.Contains(string(turns), "who is busy? SPAWN-PLEASE") {
 		t.Errorf("turn %s", turns)
 	}
 	answers, _ := os.ReadFile(filepath.Join(dir, "answers"))
@@ -539,5 +546,71 @@ func TestReportHeldBehindAnAppTurn(t *testing.T) {
 	}
 	if l.m.ctl.turn != nil {
 		t.Error("the app's turn outlived its result")
+	}
+}
+
+// Claude Code sends its init only once it has read a first message
+// (controlClaude does the same). An
+// app's turn on a fresh Den, with nothing from the human, still goes out
+// and gets its reply: Den does not wait for an init that waits for it.
+func TestAppTurnBeforeTheOrchestratorsInit(t *testing.T) {
+	l, dir, _ := controlModel(t) // controlClaude sends init after its first message
+	c := pairApp(t, l)
+	if l.m.orch.started || l.m.orch.proc != nil {
+		t.Fatal("not a fresh Den: the orchestrator already runs")
+	}
+	appTurn(t, l, c, "hi", "")
+	if !l.m.orch.started {
+		t.Error("no init after the app's turn")
+	}
+	turns, _ := os.ReadFile(filepath.Join(dir, "turns"))
+	if !strings.Contains(string(turns), "hi") {
+		t.Errorf("the app's turn did not reach the orchestrator: %s", turns)
+	}
+}
+
+// When Claude Code finished a turn after an app's turn went out, and
+// nothing came since, Den missed that turn's end (the 2026-10-17 wedge):
+// the watchdog closes it with a note and sends what waited behind it. A
+// tool card still open keeps it open.
+func TestAppTurnWatchdog(t *testing.T) {
+	defer func(d time.Duration) { appTurnGrace = d }(appTurnGrace)
+	appTurnGrace = 50 * time.Millisecond
+	l, dir, _ := controlModel(t)
+	c := pairApp(t, l)
+	c.call("orch.say", map[string]string{"text": "slow one SLOW-PLEASE"})
+	l.until("the app's turn to go out", func() bool { return l.m.ctl.sent }, nil)
+	l.run(l.m.sendReport(l.m.base[0], "REPORT-BODY tests pass"))
+	turns := func() string { raw, _ := os.ReadFile(filepath.Join(dir, "turns")); return string(raw) }
+	if len(l.m.ctl.held) != 1 {
+		t.Fatalf("held %d", len(l.m.ctl.held))
+	}
+	// Not yet: Claude Code has not finished a turn since the app's went out.
+	if l.m.watchAppTurn() != nil || l.m.ctl.turn == nil {
+		t.Fatal("closed an app turn that was still running")
+	}
+	// A turn finished after it (its end mistaken for another's), and
+	// nothing since; a tool card open still keeps the turn.
+	l.m.ctl.sentAt = time.Now().Add(-time.Second)
+	l.m.ctl.finishedAt = time.Now().Add(-500 * time.Millisecond)
+	l.m.orch.lastEvent = l.m.ctl.finishedAt
+	l.m.ctl.asks = map[*inbox.Item]string{{}: "r1"}
+	if l.m.watchAppTurn() != nil || l.m.ctl.turn == nil {
+		t.Fatal("closed an app turn with a tool card open")
+	}
+	l.m.ctl.asks = nil
+	l.run(l.m.watchOrchestrator())
+	if l.m.ctl.turn != nil {
+		t.Fatal("the watchdog left the app's turn open")
+	}
+	l.until("the held report to go out", func() bool { return strings.Contains(turns(), "REPORT-BODY") }, nil)
+	noted := false
+	for _, e := range l.m.orch.chat {
+		if strings.Contains(e.text, "Den missed the end of the app's turn") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Error("no note in the chat")
 	}
 }

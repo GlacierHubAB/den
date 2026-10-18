@@ -76,7 +76,8 @@ func TestNoNotificationWhileLookingOrForTheOrchestrator(t *testing.T) {
 	m, sent := attentionModel(t)
 	m.att.looking = func(sid string) bool { return sid == "fuzzy-sprite" }
 	runAll(m.handleRequest(req("PermissionRequest", "fuzzy-sprite", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "ls"}})))
-	m.orch.proc = &orch.Orchestrator{SessionID: "orch-session"}
+	m.orch.proc = &orch.Orchestrator{}
+	m.orch.proc.SetSessionID("orch-session")
 	runAll(m.handleRequest(req("PreToolUse", "orch-session", map[string]any{"tool_name": "AskUserQuestion"})))
 	m.cfg.Notify.NeedsYou = false
 	runAll(m.handleRequest(req("PreToolUse", "maple-owl", map[string]any{"tool_name": "AskUserQuestion"})))
@@ -207,7 +208,8 @@ func TestOnCommandsAndDensOwnEvents(t *testing.T) {
 	m.cfg.On.Stalled = `cat >> ` + out
 	runAll(m.handleRequest(req("PermissionRequest", "fuzzy-sprite", map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "rm -rf build"}})))
 	runAll(m.handleRequest(req("Stop", "fuzzy-sprite", map[string]any{"last_assistant_message": "ok"})))
-	m.orch.proc = &orch.Orchestrator{SessionID: "orch-session"}
+	m.orch.proc = &orch.Orchestrator{}
+	m.orch.proc.SetSessionID("orch-session")
 	runAll(m.handleRequest(req("PreToolUse", "orch-session", map[string]any{"tool_name": "AskUserQuestion"})))
 	m.hooksReady = true
 	m.att.since = time.Now().Add(-time.Hour)

@@ -56,3 +56,42 @@ func TestConsoleCommands(t *testing.T) {
 		}
 	}
 }
+
+// Den knows the console from its proof: its proved connection is the
+// console's in Clients, the same program's unproved one is not, and the
+// console's commands and card answers reach Den as "the console", never
+// by the program's name.
+func TestConsoleKnownFromItsProof(t *testing.T) {
+	h, c := provedConsole(t)
+	other := h.dial()
+	other.hello()
+	var proved, plain int
+	for _, cl := range h.s.Clients() {
+		if cl.Console {
+			proved++
+		} else {
+			plain++
+		}
+	}
+	// The pairing's own claim connection and other's are the same
+	// program, unproved: not the console's.
+	if proved != 1 || plain < 1 {
+		t.Errorf("clients: %d console, %d not, want 1 and at least 1: %+v", proved, plain, h.s.Clients())
+	}
+	c.send("cmd.run", map[string]string{"text": "/fleet flat"})
+	if r := ctlAct(t, h.s, func(a Act) bool { return a.Command != nil }).Command; r.Console != ConsoleLabel {
+		t.Errorf("command from %q", r.Console)
+	}
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{card("i-1", 1, true)}}))
+	g := getCard(t, c, "i-1")
+	answerCard(c, g, "deny")
+	if a := ctlAct(t, h.s, func(a Act) bool { return a.CardAnswer != nil }).CardAnswer; a.Console != ConsoleLabel {
+		t.Errorf("answer from %q", a.Console)
+	}
+	h.s.UnpairConsole(CauseDen, "")
+	for _, cl := range h.s.Clients() {
+		if cl.Console {
+			t.Errorf("a console connection after the unpair: %+v", cl)
+		}
+	}
+}

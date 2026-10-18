@@ -75,6 +75,14 @@ jobs:
           go mod verify
       - name: THIRD_PARTY_LICENSES is up to date
         run: go run ./internal/tools/thirdparty -check
+      # The release ships these two targets (see `make release`); CI otherwise
+      # builds only for the runner's amd64, so a call that arm64 lacks
+      # (syscall.Dup2) would first fail in the release build.
+      - name: builds for every release target
+        run: |
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build ./...
+          done
       - name: actionlint
         run: |
           curl -fsSL -o "$RUNNER_TEMP/actionlint.tgz" \
@@ -140,6 +148,14 @@ jobs:
           GOPROXY: "off"
           GOFLAGS: -mod=readonly
         run: make build && ./den version
+      # A parser of another process's bus messages: its seed corpus runs as a
+      # plain test above, and this gives it 30 seconds of fuzzing as well.
+      - name: fuzz the bus message parser for 30 seconds
+        if: matrix.go == 'stable'
+        env:
+          GOPROXY: "off"
+          GOFLAGS: -mod=readonly
+        run: go test -run '^$' -fuzz FuzzReadMessage -fuzztime 30s ./internal/sysd/
 
   vuln:
     runs-on: ubuntu-latest

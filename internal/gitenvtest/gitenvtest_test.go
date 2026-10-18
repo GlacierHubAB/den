@@ -85,3 +85,15 @@ func TestInheritedRepositoryIsLeftAlone(t *testing.T) {
 		t.Errorf("the inherited repository was changed:\n--- before\n%s\n--- after\n%s", before, after)
 	}
 }
+
+// A run has a state folder of its own, so no test writes the human's
+// window markers, view record or colours.
+func TestMainGivesTheRunItsOwnStateFolder(t *testing.T) {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir == "" || !strings.HasPrefix(filepath.Base(dir), StatePrefix) {
+		t.Fatalf("XDG_STATE_HOME = %q: the run would write the human's state", dir)
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(dir, filepath.Join(home, ".local")) {
+		t.Errorf("the state folder %q is the human's", dir)
+	}
+}

@@ -43,3 +43,17 @@ func unpairCmd(args []string) {
 	}
 	fmt.Fprintln(os.Stdout, d.Message)
 }
+
+// godCmd is `den god off`: end God mode in the running Den. It only
+// lowers; there is no `den god on` (God mode is turned on only in Den's
+// own window).
+func godCmd(args []string) {
+	if len(args) != 1 || args[0] != "off" {
+		fail("usage: den god off (God mode is turned on only in Den's own window)")
+	}
+	d, err := bridge.Call(bridge.SocketPath(), bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.GodOffEvent}, 10*time.Second)
+	if err != nil {
+		fail("den god off: %v: start Den first", err)
+	}
+	fmt.Println(d.Message)
+}

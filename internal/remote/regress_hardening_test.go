@@ -219,7 +219,7 @@ EOF
 			t.Errorf("%s is not in local state: the search below would find nothing either", good)
 		}
 	}
-	for _, bad := range []string{`"context_tokens":8888888888888`, `"filled":9876543`, `"five_hour":-40`, `"seven_day":7340291`, `"usd":1e+12`} {
+	for _, bad := range []string{`"context_tokens":8888888888888`, `"filled":9876543`, `"five_hour":-40`, `"seven_day":7340291`, `"usd":1000000000000`} {
 		if hits := g.l.Local.Grep(bad); len(hits) > 0 {
 			t.Errorf("%s was written to local state: %v", bad, hits)
 		}

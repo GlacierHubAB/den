@@ -13,6 +13,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -63,6 +64,7 @@ func (m Model) View() tea.View {
 	content = sanitize.Styled(content)
 	v := tea.NewView(content)
 	v.AltScreen = true
+	v.WindowTitle = m.desk.title
 	if m.tab == tabReview || m.tab == tabOrch || m.tab == tabOverview {
 		// Clicks and drags pick lines in the diff, and select text inside
 		// one pane on the chat views. The Fleet and Inbox views keep the
@@ -155,6 +157,14 @@ func (m Model) header(w int) []string {
 	default:
 		links = append(links, label) // "usage unknown" once a reading has gone stale
 	}
+	// The mode agents start in, when it is not default, and how many
+	// running agents reported another; /mode names them.
+	switch n := m.modeKnownDiffers(); {
+	case n > 0:
+		links = append(links, s.attn.Render(fmt.Sprintf("mode %s · %d in another", m.agentMode(), n)))
+	case m.agentMode() != permmode.Shipped:
+		links = append(links, "mode "+m.agentMode())
+	}
 	linksLine := s.dim.Render(strings.Join(links, " · "))
 
 	// Each part has a rank: when the line is too long, the highest ranks
@@ -166,6 +176,15 @@ func (m Model) header(w int) []string {
 	codes := m.liveCodes()
 	for _, c := range codes {
 		sys = append(sys, headerPart{s.attn.Render(c.line), 0})
+	}
+	// Unguarded agents, then God mode, are never left out, right after
+	// the codes.
+	if names := m.unguardedAgents(); len(names) > 0 {
+		sys = append(sys, headerPart{s.err.Render("UNGUARDED: " + strings.Join(names, ", ")), 0})
+	}
+	if m.god.on {
+		sys = append(sys, headerPart{s.err.Render(godChip(m.god.since)), 0})
+		fleetLine = s.err.Render("GOD MODE") + s.dim.Render(" · ") + fleetLine
 	}
 	if m.hooksReady {
 		sys = append(sys, headerPart{"hooks on", 2})
@@ -182,8 +201,8 @@ func (m Model) header(w int) []string {
 		}
 		sys = append(sys, headerPart{p, rank})
 	}
-	if chip := m.consoleChip(); chip != "" {
-		sys = append(sys, headerPart{chip, 0})
+	if m.desk.chip != "" {
+		sys = append(sys, headerPart{s.err.Render(m.desk.chip), 0})
 	}
 
 	clock := s.dim.Render(time.Now().Format("15:04"))
@@ -621,14 +640,14 @@ func (m Model) agentsPane(w, h int) string {
 		}
 		twin := m.twinNote(a.Session.SessionID)
 		role := ""
-		if a.Labels.Role != "" {
+		if a.Labels.Role != "" && !m.noRoles {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
 		}
 		last, stale := m.lastKnown(a)
 		if stale {
 			// Dimmed through and through: the host is not live.
 			glyph, name = muted.Render("·"), dim.Render(a.Name+hostChip(a))
-			if a.Labels.Role != "" {
+			if a.Labels.Role != "" && !m.noRoles {
 				role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
 			}
 		}
@@ -790,6 +809,20 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "keep going")+"  "+key("^N", "stop the mission"))
 	case it.Answerable() && it.Kind == inbox.MissionUpdate:
 		out = append(out, key("^Y", "apply it")+"  "+key("^N", "leave it"))
+	case it.Answerable() && it.Kind == inbox.MissionCriteria:
+		out = append(out, key("^Y", "change the criteria")+"  "+key("^N", "keep them"))
+	case it.Answerable() && it.Kind == inbox.MissionDone:
+		out = append(out, key("^Y", "mission done")+"  "+key("^N", "not done yet"))
+	case it.Answerable() && it.Kind == inbox.MirrorAsk:
+		out = append(out, key("^Y", "show it there")+"  "+key("^N", "keep it in Den"))
+	case it.Answerable() && it.Kind == inbox.ProcessTuned:
+		out = append(out, key("^Y", "keep it")+"  "+key("^N", "undo it"))
+	case it.Answerable() && it.Kind == inbox.PromptProposal:
+		out = append(out, key("^Y", "noted")+"  "+key("^N", "dismiss"))
+	case it.Answerable() && it.Kind == inbox.RulesPick:
+		out = append(out, key("1-9", "pick")+"  "+key("^Y", "make the picked rules")+"  "+key("^N", "drop them"))
+	case it.Answerable() && it.Kind == inbox.RulesEdited:
+		out = append(out, key("^Y", "they are my rules")+"  "+key("^N", "leave it a note"))
 	case it.Answerable() && it.Kind == inbox.MissionMove:
 		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
@@ -798,8 +831,17 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "merge it")+"  "+key("^N", "not now"))
 	case it.Answerable() && it.Kind == inbox.Cleanup:
 		out = append(out, key("^Y", "remove the worktree")+"  "+key("^N", "keep it"))
-	case it.Answerable() && it.Kind == inbox.Install:
+	case (it.Kind == inbox.DesktopInstall || it.Kind == inbox.DesktopMission) && m.desk.installing == it.ID:
+		// The approved install runs: no keys, so nobody presses ^Y again.
+		out = append(out, m.st.attn.Render(installingNote))
+	case it.Answerable() && (it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall):
 		out = append(out, key("^Y", "install it")+"  "+key("^N", "decline"))
+	case it.Answerable() && it.Kind == inbox.DesktopAct:
+		out = append(out, key("^Y", "allow once")+"  "+key("^N", "deny"))
+	case it.Answerable() && it.Kind == inbox.DesktopMission:
+		out = append(out, key("^Y", "start it")+"  "+key("^N", "decline"))
+	case it.Answerable() && it.Kind == inbox.YourTurn:
+		out = append(out, key("^Y", "done, go on")+"  "+key("^N", "end the mission"))
 	case it.Answerable() && it.Kind == inbox.Message:
 		out = append(out, key("^Y", "send it")+"  "+key("^N", "do not send"))
 	case it.Answerable() && it.Kind == inbox.Guidance:
@@ -808,6 +850,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "let the fleet go on")+"  "+key("^N", "stay stopped"))
 	case it.Answerable() && it.Kind == inbox.UsageSet:
 		out = append(out, key("^Y", "take the figure")+"  "+key("^N", "keep yours"))
+	case it.Answerable() && it.Kind == inbox.ModeSet:
+		out = append(out, key("^Y", "start agents in it")+"  "+key("^N", "keep the mode"))
 	case it.Answerable() && it.Kind == inbox.APIOn:
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.Grant:
@@ -907,6 +951,15 @@ const inboxAvatarW = 8
 
 // inboxBlock is one inbox item as the Inbox pane draws it, w wide, without
 // the blank row that follows it.
+// wrapLines is s wrapped at word boundaries to w columns (a word longer
+// than w is the only thing broken), as lines.
+func wrapLines(s string, w int) []string {
+	if w < 1 {
+		w = 1
+	}
+	return strings.Split(ansi.Wrap(s, w, ""), "\n")
+}
+
 func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	s := m.st
 	const avatarW = inboxAvatarW
@@ -927,7 +980,7 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Stalled && it.State != inbox.Resolved:
 		stripe, kindStyle = attn.Render("▏"), attn
-	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote) && it.State != inbox.Resolved:
+	case (it.Kind == inbox.Usage || it.Kind == inbox.ConsoleNote || it.Kind == inbox.GuardNote) && it.State != inbox.Resolved:
 		stripe, kindStyle = err.Render("▌"), err
 	case it.Kind == inbox.Sent:
 		switch {
@@ -957,11 +1010,14 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	textW := w - 4 - avatarW - 1
 	var text []string
 	text = append(text, head)
+	// Prose wraps at word boundaries to the pane, never cut short.
 	if via := m.viaLine(itemKey(it)); via != "" {
-		text = append(text, ansi.Truncate(via, textW, "…"))
+		text = append(text, wrapLines(via, textW)...)
 	}
 	if twin := m.twinNote(itemKey(it)); twin != "" {
-		text = append(text, attn.Render(ansi.Truncate(twin, textW, "…")))
+		for _, l := range wrapLines(twin, textW) {
+			text = append(text, attn.Render(l))
+		}
 	}
 	body := fg
 	if it.State == inbox.Resolved || it.Kind >= inbox.Done {
@@ -971,19 +1027,18 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	// everything else, what is being asked. Then the one-line gist.
 	switch {
 	case it.Kind == inbox.Done && it.Task != "":
-		text = append(text, fg.Render(ansi.Truncate(it.Task, textW, "…")))
-		text = append(text, dim.Render(ansi.Truncate(it.Title, textW, "…")))
+		for _, l := range wrapLines(it.Task, textW) {
+			text = append(text, fg.Render(l))
+		}
+		for _, l := range wrapLines(it.Title, textW) {
+			text = append(text, dim.Render(l))
+		}
 	default:
 		title := it.Title
 		if it.Kind == inbox.Idle {
 			title = m.idleTitle(itemKey(it), title)
 		}
-		lines := strings.Split(ansi.Wrap(title, textW, ""), "\n")
-		if len(lines) > 2 {
-			lines = lines[:2]
-			lines[1] = ansi.Truncate(lines[1], textW-2, "…")
-		}
-		for _, l := range lines {
+		for _, l := range wrapLines(title, textW) {
 			text = append(text, body.Render(l))
 		}
 	}
@@ -1004,10 +1059,19 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 			text = append(text, m.wrapCode(l, textW, m.inAgentColor(m.agentOrStub(itemKey(it))).st.code)...)
 			continue
 		}
-		text = append(text, dim.Render(ansi.Truncate(l, textW, "…")))
+		for _, wl := range wrapLines(l, textW) {
+			text = append(text, dim.Render(wl))
+		}
 	}
 	for j, o := range it.Options {
-		text = append(text, bright.Render(fmt.Sprint(j+1))+sp+fg.Render(ansi.Truncate(o, textW-2, "…")))
+		// The number, then the option wrapped under its own first word.
+		for k, l := range wrapLines(o, textW-2) {
+			lead := bright.Render(fmt.Sprint(j+1)) + sp
+			if k > 0 {
+				lead = sp + sp
+			}
+			text = append(text, lead+fg.Render(l))
+		}
 	}
 	key := func(k, label string) string {
 		if label == "" {
@@ -1018,6 +1082,8 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	switch {
 	case it.Kind == inbox.Sent:
 		text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
+	case (it.Kind == inbox.DesktopInstall || it.Kind == inbox.DesktopMission) && m.desk.installing == it.ID:
+		text = append(text, attn.Render(installingNote))
 	case it.Answerable() && !selected:
 		why := "waiting"
 		if it.At.After(m.inboxAt) {
@@ -1041,6 +1107,27 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		if it.Kind == inbox.MissionUpdate {
 			acts = key("^Y", "apply it") + sp + sp + key("^N", "leave it")
 		}
+		if it.Kind == inbox.MissionCriteria {
+			acts = key("^Y", "change the criteria") + sp + sp + key("^N", "keep them")
+		}
+		if it.Kind == inbox.MissionDone {
+			acts = key("^Y", "mission done") + sp + sp + key("^N", "not done yet")
+		}
+		if it.Kind == inbox.MirrorAsk {
+			acts = key("^Y", "show it there") + sp + sp + key("^N", "keep it in Den")
+		}
+		if it.Kind == inbox.ProcessTuned {
+			acts = key("^Y", "keep it") + sp + sp + key("^N", "undo it")
+		}
+		if it.Kind == inbox.PromptProposal {
+			acts = key("^Y", "noted") + sp + sp + key("^N", "dismiss")
+		}
+		if it.Kind == inbox.RulesPick {
+			acts = key("1-9", "pick") + sp + sp + key("^Y", "make the picked rules") + sp + sp + key("^N", "drop them")
+		}
+		if it.Kind == inbox.RulesEdited {
+			acts = key("^Y", "they are my rules") + sp + sp + key("^N", "leave it a note")
+		}
 		if it.Kind == inbox.MissionMove {
 			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")
 		}
@@ -1053,8 +1140,17 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		if it.Kind == inbox.Cleanup {
 			acts = key("^Y", "remove the worktree") + sp + sp + key("^N", "keep it")
 		}
-		if it.Kind == inbox.Install {
+		if it.Kind == inbox.Install || it.Kind == inbox.DesktopInstall {
 			acts = key("^Y", "install it") + sp + sp + key("^N", "decline")
+		}
+		if it.Kind == inbox.DesktopAct {
+			acts = key("^Y", "allow once") + sp + sp + key("^N", "deny")
+		}
+		if it.Kind == inbox.DesktopMission {
+			acts = key("^Y", "start it") + sp + sp + key("^N", "decline")
+		}
+		if it.Kind == inbox.YourTurn {
+			acts = key("^Y", "done, go on") + sp + sp + key("^N", "end the mission")
 		}
 		if it.Kind == inbox.Message {
 			acts = key("^Y", "send it") + sp + sp + key("^N", "do not send")
@@ -1067,6 +1163,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.UsageSet {
 			acts = key("^Y", "take the figure") + sp + sp + key("^N", "keep yours")
+		}
+		if it.Kind == inbox.ModeSet {
+			acts = key("^Y", "start agents in it") + sp + sp + key("^N", "keep the mode")
 		}
 		if it.Kind == inbox.APIOn {
 			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")
@@ -1397,15 +1496,17 @@ func (m Model) hints(w int) string {
 	var items [][2]string
 	switch {
 	case m.help:
-		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/fleet project · flat", "the Fleet by project, or not"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/mission <goal> · move <project>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
+		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/fleet project · flat", "the Fleet by project, or not"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/view [rescue]", "the window view · bring back windows on special:den"}, {"/mission <goal> · move <project>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
 		items = [][2]string{{"Tab", "complete name"}, {"↑ ↓", "pick"}, {"Enter", "send"}, {"Esc", "clear"}}
 	case m.tab == tabOverview && m.ov.proposal != "":
-		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"Enter", "refine"}, {"^E click", "actions in full"}, {"Esc", "keep for later"}, {"← →", "project"}, {"Tab", "view"}}
+		items = [][2]string{{"^Y", "start"}, {"^N", "drop"}, {"↑ ↓", "scroll"}, {"type", "tell the orchestrator what to change"}, {"Esc", "keep for later"}, {"Tab", "view"}}
+	case m.tab == tabOverview && m.ov.transcript != "":
+		items = [][2]string{{"↑ ↓", "scroll"}, {"Esc", "back to the mission"}, {"drag", "select · click a block: copy"}, {"Tab", "view"}}
 	case m.tab == tabOverview && m.ov.open != "":
-		items = [][2]string{{"↑ ↓", "scroll"}, {"^Y ^N", "answer"}, {"Enter", "message the mission"}, {"^E click", "actions in full"}, {"drag", "select · click a block: copy"}, {"/pause /resume /stop /budget", ""}, {"Esc", "back"}, {"Tab", "view"}}
+		items = [][2]string{{"↑ ↓", "owner"}, {"Enter", "transcript"}, {"^Y ^N", "answer"}, {"/mission met c1", ""}, {"/pause /resume /stop /budget", ""}, {"type", "tell the orchestrator"}, {"Esc", "back"}, {"Tab", "view"}}
 	case m.tab == tabOverview:
-		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "mission · empty: open"}, {"^Y ^N", "answer"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
+		items = [][2]string{{"← →", "project"}, {"↑ ↓", "select"}, {"Enter", "open"}, {"^Y ^N", "answer"}, {"type", "tell the orchestrator"}, {"/template", "saved mission shapes"}, {"/pause /stop", ""}, {"^O", "orchestrator"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.tab == tabInbox:
 		items = [][2]string{{"↑ ↓", "select"}, {"^Y", "allow"}, {"^N", "deny"}, {"/always", "allow again"}, {"Enter", "send · empty: open terminal"}, {"^X", "close agent"}, {"^O", "orchestrator"}, {"Tab", "view"}, {"/help", ""}, {"^C", "quit"}}
 	case m.tab == tabReview:

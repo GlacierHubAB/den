@@ -23,34 +23,47 @@ import (
 type Kind int
 
 const (
-	Permission    Kind = iota // a tool wants to run; y/n/a answer it
-	Plan                      // ExitPlanMode: approve or ask for changes
-	Question                  // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
-	Done                      // a turn finished while you were elsewhere
-	Idle                      // Claude Code's idle notice
-	Sent                      // a message you sent, with its delivery status
-	Close                     // Den asks: close these agents? y/n answer it
-	Skills                    // Den asks: install these catalogue skills? y/n answer it
-	Budget                    // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
-	Restore                   // Den asks: reopen these agents with claude --resume? y/n answer it
-	Stalled                   // working, but no hook event for a while; never "needs you"
-	Failed                    // a turn ended on an API error, or tool calls keep failing
-	Merge                     // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
-	Cleanup                   // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
-	Install                   // Den asks: copy this den to a remote host? y/n answer it
-	Message                   // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
-	Guidance                  // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
-	MissionUpdate             // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
-	Usage                     // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
-	UsageResume               // Den asks: let the fleet go on after a usage stop? y/n answer it
-	MissionMove               // Den asks: move this mission to another project, as you typed? y/n answer it
-	APIOn                     // Den asks: turn on den-api.sock for apps on this machine? y/n answer it
-	Grant                     // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
-	Pair                      // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
-	ControlAsk                // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
-	Console                   // Den asks: make the program that claimed the console code your console? y/n answer it
-	ConsoleNote               // Den says: something happened to the console (another program tried it, it was restored)
-	UsageSet                  // Den asks: take this usage figure, as the console sent it? y/n answer it
+	Permission      Kind = iota // a tool wants to run; y/n/a answer it
+	Plan                        // ExitPlanMode: approve or ask for changes
+	Question                    // AskUserQuestion: answer in the terminal, or in Den with hooks.answer_questions
+	Done                        // a turn finished while you were elsewhere
+	Idle                        // Claude Code's idle notice
+	Sent                        // a message you sent, with its delivery status
+	Close                       // Den asks: close these agents? y/n answer it
+	Skills                      // Den asks: install these catalogue skills? y/n answer it
+	Budget                      // Den asks: a mission reached its budget; keep going or stop it? y/n answer it
+	Restore                     // Den asks: reopen these agents with claude --resume? y/n answer it
+	Stalled                     // working, but no hook event for a while; never "needs you"
+	Failed                      // a turn ended on an API error, or tool calls keep failing
+	Merge                       // Den asks: merge this agent's worktree branch into the main checkout? y/n answer it
+	Cleanup                     // Den asks: remove this agent's worktree (and its branch, if merged)? y/n answer it
+	Install                     // Den asks: copy this den to a remote host? y/n answer it
+	Message                     // Den asks: send this text, asked for from a script, to an agent on a host? y/n answer it
+	Guidance                    // Den asks: load this orchestrator guidance, shown whole with its SHA-256? y/n answer it
+	MissionUpdate               // Den asks: the orchestrator says a mission is done, failed or moves on; apply it? y/n answer it
+	Usage                       // Den says: the weekly limit reached a warning share, or the fleet was stopped for it
+	UsageResume                 // Den asks: let the fleet go on after a usage stop? y/n answer it
+	MissionMove                 // Den asks: move this mission to another project, as you typed? y/n answer it
+	APIOn                       // Den asks: turn on den-api.sock for apps on this machine? y/n answer it
+	Grant                       // an app asks, through den-api.sock: grant these capabilities? y/n answer it, once
+	Pair                        // Den asks: may the program that claimed the pairing code control the orchestrator? y/n answer it
+	ControlAsk                  // in a paired app's turn the orchestrator wants a tool: allow it? y/n answer it, once
+	Console                     // Den asks: make the program that claimed the console code your console? y/n answer it
+	ConsoleNote                 // Den says: something happened to the console (another program tried it, it was restored)
+	UsageSet                    // Den asks: take this usage figure, as the console sent it? y/n answer it
+	ModeSet                     // Den asks: start agents in a mode that asks less? y/n answer it
+	DesktopInstall              // Den asks: install hypruse into Den's own venv, as planned? y/n answer it
+	DesktopMission              // Den asks: start this desktop mission, in this scope? y/n answer it
+	DesktopAct                  // a desktop agent's action needs you: allow this one call? y/n answer it
+	YourTurn                    // a desktop mission waits for a step only you do; y says it is done, n ends the mission
+	GuardNote                   // Den says: it blocked a message to a guarded agent that Den did not deliver
+	MissionCriteria             // Den asks: change a mission's done criteria, as the orchestrator asks? y/n, in Den only
+	MissionDone                 // Den asks: every done criterion is claimed; is the mission done? y/n, in Den only
+	MirrorAsk                   // Den asks: show your orchestrator conversation in the paired console? y/n, in Den only
+	ProcessTuned                // Den says: the orchestrator tuned a project's process; y keeps it, n undoes it, in Den only
+	PromptProposal              // Den shows: the orchestrator proposes a change to its own instructions; Den applies nothing, in Den only
+	RulesPick                   // Den asks: which proposed rules become the project's rules? 1-9 pick, y writes the picked, n drops them, in Den only
+	RulesEdited                 // Den asks: rules.md changed outside Den; take it as the rules again? y/n, in Den only
 )
 
 func (k Kind) String() string {
@@ -107,10 +120,36 @@ func (k Kind) String() string {
 		return "app's turn"
 	case Console:
 		return "console"
+	case ModeSet:
+		return "mode raise"
 	case UsageSet:
 		return "usage figure"
+	case GuardNote:
+		return "blocked message"
 	case ConsoleNote:
 		return "console note"
+	case DesktopInstall:
+		return "desktop install"
+	case DesktopMission:
+		return "desktop mission"
+	case DesktopAct:
+		return "desktop action"
+	case YourTurn:
+		return "your turn"
+	case MissionCriteria:
+		return "mission criteria"
+	case ProcessTuned:
+		return "process tuned"
+	case PromptProposal:
+		return "prompt proposal"
+	case RulesPick:
+		return "rules proposed"
+	case RulesEdited:
+		return "rules changed"
+	case MissionDone:
+		return "mission done"
+	case MirrorAsk:
+		return "conversation mirror"
 	}
 	return "?"
 }
@@ -165,6 +204,10 @@ func (it *Item) Answerable() bool {
 		!(it.req.Host != "" && it.req.HungUp()) // a remote one let go: its link is lost or its hook gave up
 }
 
+// AskerGone reports whether the request behind the item no longer waits
+// for its answer (the asker hung up or gave up).
+func (it *Item) AskerGone() bool { return it.req != nil && it.req.HungUp() }
+
 // AsksInDen reports whether the item is an agent's question that Den holds
 // and the human can answer here, one question at a time.
 func (it *Item) AsksInDen() bool {
@@ -174,7 +217,10 @@ func (it *Item) AsksInDen() bool {
 // DenAsks reports whether the item is Den's own question, carried out by
 // Den on ^Y rather than answered back to a hook.
 func (it *Item) DenAsks() bool {
-	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet
+	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
+		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
+		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal ||
+		it.Kind == RulesPick || it.Kind == RulesEdited
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -250,6 +296,18 @@ func (s *Store) Waiting() int {
 // SessionNeedsYou reports whether a session on this machine has anything
 // waiting.
 func (s *Store) SessionNeedsYou(sessionID string) bool { return s.NeedsYouOn("", sessionID) }
+
+// WaitingInTerminal reports whether a session on this machine has a
+// permission prompt, plan or question that only its own terminal can
+// answer: the window it runs in is where the human has to look.
+func (s *Store) WaitingInTerminal(sessionID string) bool {
+	for _, it := range s.items {
+		if it.is("", sessionID) && it.State == InTerminal && it.Kind <= Question {
+			return true
+		}
+	}
+	return false
+}
 
 // NeedsYouOn reports whether a session on host ("" for this machine) has
 // anything waiting.
@@ -394,6 +452,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
 	case "SessionEnd":
 		s.cancelMessages(host, in.SessionID)
+		s.cancelOwnAsks(host, in.SessionID)
 		s.resolveSession(host, in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
@@ -746,6 +805,35 @@ func (s *Store) AddInstall(host, title string, body []string, req *bridge.Reques
 	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
 }
 
+// DesktopSession is the SessionID of Den's questions about desktop control
+// that concern no one agent yet: the hypruse install, a mission's start.
+const DesktopSession = "den:desktop"
+
+// AddDesktopInstall adds Den's question: install hypruse as planned? req
+// is the request of the den install-hypruse that asked; it gets the
+// outcome. Only the human's ^Y answers it.
+func (s *Store) AddDesktopInstall(title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: DesktopSession, Kind: DesktopInstall, Tool: "install_hypruse", Title: title, Body: body, req: req})
+}
+
+// AddDesktopAct adds a desktop agent's action that needs the human: allow
+// this one call? req is the proxy's request; SettleWith answers it.
+func (s *Store) AddDesktopAct(sessionID, tool, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: DesktopAct, Tool: tool, Title: title, Body: body, req: req})
+}
+
+// AddYourTurn adds a desktop mission's step only the human does: ^Y says it
+// is done, ^N ends the mission. req is the agent's your_turn call.
+func (s *Store) AddYourTurn(sessionID, title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: YourTurn, Tool: "your_turn", Title: title, Body: body, req: req})
+}
+
+// AddDesktopMission adds Den's question: start this desktop mission, in
+// this scope? req is the dispatcher's request.
+func (s *Store) AddDesktopMission(title string, body []string, req *bridge.Request) *Item {
+	return s.add(&Item{SessionID: DesktopSession, Kind: DesktopMission, Tool: "desktop_mission", Title: title, Body: body, req: req})
+}
+
 // AddMessageOn adds Den's question: send this text to an agent on host?
 // req is the request of the den send that asked; it gets the outcome.
 func (s *Store) AddMessageOn(host, sessionID, title string, body []string, req *bridge.Request) *Item {
@@ -789,6 +877,19 @@ func (s *Store) AddUsageSet(title string, body []string) *Item {
 	return s.add(&Item{SessionID: UsageSession, Kind: UsageSet, Tool: "usage_set", Title: title, Body: body})
 }
 
+// ModeSession is the session id of Den's mode cards.
+const ModeSession = "den:mode"
+
+// AddModeSet adds Den's question: start agents in a mode that asks less?
+// One at a time; nil while one is open, which the caller settles first to
+// put a newer request in its place.
+func (s *Store) AddModeSet(title string, body []string) *Item {
+	if s.hasOpen("", ModeSession, ModeSet) {
+		return nil
+	}
+	return s.add(&Item{SessionID: ModeSession, Kind: ModeSet, Tool: "mode_set", Title: title, Body: body})
+}
+
 // AddMissionMove adds Den's question: move this mission to another
 // project? sessionID is "mission:<id>". Only the human's /mission move
 // raises it, and only the human's ^Y answers it.
@@ -825,6 +926,12 @@ func (s *Store) AddConsole(title string, body []string) *Item {
 	return s.add(&Item{SessionID: APISession, Kind: Console, Tool: "console_pairing", Title: title, Body: body})
 }
 
+// AddGuardNote adds Den's notice that it blocked a message to the guarded
+// session sessionID that Den did not deliver.
+func (s *Store) AddGuardNote(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: GuardNote, Title: title, Body: body})
+}
+
 // AddConsoleNote adds Den's notice about the console.
 func (s *Store) AddConsoleNote(title string, body []string) *Item {
 	return s.add(&Item{SessionID: APISession, Kind: ConsoleNote, Title: title, Body: body})
@@ -838,6 +945,48 @@ func (s *Store) AddControlAsk(title string, body []string) *Item {
 // HostPrefix makes a remote host's label an item's SessionID, for Den's
 // questions about the host rather than one of its agents.
 const HostPrefix = "host:"
+
+// AddMissionCriteria adds Den's question: change a mission's done criteria
+// as the orchestrator asks? Answered in Den only.
+func (s *Store) AddMissionCriteria(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: MissionCriteria, Tool: "update_mission", Title: title, Body: body})
+}
+
+// AddMirrorAsk adds Den's question: show the human's orchestrator
+// conversation in the paired console?
+func (s *Store) AddMirrorAsk(title string, body []string) *Item {
+	return s.add(&Item{SessionID: "den:mirror", Kind: MirrorAsk, Tool: "mirror", Title: title, Body: body})
+}
+
+// AddProcessTuned adds Den's notice: the orchestrator tuned a project's
+// process, already applied; y keeps it, n undoes it.
+func (s *Store) AddProcessTuned(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: ProcessTuned, Tool: "tune_process", Title: title, Body: body})
+}
+
+// AddPromptProposal adds the orchestrator's proposed change to its own
+// instructions, for the human to read; Den applies nothing from it.
+func (s *Store) AddPromptProposal(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: PromptProposal, Tool: "tune_process", Title: title, Body: body})
+}
+
+// AddRulesPick adds Den's question: which of these proposed rules
+// become the project's rules?
+func (s *Store) AddRulesPick(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: RulesPick, Tool: "propose_rule", Title: title, Body: body})
+}
+
+// AddRulesEdited adds Den's question: rules.md changed outside Den; take
+// it as the rules again?
+func (s *Store) AddRulesEdited(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: RulesEdited, Tool: "rules", Title: title, Body: body})
+}
+
+// AddMissionDone adds Den's question: every criterion is claimed; is the
+// mission done? Answered in Den only.
+func (s *Store) AddMissionDone(sessionID, title string, body []string) *Item {
+	return s.add(&Item{SessionID: sessionID, Kind: MissionDone, Tool: "update_mission", Title: title, Body: body})
+}
 
 // AddMissionUpdate adds Den's question: apply the orchestrator's update to a
 // mission? sessionID names the mission ("mission:<id>").
@@ -868,6 +1017,15 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 		d.Behavior = "allow"
 	}
 	it.req.Reply(d)
+}
+
+// SettleWith resolves an item with the outcome and answers whoever asked
+// with d as it is (its Data included).
+func (s *Store) SettleWith(it *Item, d bridge.Decision, outcome string) {
+	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
+	if it.req != nil {
+		it.req.Reply(d)
+	}
 }
 
 // SessionClosed resolves everything open for an agent Den closed.
@@ -1039,13 +1197,31 @@ func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 // send question is never among them: whether a message may reach the agent
 // stays a question through its turns, until the human answers, the asker
 // gives up, the link is lost or the session ends (cancelMessages).
+//
+// Den's own questions (DenAsks) are never resolved here: an agent's hook
+// events (its turn ending, its session ending, as when Den closes it) say
+// nothing about them, and only their own outcome may answer whoever asked.
 func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && it.Kind != Message && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && !it.DenAsks() && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
 			it.State, it.Resolved = Resolved, why
+		}
+	}
+}
+
+// cancelOwnAsks ends Den's questions that only the ended session itself
+// asked (a desktop agent's action or its handover): they can no longer
+// mean anything, and the asker hears a typed cancel, never an empty
+// answer. Den's other questions stored on the session stay open: a close
+// card's targets are what is being closed, and skills still fit the
+// project.
+func (s *Store) cancelOwnAsks(host, sessionID string) {
+	for _, it := range s.items {
+		if it.is(host, sessionID) && it.State != Resolved && (it.Kind == DesktopAct || it.Kind == YourTurn) {
+			s.Settle(it, false, "cancelled: the session ended; nothing done")
 		}
 	}
 }
@@ -1423,6 +1599,10 @@ func diffLines(oldS, newS string) []string {
 
 // Summarize turns an assistant reply into one plain sentence for a notice:
 // no code blocks, no markdown furniture, cut at the first sentence end.
+// summaryMax bounds a summary only against a runaway sentence: Den shows
+// the summary whole, wrapped, never cut to a line.
+const summaryMax = 1200
+
 func Summarize(text string) string {
 	text = strings.TrimSpace(sanitize.Text(text))
 	if text == "" {
@@ -1460,8 +1640,14 @@ func Summarize(text string) string {
 			break
 		}
 	}
-	if r := []rune(flat); len(r) > 160 {
-		flat = strings.TrimSpace(string(r[:159])) + "…"
+	// Whole, for Den wraps it to the pane; only a runaway sentence is cut,
+	// at a word.
+	if r := []rune(flat); len(r) > summaryMax {
+		cut := string(r[:summaryMax-1])
+		if i := strings.LastIndexByte(cut, ' '); i > summaryMax/2 {
+			cut = cut[:i]
+		}
+		flat = strings.TrimSpace(cut) + "…"
 	}
 	return flat
 }

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -128,6 +129,14 @@ type pipeDialer struct {
 	mu    sync.Mutex
 	wire  strings.Builder
 	kills []func()
+	times []time.Time // when each dial began
+}
+
+// dialTimes is when each dial so far began.
+func (d *pipeDialer) dialTimes() []time.Time {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return slices.Clone(d.times)
 }
 
 // setServe replaces Serve for the next dials; a test may call it while the
@@ -151,6 +160,9 @@ func (t tee) Write(p []byte) (int, error) {
 }
 
 func (d *pipeDialer) dial(ctx context.Context, h Host) (*Conn, error) {
+	d.mu.Lock()
+	d.times = append(d.times, time.Now())
+	d.mu.Unlock()
 	d.dials.Add(1)
 	if d.fail != nil {
 		return nil, d.fail
@@ -564,10 +576,18 @@ func TestOfflineBacksOff(t *testing.T) {
 	m := s.manager(d, hostB())
 	m.Start()
 	defer m.Close()
-	time.Sleep(400 * time.Millisecond)
-	// 20, 40, 80, 100, 100 ms: about 5 dials in 400 ms, never a tight loop.
-	if n := d.dials.Load(); n < 3 || n > 8 {
-		t.Errorf("dialled %d times in 400 ms", n)
+	// The wait is for the dials, with a deadline: a loaded runner may dial
+	// late, never early. The backoff doubles from 20 ms (the option the
+	// scratch manager sets), and a timer never fires before its time, so
+	// the gap before dial k+1 is at least 20, 40, 80 ms whatever the load.
+	// A tight loop, or a backoff that did not grow, breaks that.
+	waitFor(t, "four dials", func() bool { return d.dials.Load() >= 4 })
+	at := d.dialTimes()
+	for i, least := range []time.Duration{20, 40, 80} {
+		least *= time.Millisecond
+		if gap := at[i+1].Sub(at[i]); gap < least-5*time.Millisecond { // 5 ms of clock slack
+			t.Errorf("dial %d came %v after dial %d, want at least %v", i+2, gap, i+1, least)
+		}
 	}
 	// Between dials the host is offline; a read during a dial would say
 	// connecting, so wait for the backoff.

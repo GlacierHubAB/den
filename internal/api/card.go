@@ -49,6 +49,9 @@ type Card struct {
 	CutAt       int      `json:"cut_at,omitempty"`
 	Verbs       []string `json:"verbs"`
 	DockAnswers bool     `json:"dock_answers"`
+	// TTYOnly: while God mode is on, only the human answers it, in Den's
+	// own window; card.answer says tty_only rather than refused_from_dock.
+	TTYOnly bool `json:"-"`
 }
 
 // CardHash is a card's text_sha256: over kind, agent, tool, title, note
@@ -70,7 +73,7 @@ type CardEvent struct {
 	NeedsDenScreen bool `json:"needs_den_screen,omitempty"`
 	// On a settled card: allowed, denied, always or gone (it settled
 	// without an answer: the agent moved on, or it went to its terminal),
-	// and by den or console, "" for gone.
+	// and by den, console or rule (God mode answered it), "" for gone.
 	Result string `json:"result,omitempty"`
 	By     string `json:"by,omitempty"`
 }
@@ -239,6 +242,10 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
+	if !s.consolePowers(c) {
+		c.fail(req.ID, CodePowersLocked, PowersLocked)
+		return
+	}
 	var p struct {
 		ID    string `json:"id"`
 		Hash  string `json:"text_sha256"`
@@ -271,6 +278,9 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 	case card.Hash != p.Hash:
 		c.fail(req.ID, CodeCardChanged, "the card changed: fetch it again")
 		return
+	case card.TTYOnly:
+		c.fail(req.ID, CodeTTYOnly, "while God mode is on, only Den's own window answers this card")
+		return
 	case !card.DockAnswers || !hasVerb(card.Verbs, p.Verb):
 		c.fail(req.ID, CodeRefusedFromDock, "the console may not answer this card that way")
 		return
@@ -287,12 +297,11 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		// Unpaired first, then told: a console that hears it is unpaired
 		// never finds it still paired. Its connections close 50 ms after,
 		// so the reply still goes out.
-		s.UnpairConsole("the console answered cards faster than anyone could read: it is unpaired; pair again with den pair")
+		s.UnpairConsole(CauseBurst, "the console answered cards faster than anyone could read: it is unpaired; pair again with den pair")
 		c.fail(req.ID, CodeForbidden, "answers faster than anyone could read: the console is unpaired")
 		return
 	}
-	cur, _ := s.CurrentConsole()
-	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Verb: p.Verb, Console: ExeLabel(cur.Exe), Reply: make(chan CardResult, 1)}
+	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Verb: p.Verb, Console: ConsoleLabel, Reply: make(chan CardResult, 1)}
 	// The card's settled event, if Den pushes one while it answers, waits
 	// for the reply: the reply first, then the event, on this connection.
 	c.mu.Lock()

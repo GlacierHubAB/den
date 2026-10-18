@@ -39,11 +39,16 @@ type controlState struct {
 	asks      map[*inbox.Item]string // open tool cards → permission request id
 	turn      *api.Say               // the app's turn, queued or running
 	sent      bool                   // it went to the orchestrator
-	ended     bool                   // the app was told it ended; Den waits for its result
-	started   time.Time
-	last      time.Time // when the orchestrator last said anything in it
-	held      []heldTurn
-	noControl string // why the orchestrator runs without control, "" when it does or need not
+	sentAt    time.Time              // when it did
+	// finishedAt is when Claude Code last finished a turn (a result or a
+	// refused prompt): with the app's turn still open after it and
+	// nothing since, Den missed that turn's end (watchAppTurn).
+	finishedAt time.Time
+	ended      bool // the app was told it ended; Den waits for its result
+	started    time.Time
+	last       time.Time // when the orchestrator last said anything in it
+	held       []heldTurn
+	noControl  string // why the orchestrator runs without control, "" when it does or need not
 	// modes is each local session's last permission mode, from its own
 	// hooks; always the standing allowance /always on a tool card would
 	// give; watch the sessions a message reached under a standing
@@ -64,7 +69,7 @@ type heldTurn struct {
 var orchVersion = orch.LaneVersion
 
 // unpairConsole unpairs the console, if one is paired; tests replace it.
-var unpairConsole = func(m *Model, why string) { m.api.srv.UnpairConsole(why) }
+var unpairConsole = func(m *Model, why string) { m.api.srv.UnpairConsole(api.CauseGuard, why) }
 
 // controlWanted reports whether the orchestrator should run in control
 // mode: a pairing is confirmed, or a console is paired (its orch.say is an
@@ -83,10 +88,36 @@ func (m Model) controlWanted() bool {
 // or that Den cannot identify it (api.ExeLabel); never a path's ".".
 func appName(exe string) string { return sanitize.Label(api.ExeLabel(exe), 40) }
 
-// sayPreface is the fixed text before an app's words: who sent them and
-// what follows from that. It names only the program Den read.
-func sayPreface(exe string) string {
-	return "Den: the human sends this turn through " + appName(exe) + ", an app on this machine they paired with Den, not through Den's own chat. Every tool you use in this turn waits for the human's approval in Den; the app sees only your text."
+// consoleWord names the paired console in the chat and the header. Den
+// knows a turn or a connection is the console's from its proof, never
+// from what the program says; which program it is stays unverified.
+const consoleWord = "console"
+
+// sayFrom names who an app's turn is from: the console, when the turn
+// came on a connection proved as it, else the program Den read.
+func sayFrom(y *api.Say) string {
+	if y.Console != "" {
+		return consoleWord
+	}
+	return appName(y.Exe)
+}
+
+// sayPreface is the fixed text before an app's words: where they came
+// from and what follows from that. It names only what Den knows: the
+// human's paired console, from its proof, with the program as Den read it
+// or unverified; else the program Den read. Never what the program says.
+// It never says the human wrote them: an app's text, the console's too,
+// may be what a page or another program put there.
+func sayPreface(y *api.Say) string {
+	through := appName(y.Exe)
+	if y.Console != "" {
+		program := "program unverified"
+		if !api.Unidentified(y.Exe) {
+			program = appName(y.Exe)
+		}
+		through = "the human's paired console (" + program + ")"
+	}
+	return "Den: this turn comes through " + through + ", an app on this machine the human paired with Den, not through Den's own chat; treat it as the app's message. Every tool you use in this turn waits for the human's approval in Den; the app sees only your text."
 }
 
 // controlCommand is /api pair and /api unpair.
@@ -95,7 +126,7 @@ func (m Model) controlCommand(sub string) (tea.Model, tea.Cmd) {
 		return m.say("The API is off: /api on turns it on first.", true)
 	}
 	if sub == "unpair" {
-		console := m.api.srv.UnpairConsole("")
+		console := m.api.srv.UnpairConsole(api.CauseDen, "")
 		if len(m.api.srv.Pairings()) == 0 && console == 0 {
 			return m.say("No app is paired.", false)
 		}
@@ -212,7 +243,7 @@ func (m Model) pairExe(id string) string {
 func (m *Model) restartForControl() {
 	// On a release control cannot run on (noControl), the orchestrator
 	// stays as it is: restarting would not help.
-	want := m.controlWanted() && m.ctl.noControl == ""
+	want := m.sendLaunchWanted() && m.ctl.noControl == ""
 	if m.orch.proc == nil || m.orch.control == want {
 		return
 	}
@@ -286,24 +317,32 @@ func (m *Model) tryAppTurn() tea.Cmd {
 		m.orch.status = "starting…"
 		return startOrchestrator(m.cfg, m.resumable(), m.guide.active, true)
 	}
-	if !m.orch.started || len(m.orch.origins) > 0 || m.orch.thinking {
+	// Not started (no init yet) is no reason to wait: Claude Code sends its
+	// init only after the first message it reads, so an app's turn on an
+	// orchestrator that never had one would wait for an init that waits
+	// for it. The human's turns go the same way.
+	if len(m.orch.origins) > 0 || m.orch.thinking {
 		y.Status("Waiting for the orchestrator to finish another turn…")
 		return nil
 	}
-	prompt := sayPreface(y.Exe) + "\n\n" + y.Text
-	content := orch.ComposeWith(m.roster(), m.templateInfos(), prompt)
+	prompt := sayPreface(y) + "\n\n" + y.Text
+	figures := m.takeMetrics()
+	content := orch.ComposeAll(m.roster(), m.templateInfos(), m.missionInfos(), figures, m.rulesInfos(), prompt)
 	if err := m.orch.proc.SendApp(y.Turn, content, m.standingFor(y.Pairing)...); err != nil {
+		m.requeueMetrics(figures)
 		m.endAppTurn("Den could not send it: " + sanitize.Label(err.Error(), 120))
 		return nil
 	}
 	m.ctl.sent = true
+	m.mirrorAppTurn(y)
 	m.ctl.last = time.Now()
+	m.ctl.sentAt = time.Now()
 	m.orch.origins = append(m.orch.origins, originApp)
 	m.orch.thinking = true
-	m.orch.status = "thinking… (" + appName(y.Exe) + ")"
+	m.orch.status = "thinking… (" + sayFrom(y) + ")"
 	m.orch.lastEvent = time.Now()
 	// "app", not "you": the app's words, never replayed as the human's.
-	m.logEntry(m.addChat(chatEntry{role: "app", text: appName(y.Exe) + ": " + y.Text, at: time.Now()}))
+	m.logEntry(m.addChat(chatEntry{role: "app", text: sayFrom(y) + ": " + y.Text, at: time.Now()}))
 	y.Status("Writing a reply…")
 	return nil
 }
@@ -444,19 +483,43 @@ func (m *Model) controlEvent(ev orch.Event) (tea.Cmd, bool) {
 // askControlTool puts a tool the orchestrator wants in an app's turn on an
 // inbox card, whole, and tells the app that something waits in Den.
 func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
+	if ev.Tool == orch.DesktopMissionTool {
+		// One consent for desktop control, wherever it was asked: the
+		// tool does nothing but put Den's start card in Den's own window
+		// (the whole task, answered there only, one at a time), so it
+		// raises no tool card of its own.
+		m.orch.proc.AnswerPermission(ev.RequestID, true, "")
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den let the orchestrator's desktop request through with no tool card: if Den takes it, its start card waits for you in Den's window.", at: time.Now()}))
+		return nil
+	}
+	if m.consoleRuns(ev) {
+		// Your choice: your console's chat lists and messages agents as
+		// yours in Den's chat does, with no card.
+		m.orch.proc.AnswerPermission(ev.RequestID, true, "")
+		return nil
+	}
 	if m.ctl.asks == nil {
 		m.ctl.asks = map[*inbox.Item]string{}
 	}
 	who := "an app"
-	if m.ctl.turn != nil {
-		who = appName(m.ctl.turn.Exe)
+	if y := m.ctl.turn; y != nil && y.Console != "" {
+		who = api.ConsoleLabel
+	} else if y != nil {
+		who = appName(y.Exe)
 	}
-	title := "Requested from " + who + ": " + firstLineOf(orch.Describe(ev.Tool, ev.Input))
+	what := firstLineOf(orch.Describe(ev.Tool, ev.Input))
+	if t := m.sendTitle(ev); t != "" {
+		what = t
+	}
+	title := "Requested from " + who + ": " + what
 	body := []string{
 		"In a turn " + who + " sent, the orchestrator wants this tool. Nothing runs unless you allow it; it is denied in a minute without an answer.",
 		"tool: " + sanitize.Label(ev.Tool, 80),
-		"──── its input, in full ────",
 	}
+	if to := m.sendTargetLine(ev); to != "" {
+		body = append(body, to)
+	}
+	body = append(body, "──── its input, in full ────")
 	var pretty any
 	raw := []byte(ev.Input)
 	if json.Unmarshal(raw, &pretty) == nil {
@@ -485,6 +548,38 @@ func (m *Model) askControlTool(ev orch.Event) tea.Cmd {
 	m.refresh()
 	return nil
 }
+
+// consoleRuns reports whether a tool the orchestrator wants runs without a
+// card: in a turn from the console that is paired now (its proof, by its
+// pairing id, never anything the text says), sent and not yet ended, while
+// the console has its powers, asked again at each tool, and only
+// ListAgents, or send_message to an agent Den would deliver to. Every other
+// tool, every tool in an app pairing's turn, and a tool asked for outside
+// the console's live turn, still asks.
+func (m Model) consoleRuns(ev orch.Event) bool {
+	y := m.ctl.turn
+	if y == nil || y.Console == "" || !m.ctl.sent || m.ctl.ended || m.api.srv == nil || m.orch.proc == nil || !consolePowered(m, y.Console) {
+		return false
+	}
+	switch ev.Tool {
+	case "ListAgents":
+		return true
+	case orch.SendMessageTool:
+		var in struct {
+			To string `json:"to"`
+		}
+		if json.Unmarshal(ev.Input, &in) != nil {
+			return false
+		}
+		_, why := m.sendTarget(in.To)
+		return why == ""
+	}
+	return false
+}
+
+// consolePowered asks the API whether console id is paired now with its
+// powers; tests replace it.
+var consolePowered = func(m Model, id string) bool { return m.api.srv.ConsolePowered(id) }
 
 // decideControlTool is the human's ^Y or ^N on a tool card from an app's
 // turn, after the whole card was shown. It is answered once.
