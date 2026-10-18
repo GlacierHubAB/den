@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Package SHA-256 `142805e2064377221ecb667bdcb092692413fe433a3e4e7d588636101eb872f6`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
+Package SHA-256 `de22142798bb7df52a7f897eed98e2300821f29e810a3fa91f0a875efbf8bcd7`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -149,9 +149,15 @@ What only the server's own test can do is passed in:
   with the same id and text. Left nil, it is skipped.
 - `fleet doing`: an app connection's fleet carries every agent's `doing`
   empty; the proved console's own connection carries it, `text` empty or
-  at most 80 runes and starting with one of Den's lead phrases (waiting for
-  you, stalled, idle, editing, writing, reading, running, searching,
-  fetching, delegating, working on, working), `at` in RFC3339, and at least
+  at most 80 runes and a lead phrase of Den's closed set, case-sensitive
+  (Waiting for you; Stuck, needs a look; Idle; Navigating files and folders;
+  Reading; Editing; Writing; Searching the code; Running the tests; Checking
+  the code; Building the project; Installing packages; Looking over the
+  changes; Committing changes; Pushing changes; Working with git; Working on
+  GitHub; Fetching a web page; Searching the web; Handing work to a helper;
+  Working with containers; Managing services; Running a command; Working
+  on; Working), alone or followed by " " and a target, ":" and a reason, or
+  "…" (only the lead is checked), `at` in RFC3339, and at least
   one agent non-empty. Skipped when the server has no agent.
 - `chat.history` holds only Den's two roles, user and orchestrator.
 - Console events of a kind a subtest is not waiting for (Den's `paired`,
