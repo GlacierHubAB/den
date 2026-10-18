@@ -90,6 +90,12 @@ func TestStopChecksIdentity(t *testing.T) {
 	if err := victim.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Fatal("the process was signalled")
 	}
+	// The pid with the recorded start still runs, but not what Den
+	// recorded: the stop failed, and says so first, never "nothing ran".
+	// The other, recorded with another start, is gone: nothing to say.
+	if r.OK() || len(r.Failed) != 1 || !strings.HasPrefix(r.Failed[0], "the agent (pid ") || !strings.HasPrefix(r.Line(), "could not stop the agent") || strings.Contains(r.Line(), "nothing of Den's was running") {
+		t.Errorf("report %+v: %s", r, r.Line())
+	}
 }
 
 // Stop still ends a process whose binary was updated in place during the
@@ -116,7 +122,7 @@ func TestStopAfterAnUpdateInPlace(t *testing.T) {
 	os.Remove(bin) // the update writes a new file at the path
 	os.WriteFile(bin, raw, 0o755)
 	r := Stop(Targets{Agent: p}, filepath.Join(t.TempDir(), "none.json"))
-	if len(r.Stopped) != 1 || !gone(c) {
+	if len(r.Stopped) != 1 || !r.OK() || !gone(c) {
 		t.Fatalf("not stopped after the update: %+v", r)
 	}
 }

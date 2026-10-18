@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
@@ -24,9 +25,16 @@ func desktopCmd(args []string) {
 	d, err := bridge.Call(bridge.SocketPath(), bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.DesktopStopEvent}, 5*time.Second)
 	if err == nil {
 		fmt.Println(sanitize.Text(d.Message))
+		if d.Behavior == "deny" {
+			os.Exit(1) // a stop that could not signal: never reads as done
+		}
 		return
 	}
-	fmt.Println(stopWithoutDen(desktopStateDir()))
+	out := stopWithoutDen(desktopStateDir())
+	fmt.Println(out)
+	if strings.Contains(out, "could not stop") {
+		os.Exit(1)
+	}
 	os.Remove(desktop.PointerPath())
 }
 
@@ -63,6 +71,9 @@ func stopWithoutDen(dir string) string {
 	if out == "" {
 		r := desktop.Stop(desktop.Targets{}, desktop.BeaconPath())
 		return "Den is not running and no desktop mission is recorded live; " + r.Line()
+	}
+	if strings.Contains(out, "could not stop") {
+		return "Den is not running; from its records, NOT everything could be stopped:\n" + out
 	}
 	return "Den is not running; stopped from its records (its windows stay open):\n" + out
 }

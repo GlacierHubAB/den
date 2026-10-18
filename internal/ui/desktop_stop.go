@@ -82,6 +82,39 @@ func (dm *deskMission) save() {
 	}
 }
 
+// deskStopFailedChip is the header chip while a stop could not signal one
+// of a mission's processes.
+const deskStopFailedChip = "DESKTOP · STOP FAILED · /desktop stop"
+
+// stopDesk stops dm's processes, and ends the mission only once none of
+// them still runs. A stop that could not signal one keeps the mission live:
+// every call of its agent refused (refusal), the console still told it is
+// active, the chip red; Den says so loudly the first time, and each later
+// stop (the tick's, or /desktop stop) tries again. It reports whether the
+// mission ended.
+func (m *Model) stopDesk(dm *deskMission, why string) (desktop.StopReport, bool) {
+	r := deskStopFn(dm.targets(), deskBeacon())
+	if !r.OK() {
+		first := dm.stopFailed == ""
+		dm.stopFailed = r.Line()
+		if first {
+			dm.stopWhy = why
+			m.desk.chip = deskStopFailedChip
+			deskNotify(notify.Note{Summary: "Desktop control NOT stopped", Body: r.Line(), Urgent: true})
+			m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop FAILED (" + why + "): " + r.Line() + ". The mission stays on, and every call of its agent is refused, until Den can stop it; Den tries again every few seconds, and /desktop stop tries at once.", at: time.Now()}))
+			m.flash, m.flashErr = "Desktop control NOT stopped: "+sanitize.Label(r.Line(), 160), true
+		}
+		return r, false
+	}
+	if dm.stopWhy != "" {
+		why = dm.stopWhy
+	}
+	dm.stopFailed = ""
+	os.Remove(desktop.PointerPath())
+	m.endDeskMission(dm, why)
+	return r, true
+}
+
 // stopDesktop ends every live mission now: hypruse and the agent stopped
 // by pidfd, the mission's windows closed. It returns what it did.
 func (m *Model) stopDesktop(why string) string {
@@ -92,12 +125,14 @@ func (m *Model) stopDesktop(why string) string {
 			continue
 		}
 		stopped = true
-		r := deskStopFn(dm.targets(), deskBeacon())
-		os.Remove(desktop.PointerPath())
-		m.endDeskMission(dm, why)
+		r, ended := m.stopDesk(dm, why)
+		lines = append(lines, r.Line())
+		if !ended {
+			dm.stopRestore = true
+			continue
+		}
 		m.restoreDeskMission(dm)
 		dm.save()
-		lines = append(lines, r.Line())
 		deskNotify(notify.Note{Summary: "Desktop control stopped", Body: why})
 	}
 	if !stopped {
@@ -127,7 +162,7 @@ func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
 	if len(args) > 0 && strings.EqualFold(args[0], "stop") {
 		out := m.stopDesktop("you stopped it with /desktop stop")
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop: " + out, at: time.Now()}))
-		return m.say("Desktop stop: "+sanitize.Label(out, 200), strings.Contains(out, "did not start"))
+		return m.say("Desktop stop: "+sanitize.Label(out, 200), strings.Contains(out, "did not start") || strings.Contains(out, "could not stop"))
 	}
 	dm := m.deskLive()
 	if dm == nil {
@@ -144,7 +179,11 @@ func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
 func (m *Model) handleDesktopStop(r *bridge.Request) tea.Cmd {
 	out := m.stopDesktop("den desktop stop")
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop: " + out, at: time.Now()}))
-	r.Reply(bridge.Decision{Behavior: "allow", Message: out})
+	behavior := "allow"
+	if strings.Contains(out, "could not stop") {
+		behavior = "deny" // `den desktop stop` then fails, never reads as done
+	}
+	r.Reply(bridge.Decision{Behavior: behavior, Message: out})
 	return nil
 }
 
@@ -158,6 +197,18 @@ func (m *Model) deskOnTick() tea.Cmd {
 			return tea.Tick(5*time.Second, func(time.Time) tea.Msg { return deskTickMsg{} })
 		}
 		return nil
+	}
+	if dm.stopFailed != "" {
+		// A stop that could not signal: try again each tick, quietly, and
+		// keep the chip red until nothing of the mission runs.
+		if cmd := m.finishDeskMission(dm, dm.stopWhy); dm.Ended != "" {
+			if dm.stopRestore {
+				m.restoreDeskMission(dm)
+			}
+			return cmd
+		}
+		m.desk.chip = deskStopFailedChip
+		return deskTick()
 	}
 	if dm.AgentPID > 1 && deskStart(dm.AgentPID) != dm.AgentStart {
 		m.finishDeskMission(dm, "the agent's session ended")
@@ -207,9 +258,12 @@ func (m *Model) deskAgentStopped(r *bridge.Request) tea.Cmd {
 // agent stopped, the report passed to the orchestrator inside Den's
 // agent_report fence, never as plain text.
 func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
-	r := deskStopFn(dm.targets(), deskBeacon())
-	os.Remove(desktop.PointerPath())
-	m.endDeskMission(dm, why)
+	r, over := m.stopDesk(dm, why)
+	if !over {
+		m.refresh()
+		return nil // still live: the tick tries again
+	}
+	why = dm.Ended
 	dm.save()
 	deskNotify(notify.Note{Summary: "Desktop control ended", Body: why})
 	ended := "Desktop mission ended: " + why + "; " + r.Line() + ". Its journal, screenshots and log are deleted in 10 minutes; /desktop keep keeps them."
