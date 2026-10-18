@@ -187,19 +187,20 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 	}
 }
 
-// mcpTools is what `den mcp` offers: note and notes to everyone;
-// update_mission, propose_mission, tune_process and propose_rule only to
-// the orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the agents it
-// starts), and with missionsOnly nothing else.
+// mcpTools is what `den mcp` offers: note, notes and overlap_ack to
+// everyone; update_mission, propose_mission, tune_process and propose_rule
+// only to the orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the
+// agents it starts), and with missionsOnly nothing else.
 func mcpTools(all []mcp.Tool, orchestrator, missionsOnly, control bool) []mcp.Tool {
 	if !orchestrator {
-		return append(all, noteTools()...)
+		return append(append(all, noteTools()...), overlapAckTool())
 	}
 	if missionsOnly {
 		all = nil
 	}
 	all = append(all, missionTool(), proposeTool(), tuneTool(), ruleTool())
 	all = append(all, noteTools()...)
+	all = append(all, overlapAckTool())
 	if control {
 		all = append(all, sendMessageTool())
 	}
@@ -436,6 +437,31 @@ func noteTools() []mcp.Tool {
 				}
 				return askDen(bridge.NotesEvent, in, "no notes were read")
 			},
+		},
+	}
+}
+
+// overlapAckTool is overlap_ack: an agent's word that it and the agent its
+// branch overlaps with agreed who goes first (with), or the orchestrator's
+// decision for two agents (agents); Den then warns neither about the files
+// they overlap on now, only about a file new to them.
+func overlapAckTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        strings.TrimPrefix(orch.OverlapAckTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Tell Den that two agents whose branches both change files have agreed who goes first or how to split the work, so Den stops warning them about those files. An agent gives with: the other agent's name; the orchestrator gives agents: both names. Den warns again only for a file new to the pair.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"with":   map[string]any{"type": "string", "description": "An agent's call: the other agent's critter or peer name."},
+				"agents": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The orchestrator's call: both agents' names."},
+			},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.OverlapAckInput
+			if json.Unmarshal(args, &in) != nil || (strings.TrimSpace(in.With) == "" && len(in.Agents) != 2) {
+				return "", errorString("give with (the other agent), or agents (both, from the orchestrator)")
+			}
+			return askDen(bridge.OverlapAckEvent, in, "nothing was recorded")
 		},
 	}
 }
