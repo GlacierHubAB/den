@@ -159,10 +159,27 @@ func (m Model) proposalProject(name string) (string, error) {
 // team. An owner grants nothing; it says who does what.
 func (m Model) resolveOwner(owner string, team []mission.Member) (sid, name, role string, err error) {
 	o := strings.TrimSpace(owner)
+	// Its exact peer handle, else its critter name; two agents can share a
+	// critter name, and then the owner is refused, never the first picked.
+	var byPeer, byName []fleet.Agent
 	for _, a := range m.base {
-		if a.Status == fleet.Gone || m.isOrchestrator(a) || !strings.EqualFold(a.Name, o) {
+		if a.Status == fleet.Gone || m.isOrchestrator(a) {
 			continue
 		}
+		if a.Session.Name != "" && a.Session.Name == o {
+			byPeer = append(byPeer, a)
+		} else if strings.EqualFold(a.Name, o) {
+			byName = append(byName, a)
+		}
+	}
+	hits := byPeer
+	if len(hits) == 0 {
+		hits = byName
+	}
+	if len(hits) > 1 {
+		return "", "", "", fmt.Errorf("owner %q is more than one agent: %s; give its peer handle instead", sanitize.Label(o, 80), withPeers(hits))
+	}
+	for _, a := range hits {
 		if a.Host != "" {
 			return "", "", "", fmt.Errorf("%s is on %s: missions stay on this machine", sanitize.Label(a.Name, 80), sanitize.Label(a.Host, 80))
 		}
@@ -174,6 +191,15 @@ func (m Model) resolveOwner(owner string, team []mission.Member) (sid, name, rol
 		}
 	}
 	return "", "", "", fmt.Errorf("owner %q is not a running agent's critter name or a role in team", sanitize.Label(o, 80))
+}
+
+// withPeers lists agents that share a name, each with its peer handle.
+func withPeers(as []fleet.Agent) string {
+	var out []string
+	for _, a := range as {
+		out = append(out, sanitize.Label(a.Name, 60)+" ("+sanitize.Label(a.Session.Name, 60)+")")
+	}
+	return strings.Join(out, ", ")
 }
 
 // cloneMission is a deep copy, so a call is checked whole on the copy
