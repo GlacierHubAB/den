@@ -808,6 +808,8 @@ Each connection proves once, at its start:
 | `cmd.run` | `{text}` | `{ok, note}` |
 | `mode.set` | `{mode}` | `{ok, applied, note}` for a lowering, or `{ok, card, note}` for a raise that waits on that card |
 | `god.off` | | `{ok, was_on}`: Den turns God mode off |
+| `overlay.linked` | `{mission}` | `{linked: true}`: your glow and Stop for that mission are drawn (see Desktop overlay) |
+| `overlay.unlinked` | `{mission}` | `{linked: false}`: you hid them |
 
 All but `console.challenge`, `console.claim`, `console.auth` and
 `console.unpair {all: true}` need a proved connection, else `forbidden`
@@ -1044,6 +1046,32 @@ where the pointer is.
   the console's is ever let through: a click under the dock or any other
   window of yours is refused. Draw the glow on the bottom layer, which
   never blocks a click.
+- The link: send `overlay.linked {mission}`, with the `mission` of the
+  `active` desktop event, once your glow and Stop for that mission are
+  on screen, and `overlay.unlinked {mission}` when you hide them. Send
+  both from a proved connection subscribed to `console.events`
+  (`forbidden` otherwise); `overlay.linked` needs your powers
+  (`powers_locked` without them). A `mission` that is not the one running
+  is `not_found`. At most 30 overlay calls a minute (`unavailable` past
+  that).
+
+  From the first `overlay.linked` the task is overlay-backed. Its input
+  (pointer, keys, binds, window actions, launches; looking at the screen
+  goes on) runs only while both of these hold, with no grace period:
+  - the link stands: no `overlay.unlinked` since, and the connection that
+    sent it is still open, proved and subscribed. A reconnect, a re-pair
+    or an unpair takes it down: send `overlay.linked` again from the new
+    connection;
+  - Den sees your glow itself: a layer surface with namespace
+    `agent-glow`, of the process of one of your proved connections.
+
+  While either is down, Den refuses the agent's input with "paused: the
+  dock's overlay is down; Den resumes when it is back", says so in its
+  chat, and says so again when it resumes. Down for 5 minutes, the task
+  ends, as when Den's own window goes. The human's stop is never paused.
+  A console that never sends `overlay.linked` changes nothing: Den's own
+  window and its stop are the human's view of the task then. Missions
+  with apps are not paused.
 
 ### Conversation mirror
 

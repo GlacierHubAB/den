@@ -68,6 +68,10 @@ type deskMission struct {
 	headless    bool // started with no window of its own, by design
 	viewChecked bool // the agent was found running under it
 	placed      bool
+	// overlayPaused: the console's overlay is down and input waits, since
+	// overlayPausedAt (deskOverlayCheck).
+	overlayPaused   bool
+	overlayPausedAt time.Time
 	// A headless agent's steps in the chat (desktop_headless.go): shown
 	// in the current minute, since when, and those left out.
 	stepsShown, stepsHidden int
@@ -141,6 +145,14 @@ var (
 		if m.api.srv != nil {
 			m.api.srv.SetDesktop(mission)
 		}
+	}
+	// deskOverlay says whether the console has linked its overlay to a
+	// mission (backed), and whether the link holds now (api.Server.OverlayLink).
+	deskOverlay = func(m *Model, mission string) (backed, linked bool) {
+		if m.api.srv == nil {
+			return false, false
+		}
+		return m.api.srv.OverlayLink(mission)
 	}
 	// deskSetAsking tells the console whether a desktop start card waits.
 	deskSetAsking = func(m *Model, asking bool) {
@@ -299,6 +311,61 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 	return deny("unknown request")
 }
 
+// deskLooks are the desktop tools that only look (or ask the human): an
+// overlay pause lets them through. Every other tool is input.
+var deskLooks = map[string]bool{
+	"desktop": true, "binds": true, "screenshot": true, "zoom": true, "ui": true, "marks": true,
+	"request_approval": true, "your_turn": true,
+}
+
+// deskOverlayWait is how long a task's input stays paused for the
+// console's overlay before Den ends the task.
+const deskOverlayWait = 5 * time.Minute
+
+// deskOverlayCheck pauses or resumes a task's input on the console's
+// overlay, and says whether input is paused now. Once the console has
+// linked its overlay to the task (overlay.linked), input goes only while
+// both hold, each Den's own observation: that link stands on a proved,
+// subscribed connection of the paired console (which had its powers when
+// it linked), and Den sees the console's glow, a layer surface of that
+// console's process (glow). Otherwise input pauses, with no grace, and a
+// pause longer than deskOverlayWait ends the task, as Den's own window
+// going does. A task the console never linked is never paused. Den's chat
+// hears each pause and resume once.
+func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end tea.Cmd) {
+	if !dm.Task || dm.Ended != "" {
+		return false, nil
+	}
+	backed, linked := deskOverlay(m, dm.ID)
+	if !backed {
+		return false, nil
+	}
+	if linked && glow {
+		if dm.overlayPaused {
+			dm.overlayPaused = false
+			m.deskOverlayNote("Desktop agent resumed: the dock's overlay is back.")
+		}
+		return false, nil
+	}
+	if !dm.overlayPaused {
+		dm.overlayPaused, dm.overlayPausedAt = true, time.Now()
+		m.deskOverlayNote("Desktop agent paused: the dock's overlay is down. Its input waits until the overlay is back, at most 5 minutes; /desktop stop ends it now.")
+	}
+	if time.Since(dm.overlayPausedAt) >= deskOverlayWait {
+		return true, m.finishDeskMission(dm, "the dock's overlay was down for 5 minutes")
+	}
+	return true, nil
+}
+
+// deskOverlayPaused is what an input call hears while paused.
+const deskOverlayPaused = "paused: the dock's overlay is down; Den resumes when it is back"
+
+// deskOverlayNote puts a fixed overlay line in Den's chat.
+func (m *Model) deskOverlayNote(text string) {
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: text, at: time.Now()}))
+	m.flash, m.flashErr = text, true
+}
+
 // fromProxy reports whether a request comes from the mission's proxy, the
 // process that started it: pid and start.
 func (m *Model) fromProxy(dm *deskMission, r *bridge.Request) bool {
@@ -348,6 +415,12 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	if why := dm.taskGone(msg.snap); why != "" {
 		deny(why + "; the task has ended")
 		return m.finishDeskMission(dm, why)
+	}
+	if paused, end := m.deskOverlayCheck(dm, msg.snap.ConsoleGlow(m.consoleProcs())); end != nil {
+		deny(deskOverlayPaused)
+		return end
+	} else if paused && !deskLooks[in.Tool] {
+		return deny(deskOverlayPaused)
 	}
 	// The console's pointer outline lies over the whole monitor and takes
 	// no input: it never blocks a click, and nothing else of the console's

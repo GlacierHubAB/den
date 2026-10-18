@@ -86,6 +86,8 @@ type Server struct {
 	god godState
 	// desk is the running desktop mission as Den last set it (desktop.go).
 	desk desktopState
+	// overlay is the console's overlay link (overlay.go).
+	overlay overlayState
 	// cmdLimits counts the console's commands.
 	cmdLimits cmdLimits
 	closeOnce sync.Once
@@ -1098,6 +1100,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.consoleUnpair(c, req)
 	case "conversation.history":
 		s.conversationHistory(c, req)
+	case "overlay.linked":
+		s.overlayVerb(c, req, true)
+	case "overlay.unlinked":
+		s.overlayVerb(c, req, false)
 	case "card.get":
 		s.cardGet(c, req)
 	case "card.answer":

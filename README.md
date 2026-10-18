@@ -1146,6 +1146,12 @@ that send keys to another window by name; and `ctrl+alt+Delete`,
   key, below). The agent also stops when Den quits, however Den ends: it is
   Den's own child, signalled when Den goes (with `agent_view`, its terminal
   watches Den), and `den desktop stop` still works from Den's records.
+- **The dock's overlay.** When a paired dock (Drey) shows the task's glow
+  and Stop, Den pauses the agent's mouse and keyboard whenever that
+  overlay is down, for any reason, and says so in its chat. The agent may
+  still look at the screen. It resumes once the dock links the overlay
+  again and Den sees the glow, and the task ends after 5 minutes down.
+  A dock that never shows the overlay changes nothing.
 - **The per-task limit.** Den stops the task after `task_minutes` of wall
   time or `task_actions` desktop calls, whichever comes first. Den counts
   them itself, and only your config sets them:

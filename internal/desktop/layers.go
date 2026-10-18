@@ -27,6 +27,21 @@ const OverlayLevel = 3
 // input region): the one surface ExemptConsole lets through.
 const PointerNamespace = "drey-agent-pointer"
 
+// GlowNamespace is the layer namespace of the console's glow, drawn while
+// a desktop agent works.
+const GlowNamespace = "agent-glow"
+
+// ConsoleGlow reports whether the console's glow is on the desktop: a
+// surface named GlowNamespace whose process is one in console.
+func (s Snapshot) ConsoleGlow(console map[int]bool) bool {
+	for _, l := range s.Layers {
+		if l.Namespace == GlowNamespace && l.PID > 1 && console[l.PID] {
+			return true
+		}
+	}
+	return false
+}
+
 // ExemptConsole drops from the snapshot the console's pointer outline: a
 // surface on the overlay level, named PointerNamespace, whose process is
 // one in console (the processes of the console's proved den-api.sock
