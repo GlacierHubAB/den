@@ -40,11 +40,11 @@ const (
 type teamState struct {
 	scanning bool
 	next     time.Time
-	// overlaps are each agent's overlaps now, by session id; warned the
-	// pairs told, until they stop overlapping; lastWarn when each agent
-	// was last told.
+	// overlaps are each agent's overlaps now, by session id; pairs the
+	// pairs told and the files each was told about, kept in Den's state
+	// dir (team_warned.go); lastWarn when each agent was last told.
 	overlaps map[string][]process.Overlap
-	warned   map[string]bool
+	pairs    map[string]*warnedPair
 	lastWarn map[string]time.Time
 	// branches are each agent's branch as last read, by session id;
 	// nudged when each agent's branch (session and branch) was last
@@ -115,32 +115,35 @@ func (m *Model) teamTick(now time.Time) tea.Cmd {
 	}
 }
 
-// applyTeamScan records the overlaps a read found and tells each new pair,
-// both agents at once, unless one was told within teamWarnEvery: then the
-// pair is told on a later read, while it still overlaps.
+// applyTeamScan records the overlaps a read found and tells each pair about
+// the files it was not told about yet (team_warned.go), both agents at
+// once, unless one was told within teamWarnEvery: then the pair is told on
+// a later read, while it still overlaps.
 func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 	m.team.scanning = false
-	if m.team.warned == nil {
-		m.team.warned, m.team.lastWarn = map[string]bool{}, map[string]time.Time{}
+	if m.team.lastWarn == nil {
+		m.team.lastWarn = map[string]time.Time{}
 	}
+	changed := m.pruneWarned(msg.works, now)
 	overlaps := process.Overlaps(msg.works)
 	by := map[string][]process.Overlap{}
-	current := map[string]bool{}
 	var cmds []tea.Cmd
 	for _, o := range overlaps {
 		by[o.A] = append(by[o.A], o)
 		by[o.B] = append(by[o.B], o)
-		key := o.A + "\x00" + o.B
-		current[key] = true
-		if m.team.warned[key] {
+		fresh := freshFiles(m.warnedPairs()[pairKey(o.A, o.B)], o.Files)
+		if len(fresh) == 0 {
 			continue
 		}
 		a, okA := m.agentFor(o.A)
 		b, okB := m.agentFor(o.B)
-		if !okA || !okB || now.Sub(m.team.lastWarn[o.A]) < teamWarnEvery || now.Sub(m.team.lastWarn[o.B]) < teamWarnEvery {
+		live := func(x fleet.Agent) bool { return x.Status != fleet.Gone && x.Session.Alive }
+		if !okA || !okB || !live(a) || !live(b) || now.Sub(m.team.lastWarn[o.A]) < teamWarnEvery || now.Sub(m.team.lastWarn[o.B]) < teamWarnEvery {
 			continue
 		}
-		m.team.warned[key] = true
+		m.noteWarned(o.A, o.B, fresh, "", now)
+		changed = true
+		o.Files = fresh
 		m.team.lastWarn[o.A], m.team.lastWarn[o.B] = now, now
 		m.countProcess(func(s *mission.Stats) { s.Overlaps++ }, o.A, o.B)
 		// A God-mode guarded agent takes messages only as Den mediates
@@ -169,10 +172,8 @@ func (m *Model) applyTeamScan(msg teamScanMsg, now time.Time) tea.Cmd {
 		}
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: now, text: note}))
 	}
-	for key := range m.team.warned {
-		if !current[key] {
-			delete(m.team.warned, key) // told again if they overlap again
-		}
+	if changed {
+		m.saveWarned()
 	}
 	m.team.overlaps = by
 	for _, w := range msg.works {
@@ -292,7 +293,8 @@ func (m Model) branchLine(sessionID string, now time.Time) string {
 func overlapMessage(other fleet.Agent, files []string) string {
 	return "Den, an automatic check (not the human): your branch and " + other.Name + "'s (peer for SendMessage: " +
 		strconv.Quote(other.Session.Name) + ") both change these files, as git lists them: " + quotedFiles(files) +
-		". Agree with " + other.Name + " who goes first or how to split the work, and tell the orchestrator, which decides."
+		". Agree with " + other.Name + " who goes first or how to split the work, and tell the orchestrator, which decides." +
+		" Once you agree, call Den's overlap_ack tool with " + other.Name + "'s name: Den then warns you two again only for a file new to you."
 }
 
 // quotedFiles is files as quoted data: at most overlapNames, each cut to

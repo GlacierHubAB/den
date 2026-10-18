@@ -248,6 +248,19 @@ type MemoryInput struct {
 	From  []string `json:"from,omitempty"`
 }
 
+// OverlapAckEvent is not a hook event: `den mcp` sends it for overlap_ack,
+// an agent's (or the orchestrator's) word that a pair whose branches both
+// change files has agreed who goes first; Den then stays quiet about those
+// files for that pair.
+const OverlapAckEvent = "OverlapAck"
+
+// OverlapAckInput is overlap_ack's call: With, the other agent (an agent's
+// call), or Agents, both of them (the orchestrator's).
+type OverlapAckInput struct {
+	With   string   `json:"with,omitempty"`
+	Agents []string `json:"agents,omitempty"`
+}
+
 // OrchSendEvent is not a hook event: `den mcp --control` sends it for the
 // orchestrator's send_message call, which control gives it in place of
 // SendMessage. Den delivers the message the way SendMessage would and

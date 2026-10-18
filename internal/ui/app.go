@@ -822,6 +822,10 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.TeamEvent {
 		return m.handleTeamQuery(r)
 	}
+	if r.Event == bridge.OverlapAckEvent {
+		m.handleOverlapAck(r)
+		return nil
+	}
 	if r.Event == bridge.NoteEvent || r.Event == bridge.NotesEvent || r.Event == bridge.RuleEvent {
 		return m.handleMemory(r)
 	}

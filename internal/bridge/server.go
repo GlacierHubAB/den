@@ -126,6 +126,7 @@ var held = map[string]bool{
 	NoteEvent:           true,
 	NotesEvent:          true,
 	RuleEvent:           true,
+	OverlapAckEvent:     true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.
