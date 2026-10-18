@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
 )
@@ -440,5 +441,26 @@ func TestOnlyTheHumansPathsMeetOrChangeCriteria(t *testing.T) {
 	}
 	if found < 3 {
 		t.Fatalf("found only %d calls: the test no longer sees them", found)
+	}
+}
+
+// Two agents with one critter name: an owner by that name is refused,
+// naming both with their peer handles, never the first one found; the
+// peer handle then names one exactly.
+func TestMissionOwnerSharedNameIsRefused(t *testing.T) {
+	m := Model{agents: sample(), store: inbox.New()}
+	m.base = m.agents[:2]
+	m.base[0].Name, m.base[0].Session.Name, m.base[0].Session.SessionID = "Zippy Wombat", "drey-lead", "s-drey"
+	m.base[1].Name, m.base[1].Session.Name, m.base[1].Session.SessionID = "Zippy Wombat", "demo-a", "s-demo"
+	for i := range m.base {
+		m.base[i].Status, m.base[i].Session.Alive = fleet.Idle, true
+	}
+	_, _, _, err := m.resolveOwner("Zippy Wombat", nil)
+	if err == nil || !strings.Contains(err.Error(), "drey-lead") || !strings.Contains(err.Error(), "demo-a") {
+		t.Fatalf("a shared name: %v", err)
+	}
+	sid, name, _, err := m.resolveOwner("demo-a", nil)
+	if err != nil || sid != "s-demo" || name != "Zippy Wombat" {
+		t.Fatalf("by peer handle: %q %q %v", sid, name, err)
 	}
 }
