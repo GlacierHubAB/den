@@ -2269,6 +2269,8 @@ var (
 		"desktop": {"den": true, "orchestrator": true},
 	}
 	reservedAgents = []string{"den", "drey", "you", "orchestrator"}
+	// agentIDRe is the shape of an agent's session id, the ids Drey's bridge accepts
+	agentIDRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
 	// doingLeadWords is Den's closed set of lead phrases for `doing`, case-sensitive, longest first so "Working on" is tried
 	// before "Working". "Stuck, needs a look" holds a comma.
 	doingLeadWords = []string{
@@ -2382,19 +2384,21 @@ type conversationEntry struct {
 	Text string
 }
 
-// checkConversationEntry: `{id, at, turn?, origin, speaker, agent?, console?, text}` and no other field. id above 0,
+// checkConversationEntry: `{id, at, turn?, origin, speaker, agent?, agent_id?, console?, text}` and no other field. id above 0,
 // at RFC3339 UTC, origin and speaker a pair Den's text allows (speaker den never speaks for origin you or console),
 // console {label, self} exactly with origin console (and nothing else in it), agent exactly with report or desktop
-// (one plain line of at most 64 runes, never Den, Drey, You or Orchestrator), text of at most 20 lines and 2000
-// runes (Den's cut mark aside) with none of badRune's characters.
+// (one plain line of at most 64 runes, never Den, Drey, You or Orchestrator), text of at most 65536 bytes of UTF-8 and
+// any number of lines (Den's cut mark aside, which ends a cut text; the same words in the middle are the text's own, since
+// an agent can write them) with none of badRune's characters.
 func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	var e struct {
-		ID      int64  `json:"id"`
-		At      string `json:"at"`
-		Turn    string `json:"turn"`
-		Origin  string `json:"origin"`
-		Speaker string `json:"speaker"`
-		Agent   string `json:"agent"`
+		ID      int64   `json:"id"`
+		At      string  `json:"at"`
+		Turn    string  `json:"turn"`
+		Origin  string  `json:"origin"`
+		Speaker string  `json:"speaker"`
+		Agent   string  `json:"agent"`
+		AgentID *string `json:"agent_id"`
 		Console *struct {
 			Label string `json:"label"`
 			Self  *bool  `json:"self"`
@@ -2423,6 +2427,18 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	case e.Origin != "report" && e.Origin != "desktop" && e.Agent != "":
 		return conversationEntry{}, fmt.Errorf("agent with origin %s", e.Origin)
 	}
+	// agent_id (Den's session id for the agent) comes only in the line that carries agent, so only with origin report or desktop,
+	// and fits the ids Drey's bridge accepts; it may be absent
+	if e.AgentID != nil {
+		switch {
+		case e.Agent == "":
+			return conversationEntry{}, errors.New("agent_id without agent")
+		case e.Origin != "report" && e.Origin != "desktop":
+			return conversationEntry{}, fmt.Errorf("agent_id with origin %s", e.Origin)
+		case !agentIDRe.MatchString(*e.AgentID):
+			return conversationEntry{}, fmt.Errorf("agent_id %q is not 1 to 64 of letters, digits and _ . : -", *e.AgentID)
+		}
+	}
 	if e.Agent != "" {
 		if strings.TrimSpace(e.Agent) == "" {
 			return conversationEntry{}, fmt.Errorf("agent %q is only spaces", e.Agent)
@@ -2450,7 +2466,9 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	if tm, err := time.Parse(time.RFC3339, e.At); err != nil || tm.Location() != time.UTC {
 		return conversationEntry{}, fmt.Errorf("at %q is not RFC3339 UTC", e.At)
 	}
-	// Den's cut mark ends a text it cut, on a line of its own or not; the limits are for the words before it
+	// Den's cut mark ends a text it cut, on a line of its own or not; the limit is for the words before it. A text is
+	// the whole message, as many lines as it has: no line limit, only 64 KiB (65536 bytes of UTF-8), and a cut text
+	// ends with the mark. The same words mid-text are not checked: an agent can write them.
 	text := strings.TrimSuffix(e.Text, cutMark)
 	if len(text) != len(e.Text) {
 		text = strings.TrimSuffix(text, "\n")
@@ -2458,10 +2476,8 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	switch {
 	case strings.TrimSpace(text) == "":
 		return conversationEntry{}, errors.New("empty text")
-	case utf8.RuneCountInString(text) > 2000:
-		return conversationEntry{}, fmt.Errorf("text of %d runes, the most is 2000", utf8.RuneCountInString(text))
-	case strings.Count(text, "\n") >= 20:
-		return conversationEntry{}, fmt.Errorf("text of %d lines, the most is 20", strings.Count(text, "\n")+1)
+	case len(text) > 65536:
+		return conversationEntry{}, fmt.Errorf("text of %d bytes, the most is 65536", len(text))
 	case !utf8.ValidString(e.Text):
 		return conversationEntry{}, errors.New("text is not valid UTF-8")
 	}
