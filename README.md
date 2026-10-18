@@ -949,6 +949,15 @@ leading others). The orchestrator picks by the task. Its spawn note says which
 (`▶ starting an agent in ~/code/site on opus · …`), and once the session
 registers the note becomes that agent's dispatch card.
 
+**A name per agent.** `spawn_agent` takes a `role` and a `title`, a few
+words on the agent's job ("payments backend engineer"). Den names the agent
+by its role, or by the title when the role says nothing about the work
+("coding agent", "developer", "engineer"): such a role without a title is
+refused, so the orchestrator is told to always give one. The name is
+lower-case with hyphens; a second agent of the same role gets a number
+("backend-engineer2"). A name is only a label: Den keys everything on the
+session, and no name grants anything.
+
 **A worktree per agent.** `spawn_agent` takes `worktree`: `true`, or a name.
 The agent is then started with `claude --worktree <name>`, so Claude Code gives
 it a git worktree of its own under `<repo>/.claude/worktrees/<name>` on a new
