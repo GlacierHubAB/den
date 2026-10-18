@@ -215,6 +215,60 @@ func TestOrchestratorCloseRequestWaitsForTheHuman(t *testing.T) {
 	}
 }
 
+// The orchestrator hears what really happened: the target's session ends
+// while Den closes it (its SessionEnd hook arrives before the close's
+// outcome), and the answer is still the close's own, naming the agent.
+func TestOrchestratorCloseHearsTheOutcomeWhenTheTargetEndsFirst(t *testing.T) {
+	ops := &fakeCloseOps{}
+	closeOps = ops
+	t.Cleanup(func() { closeOps = closer.System{} })
+	m := closeModel(t)
+	payload, _ := json.Marshal(bridge.CloseInput{Peers: []string{"fuzzy"}})
+	req := bridge.TestRequest(bridge.Envelope{Event: bridge.CloseEvent, Payload: payload})
+	m.handleRequest(req)
+	it := closeItems(m)[0]
+	// The close card's own answer, past the reading gates a human's press
+	// goes through (TestAllowRunsTheCloseAndClearsTheAgent covers those).
+	mm, cmd := m.decideClose(it, "allow")
+	m = mm.(Model)
+	var done closeDoneMsg
+	var walk func(tea.Cmd)
+	walk = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		switch v := c().(type) {
+		case closeDoneMsg:
+			done = v
+		case tea.BatchMsg:
+			for _, x := range v {
+				walk(x)
+			}
+		}
+	}
+	walk(cmd)
+	if done.itemID != it.ID {
+		t.Fatalf("the close did not run: %+v", done)
+	}
+	// The target's hooks, as its session ends under the close.
+	sid := it.SessionID
+	for _, ev := range []string{"Stop", "SessionEnd"} {
+		p, _ := json.Marshal(map[string]any{"session_id": sid, "hook_event_name": ev})
+		r := &bridge.Request{Envelope: bridge.Envelope{Event: ev, SessionID: sid, Payload: p}}
+		json.Unmarshal(p, &r.Input)
+		m.handleRequest(r)
+	}
+	if d, ok := req.Decided(); ok {
+		t.Fatalf("answered before the close's outcome: %+v", d)
+	}
+	mm, _ = m.Update(done)
+	m = mm.(Model)
+	d, ok := req.Decided()
+	if !ok || d.Behavior != "allow" || d.Message != "closed Fuzzy Sprite" {
+		t.Errorf("the orchestrator heard %+v %v", d, ok)
+	}
+}
+
 // staleModel: Fuzzy idle 3h, Maple idle 20m, Mossy needs you, Snug works;
 // Comet gone. Fuzzy's peer is protected, Maple is flagged.
 func staleModel(t *testing.T) Model {
