@@ -389,8 +389,8 @@ func TestProtectByFolderAndTaskAndTheCommandsPersist(t *testing.T) {
 		}
 	}
 	m.refresh()
-	fuzzy, _ := m.agentNamed("Fuzzy Sprite")
-	maple, _ := m.agentNamed("Maple Owl")
+	fuzzy, _, _ := m.agentNamed("Fuzzy Sprite")
+	maple, _, _ := m.agentNamed("Maple Owl")
 	if why := m.guardReason(fuzzy); why != "protected: works in ~/projects/xml-converter" {
 		t.Errorf("folder rule: %q", why)
 	}

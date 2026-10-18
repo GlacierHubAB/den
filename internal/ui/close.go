@@ -432,7 +432,7 @@ func (m Model) guardName(name string) string {
 		}
 		return strings.TrimSpace(name[:i]) + "@" + host
 	}
-	if a, ok := m.agentNamed(name); ok {
+	if a, ok, _ := m.agentNamed(name); ok {
 		return a.Name
 	}
 	for _, r := range m.remote.agents {
@@ -642,7 +642,11 @@ func (m Model) closeNamed(name string) (a fleet.Agent, why string) {
 	}
 	var hits []fleet.Agent
 	if !qualified || host == "" {
-		if l, ok := m.agentNamed(name); ok {
+		l, ok, shared := m.agentNamed(name)
+		if shared != "" {
+			return fleet.Agent{}, "that name is more than one agent: " + shared + "; name it by its peer handle"
+		}
+		if ok {
 			hits = append(hits, l)
 		}
 	}
@@ -676,13 +680,28 @@ func (m Model) agentByPeer(peer string) (fleet.Agent, bool) {
 }
 
 // agentNamed finds an agent by critter name or peer name, case-insensitively.
-func (m Model) agentNamed(name string) (fleet.Agent, bool) {
+// A name two agents share finds neither: shared lists them, each with its
+// peer handle, which names one.
+func (m Model) agentNamed(name string) (a fleet.Agent, ok bool, shared string) {
+	var byPeer, byName []fleet.Agent
 	for _, a := range m.base {
-		if strings.EqualFold(a.Name, name) || strings.EqualFold(a.Session.Name, name) {
-			return a, true
+		if strings.EqualFold(a.Session.Name, name) {
+			byPeer = append(byPeer, a)
+		} else if strings.EqualFold(a.Name, name) {
+			byName = append(byName, a)
 		}
 	}
-	return fleet.Agent{}, false
+	hits := byPeer
+	if len(hits) == 0 {
+		hits = byName
+	}
+	switch len(hits) {
+	case 0:
+		return fleet.Agent{}, false, ""
+	case 1:
+		return hits[0], true, ""
+	}
+	return fleet.Agent{}, false, withPeers(hits)
 }
 
 // splitNames splits "Mossy Lemur, Snug Capybara" or "mossy snug"; a
