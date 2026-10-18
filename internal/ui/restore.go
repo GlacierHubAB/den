@@ -112,6 +112,7 @@ func (m *Model) afterScan() {
 	}
 	m.relinkReopened()
 	m.observeRoster()
+	m.migrateGuard()
 }
 
 // alive reports whether a session is running now.
