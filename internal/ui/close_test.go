@@ -227,7 +227,9 @@ func TestOrchestratorCloseHearsTheOutcomeWhenTheTargetEndsFirst(t *testing.T) {
 	req := bridge.TestRequest(bridge.Envelope{Event: bridge.CloseEvent, Payload: payload})
 	m.handleRequest(req)
 	it := closeItems(m)[0]
-	mm, cmd := m.answer("allow")
+	// The close card's own answer, past the reading gates a human's press
+	// goes through (TestAllowRunsTheCloseAndClearsTheAgent covers those).
+	mm, cmd := m.decideClose(it, "allow")
 	m = mm.(Model)
 	var done closeDoneMsg
 	var walk func(tea.Cmd)
@@ -245,11 +247,16 @@ func TestOrchestratorCloseHearsTheOutcomeWhenTheTargetEndsFirst(t *testing.T) {
 		}
 	}
 	walk(cmd)
+	if done.itemID != it.ID {
+		t.Fatalf("the close did not run: %+v", done)
+	}
 	// The target's hooks, as its session ends under the close.
 	sid := it.SessionID
 	for _, ev := range []string{"Stop", "SessionEnd"} {
 		p, _ := json.Marshal(map[string]any{"session_id": sid, "hook_event_name": ev})
-		m.handleRequest(&bridge.Request{Envelope: bridge.Envelope{Event: ev, SessionID: sid, Payload: p}})
+		r := &bridge.Request{Envelope: bridge.Envelope{Event: ev, SessionID: sid, Payload: p}}
+		json.Unmarshal(p, &r.Input)
+		m.handleRequest(r)
 	}
 	if d, ok := req.Decided(); ok {
 		t.Fatalf("answered before the close's outcome: %+v", d)
