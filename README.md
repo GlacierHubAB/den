@@ -1144,24 +1144,23 @@ the agent's terminal when you turned it on, or a paired console's dock
 that send keys to another window by name; and `ctrl+alt+Delete`,
 `Backspace` and `F1`–`F12`. The signs you can rely on during a task are
 Den's own: the `DESKTOP · on` chip in Den's header, the agent's view
-(when `agent_view` is on), and `/desktop stop`. A paired console's dock may also glow
-and offer a Stop, but those are extras, not a safety control. If the dock's
-overlay goes away during a task, the task goes on: Den's chip and
-`/desktop stop` are what to rely on. Your levers are these:
+(when `agent_view` is on), and `/desktop stop`. A paired console's dock may
+also glow, but that is an extra, not a safety control. If the dock's overlay
+goes away during a task, Den pauses the agent's input (below), yet Den's
+chip and `/desktop stop` are still what to rely on. Your levers are these:
 
 - **The panic stop.** `/desktop stop` or `den desktop stop` (bind it to a
   key, below). The agent also stops when Den quits, however Den ends: it is
   Den's own child, signalled when Den goes (with `agent_view`, its terminal
   watches Den), and `den desktop stop` still works from Den's records.
-- **The dock's overlay.** When a paired dock (Drey) shows the task's glow
-  and Stop, Den pauses the agent's mouse and keyboard whenever that
+- **The dock's overlay pause.** When a paired dock (Drey) shows the
+  task's glow, Den pauses the agent's mouse and keyboard whenever that
   overlay is down, for any reason, and says so in its chat. The agent may
   still look at the screen. It resumes once the dock links the overlay
-  again and Den sees the overlay on every monitor, and the task ends
-  after 5 minutes down.
-  A task started while the dock is connected waits up to 15 seconds for
-  the overlay before its first input; if the overlay never comes, the
-  task runs without it and Den's chat says so.
+  again and Den sees it on every monitor, and the task ends after 5
+  minutes down. A task started while the dock is connected waits up to
+  15 seconds for the overlay before its first input; if the overlay never
+  comes, the task runs without it and Den's chat says so.
 - **The per-task limit.** Den stops the task after `task_minutes` of wall
   time or `task_actions` desktop calls, whichever comes first. Den counts
   them itself, and only your config sets them:

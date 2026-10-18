@@ -7,8 +7,8 @@ import (
 )
 
 // The console's overlay link (overlay.linked, overlay.unlinked). The
-// console sends overlay.linked once it has drawn its glow and Stop for the
-// running desktop mission, and overlay.unlinked when it hides them. From a
+// console sends overlay.linked once it has drawn its glow for the running
+// desktop mission, and overlay.unlinked when it hides it. From a
 // mission's first link on, the mission is overlay-backed: Den's TUI pauses
 // the agent's input whenever the link is down (OverlayLink), and only a
 // fresh overlay.linked over a proved connection with its powers resumes

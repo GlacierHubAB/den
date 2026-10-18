@@ -808,7 +808,7 @@ Each connection proves once, at its start:
 | `cmd.run` | `{text}` | `{ok, note}` |
 | `mode.set` | `{mode}` | `{ok, applied, note}` for a lowering, or `{ok, card, note}` for a raise that waits on that card |
 | `god.off` | | `{ok, was_on}`: Den turns God mode off |
-| `overlay.linked` | `{mission}` | `{linked: true}`: your glow and Stop for that mission are drawn (see Desktop overlay) |
+| `overlay.linked` | `{mission}` | `{linked: true}`: your glow for that mission is drawn (see Desktop overlay) |
 | `overlay.unlinked` | `{mission}` | `{linked: false}`: you hid them |
 
 All but `console.challenge`, `console.claim`, `console.auth` and
@@ -1049,8 +1049,8 @@ where the pointer is.
   one per output, with an empty input region, so it shows above windows
   and never blocks a click.
 - The link: send `overlay.linked {mission}`, with the `mission` of the
-  `active` desktop event, once your glow and Stop for that mission are
-  on screen, and `overlay.unlinked {mission}` when you hide them. Send
+  `active` desktop event, once your glow for that mission is on every
+  monitor, and `overlay.unlinked {mission}` when you hide it. Send
   both from a proved connection subscribed to `console.events`
   (`forbidden` otherwise); `overlay.linked` needs your powers
   (`powers_locked` without them). A `mission` that is not the one running
