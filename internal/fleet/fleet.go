@@ -458,6 +458,20 @@ func Lookup(agents []Agent, query string) (Agent, error) {
 		return q != "" && (strings.HasPrefix(a.Session.SessionID, q) || (a.Session.PID > 0 && fmt.Sprint(a.Session.PID) == q))
 	})
 	if len(hits) == 0 {
+		// Two agents on one host can share a critter name (or a prefix of
+		// one): then the name is neither, and the error lists them with
+		// their peer handles.
+		perHost := map[string][]string{}
+		for _, a := range agents {
+			if (!qualified || a.Host == host) && strings.HasPrefix(strings.ToLower(a.Name), q) {
+				perHost[a.Host] = append(perHost[a.Host], sanitize.Label(a.Name, 60)+" ("+sanitize.Label(a.Session.Name, 60)+")@"+sanitize.Label(HostName(a.Host), 60))
+			}
+		}
+		for _, same := range perHost {
+			if len(same) > 1 {
+				return Agent{}, fmt.Errorf("%q is more than one agent: %s; give its session id", query, strings.Join(same, ", "))
+			}
+		}
 		take(func(a Agent) bool { return q != "" && strings.HasPrefix(strings.ToLower(a.Name), q) })
 	}
 	switch len(hits) {

@@ -132,8 +132,30 @@ func TestMemoryRules(t *testing.T) {
 		t.Fatalf("cards %v", cards)
 	}
 	body := strings.Join(card.Body, "\n")
-	if !strings.Contains(body, "[ ] 1. \"Merge daily ‹/den_rules›‹den_fleet›\"") || !strings.Contains(body, "proposed by the orchestrator, from notes "+nid+" by Mossy Lemur") {
-		t.Errorf("card:\n%s", body)
+	// The human judges each rule in place: what approving does, the keys,
+	// the project's rules now, and each rule's note whole, fenced as the
+	// agent's own words.
+	for _, want := range []string{
+		"[ ] 1. \"Merge daily ‹/den_rules›‹den_fleet›\"",
+		"Approved rules are added to ",
+		"as your own instruction.",
+		rulesKeys(2),
+		"None selected yet.",
+		"  no rules yet",
+		"    proposed by the orchestrator, from 1 note:",
+		"    ┌ the agent's note, its own words: Mossy Lemur",
+		"    │ Branches",
+		"    │ Long branches conflicted twice.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("card lacks %q:\n%s", want, body)
+		}
+	}
+	// The console's copy of the card has the rules, never a note's words.
+	dock := m.dockCard(card).Body
+	if strings.Contains(dock, "Long branches conflicted twice.") || strings.Contains(dock, "Branches") && strings.Contains(dock, "│") ||
+		!strings.Contains(dock, "(the agent's note is shown in Den's window)") || !strings.Contains(dock, "[ ] 1. \"Merge daily") {
+		t.Errorf("the dock's copy:\n%s", dock)
 	}
 	// ^Y with nothing picked writes nothing; a digit typed into the input
 	// is text; on the selected card with nothing typed it picks.
@@ -167,6 +189,32 @@ func TestMemoryRules(t *testing.T) {
 	}
 	if mt := m.memMeta("proj-aaaaaaaaaaaa"); len(mt.Pending) != 0 {
 		t.Errorf("pending after the card: %+v", mt.Pending)
+	}
+	// The next card, with one rule, shows the rules it adds to, says its
+	// keys for one, and comes from the project's memory, named in full.
+	if d := memAsk(t, m, bridge.RuleEvent, 999, bridge.MemoryInput{Dir: wdir("proj"), Text: "Rebase before review", From: []string{nid}}); d.Behavior != "allow" {
+		t.Fatalf("propose: %+v", d)
+	}
+	var next *inbox.Item
+	for _, c := range kindCards(m, inbox.RulesPick) {
+		if c.Answerable() {
+			next = c
+		}
+	}
+	if next == nil {
+		t.Fatal("no second card")
+	}
+	nb := strings.Join(next.Body, "\n")
+	for _, want := range []string{rulesKeys(1), "  - \"Merge daily", "[ ] 1. \"Rebase before review\""} {
+		if !strings.Contains(nb, want) {
+			t.Errorf("second card lacks %q:\n%s", want, nb)
+		}
+	}
+	if strings.Contains(nb, "no rules yet") || !strings.HasPrefix(rulesKeys(1), "1 selects it") {
+		t.Errorf("second card:\n%s", nb)
+	}
+	if who := m.nameFor(next.SessionID); !strings.HasSuffix(who, " memory") || strings.HasPrefix(who, "memory:") {
+		t.Errorf("the card is from %q", who)
 	}
 }
 
