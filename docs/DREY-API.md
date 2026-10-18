@@ -174,7 +174,7 @@ no transcript, and no request body outside `inbox.body`.
   a working agent of this machine, its latest tool comes next, as an activity
   ending in `…`: `Editing team.go…`, `Writing NOTES.md…` or `Reading team.go…`
   with the file's base name (`Editing a file…`, `Reading files…` without a
-  plain one), `Searching the code…`, `Fetching a web page…`, `Searching the
+  plain one, or for a name that looks like an id, token or secret), `Searching the code…`, `Fetching a web page…`, `Searching the
   web…` or `Handing work to a helper…`. A shell command says what it does:
   `Navigating files and folders…`, `Reading` a file, `Searching the code…`,
   `Running the tests…`, `Checking the code…`, `Building the project…`,

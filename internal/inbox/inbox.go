@@ -452,6 +452,7 @@ func (s *Store) apply(r *bridge.Request) *Item {
 		return s.add(&Item{Host: host, SessionID: in.SessionID, Kind: Done, State: Resolved, Title: Summarize(in.LastAssistant)})
 	case "SessionEnd":
 		s.cancelMessages(host, in.SessionID)
+		s.cancelOwnAsks(host, in.SessionID)
 		s.resolveSession(host, in.SessionID, "session ended", func(it *Item) bool { return true })
 	}
 	return nil
@@ -1196,13 +1197,31 @@ func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 // send question is never among them: whether a message may reach the agent
 // stays a question through its turns, until the human answers, the asker
 // gives up, the link is lost or the session ends (cancelMessages).
+//
+// Den's own questions (DenAsks) are never resolved here: an agent's hook
+// events (its turn ending, its session ending, as when Den closes it) say
+// nothing about them, and only their own outcome may answer whoever asked.
 func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && it.Kind != Message && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && !it.DenAsks() && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
 			it.State, it.Resolved = Resolved, why
+		}
+	}
+}
+
+// cancelOwnAsks ends Den's questions that only the ended session itself
+// asked (a desktop agent's action or its handover): they can no longer
+// mean anything, and the asker hears a typed cancel, never an empty
+// answer. Den's other questions stored on the session stay open: a close
+// card's targets are what is being closed, and skills still fit the
+// project.
+func (s *Store) cancelOwnAsks(host, sessionID string) {
+	for _, it := range s.items {
+		if it.is(host, sessionID) && it.State != Resolved && (it.Kind == DesktopAct || it.Kind == YourTurn) {
+			s.Settle(it, false, "cancelled: the session ended; nothing done")
 		}
 	}
 }

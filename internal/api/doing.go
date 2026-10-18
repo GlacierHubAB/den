@@ -355,14 +355,15 @@ func readFile(args []string) string {
 // fileName is a base name that says nothing beyond itself.
 var fileName = regexp.MustCompile(`^[A-Za-z0-9._+-]{1,40}$`)
 
-// baseName is a path's last element, when it is a plain file name.
+// baseName is a path's last element, when it is a plain file name that
+// does not look like an id, a token or a secret.
 func baseName(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
 	}
 	b := filepath.Base(path)
-	if !fileName.MatchString(b) || b == "." || b == ".." {
+	if !fileName.MatchString(b) || b == "." || b == ".." || idLike.MatchString(b) {
 		return ""
 	}
 	return b

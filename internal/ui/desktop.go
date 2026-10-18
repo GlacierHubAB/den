@@ -521,7 +521,8 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 		}
 		m.deskAllow(r, dm, in.Tool, v, deskPieces(in.Tool, v))
 		if in.Tool == "desktop" {
-			sc := desktop.ScopeOf(dm.Mission, msg.snap)
+			// mission, not dm.Mission: a task hides the console's windows too.
+			sc := desktop.ScopeOf(mission, msg.snap)
 			data, _ := json.Marshal(desktop.Answer{Args: mustJSON(v.Args), Scope: &sc})
 			r.Reply(bridge.Decision{Behavior: "allow", Data: data})
 		}

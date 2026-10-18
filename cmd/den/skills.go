@@ -100,8 +100,10 @@ func offerProjectSkills(in orch.SkillsInput, by string) (string, error) {
 		return "", errorString("Den is not running or did not answer; nothing was installed")
 	case d.Behavior == "allow":
 		return "Approved by the human: " + d.Message + ". Sessions in that project find them in .claude/skills; one that started before the folder existed needs /reload-skills.", nil
-	default:
+	case d.Behavior == "deny":
 		return "No skills were installed: " + d.Message + ".", nil
+	default:
+		return noAnswer("what was installed"), nil
 	}
 }
 
