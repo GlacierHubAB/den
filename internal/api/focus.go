@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/names"
 )
 
 // Focus limits.
@@ -82,10 +85,27 @@ func (s *Server) focus(c *conn, req Request) {
 		}
 	}
 	if hit == nil {
+		// A name, as every place in Den resolves one (names.Resolve): a
+		// name two agents share is refused, never guessed.
+		var cands []names.Candidate
+		for _, a := range v.Fleet.Agents {
+			cands = append(cands, names.Candidate{ID: a.ID, Name: a.Name, Host: a.Host})
+		}
+		// The name as Den writes it, exactly.
+		cd, err := names.Resolve(p.Target, cands, names.Opts{})
+		var amb *names.Ambiguous
+		var elsewhere *names.NeedsHost
+		switch {
+		case errors.As(err, &amb):
+			c.fail(req.ID, CodeNotFound, "more than one agent has that name: name it by its id")
+			return
+		case errors.As(err, &elsewhere):
+			c.fail(req.ID, CodeUnavailable, "it runs on another machine: open it in Den")
+			return
+		}
 		for i := range v.Fleet.Agents {
-			if a := &v.Fleet.Agents[i]; a.Name == p.Target {
+			if a := &v.Fleet.Agents[i]; err == nil && a.ID == cd.ID && a.Host == cd.Host && a.Name == p.Target {
 				hit = a
-				break
 			}
 		}
 	}
