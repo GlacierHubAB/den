@@ -48,6 +48,7 @@ func evLine(tm time.Time, kind, session string, mod ...func(*events.Event)) stri
 	return string(raw)
 }
 
+func source(s string) func(*events.Event)  { return func(e *events.Event) { e.Source = s } }
 func request(r string) func(*events.Event) { return func(e *events.Event) { e.Request = r } }
 func reason(r string) func(*events.Event)  { return func(e *events.Event) { e.Reason = r } }
 
@@ -174,6 +175,26 @@ func TestTurnsAndConcurrency(t *testing.T) {
 	}
 	if src.Skipped != 3 {
 		t.Errorf("events.jsonl: %d lines skipped, want the 3 that are not events", src.Skipped)
+	}
+}
+
+func TestPromptsBySource(t *testing.T) {
+	p := Paths{Events: write(t, t.TempDir(), "events.jsonl",
+		evLine(at(1, 0), events.TurnStart, sessA, source(events.SourcePeer)),
+		evLine(at(2, 0), events.TurnStart, sessA, source(events.SourceTerminal)),
+		evLine(at(3, 0), events.TurnStart, sessB, source(events.SourceTerminal)),
+		evLine(at(4, 0), events.TurnStart, sessB),                       // written before the field
+		evLine(at(5, 0), events.Done, sessB, source(events.SourcePeer)), // only a turn_start counts
+		evLine(base.Add(-time.Minute), events.TurnStart, sessB, source(events.SourcePeer)),
+	)}
+	tn := Compute(p, base, base.Add(time.Hour)).Turns
+	if tn == nil || tn.Prompts != 4 || tn.PromptsPeer != 1 || tn.PromptsTerminal != 2 || tn.PromptsUnknown != 1 {
+		t.Errorf("prompts: %+v", tn)
+	}
+	var out bytes.Buffer
+	Compute(p, base, base.Add(time.Hour)).WriteText(&out)
+	if want := "4: 1 from peers, 2 from terminals, 1 source unknown"; !strings.Contains(out.String(), want) {
+		t.Errorf("text lacks %q:\n%s", want, out.String())
 	}
 }
 

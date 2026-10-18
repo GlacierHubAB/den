@@ -30,7 +30,7 @@ func (r Report) WriteText(w io.Writer) {
 			kv(w, "turn length", fmt.Sprintf("median %s, longest %s", dur(*t.MedianSeconds), dur(*t.LongestSeconds)))
 		}
 		kv(w, "agents at once", fmt.Sprintf("most %d, average %.2f over the window", t.PeakAgents, t.AverageAgents))
-		kv(w, "prompts submitted", fmt.Sprint(t.Prompts))
+		kv(w, "prompts submitted", fmt.Sprintf("%d: %d from peers, %d from terminals, %d source unknown", t.Prompts, t.PromptsPeer, t.PromptsTerminal, t.PromptsUnknown))
 	}
 
 	fmt.Fprintln(w, "\nWaiting on you (events.jsonl, hooks.log)")

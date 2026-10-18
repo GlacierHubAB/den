@@ -57,6 +57,13 @@ type Turns struct {
 	// A prompt sent while an agent works, or one that interrupted a turn,
 	// is a prompt but not a turn of its own.
 	Prompts int `json:"prompts"`
+	// The prompts by the source field of their turn_start: delivered as a
+	// peer's message, or any other prompt ("terminal": typed in the agent's
+	// terminal, or Den's brief for a spawned agent). An event written
+	// before the field has none: its source is unknown.
+	PromptsPeer     int `json:"prompts_peer"`
+	PromptsTerminal int `json:"prompts_terminal"`
+	PromptsUnknown  int `json:"prompts_unknown"`
 	// Agents are the sessions that submitted a prompt or ended a turn.
 	Agents int `json:"agents"`
 	// Measured are the finished turns whose start was recorded; their
@@ -158,6 +165,7 @@ type event struct {
 	session string
 	request string
 	reason  string
+	source  string
 }
 
 // need is a request that waited on the human.
@@ -179,7 +187,7 @@ func (r *Report) fromEvents(p Paths, since, until time.Time) {
 			if json.Unmarshal(line, &e) != nil || e.Time.IsZero() || e.Session == "" {
 				return time.Time{}, false
 			}
-			evs = append(evs, event{t: e.Time, kind: e.Kind, session: e.Session, request: e.Request, reason: e.Reason})
+			evs = append(evs, event{t: e.Time, kind: e.Kind, session: e.Session, request: e.Request, reason: e.Reason, source: e.Source})
 			return e.Time, true
 		})
 	}
@@ -204,6 +212,14 @@ func (r *Report) fromEvents(p Paths, since, until time.Time) {
 			open[e.session] = e.t
 			if in {
 				t.Prompts++
+				switch e.source {
+				case events.SourcePeer:
+					t.PromptsPeer++
+				case events.SourceTerminal:
+					t.PromptsTerminal++
+				default:
+					t.PromptsUnknown++
+				}
 				agents[e.session] = true
 			}
 		case events.Done, events.TurnFailed:

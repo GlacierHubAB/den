@@ -29,7 +29,7 @@ output says where each file begins.
 | Figure | From | Meaning and limits |
 | --- | --- | --- |
 | turns finished | `events.jsonl` | `done` events in the window. Turns that ended on an API error (`turn_failed`) are counted apart |
-| prompts submitted | `events.jsonl` | `turn_start` events. A prompt sent while an agent works, or one that interrupted a turn, is a prompt but not a turn of its own, so prompts outnumber turns |
+| prompts submitted | `events.jsonl` | `turn_start` events. A prompt sent while an agent works, or one that interrupted a turn, is a prompt but not a turn of its own, so prompts outnumber turns. They are split by the event's `source` ([EVENTS.md](EVENTS.md)): from peers, from terminals (typed in the agent's terminal, or Den's brief for a spawned agent), and source unknown. Events written before the field existed have none, so they count as unknown |
 | working time, turn length | `events.jsonl` | for each finished turn, its `done` less the session's latest `turn_start` before it. A turn whose start is not recorded (Claude Code started it without a prompt) is counted as finished but not timed; one cut off by an `idle` notice, a session end or a restart is not timed. A prompt sent mid-turn makes the turn count from the later prompt. So the time is a lower bound |
 | agents at once | `events.jsonl` | the most timed turns running at one moment, and the timed working time over the length of the window. A lower bound too |
 | requests that waited on you | `events.jsonl` | `needs_you` events by request. One that a standing "always" then allowed is in the stream too |
