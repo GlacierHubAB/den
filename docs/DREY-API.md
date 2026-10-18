@@ -1080,8 +1080,10 @@ local socket open to this user only.
   lines from the agent's checked name, a plain name of at most 40 characters,
   so a name with a sentence in it or one that reads as Den is shown as `an
   agent`. Escapes, control, bidi and zero-width
-  characters are removed, and the text is at most 20 lines and 2000 runes. A
-  longer one ends with "(cut: the rest is in Den)", never cut silently.
+  characters are removed. The text is the whole message, as many lines as it
+  has (often Markdown): wrap it, never cut it. Only one over 64 KiB (65536
+  bytes of UTF-8), a safety cap, is cut on a character, its last line then
+  "(cut: the rest is in Den)": never cut silently.
 - Entries come in `id` order; a reply comes once its turn ended (after
   `orch.say`'s `done` for a console's own turn). Reports are limited to 6 a
   minute per agent and 30 a minute in all; past that, one Den line says more
@@ -1090,7 +1092,10 @@ local socket open to this user only.
   `conversation.history` answers `forbidden` while it is not shown, and a
   Den without the verb answers `unsupported`.
 - `conversation.history` returns only entries since the conversation was last
-  shown in this console, at most 200, newest first. Drop an unknown field, and
+  shown in this console, at most 200, newest first, and only as many as fit
+  in one reply line (about 768 KiB of entries, always at least one): with
+  long entries, it holds fewer than asked. Den keeps the newest 500 entries,
+  and at most 8 MiB of their text. Drop an unknown field, and
   skip an entry whose origin or speaker you do not know.
 
 ### Console limits

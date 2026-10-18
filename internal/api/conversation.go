@@ -48,13 +48,17 @@ var (
 
 // Caps on the mirror.
 const (
-	convMaxRunes     = 2000
-	convMaxLines     = 20
+	// An entry is the whole message: a console wraps it. Only one past
+	// convMaxBytes, a safety cap, is cut, and its JSON (at most six bytes a
+	// byte, for an escaped "<") stays well inside MaxLine.
+	convMaxBytes     = 64 << 10
 	convCut          = "(cut: the rest is in Den)"
-	convKeep         = 500 // entries kept in memory
-	convHistoryMax   = 200 // entries one conversation.history returns
-	convPerAgent     = 6   // report entries a minute per agent
-	convReportsTotal = 30  // report entries a minute across all agents
+	convKeep         = 500       // entries kept in memory
+	convKeepBytes    = 8 << 20   // and their text, in all
+	convHistoryMax   = 200       // entries one conversation.history returns
+	convHistoryBytes = 768 << 10 // the entries' JSON in one reply, inside MaxLine
+	convPerAgent     = 6         // report entries a minute per agent
+	convReportsTotal = 30        // report entries a minute across all agents
 )
 
 // ConvConsole names the console that sent a turn: its label, and Self
@@ -89,6 +93,8 @@ type convState struct {
 	mu      sync.Mutex
 	seq     uint64
 	entries []convStored
+	// textBytes is the entries' text, in all, for convKeepBytes.
+	textBytes int
 	// on, for and since: the human let console for mirror, at since.
 	on    bool
 	forID string
@@ -267,7 +273,13 @@ func (s *Server) Converse(in Converse) bool {
 	e.ID, e.At = st.seq, now.UTC()
 	stored := convStored{ConvEntry: e, consoleID: in.ConsoleID}
 	st.entries = append(st.entries, stored)
-	if n := len(st.entries) - convKeep; n > 0 {
+	st.textBytes += len(e.Text)
+	n := 0
+	for n < len(st.entries)-1 && (len(st.entries)-n > convKeep || st.textBytes > convKeepBytes) {
+		st.textBytes -= len(st.entries[n].Text)
+		n++
+	}
+	if n > 0 {
 		st.entries = append([]convStored(nil), st.entries[n:]...)
 	}
 	on, forID := st.on, st.forID
@@ -348,7 +360,8 @@ func (s *Server) mayMirror(c *conn) bool {
 }
 
 // conversationHistory is conversation.history: the newest entries first,
-// at most limit (convHistoryMax), only those since the mirror was turned
+// at most limit (convHistoryMax) and as many as fit in one reply line
+// (convHistoryBytes), only those since the mirror was turned
 // on for this console (and since Den started), only for a console that
 // may mirror.
 func (s *Server) conversationHistory(c *conn, req Request) {
@@ -375,6 +388,16 @@ func (s *Server) conversationHistory(c *conn, req Request) {
 		out = append(out, e.forConn(c))
 	}
 	st.mu.Unlock()
+	// The reply is one line: the newest entries that fit convHistoryBytes,
+	// at least one.
+	size := 0
+	for i, e := range out {
+		raw, _ := json.Marshal(e)
+		if size += len(raw) + 1; i > 0 && size > convHistoryBytes {
+			out = out[:i]
+			break
+		}
+	}
 	if out == nil {
 		out = []ConvEntry{}
 	}
@@ -382,8 +405,9 @@ func (s *Server) conversationHistory(c *conn, req Request) {
 }
 
 // convText is an entry's text: escapes, controls, bidi and other format
-// characters (zero-width ones too) removed, at most convMaxLines lines and
-// convMaxRunes runes, with convCut when it was longer: never cut silently.
+// characters (zero-width ones too) removed, whole up to convMaxBytes, and
+// past that cut on a character with convCut as its last line: never cut
+// silently.
 func convText(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if unicode.Is(unicode.Cf, r) {
@@ -392,20 +416,14 @@ func convText(s string) string {
 		return r
 	}, sanitize.Text(s))
 	s = strings.TrimSpace(s)
-	cut := false
-	if lines := strings.Split(s, "\n"); len(lines) > convMaxLines {
-		s, cut = strings.Join(lines[:convMaxLines-1], "\n"), true // the cut note is the last line
-	}
-	if utf8.RuneCountInString(s) > convMaxRunes {
-		cut = true
-	}
-	if !cut {
+	if len(s) <= convMaxBytes {
 		return s
 	}
-	if room := convMaxRunes - utf8.RuneCountInString(convCut) - 1; utf8.RuneCountInString(s) > room {
-		s = string([]rune(s)[:room])
+	room := convMaxBytes - len(convCut) - 1
+	for room > 0 && !utf8.RuneStart(s[room]) {
+		room--
 	}
-	return strings.TrimRight(s, "\n ") + "\n" + convCut
+	return strings.TrimRight(s[:room], "\n ") + "\n" + convCut
 }
 
 // agentName is a name the mirror shows as it is: a short, plain name, no

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // testNow is one fixed moment, for the rate limits.
@@ -58,14 +59,16 @@ func TestConversationMirror(t *testing.T) {
 	if e := nextConversation(t, con); e.Agent != "an agent" || e.ID <= first.ID {
 		t.Errorf("reserved name: %+v", e)
 	}
-	long := strings.Repeat("line\n", 40)
+	// The whole message, however many lines: a console wraps it.
+	long := strings.TrimSpace(strings.Repeat("line\n", 400))
 	h.s.Converse(Converse{Origin: OriginMission, Speaker: SpeakerOrchestrator, Text: long})
-	if e := nextConversation(t, con); !strings.HasSuffix(e.Text, "\n"+convCut) || strings.Count(e.Text, "\n") != convMaxLines-1 {
-		t.Errorf("cut %q", e.Text)
+	if e := nextConversation(t, con); e.Text != long {
+		t.Errorf("a long message was cut: %d bytes", len(e.Text))
 	}
-	h.s.Converse(Converse{Origin: OriginMission, Speaker: SpeakerOrchestrator, Text: strings.Repeat("x", 5000)})
-	if e := nextConversation(t, con); len([]rune(e.Text)) > convMaxRunes || !strings.HasSuffix(e.Text, convCut) {
-		t.Errorf("rune cap: %d", len([]rune(e.Text)))
+	// Only past the safety cap is it cut, on a character, with the note.
+	h.s.Converse(Converse{Origin: OriginMission, Speaker: SpeakerOrchestrator, Text: strings.Repeat("ä", convMaxBytes)})
+	if e := nextConversation(t, con); len(e.Text) > convMaxBytes || !strings.HasSuffix(e.Text, "\n"+convCut) || !utf8.ValidString(e.Text) {
+		t.Errorf("cap: %d bytes, valid %v", len(e.Text), utf8.ValidString(e.Text))
 	}
 	h.s.Converse(Converse{Origin: OriginConsole, Speaker: SpeakerYou, Turn: "t-1", ConsoleID: cur.ID, ConsoleLabel: "Drey's dock", Text: "from the dock"})
 	if e := nextConversation(t, con); e.Console == nil || !e.Console.Self || e.Console.Label != "Drey's dock" || e.Turn != "t-1" {
@@ -114,6 +117,49 @@ func nextMirror(t *testing.T, c *client) MirrorState {
 			}
 			return m
 		}
+	}
+}
+
+// Long entries: history answers with the newest that fit one reply line,
+// newest first, and Den keeps at most convKeepBytes of text, dropping the
+// oldest.
+func TestConversationLongEntries(t *testing.T) {
+	h, con := provedConsole(t)
+	cur, _ := h.s.CurrentConsole()
+	if !cur.Powers {
+		h.s.ConsolePowersAnswered(cur.ID, true)
+	}
+	h.s.SetMirror(cur.ID, true)
+	big := strings.Repeat("<", convMaxBytes-200) // six bytes each in JSON
+	for i := range 10 {
+		h.s.Converse(Converse{Origin: OriginMission, Speaker: SpeakerOrchestrator, Text: big + strings.Repeat("!", i+1)})
+	}
+	l := con.call("conversation.history", nil)
+	if !l.OK {
+		t.Fatal(l.Error)
+	}
+	var res struct{ Entries []ConvEntry }
+	json.Unmarshal(l.Result, &res)
+	if len(l.Result) > convHistoryBytes+1024 || len(res.Entries) == 0 || len(res.Entries) >= 10 {
+		t.Fatalf("history of %d bytes, %d entries", len(l.Result), len(res.Entries))
+	}
+	if !strings.HasSuffix(res.Entries[0].Text, strings.Repeat("!", 10)) {
+		t.Errorf("not the newest first")
+	}
+
+	st := &h.s.conv
+	for range convKeepBytes/convMaxBytes + 20 {
+		h.s.Converse(Converse{Origin: OriginYou, Speaker: SpeakerYou, Text: strings.Repeat("y", convMaxBytes)})
+	}
+	st.mu.Lock()
+	sum := 0
+	for _, e := range st.entries {
+		sum += len(e.Text)
+	}
+	n, total := len(st.entries), st.textBytes
+	st.mu.Unlock()
+	if total != sum || total > convKeepBytes || n == 0 {
+		t.Errorf("kept %d entries, %d bytes (counted %d)", n, sum, total)
 	}
 }
 
