@@ -15,11 +15,15 @@ den stats --since 2026-10-11 --until 2026-10-18
 den stats --since 2026-10-11T00:00:00Z --json
 ```
 
-The window is `[since, until)`. `--since` and `--until` take an RFC 3339 time,
-`2006-01-02 15:04` or a date (local time, the start of that day); `--until`
-defaults to now. `--days N` counts back from now and cannot be combined with
-the others. The output prints the exact window and the command that repeats
-it, so a figure can be reproduced from the same files. The files only grow,
+The window is `[since, until)`: `--since` is included and `--until` is not.
+`--since` and `--until` take an RFC 3339 time with a zone
+(`2026-10-11T00:00:00Z`), `2026-10-11 15:04`, or a bare date. A bare date or a
+time without a zone is local time on this machine, not UTC: `2026-10-18` means
+local midnight at the start of that day, so `--until 2026-10-18` stops before
+that day begins. `--until` defaults to now. `--days N` counts back from now
+and cannot be combined with the others. The output prints the exact window in
+UTC and the command that repeats it, with RFC 3339 times, so a figure can be
+reproduced from the same files whatever the time zone. The files only grow,
 except that the event stream keeps its last 4 to 8 MB (`events.jsonl` and
 `events.jsonl.1`), so an old window can lose its start; the last section of the
 output says where each file begins.

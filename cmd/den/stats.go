@@ -19,9 +19,9 @@ import (
 // time. It only reads them, and needs no running Den.
 func statsCmd(args []string) {
 	fs := flag.NewFlagSet("stats", flag.ExitOnError)
-	days := fs.Int("days", 0, "the last N days (the default is 7)")
-	since := fs.String("since", "", "start of the window: RFC 3339, \"2006-01-02 15:04\" or a date, in local time")
-	until := fs.String("until", "", "end of the window, not included; the default is now")
+	days := fs.Int("days", 0, "the last N days, counted back from now (the default is 7)")
+	since := fs.String("since", "", "start of the window, included: RFC 3339, \"2006-01-02 15:04\" or a date. A date, or a time without a zone, is local time, not UTC: 2026-10-18 is local midnight")
+	until := fs.String("until", "", "end of the window, excluded; the formats of --since; the default is now. The output prints the exact UTC window and the command that repeats it")
 	asJSON := fs.Bool("json", false, "print JSON")
 	fs.Parse(args)
 	from, to, err := stats.ParseWindow(*since, *until, *days, time.Now())
