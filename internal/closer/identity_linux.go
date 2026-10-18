@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 // clockTicks is USER_HZ, the unit of a process's start time in
@@ -65,6 +67,7 @@ func checkClaude(pid int, started time.Time) error {
 		return fmt.Errorf("cannot read pid %d: %v", pid, err)
 	}
 	exe, _ := os.Readlink(dir + "/exe")
+	exe = procs.Undeleted(exe)
 	raw, _ := os.ReadFile(dir + "/cmdline")
 	argv := strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00")
 	name := strings.TrimSpace(string(comm))

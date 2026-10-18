@@ -52,6 +52,75 @@ func TestDesktopStopCommand(t *testing.T) {
 	}
 }
 
+// A stop that could not signal the agent never reads as done: the mission
+// stays live with its chip red, every call is refused, the human is told
+// loudly once, and the tick's retry, once the process is gone, ends it and
+// closes Den's windows.
+func TestDesktopStopThatFailsKeepsTheMissionOn(t *testing.T) {
+	m, _, closed := stopRig(t)
+	failing := true
+	deskStopFn = func(desktop.Targets, string) desktop.StopReport {
+		if failing {
+			return desktop.StopReport{Failed: []string{"the agent (pid 500: pid 500 is another process now)"}}
+		}
+		return desktop.StopReport{}
+	}
+	var notes []notify.Note
+	deskNotify = func(n notify.Note) { notes = append(notes, n) }
+	mm, _ := m.desktopCommand([]string{"stop"})
+	*m = mm.(Model)
+	dm := m.deskLive()
+	if dm == nil {
+		t.Fatal("a failed stop ended the mission")
+	}
+	if m.desk.chip != deskStopFailedChip {
+		t.Errorf("chip %q", m.desk.chip)
+	}
+	if d, _ := deskCall(m, "desktop", `{}`); d.Behavior != "deny" {
+		t.Errorf("a call after a failed stop: %+v", d)
+	}
+	if len(notes) != 1 || !notes[0].Urgent || !strings.Contains(notes[0].Summary, "NOT stopped") {
+		t.Errorf("notes %+v", notes)
+	}
+	if len(*closed) != 0 {
+		t.Errorf("closed windows before the agent stopped: %v", *closed)
+	}
+	// Still failing: the tick keeps it on, red, and says nothing more.
+	m.deskOnTick()
+	if m.deskLive() == nil || m.desk.chip != deskStopFailedChip || len(notes) != 1 {
+		t.Fatalf("after a failing retry: live %v chip %q notes %d", m.deskLive() != nil, m.desk.chip, len(notes))
+	}
+	// The process is gone: the next retry ends it, as the human's stop.
+	failing = false
+	m.deskOnTick()
+	if m.deskLive() != nil || dm.Ended != "you stopped it with /desktop stop" {
+		t.Fatalf("not ended after the process went: %q", dm.Ended)
+	}
+	if len(*closed) != 2 {
+		t.Errorf("Den's windows not closed after the retry: %v", *closed)
+	}
+	m.deskOnTick()
+	if m.desk.chip != "" {
+		t.Errorf("chip after the end: %q", m.desk.chip)
+	}
+}
+
+// The task's limits end a mission through the same stop, and a failed one
+// keeps it on too.
+func TestDesktopFinishThatFailsKeepsTheMissionOn(t *testing.T) {
+	m, _, _ := stopRig(t)
+	deskStopFn = func(desktop.Targets, string) desktop.StopReport {
+		return desktop.StopReport{Failed: []string{"the agent (pid 500: the signal failed)"}}
+	}
+	dm := m.deskLive()
+	if cmd := m.finishDeskMission(dm, "the task's time ran out"); cmd != nil || dm.Ended != "" || dm.stopFailed == "" {
+		t.Fatalf("ended %q, failed %q", dm.Ended, dm.stopFailed)
+	}
+	if d, _ := deskCall(m, "desktop", `{}`); d.Behavior != "deny" {
+		t.Errorf("a call after a failed finish: %+v", d)
+	}
+}
+
 // den desktop stop over den.sock is never refused, whoever asks.
 func TestDesktopStopFromSocket(t *testing.T) {
 	m, stops, _ := stopRig(t)

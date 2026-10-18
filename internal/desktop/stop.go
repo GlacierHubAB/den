@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 // Beacon is hypruse's status file: which process holds the desktop, and
@@ -80,20 +82,30 @@ type Targets struct {
 // StopReport says what a stop did.
 type StopReport struct {
 	Stopped []string // what was signalled
-	Foreign string   // the beacon is held by a process Den did not start: said loudly, never signalled
+	// Failed are the processes still running that Den could not signal
+	// (one that no longer matches what Den recorded, or a signal that
+	// failed): the stop did not happen, and is never reported as done.
+	Failed  []string
+	Foreign string // the beacon is held by a process Den did not start: said loudly, never signalled
 	Notes   []string
 	Took    time.Duration
 }
 
-// Line is the report in one line.
+// OK reports whether every recorded process still running was stopped.
+func (r StopReport) OK() bool { return len(r.Failed) == 0 }
+
+// Line is the report in one line; a failed stop says so first.
 func (r StopReport) Line() string {
 	var parts []string
+	if len(r.Failed) > 0 {
+		parts = append(parts, "could not stop "+strings.Join(r.Failed, ", ")+": stop it yourself, or /desktop stop to try again")
+	}
 	if r.Foreign != "" {
 		parts = append(parts, r.Foreign)
 	}
 	if len(r.Stopped) > 0 {
 		parts = append(parts, "stopped "+strings.Join(r.Stopped, ", "))
-	} else {
+	} else if len(r.Failed) == 0 {
 		parts = append(parts, "nothing of Den's was running")
 	}
 	parts = append(parts, r.Notes...)
@@ -138,13 +150,23 @@ func Stop(t Targets, beacon string) StopReport {
 	if b, active := ReadBeacon(beacon); active && (b.PID != t.Child.PID || startTicks(b.PID) != t.Child.Start) {
 		r.Foreign = fmt.Sprintf("the desktop is held by a process Den did not start (pid %d); Den stopped only its own agent", b.PID)
 	}
+	// failed: a recorded process that still runs (the same pid with the
+	// same start) and was not signalled. One that ended, or whose pid is
+	// another process's now, is gone: nothing to stop.
+	failed := func(name string, p Proc, why string) {
+		if p.PID > 1 && p.Start != "" && startTicks(p.PID) == p.Start {
+			r.Failed = append(r.Failed, fmt.Sprintf("%s (pid %d: %s)", name, p.PID, why))
+		}
+	}
 	term := func(name string, p Proc, grace time.Duration) {
 		h, err := hold(p)
 		if err != nil {
+			failed(name, p, err.Error())
 			return
 		}
 		defer h.Release()
-		if h.Signal(syscall.SIGTERM) != nil {
+		if err := h.Signal(syscall.SIGTERM); err != nil {
+			failed(name, p, "the signal failed: "+err.Error())
 			return
 		}
 		r.Stopped = append(r.Stopped, name)
@@ -183,10 +205,12 @@ func startTicks(pid int) string {
 	return f[19]
 }
 
-// exeOf is the executable a process runs, resolved.
+// exeOf is the executable a process runs, resolved, as its path: one
+// updated in place during the mission (Claude Code updates itself) is
+// still the process recorded (procs.Undeleted).
 func exeOf(pid int) string {
 	p, _ := os.Readlink(filepath.Join(procRoot, strconv.Itoa(pid), "exe"))
-	return p
+	return procs.Undeleted(p)
 }
 
 // RecordProc is the Proc for a live pid, read now.
