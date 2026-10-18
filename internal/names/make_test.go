@@ -41,12 +41,12 @@ func TestReserved(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"the-human", "the-orchestrator", "close", "stop", "none", "every", "idle",
-		"deadbeef", "3f9c1a2b", "20261018-105821-1d533d66", "a1b2c3d4-builder"} {
+		"deadbeef", "3f9c1a2b", "20261018-105821-1d533d66", "a1b2c3d4-builder", "deaf", "cafe", "bead", "cafe-bead"} {
 		if Reserved(name) == "" {
 			t.Errorf("%q was allowed", name)
 		}
 	}
-	for _, name := range []string{"backend-engineer", "technical-writer", "reviewer", "denver-guide", "users-guide", "sysadmin"} {
+	for _, name := range []string{"backend-engineer", "technical-writer", "reviewer", "denver-guide", "users-guide", "sysadmin", "ace", "decoder"} {
 		if why := Reserved(name); why != "" {
 			t.Errorf("%q refused: %s", name, why)
 		}

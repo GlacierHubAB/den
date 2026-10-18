@@ -80,8 +80,13 @@ var CommandWords = set(
 )
 
 // idLike is a name or word that reads as an id: eight or more hex digits
-// (a session id's or a mission id's groups).
-var idLike = regexp.MustCompile(`^[0-9a-f]{8,}$`)
+// (a session id's or a mission id's groups). hexOnly is a name that could
+// be a session id's prefix in a terminal command ("deaf", "cafe-bead"):
+// four or more hex digits and nothing else.
+var (
+	idLike  = regexp.MustCompile(`^[0-9a-f]{8,}$`)
+	hexOnly = regexp.MustCompile(`^[0-9a-f]{4,}$`)
+)
 
 // Reserved says why a normalised name may not be used, "" when it may.
 func Reserved(name string) string {
@@ -90,7 +95,7 @@ func Reserved(name string) string {
 		return "no usable letters"
 	case reservedNames[name], CommandWords[name]:
 		return "it is a word Den uses"
-	case idLike.MatchString(strings.ReplaceAll(name, "-", "")):
+	case idLike.MatchString(strings.ReplaceAll(name, "-", "")), hexOnly.MatchString(strings.ReplaceAll(name, "-", "")):
 		return "it reads as an id"
 	}
 	for _, w := range strings.Split(name, "-") {
