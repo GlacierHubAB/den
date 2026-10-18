@@ -32,4 +32,12 @@ func TestConsoleGlow(t *testing.T) {
 	if (Snapshot{Layers: []Layer{own("DP-1")}}).ConsoleGlow(console) {
 		t.Error("no monitors read")
 	}
+	// A mirror or disabled output has no overlay of its own: not needed.
+	withMirror := append(mons, Monitor{Name: "HDMI-A-1", Mirror: true})
+	if !(Snapshot{Monitors: withMirror, Layers: []Layer{own("DP-1"), own("DP-2")}}).ConsoleGlow(console) {
+		t.Error("a mirror counted as down")
+	}
+	if (Snapshot{Monitors: []Monitor{{Name: "HDMI-A-1", Mirror: true}}, Layers: []Layer{own("HDMI-A-1")}}).ConsoleGlow(console) {
+		t.Error("only mirrors, yet up")
+	}
 }

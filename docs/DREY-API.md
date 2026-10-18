@@ -1044,8 +1044,10 @@ where the pointer is.
   surface's input region from Hyprland, so it relies on you for this:
   never give an input-taking surface that namespace. No other surface of
   the console's is ever let through: a click under the dock or any other
-  window of yours is refused. Draw the glow on the bottom layer, which
-  never blocks a click.
+  window of yours is refused. Drey draws the glow (the aurora) and the
+  pointer outline in the `drey-agent-pointer` surface, overlay level 3,
+  one per output, with an empty input region, so it shows above windows
+  and never blocks a click.
 - The link: send `overlay.linked {mission}`, with the `mission` of the
   `active` desktop event, once your glow and Stop for that mission are
   on screen, and `overlay.unlinked {mission}` when you hide them. Send
@@ -1062,11 +1064,12 @@ where the pointer is.
     sent it is still open, proved and subscribed. A reconnect, a re-pair
     or an unpair takes it down: send `overlay.linked` again from the new
     connection;
-  - Den sees your overlay itself: on every monitor, a surface on the
-    overlay level (3) with layer namespace `drey-agent-pointer`, of the
-    process of one of your proved connections (the surface the pointer
-    rule above lets clicks through). Another namespace, such as a test
-    instance's, never counts.
+  - Den sees your overlay itself: on every monitor `hyprctl monitors`
+    lists (enabled ones; a mirror of another output is skipped), a
+    surface on the overlay level (3) with layer namespace
+    `drey-agent-pointer`, of the process of one of your proved
+    connections (the surface the pointer rule above lets clicks
+    through). Another namespace, such as a test instance's, never counts.
 
   While either is down, Den refuses the agent's input with "paused: the
   dock's overlay is down; Den resumes when it is back", says so in its

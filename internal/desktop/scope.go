@@ -36,6 +36,10 @@ type Monitor struct {
 	W, H      int
 	Workspace int  // the workspace it shows
 	Special   bool // a special workspace is pulled up over it
+	// Mirror: it mirrors another monitor, or Hyprland says it is disabled
+	// (plain `hyprctl monitors` lists only enabled ones): the console draws
+	// no overlay of its own on it.
+	Mirror bool
 }
 
 // Contains reports whether the global point lies on the monitor.
@@ -150,6 +154,8 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 			ID   int    `json:"id"`
 			Name string `json:"name"`
 		} `json:"specialWorkspace"`
+		MirrorOf string `json:"mirrorOf"`
+		Disabled bool   `json:"disabled"`
 	}
 	if err := json.Unmarshal(out, &mons); err != nil {
 		return s, fmt.Errorf("hyprctl monitors: %v", err)
@@ -164,7 +170,7 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 		if m.Transform%2 == 1 {
 			w, h = h, w
 		}
-		s.Monitors = append(s.Monitors, Monitor{Name: m.Name, X: m.X, Y: m.Y, W: w, H: h, Workspace: m.ActiveWorkspace.ID, Special: m.SpecialWorkspace.ID != 0 || m.SpecialWorkspace.Name != ""})
+		s.Monitors = append(s.Monitors, Monitor{Name: m.Name, X: m.X, Y: m.Y, W: w, H: h, Workspace: m.ActiveWorkspace.ID, Special: m.SpecialWorkspace.ID != 0 || m.SpecialWorkspace.Name != "", Mirror: m.Disabled || m.MirrorOf != "" && m.MirrorOf != "none"})
 	}
 	if err := readExtras(ctx, &s); err != nil {
 		return s, err
