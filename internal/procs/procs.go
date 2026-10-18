@@ -83,13 +83,23 @@ func Parent(pid int) (ppid int, comm string, ok bool) {
 	return ppid, comm, ok
 }
 
-// Exe is the executable pid runs, resolved ("" when it cannot be read).
+// Exe is the executable pid runs, resolved ("" when it cannot be read),
+// as its path: Undeleted.
 func Exe(pid int) string {
 	p, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(pid), "exe"))
 	if err != nil {
 		return ""
 	}
-	return p
+	return Undeleted(p)
+}
+
+// Undeleted is a /proc/<pid>/exe link without the " (deleted)" the kernel
+// adds once the file at that path was replaced, as an install or an update
+// replaces a binary that is running: the process still runs what was at
+// the path, which is what Go's os.Executable says too. Without it, a Den
+// (or Claude Code) updated in place stops matching its own path.
+func Undeleted(link string) string {
+	return strings.TrimSuffix(link, " (deleted)")
 }
 
 // shells are the commands a hook command line may run in before it execs
