@@ -384,6 +384,10 @@ func (m *Model) focusProposal(id string) {
 // selectedProposal is the proposal the human selected in the chat, by its
 // id, while it still waits; nil otherwise, and ^Y and ^N then answer a
 // request as ever.
+// proposalKeyHint is what ^Y or ^N says while a proposal waits and nothing
+// is selected to answer.
+const proposalKeyHint = "Select the proposal with ↑ first (it is in the strip above the orchestrator's chat), then ^Y starts it or ^N drops it."
+
 func (m Model) selectedProposal() *mission.Mission {
 	if m.orch.propFocus == "" || m.missions == nil {
 		return nil
@@ -401,7 +405,7 @@ func (m Model) selectedProposal() *mission.Mission {
 func (m Model) answerProposal(start bool) (tea.Model, tea.Cmd) {
 	ms := m.selectedProposal()
 	if ms == nil {
-		return m, nil
+		return m.say(proposalKeyHint, true)
 	}
 	if ms.Updated.After(m.orch.propAt) {
 		m.focusProposal(ms.ID) // the human has seen it change: the next ^Y counts after the settle
