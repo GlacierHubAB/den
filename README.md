@@ -21,11 +21,10 @@ are on, and `Enter` brings any of them to the front. Den is Linux software and
 works on other desktops without the window placement (see
 [Requirements](#requirements)).
 
-**Status.** The latest release is v0.5.2 (2026-10-15). Anything marked
-**(v0.6.0)** is merged on `dev` for the next release, which is being prepared
-on the `release/v0.6.0` branch, and is not in a tagged release yet; the
-[dev channel](docs/DEV-CHANNEL.md) installs it now. Den drives Claude Code
-today; other agent CLIs are planned (see
+**Status.** The latest release is v0.6.0 (2026-10-18), and everything below
+is in it. What is merged on `dev` since then reaches the next release first
+through the [dev channel](docs/DEV-CHANNEL.md). Den drives Claude Code today;
+other agent CLIs are planned (see
 [Supported agents and roadmap](#supported-agents-and-roadmap)).
 
 ## Why Den
@@ -46,7 +45,7 @@ that two agents edited the same file. Den takes over that job.
   retelling.
 - **Context that is kept, not re-typed.** Each agent gets a self-contained
   brief, its own session and, if you want, its own worktree. A mission's
-  constraints ride on every dispatch. Project memory (v0.6.0) keeps what agents
+  constraints ride on every dispatch. Project memory keeps what agents
   learned for whoever works there next. After a reboot, Den offers to reopen
   the agents that were live, each back in its place in the tree.
 - **Guardrails Den enforces.** The decisions that matter stay yours, on cards
@@ -97,13 +96,13 @@ that two agents edited the same file. Den takes over that job.
   skills for you to approve.
 - **Teams:** a lead gets `spawn_agent` too, starts its own people, and reports
   up when its piece is done. Den draws the tree as the team grows.
-- **Missions:** run once, in a loop, fanned out to a team, or on a schedule. In
-  v0.6.0 a mission has done criteria and sub-goals with owners, and every
+- **Missions:** run once, in a loop, fanned out to a team, or on a schedule. A
+  mission has done criteria and sub-goals with owners, and every
   mission that is not a schedule ends with a criterion Den adds itself: shown
   working on your real setup. Four templates ship: code review, bugfix,
   research and docs pass.
 
-**Keep work small and mergeable (v0.6.0)**
+**Keep work small and mergeable**
 
 - **Overlaps:** when two agents' branches change the same files, Den tells both
   agents which files overlap and with whom.
@@ -127,7 +126,7 @@ that two agents edited the same file. Den takes over that job.
 
 **Keep context across agents and restarts**
 
-- **Project memory (v0.6.0):** agents keep notes as data. Rules come only from
+- **Project memory:** agents keep notes as data. Rules come only from
   you, on a card, and the folder opens as an Obsidian vault.
 - **Bringing agents back:** one question after a reboot reopens the agents that
   were live, with `claude --resume`. `/reopen` brings back one agent, and
@@ -135,7 +134,7 @@ that two agents edited the same file. Den takes over that job.
 - **The orchestrator's chat persists,** and the orchestrator resumes its own
   session when Den starts again.
 
-**Go hands-off when you choose (v0.6.0)**
+**Go hands-off when you choose**
 
 - **Permission mode:** one mode for every agent Den starts. A mode that asks
   less waits on a card for your `Ctrl+Y`.
@@ -143,8 +142,10 @@ that two agents edited the same file. Den takes over that job.
   the orchestrator starts then run without asking, and every message to them
   goes through Den.
 - **Desktop control:** an agent drives the mouse and keyboard on Hyprland,
-  through a gate in Den. Outward steps ask on a card with a screenshot, each
-  task has a time and action limit, and `den desktop stop` is the panic stop.
+  through a gate in Den. In a mission with apps you configured, outward steps
+  ask on a card with a screenshot. A task, which may use the whole desktop,
+  runs on its own after your one `Ctrl+Y`, within its time and action limits.
+  `den desktop stop` is the panic stop.
 
 **Script it, or pair an app**
 
@@ -201,8 +202,11 @@ that two agents edited the same file. Den takes over that job.
   installing skills, restoring agents, moving a mission, going over a budget
   and lowering the permission mode each wait on a card, and nothing happens
   before `Ctrl+Y`. App pairings, God mode, guidance, tuning and desktop tasks
-  are answered only in Den's own window. In God mode (v0.6.0) Den answers some of
-  its own cards itself, and lists each one in its chat.
+  are answered only in Den's own window. One exception: your console pairs by
+  itself, with no card, once Den has checked through your systemd user manager
+  that it is the console's own service (see [Apps](#apps-den-apisock)). In God
+  mode Den answers some of its own cards itself, and lists each one in its
+  chat.
 - **Narrow standing answers.** `/always` covers one exact command, or edits by
   one tool inside the agent's folder. It never covers a command with shell
   operators, or a file that raises trust (`~/.ssh`, `.git`, `.claude`, shell
@@ -211,9 +215,10 @@ that two agents edited the same file. Den takes over that job.
   a Den that is not running, leaves the request to Claude Code's own dialog.
 - **Agents' words are data.** The orchestrator's own hook stops every peer
   message first. Den passes one on only from a live session on this machine
-  that it sees in its fleet, fenced as that agent's report. Den tests that hook before every launch. If anything
-  gets past it, Den kills the orchestrator and starts a fresh one. Notes in
-  project memory are data too, and only you make rules.
+  that it sees in its fleet, fenced as that agent's report. Den tests that hook
+  before every launch. If anything gets past it, Den kills the orchestrator and
+  starts a fresh one. Notes in project memory are data too, and only you make
+  rules.
 - **Text from outside is cleaned.** Escape sequences, other control characters,
   bidirectional overrides and invalid UTF-8 are removed from agent, transcript,
   git and host text before Den shows it.
@@ -221,7 +226,7 @@ that two agents edited the same file. Den takes over that job.
   turn off fsmonitor, filter and merge drivers, external diff and textconv.
 - **Pinned downloads.** Skills come from a built-in catalogue, each pinned to a
   full commit SHA with a SHA-256 for every file. Den refuses a skill that sets
-  hooks or `allowed-tools`. The desktop tool, hypruse (v0.6.0), is pinned to a
+  hooks or `allowed-tools`. The desktop tool, hypruse, is pinned to a
   commit, every file hash-checked, with dependencies pinned by hash and
   installed from wheels only.
 - **Close safety.** Den refuses to close an agent that is working or waiting on
@@ -234,8 +239,9 @@ that two agents edited the same file. Den takes over that job.
   host sends metadata only by default.
 
 Each section below says plainly what stays open. Anything running as your user
-can change Den's files, type into its window or drive a paired app, and an
-agent in God mode can do anything you can. See [God mode](#god-mode),
+can change Den's files, type into its window or drive a paired app. Anything
+that can change the console's service gets the console's reading and chat
+without a question in Den, and an agent in God mode can do anything you can. See [God mode](#god-mode),
 [Apps](#apps-den-apisock) and [Desktop control](#desktop-control).
 
 The orchestrator's prompt (`internal/orch/orch.go`) sets how it staffs work:
@@ -258,8 +264,8 @@ only when `ci-passed` succeeds. That check needs every job in
   `THIRD_PARTY_LICENSES` check, a build for linux/amd64 and linux/arm64, and
   `actionlint`.
 - **test:** `make test` under the race detector, on the release Go and on the
-  newest Go. The run is offline, with no git identity, and includes the remote
-  acceptance tests against a real `sshd` and `tmux`, plus 30 seconds of
+  newest Go. The tests need no network (no module proxy) and no git config,
+  and they include the remote acceptance tests against a real `sshd` and `tmux`, plus 30 seconds of
   fuzzing.
 - **vuln:** `govulncheck`. **secrets:** `gitleaks` over the whole history.
 - **heavy:** the whole tree under the race detector three times on two CPUs,
@@ -308,20 +314,22 @@ see Anthropic's documentation for how it works today.
 
 ## Measurable results
 
-Figures from `dev` at d7b5a27 (2026-10-18), and from GitHub on the same day.
-Each command prints today's figure: run it from a clone of this repository.
+A snapshot at the v0.6.0 tag (957d929, 2026-10-18), with the GitHub figures
+read the same day. The counts grow with every change, so each command prints
+today's figure: run it from a clone of this repository, or check out `v0.6.0`
+to get these.
 
 | Figure | Value | Reproduce |
 | --- | --- | --- |
 | Go packages | 55 | `go list ./... \| wc -l` |
-| Test functions | 1,520 in 304 test files | `git grep -h -E '^func Test[A-Z_0-9]' -- '*_test.go' \| wc -l` |
+| Top-level `Test` functions (subtests not counted) | 1,533 in 306 test files | `git grep -h -E '^func Test[A-Z_0-9]' -- '*_test.go' \| wc -l` |
 | Fuzz targets | 13 | `git grep -h -E '^func Fuzz' -- '*_test.go' \| wc -l` |
-| Lines of Go, code and tests | 82,079 and 60,500 | `git ls-files '*.go' \| grep -v '_test.go$' \| xargs cat \| wc -l`, and the same for `'*_test.go'` |
+| Lines of Go, code and tests | 82,431 and 60,961 | `git ls-files '*.go' \| grep -v '_test.go$' \| xargs cat \| wc -l`, and the same for `'*_test.go'` |
 | CI jobs every pull request must pass | lint, test (2 Go versions), vuln, secrets, heavy (race x3 on 2 CPUs) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
 | Actions pinned to a commit SHA | 18 of 18 `uses:` lines | `grep -h 'uses: [^.]' .github/workflows/*.yml` |
-| Tagged versions | 19, v0.1.0 (2026-10-08) to v0.5.2 (2026-10-15) | `git tag -l 'v*' --sort=creatordate --format='%(refname:short) %(creatordate:short)'` |
-| Merged pull requests | 158 (143 into `dev`, 15 into `main`) | `gh pr list --repo GlacierHubAB/den --state merged --limit 1000 --json baseRefName -q 'group_by(.baseRefName) \| map({(.[0].baseRefName): length})'` |
-| Release binary, v0.5.2 | 20,242,594 bytes (amd64), 19,267,746 bytes (arm64), static | `gh release view v0.5.2 --repo GlacierHubAB/den --json assets -q '.assets[] \| "\(.name) \(.size)"'` |
+| Tagged versions | 20, v0.1.0 (2026-10-08) to v0.6.0 (2026-10-18) | `git tag -l 'v*' --sort=creatordate --format='%(refname:short) %(creatordate:short)'` |
+| Merged pull requests | 171 (155 into `dev`, 16 into `main`) on 2026-10-18 | `gh pr list --repo GlacierHubAB/den --state merged --limit 1000 --json baseRefName -q 'group_by(.baseRefName) \| map({(.[0].baseRefName): length})'` |
+| Release binary, v0.6.0 | 23,371,938 bytes (amd64), 22,282,402 bytes (arm64), static | `gh release view v0.6.0 --repo GlacierHubAB/den --json assets -q '.assets[] \| "\(.name) \(.size)"'` |
 | Claude Code hook events Den uses | 10 | `internal/hooks/install.go` |
 | Vetted skills in the catalogue | 7, from 5 repositories | `den skills catalogue` |
 
@@ -330,7 +338,7 @@ Each command prints today's figure: run it from a clone of this repository.
 - tokens and a list-price estimate per agent, per team, per mission run and for
   the whole fleet, with a split by host (see [Cost](#cost));
 - the account's weekly usage, as Claude Code reports it (see [Usage](#usage));
-- in v0.6.0, each mission's merged changes and its cost per merged change,
+- each mission's merged changes and its cost per merged change,
   its idle agents, and a record in `~/.local/state/den/metrics.jsonl` of each
   mission's runs, cost, merged changes, how long the merged branches lived, and
   the overlaps and nudges Den sent (see
@@ -468,7 +476,7 @@ part of it works. On Omarchy:
   one-process-many-windows by title and directory.
 - **Colours follow the current Omarchy theme**, read from
   `~/.local/state/omarchy/current/theme/colors.toml` (`internal/theme`).
-- **Agent view and User view (v0.6.0).** A paired app can hide the agents'
+- **Agent view and User view.** A paired app can hide the agents'
   windows on Hyprland's `special:den` workspace and bring them back, so the
   agents keep working while your workspaces stay yours. `/view` says which
   view is on, and `/view rescue`, typed in Den, brings back every window on
