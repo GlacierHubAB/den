@@ -1128,7 +1128,9 @@ it at work on the screen. To watch it in a terminal of its own instead, set
 mouse and keyboard to: …" with the whole task (a task too long to show whole
 is refused, and so is one holding hidden characters). On `Ctrl+Y` the agent
 may use your whole desktop for that task: the pointer and keyboard in any
-window, your Hyprland binds, and launching apps, with no app config. No step
+window, your Hyprland binds, and launching apps, with no app config. Its
+view of the desktop lists every monitor, workspace and window, the focused
+window and the cursor, but not Den's own windows or the dock's. No step
 asks you except the agent's own `request_approval` and `your_turn`.
 
 Read this before you say yes: **while a task runs, the agent can do anything
