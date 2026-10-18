@@ -464,7 +464,7 @@ func Lookup(agents []Agent, query string) (Agent, error) {
 		perHost := map[string][]string{}
 		for _, a := range agents {
 			if (!qualified || a.Host == host) && strings.HasPrefix(strings.ToLower(a.Name), q) {
-				perHost[a.Host] = append(perHost[a.Host], a.Name+" ("+a.Session.Name+")@"+HostName(a.Host))
+				perHost[a.Host] = append(perHost[a.Host], sanitize.Label(a.Name, 60)+" ("+sanitize.Label(a.Session.Name, 60)+")@"+sanitize.Label(HostName(a.Host), 60))
 			}
 		}
 		for _, same := range perHost {
