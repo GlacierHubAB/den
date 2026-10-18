@@ -32,9 +32,9 @@ type Guard struct {
 	Flagged []Flag   `json:"flagged,omitempty"`
 }
 
-// Entry is one guarded agent: its session key (the session id, with
-// "@host" for an agent on another machine), the name it had when the
-// human guarded it (shown, never matched), and a flag's note.
+// Entry is one guarded agent: its session id as Den keys it (an agent on
+// another machine's carries "@host"), the name it had when the human
+// guarded it (shown, never matched), and a flag's note.
 type Entry struct {
 	Session string `json:"session"`
 	Name    string `json:"name,omitempty"`
@@ -45,15 +45,6 @@ type Entry struct {
 type Flag struct {
 	Name string `json:"name"`
 	Note string `json:"note,omitempty"`
-}
-
-// Key is the guard's key for a session: its id, with "@host" for an agent
-// on another machine.
-func Key(sessionID, host string) string {
-	if host == "" {
-		return sessionID
-	}
-	return sessionID + "@" + host
 }
 
 // GuardPath is the state file.
@@ -174,7 +165,7 @@ func (g *Guard) TakeLegacy(keepProtect []string, keepFlags []Flag) {
 }
 
 // Protected says why an agent must be left alone, "" when it is not
-// protected. key is its session (Key); dirs are its working directory and
+// protected. key is its session id; dirs are its working directory and
 // the repositories it edited; task is what it is working on.
 func (g *Guard) Protected(key string, dirs []string, task string) string {
 	if e, ok := g.IsProtected(key); ok {

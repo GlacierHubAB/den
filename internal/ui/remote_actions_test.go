@@ -337,11 +337,13 @@ func TestCloseIdleListsRemoteAgentsAndRespectsProtect(t *testing.T) {
 	if strings.Contains(text, "on gpu") {
 		t.Errorf("an offline host's agent is listed:\n%s", text)
 	}
-	// Protected by name: left out of the bulk close.
+	// Protected: left out of the bulk close.
 	m1, feed1, _ := remoteModel(t)
 	remoteIdle(m1, feed1)
 	m1.ensureGuard()
-	m1.guard.Protect("Mossy Lemur")
+	m1.guardPath = filepath.Join(t.TempDir(), "protected.json")
+	mm, _ = m1.guardCommand("/protect", []string{"Mossy", "Lemur@devbox"})
+	*m1 = mm.(Model)
 	mm, _ = m1.closeCommand([]string{"idle"})
 	for _, o := range mm.(Model).store.Items() {
 		if o.Kind == inbox.Close && strings.Contains(strings.Join(o.Body, "\n"), "SIGTERM there") {
@@ -544,10 +546,10 @@ func TestProtectNameAtHostHoldsForEveryClosePath(t *testing.T) {
 		return false
 	}
 
-	// By peer name and host: recorded as the critter name on that host.
+	// By peer name and host: recorded as that host's session.
 	*m = g(m.guardCommand("/protect", []string{"user-devbox@devbox"}))
-	if len(m.guard.Names) != 1 || m.guard.Names[0] != "Mossy Lemur@devbox" || !strings.Contains(m.flash, "Mossy Lemur@devbox is protected") {
-		t.Fatalf("names %q flash %q", m.guard.Names, m.flash)
+	if len(m.guard.Sessions) != 1 || m.guard.Sessions[0].Session != dupSession+"@devbox" || !strings.Contains(m.flash, "Mossy Lemur@devbox is protected") {
+		t.Fatalf("sessions %+v flash %q", m.guard.Sessions, m.flash)
 	}
 	// /close Name@host: refused, saying how to allow it.
 	got := g(m.closeCommand([]string{"Mossy", "Lemur@devbox"}))
@@ -585,31 +587,36 @@ func TestProtectNameAtHostHoldsForEveryClosePath(t *testing.T) {
 
 	// /unprotect takes the same form back; then the named close is offered.
 	*m = g(m.guardCommand("/unprotect", []string{"Mossy Lemur@devbox"}))
-	if len(m.guard.Names) != 0 {
-		t.Fatalf("unprotect left %q", m.guard.Names)
+	if len(m.guard.Sessions) != 0 {
+		t.Fatalf("unprotect left %+v", m.guard.Sessions)
 	}
 	if got = g(m.closeCommand([]string{"Mossy Lemur@devbox"})); !remoteProposed(got) {
 		t.Errorf("unprotected remote agent not offered: flash %q", got.flash)
 	}
 }
 
-func TestProtectBareNameCoversLocalAndRemote(t *testing.T) {
+// A protect covers that one session: "@local" is this machine's agent,
+// and an agent with the same name on a host stays closable.
+func TestProtectCoversOnlyThatSession(t *testing.T) {
 	m, feed, _ := remoteModel(t)
 	remoteIdle(m, feed)
 	m.ensureGuard()
 	m.guardPath = filepath.Join(t.TempDir(), "protected.json")
-	// "@local" is this machine's agent, recorded by its bare name, which
-	// also covers an agent called so on any host.
 	mm, _ := m.guardCommand("/protect", []string{"mossy lemur@local"})
 	*m = mm.(Model)
-	if len(m.guard.Names) != 1 || m.guard.Names[0] != "Mossy Lemur" {
-		t.Fatalf("names %q", m.guard.Names)
+	if len(m.guard.Sessions) != 1 || strings.Contains(m.guard.Sessions[0].Session, "@") {
+		t.Fatalf("sessions %+v", m.guard.Sessions)
 	}
-	for _, name := range []string{"Mossy Lemur@local", "Mossy Lemur@devbox"} {
-		mm, _ = m.closeCommand([]string{name})
-		if got := mm.(Model); openClose(got) != nil || !strings.Contains(got.flash, "protected (Mossy Lemur) · /unprotect Mossy Lemur to allow it") {
-			t.Errorf("/close %s: flash %q", name, got.flash)
-		}
+	mm, _ = m.closeCommand([]string{"Mossy Lemur@local"})
+	if got := mm.(Model); openClose(got) != nil || !strings.Contains(got.flash, "protected (Mossy Lemur) · /unprotect Mossy Lemur to allow it") {
+		t.Errorf("/close Mossy Lemur@local: flash %q", got.flash)
+	}
+	mm, _ = m.closeCommand([]string{"Mossy Lemur@devbox"})
+	if got := mm.(Model); openClose(got) == nil {
+		t.Errorf("the host's agent with the same name was held: flash %q", got.flash)
+	}
+	for _, it := range closeItems(*m) {
+		m.store.Settle(it, false, "kept")
 	}
 	// The orchestrator naming the local one by peer: refused.
 	pl, _ := json.Marshal(bridge.CloseInput{Peers: []string{"user-aa"}, Reason: "tidy"})
@@ -618,9 +625,10 @@ func TestProtectBareNameCoversLocalAndRemote(t *testing.T) {
 	if d, ok := r.Decided(); !ok || d.Behavior != "deny" || !strings.Contains(d.Message, "/unprotect Mossy Lemur to allow it") {
 		t.Errorf("close_agent of a protected agent: %+v %v", d, ok)
 	}
-	// Flags by name@host hold too.
-	m.guard.Names = nil
-	m.guard.SetFlag("Mossy Lemur@devbox", "keep")
+	// A flag on the host's agent holds too.
+	m.guard.Sessions = nil
+	mm, _ = m.guardCommand("/flag", []string{"Mossy", "Lemur@devbox:", "keep"})
+	*m = mm.(Model)
 	mm, _ = m.closeCommand([]string{"idle"})
 	if it := openClose(mm.(Model)); it == nil || !strings.Contains(strings.Join(it.Body, "\n"), "Holds context, not selected: Mossy Lemur (keep)") || strings.Contains(strings.Join(it.Body, "\n"), "SIGTERM there") {
 		t.Errorf("flagged remote agent in an idle close: %+v", it)

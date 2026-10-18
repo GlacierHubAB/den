@@ -51,9 +51,10 @@ func idleFor(a fleet.Agent, now time.Time) (time.Duration, bool) {
 	return now.Sub(a.LastActive), true
 }
 
-// guardKey is the guard's key for an agent: its session, with its host
-// for one elsewhere. The guard never matches a name.
-func guardKey(a fleet.Agent) string { return closer.Key(a.Session.SessionID, a.Host) }
+// guardKey is the guard's key for an agent: its session id as Den keys it
+// (an agent on a host carries the host, "id@host"). The guard never
+// matches a name.
+func guardKey(a fleet.Agent) string { return a.Session.SessionID }
 
 // guardReason says why the guard keeps an agent out of a bulk close.
 func (m Model) guardReason(a fleet.Agent) string {
@@ -61,7 +62,7 @@ func (m Model) guardReason(a fleet.Agent) string {
 		return ""
 	}
 	if _, ok := m.guard.IsProtected(guardKey(a)); ok {
-		return "protected (" + a.Name + ")"
+		return "protected (" + m.guardLabel(a) + ")"
 	}
 	// Folder rules are folders on this machine: an agent on a host has no
 	// path here, so only its session, or a task that mentions the folder's

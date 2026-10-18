@@ -662,16 +662,31 @@ func (m Model) critterForPeer(peer string) string {
 	return name
 }
 
-// agentForPeer resolves a peer name to the agent's critter name and session
-// id; an unknown peer keeps its name and has no id.
+// agentForPeer resolves a peer name to the agent's name and session id:
+// the one live session with that handle, else the one session at all. A
+// handle is reused, so two that fit are neither: an unknown or shared peer
+// keeps its name and has no id.
 func (m Model) agentForPeer(peer string) (name, sid string) {
 	p := strings.TrimPrefix(peer, "@")
 	if i := strings.Index(p, " ["); i > 0 {
 		p = p[:i]
 	}
+	var live, all []fleet.Agent
 	for _, a := range m.agents {
-		if a.Session.Name == p {
-			return a.Name, a.Session.SessionID
+		if p == "" || a.Session.Name != p {
+			continue
+		}
+		all = append(all, a)
+		if a.Session.Alive && a.Status != fleet.Gone {
+			live = append(live, a)
+		}
+	}
+	for _, hits := range [][]fleet.Agent{live, all} {
+		if len(hits) == 1 {
+			return hits[0].Name, hits[0].Session.SessionID
+		}
+		if len(hits) > 1 {
+			break
 		}
 	}
 	return peer, ""
