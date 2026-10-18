@@ -1853,6 +1853,14 @@ func (m Model) nameFor(sessionID string) string {
 		}
 		return "mission"
 	}
+	if repo, ok := strings.CutPrefix(sessionID, memorySessionPrefix); ok {
+		// A project's memory card is from that project's memory, named in
+		// full, never a cut id.
+		if mt := m.mem.metas[repo]; mt != nil && mt.Name != "" {
+			return sanitize.Label(mt.Name, 60) + " memory"
+		}
+		return "project memory"
+	}
 	if a, ok := m.agentFor(sessionID); ok {
 		return a.Name
 	}

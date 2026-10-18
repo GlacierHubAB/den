@@ -232,6 +232,20 @@ func noteBody(raw string) string {
 	return raw
 }
 
+// ReadNote is one note's body, as Search reads it: cleaned, whole (a note
+// is at most MaxNote bytes). ok is false for a note Den has no file for, or
+// one over its size.
+func ReadNote(dir, id string) (string, bool) {
+	if !ValidID(id) {
+		return "", false
+	}
+	raw, err := readFile(filepath.Join(dir, notesDirName, id+".md"), maxFileBytes)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(sanitize.Text(noteBody(string(raw)))), true
+}
+
 // Found is a note as the notes tool returns it.
 type Found struct {
 	ID string
