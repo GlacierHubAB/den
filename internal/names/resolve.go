@@ -61,8 +61,9 @@ func (e *NeedsHost) Error() string {
 // two share the name, and the host for one elsewhere.
 func Labels(cs []Candidate) []string {
 	count := map[string]int{}
+	key := func(c Candidate) string { return strings.ToLower(c.Name) + "@" + strings.ToLower(c.Host) }
 	for _, c := range cs {
-		count[strings.ToLower(c.Name)]++
+		count[key(c)]++
 	}
 	out := make([]string, 0, len(cs))
 	for _, c := range cs {
@@ -70,7 +71,7 @@ func Labels(cs []Candidate) []string {
 		if l == "" {
 			l = c.Peer
 		}
-		if count[strings.ToLower(c.Name)] > 1 && c.Peer != "" && c.Peer != c.Name {
+		if count[key(c)] > 1 && c.Peer != "" && c.Peer != c.Name {
 			l += " (" + c.Peer + ")"
 		}
 		if c.Host != "" {

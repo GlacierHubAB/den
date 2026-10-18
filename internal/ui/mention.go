@@ -37,18 +37,30 @@ func resolveMention(text string, agents []fleet.Agent) mention {
 	rest := strings.TrimPrefix(text, "@")
 	lower := strings.ToLower(rest)
 	cands := fleet.Candidates(agents)
-	best := 0
-	for _, c := range cands {
-		for _, n := range []string{c.Name, c.Alias, c.Peer} {
-			n = strings.ToLower(n)
-			if n == "" || len(n) <= best || !strings.HasPrefix(lower, n) {
+	// The longest whole name that starts the text, on this machine first:
+	// a longer name on a host never captures a local agent's mention.
+	longest := func(local bool) int {
+		best := 0
+		for _, c := range cands {
+			if (c.Host == "") != local {
 				continue
 			}
-			if len(lower) != len(n) && lower[len(n)] != ' ' && lower[len(n)] != '@' {
-				continue
+			for _, n := range []string{c.Name, c.Alias, c.Peer} {
+				n = strings.ToLower(n)
+				if n == "" || len(n) <= best || !strings.HasPrefix(lower, n) {
+					continue
+				}
+				if len(lower) != len(n) && lower[len(n)] != ' ' && lower[len(n)] != '@' {
+					continue
+				}
+				best = len(n)
 			}
-			best = len(n)
 		}
+		return best
+	}
+	best := longest(true)
+	if best == 0 {
+		best = longest(false)
 	}
 	query, body, opts := "", "", names.Opts{}
 	if best > 0 {
