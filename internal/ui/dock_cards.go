@@ -53,6 +53,9 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		body = append(body, strings.Split(it.Intent, "\n")...)
 	}
 	body = append(body, it.Body...)
+	if it.Kind == inbox.RulesPick {
+		body = withoutNotes(body)
+	}
 	return api.Card{
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
@@ -65,6 +68,27 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		DockAnswers: dockMayAnswer(it) && !m.godTTYOnly(it),
 		TTYOnly:     m.godTTYOnly(it),
 	}
+}
+
+// withoutNotes is a rules card's lines for a console: each note, fenced
+// from its "┌" line to its "└", becomes one line saying it is in Den's
+// window. The console cannot answer the card, and agents' notes reach a
+// console nowhere else; the rules and the project's rules stay.
+func withoutNotes(lines []string) []string {
+	var out []string
+	in := false
+	for _, l := range lines {
+		switch {
+		case !in && strings.HasPrefix(l, noteFenceTop):
+			in = true
+			out = append(out, "    (the agent's note is shown in Den's window)")
+		case in && strings.HasPrefix(l, noteFenceBottom):
+			in = false
+		case !in:
+			out = append(out, l)
+		}
+	}
+	return out
 }
 
 // dockMayAnswer reports whether a console may answer it. Never: what makes
