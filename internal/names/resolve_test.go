@@ -95,3 +95,22 @@ func TestResolveExactFieldsAreOneTier(t *testing.T) {
 		t.Errorf("label %q", l[0])
 	}
 }
+
+// Only ASCII letters fold: a lookalike never matches the plain letter it
+// resembles, as an exact name or as a prefix.
+func TestResolveFoldsASCIIOnly(t *testing.T) {
+	cands := []Candidate{{ID: "s-kate", Name: "Kate"}, {ID: "s-strasse", Name: "STRASSE"}, {ID: "s-iris", Name: "Iris"}, {ID: "s-sam", Name: "sam"}}
+	for _, q := range []string{"\u212Aate", "\u212Aa", "stra\u00dfe", "\u0130ris", "\u017Fam"} {
+		if c, err := Resolve(q, cands, Opts{Prefix: true}); err == nil {
+			t.Errorf("%q resolved to %q", q, c.ID)
+		}
+	}
+	for q, want := range map[string]string{"kate": "s-kate", "KA": "s-kate", "strasse": "s-strasse", "SAM": "s-sam"} {
+		if c, err := Resolve(q, cands, Opts{Prefix: true}); err != nil || c.ID != want {
+			t.Errorf("%q: %q %v", q, c.ID, err)
+		}
+	}
+	if Fold("A\u212Ab\u00c9") != "a\u212Ab\u00c9" {
+		t.Error("Fold changed a rune that is not an ASCII letter")
+	}
+}
