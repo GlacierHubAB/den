@@ -49,6 +49,7 @@ func runMCP() {
 					"name":     map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
 					"model":    map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
 					"role":     map[string]any{"type": "string", "description": "The agent's role in a few words: coding agent, ui designer, frontend developer, qa automation, security auditor. Den offers the human the skills from its vetted catalogue that fit the role, for this agent only, and waits for their answer before starting it; the agent starts either way, with the skills they approved."},
+					"title":    map[string]any{"type": "string", "description": "A few words on this agent's job, specific to the work: \"release notes writer\", \"payments backend engineer\". Den names the agent by its role (\"@backend-engineer\"), or by the title when the role is generic (coding agent, developer, engineer, assistant…): such a role without a title is refused. A name is only a label; it grants nothing."},
 					"skills":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these catalogue skills. Each must fit the role; it may be one the role's default offer (at most four) leaves out."},
 					"worktree": map[string]any{"oneOf": []any{map[string]any{"type": "boolean"}, map[string]any{"type": "string"}}, "description": "Optional: start the agent in a git worktree of its own (true, or a name for it), made by Claude Code under <repo>/.claude/worktrees on branch worktree-<name>, so agents editing one repository do not collide. dir must be in a git repository that has a commit. The human reviews and merges the branch in Den's Review; the agent is told to commit there and not to merge."},
 					"reason":   map[string]any{"type": "string", "description": "Only when the repository's team is at Den's cap (default 3 agents per repository, the orchestrator not counted): one line on why one more agent is needed. Den refuses a spawn over the cap without it, and shows the reason to the human in its chat."},
@@ -62,6 +63,9 @@ func runMCP() {
 				in, ok := orch.ParseSpawn(args)
 				if !ok {
 					return "", errDir
+				}
+				if why := needsTitle(in); why != "" {
+					return "", errorString(why)
 				}
 				if err := teamRoom(in, lead); err != nil {
 					return "", err
@@ -81,6 +85,7 @@ func runMCP() {
 				if err != nil {
 					return "", err
 				}
+				nameSpawned(res, in)
 				return strings.TrimSpace(res.Describe() + " " + note), nil
 			},
 		},

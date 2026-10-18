@@ -1036,6 +1036,9 @@ type SpawnInput struct {
 	// one the default offer's cap leaves out.
 	Role   string   `json:"role"`
 	Skills []string `json:"skills"`
+	// Title is a few words on the agent's job: Den names the agent by its
+	// role, or by the title when the role is generic.
+	Title string `json:"title"`
 	// Worktree gives the agent a git worktree of its own: true, or a name.
 	Worktree spawn.Worktree `json:"worktree"`
 	// Reason says why the team in the repository needs one more agent

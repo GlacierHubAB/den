@@ -33,7 +33,7 @@ func askSkills(in bridge.SkillsInput) (bridge.Decision, bool) {
 	return bridge.Ask(bridge.SocketPath(), env, skillsWait)
 }
 
-func names(ms []skills.Match) []string {
+func skillNames(ms []skills.Match) []string {
 	var out []string
 	for _, m := range ms {
 		out = append(out, m.Name)
@@ -64,7 +64,7 @@ func offerAgentSkills(req *spawn.Request, role string, want []string, by string)
 	sessions, _ := discover.Scan()
 	req.Name = spawn.PeerName(req.Name, dir, sessions)
 	root := skills.AgentRoot(req.Name, time.Now())
-	d, ok := askSkills(bridge.SkillsInput{Role: role, Skills: names(ms), Scope: string(skills.Agent), Dir: dir, Peer: req.Name, Root: root, AskedBy: by})
+	d, ok := askSkills(bridge.SkillsInput{Role: role, Skills: skillNames(ms), Scope: string(skills.Agent), Dir: dir, Peer: req.Name, Root: root, AskedBy: by})
 	switch {
 	case !ok:
 		return "Den did not answer the skills offer, so the agent started without skills.", nil
@@ -94,7 +94,7 @@ func offerProjectSkills(in orch.SkillsInput, by string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	d, ok := askSkills(bridge.SkillsInput{Role: in.Role, Skills: names(ms), Scope: string(skills.Project), Dir: dir, AskedBy: by, Reason: in.Reason})
+	d, ok := askSkills(bridge.SkillsInput{Role: in.Role, Skills: skillNames(ms), Scope: string(skills.Project), Dir: dir, AskedBy: by, Reason: in.Reason})
 	switch {
 	case !ok:
 		return "", errorString("Den is not running or did not answer; nothing was installed")
