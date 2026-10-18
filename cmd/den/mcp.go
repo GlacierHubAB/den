@@ -310,7 +310,7 @@ func proposeTool() mcp.Tool {
 	}
 	return mcp.Tool{
 		Name:        strings.TrimPrefix(orch.ProposeTool, "mcp__"+orch.MCPServer+"__"),
-		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
+		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they select it in Den's chat (↑) and press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

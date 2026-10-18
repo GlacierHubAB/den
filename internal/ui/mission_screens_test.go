@@ -557,6 +557,16 @@ func TestTwoProposalsNeedASelection(t *testing.T) {
 	if m.missions.Get("pa").State != mission.Proposed || m.missions.Get("pb").State != mission.Proposed {
 		t.Fatal("^Y with nothing selected started a proposal")
 	}
+	// Never silent: it says how to select one.
+	if m.flash != proposalKeyHint || !m.flashErr {
+		t.Errorf("^Y with nothing selected said %q (error %v)", m.flash, m.flashErr)
+	}
+	m.flash = ""
+	mm, _ = m.handleKey(tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl})
+	m = mm.(Model)
+	if m.flash != proposalKeyHint || m.missions.Get("pa").State != mission.Proposed || m.missions.Get("pb").State != mission.Proposed {
+		t.Errorf("^N with nothing selected said %q", m.flash)
+	}
 	m.moveCard(-1) // with no cards, ↑ selects the last proposal row: pb
 	if m.orch.propFocus != "pb" {
 		t.Fatalf("focus %q", m.orch.propFocus)

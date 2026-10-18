@@ -1476,6 +1476,11 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		return m.say(msg, true)
 	}
 	if it == nil || !it.Answerable() {
+		if len(m.stripProposals()) > 0 {
+			// Never silent, and never a guess: the key may have been meant
+			// for a card, so a proposal is answered only once selected.
+			return m.say(proposalKeyHint, true)
+		}
 		return m.say("Nothing is waiting for an answer.", true)
 	}
 	if m.tab != tabInbox && verb != "deny" && !m.detailShowsWhole(it) {
