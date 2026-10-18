@@ -1119,9 +1119,9 @@ shows the plan, each app, and what the agent will and will not have. On
 itself, and starts the agent. The agent has only the desktop tools: no
 shell, files, web, messages, app launching, keybinds or clipboard. It runs
 with no window of its own, so nothing opens in front of the work: what it
-says and does shows in Den's chat, and Drey's overlay shows
-it at work on the screen. To watch it in a terminal of its own instead, set
-`agent_view = true` in the `[desktop]` section; `Ctrl+C` there stops it.
+says and does shows in Den's chat. To watch it in a terminal of its own
+instead, set `agent_view = true` in the `[desktop]` section; `Ctrl+C` there
+stops it.
 
 **A task: the whole desktop.** The orchestrator can instead call
 `desktop_mission` with one task and no apps. The card reads "Control your
@@ -1142,7 +1142,12 @@ the agent's terminal when you turned it on, or a paired console's dock
 (Drey's); exiting or reloading Hyprland, or running `hyprctl` or
 `den` through a bind or a launch; closing or killing Den's window; binds
 that send keys to another window by name; and `ctrl+alt+Delete`,
-`Backspace` and `F1`–`F12`. Your levers are these:
+`Backspace` and `F1`–`F12`. The signs you can rely on during a task are
+Den's own: the `DESKTOP · on` chip in Den's header, the agent's view
+(when `agent_view` is on), and `/desktop stop`. A paired console's dock may also glow
+and offer a Stop, but those are extras, not a safety control. If the dock's
+overlay goes away during a task, the task goes on: Den's chip and
+`/desktop stop` are what to rely on. Your levers are these:
 
 - **The panic stop.** `/desktop stop` or `den desktop stop` (bind it to a
   key, below). The agent also stops when Den quits, however Den ends: it is
