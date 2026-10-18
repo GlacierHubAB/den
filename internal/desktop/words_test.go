@@ -95,3 +95,75 @@ func TestFilterDesktop(t *testing.T) {
 		t.Error("a snapshot of another shape must fail")
 	}
 }
+
+// A task sees the whole desktop but Den's own windows: every monitor,
+// workspace and other window, the focused window and the cursor. Layers
+// stay dropped.
+func TestFilterDesktopTask(t *testing.T) {
+	m := Mission{Task: true, Protected: map[string]bool{"0xd": true, "0xgone": true}}
+	raw := `{"monitors":[{"name":"DP-1","geometry":[0,0,1920,1080]},{"name":"DP-2","geometry":[1920,0,1920,1080]}],
+	"workspaces":[{"id":1,"name":"1"},{"id":4,"name":"4"}],
+	"windows":[{"address":"0xd","title":"Den"},{"address":"0xf","title":"x.com - Firefox"},{"address":"0xt","title":"notes"}],
+	"active_window":"0xf","cursor":[2500,300],"layers":[{"namespace":"drey-dock"}]}`
+	sc := ScopeOf(m, Snapshot{})
+	out, err := FilterDesktop([]byte(raw), sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back struct {
+		Monitors   []map[string]any `json:"monitors"`
+		Workspaces []map[string]any `json:"workspaces"`
+		Windows    []map[string]any `json:"windows"`
+		Active     any              `json:"active_window"`
+		Cursor     []float64        `json:"cursor"`
+		Layers     any              `json:"layers"`
+		Note       string           `json:"note"`
+	}
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Monitors) != 2 || len(back.Workspaces) != 2 {
+		t.Errorf("monitors %v, workspaces %v", back.Monitors, back.Workspaces)
+	}
+	if len(back.Windows) != 2 || back.Windows[0]["address"] != "0xf" || back.Windows[1]["address"] != "0xt" {
+		t.Errorf("windows %v", back.Windows)
+	}
+	if strings.Contains(string(out), `"Den"`) || strings.Contains(string(out), "0xd") {
+		t.Errorf("Den's window leaked: %s", out)
+	}
+	if back.Active != "0xf" || len(back.Cursor) != 2 || back.Cursor[0] != 2500 {
+		t.Errorf("active %v, cursor %v", back.Active, back.Cursor)
+	}
+	if back.Layers != nil || strings.Contains(string(out), "drey-dock") {
+		t.Errorf("layers shown: %s", out)
+	}
+	if back.Note != "Den hides only its own windows." {
+		t.Errorf("note %q", back.Note)
+	}
+
+	// Den's window focused: not named as the focused window.
+	out, _ = FilterDesktop([]byte(strings.Replace(raw, `"active_window":"0xf"`, `"active_window":"0xd"`, 1)), sc)
+	back.Active = nil
+	json.Unmarshal(out, &back)
+	if back.Active != nil {
+		t.Errorf("Den's focused window shown as %v", back.Active)
+	}
+	// No cursor or focus at all: null, not an error.
+	out, err = FilterDesktop([]byte(`{"monitors":[],"workspaces":[],"windows":[],"active_window":null,"cursor":null}`), sc)
+	if err != nil || !strings.Contains(string(out), `"cursor":null`) {
+		t.Errorf("empty desktop: %s, %v", out, err)
+	}
+}
+
+// ScopeOf for a task names every protected address, sorted, and no
+// mission workspace or windows; a mission's Scope has no Hidden.
+func TestScopeOfTask(t *testing.T) {
+	sc := ScopeOf(Mission{Task: true, Protected: map[string]bool{"0xb": true, "0xa": true, "": true}}, Snapshot{})
+	if !sc.Task || len(sc.Windows) != 0 || sc.Workspace != 0 || strings.Join(sc.Hidden, ",") != "0xa,0xb" {
+		t.Errorf("task scope %+v", sc)
+	}
+	m, s := fixture()
+	if mc := ScopeOf(m, s); mc.Task || mc.Hidden != nil {
+		t.Errorf("mission scope %+v", mc)
+	}
+}

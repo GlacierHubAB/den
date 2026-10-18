@@ -2,6 +2,8 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/desktop"
@@ -54,5 +56,33 @@ func TestDesktopTaskLeavesTheDockAlone(t *testing.T) {
 	start = "99999"
 	if dv, _ := deskCall(m, "pointer", `{"action":"click","x":1100,"y":700}`); dv.Behavior != "allow" {
 		t.Fatalf("a stale console pid still protects: %+v", dv)
+	}
+}
+
+// A task's desktop call is answered with the whole desktop but Den's own
+// windows and the dock's, which the proxy then hides from the agent.
+func TestDesktopTaskScopeHidesDenAndTheDock(t *testing.T) {
+	m, d, _ := taskMission(t)
+	oldConsole, oldStart, oldSnap := deskConsole, deskStart, deskSnapshot
+	t.Cleanup(func() { deskConsole, deskStart, deskSnapshot = oldConsole, oldStart, oldSnap })
+	deskConsole = func(*Model) map[int]uint64 { return map[int]uint64{1500: 15000} }
+	deskStart = func(pid int) string {
+		if pid == 1500 {
+			return "15000"
+		}
+		return oldStart(pid)
+	}
+	deskSnapshot = func(context.Context) (desktop.Snapshot, error) {
+		s := d.snap()
+		s.Windows = append(s.Windows, desktop.Window{Address: "0xdock", Class: "drey", PID: 1500, Workspace: 1, At: [2]int{1000, 600}, Size: [2]int{400, 300}, Mapped: true})
+		return s, nil
+	}
+	dv, _ := deskCall(m, "desktop", `{}`)
+	var a desktop.Answer
+	if dv.Behavior != "allow" || json.Unmarshal(dv.Data, &a) != nil || a.Scope == nil {
+		t.Fatalf("desktop call: %+v", dv)
+	}
+	if !a.Scope.Task || strings.Join(a.Scope.Hidden, ",") != "0xden,0xdock,0xview" {
+		t.Fatalf("task scope %+v", *a.Scope)
 	}
 }
