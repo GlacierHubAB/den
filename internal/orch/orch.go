@@ -192,6 +192,16 @@ const (
 	RuleTool  = "mcp__den__propose_rule"
 )
 
+// DenTools are Den's tools the orchestrator always has; SpawnTools those
+// it has only with Spawn. One list for every mode: --allowedTools without
+// control, and the tools Den allows in a human's turn with control on
+// (humanTools), so a tool can never be offered in one mode and refused in
+// another.
+var (
+	DenTools   = []string{MissionTool, ProposeTool, TuneTool, RuleTool, NoteTool, NotesTool}
+	SpawnTools = []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool, DesktopMissionTool}
+)
+
 // MissionsOnly is the `den mcp` argument that offers update_mission alone,
 // for an orchestrator that may not open terminals or start agents.
 const MissionsOnly = "--missions-only"
@@ -377,10 +387,10 @@ func Argv(o Options) []string {
 			args = append(args, "--mcp-config", controlMCPConfig(exe, o.Spawn), "--strict-mcp-config")
 		case o.Spawn:
 			args = append(args, "--mcp-config", MCPConfig(exe), "--strict-mcp-config")
-			allowed += "," + SpawnAgentTool + "," + OpenTerminalTool + "," + CloseAgentTool + "," + SkillsTool + "," + MissionTool + "," + DesktopMissionTool + "," + ProposeTool + "," + TuneTool + "," + RuleTool + "," + NoteTool + "," + NotesTool
+			allowed += "," + strings.Join(append(append([]string(nil), SpawnTools...), DenTools...), ",")
 		default:
 			args = append(args, "--mcp-config", missionsMCPConfig(exe), "--strict-mcp-config")
-			allowed += "," + MissionTool + "," + ProposeTool + "," + TuneTool + "," + RuleTool + "," + NoteTool + "," + NotesTool
+			allowed += "," + strings.Join(DenTools, ",")
 		}
 	}
 	if o.Control {
