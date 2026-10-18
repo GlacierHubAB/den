@@ -2,6 +2,7 @@ package names
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func TestResolve(t *testing.T) {
 		{"pebble quokka", Opts{}, "cccc3333"},    // the alias
 		{"Amber Otter@devbox", Opts{}, "dddd4444"},
 		{"builder@devbox", Opts{}, "dddd4444"},
-		{"amber-otter", Opts{}, "eeee5555"}, // a peer handle beats a name elsewhere
+		{"amber-otter", Opts{}, "eeee5555"}, // a name elsewhere needs its host
 		{"Mossy Lemur", Opts{}, ""},         // two share it: refused
 		{"Mossy Lemur@local", Opts{}, ""},
 		{"tech", Opts{}, ""}, // no prefix without Opts.Prefix
@@ -61,5 +62,36 @@ func TestResolveSaysWhy(t *testing.T) {
 	}
 	if _, err := Resolve("nobody", fleet, Opts{}); !errors.Is(err, ErrNoMatch) {
 		t.Fatalf("no match: %v", err)
+	}
+}
+
+// A peer handle is not Den's to choose: a session whose handle is another
+// agent's name or alias does not capture it, and neither does a name
+// capture another agent's alias. One session matching through several
+// fields is still one.
+func TestResolveExactFieldsAreOneTier(t *testing.T) {
+	cands := []Candidate{
+		{ID: "s-agent", Peer: "den-api", Name: "Mossy Lemur"},
+		{ID: "s-outside", Peer: "Mossy Lemur"},
+		{ID: "s-renamed", Peer: "docs", Name: "technical-writer", Alias: "Pebble Quokka"},
+		{ID: "s-pebble", Peer: "misc", Name: "Pebble Quokka"},
+		{ID: "s-self", Peer: "builder", Name: "builder"},
+	}
+	var amb *Ambiguous
+	if _, err := Resolve("Mossy Lemur", cands, Opts{}); !errors.As(err, &amb) || len(amb.Candidates) != 2 {
+		t.Errorf("a handle against a name: %v", err)
+	}
+	if _, err := Resolve("pebble quokka", cands, Opts{}); !errors.As(err, &amb) || len(amb.Candidates) != 2 {
+		t.Errorf("a name against an alias: %v", err)
+	}
+	if c, err := Resolve("builder", cands, Opts{}); err != nil || c.ID != "s-self" {
+		t.Errorf("one session through two fields: %q %v", c.ID, err)
+	}
+	if c, err := Resolve("den-api", cands, Opts{}); err != nil || c.ID != "s-agent" {
+		t.Errorf("a unique handle: %q %v", c.ID, err)
+	}
+	// Labels are labels: no control characters reach a message.
+	if l := Labels([]Candidate{{Name: "x\x1b[31mred", Peer: "p\u202eq", Host: "h\nost"}}); strings.ContainsAny(l[0], "\x1b\n\u202e") {
+		t.Errorf("label %q", l[0])
 	}
 }

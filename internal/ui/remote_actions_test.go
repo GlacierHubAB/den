@@ -320,6 +320,9 @@ func TestCloseNameOnSeveralHostsNeedsTheHost(t *testing.T) {
 	if it := openClose(mm.(Model)); it == nil || strings.Contains(strings.Join(it.Body, "\n"), "SIGTERM there") {
 		t.Errorf("an unqualified name did not mean the local agent: %+v", it)
 	}
+	for _, it := range closeItems(*m) {
+		m.store.Settle(it, false, "kept")
+	}
 	m.base = nil
 	m.refresh()
 	mm, _ = m.closeCommand([]string{"Mossy Lemur"})

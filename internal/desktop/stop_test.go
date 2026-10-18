@@ -127,35 +127,6 @@ func TestStopAfterAnUpdateInPlace(t *testing.T) {
 	}
 }
 
-// Stop still ends a process whose binary was updated in place during the
-// mission (Claude Code updates itself): it is the process recorded.
-func TestStopAfterAnUpdateInPlace(t *testing.T) {
-	src, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep")
-	}
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin := filepath.Join(t.TempDir(), "claude")
-	if err := os.WriteFile(bin, raw, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	c := exec.Command(bin, "30")
-	if err := c.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { c.Process.Kill(); c.Wait() })
-	p := RecordProc(c.Process.Pid)
-	os.Remove(bin) // the update writes a new file at the path
-	os.WriteFile(bin, raw, 0o755)
-	r := Stop(Targets{Agent: p}, filepath.Join(t.TempDir(), "none.json"))
-	if len(r.Stopped) != 1 || !gone(c) {
-		t.Fatalf("not stopped after the update: %+v", r)
-	}
-}
-
 func TestBeaconZombieAndStale(t *testing.T) {
 	c := exec.Command("true")
 	c.Start()

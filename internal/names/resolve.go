@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // Candidate is one agent a name may point to.
@@ -67,15 +69,15 @@ func Labels(cs []Candidate) []string {
 	}
 	out := make([]string, 0, len(cs))
 	for _, c := range cs {
-		l := c.Name
+		l := sanitize.Label(c.Name, 60)
 		if l == "" {
-			l = c.Peer
+			l = sanitize.Label(c.Peer, 60)
 		}
 		if count[key(c)] > 1 && c.Peer != "" && c.Peer != c.Name {
-			l += " (" + c.Peer + ")"
+			l += " (" + sanitize.Label(c.Peer, 60) + ")"
 		}
 		if c.Host != "" {
-			l += "@" + c.Host
+			l += "@" + sanitize.Label(c.Host, 60)
 		}
 		out = append(out, l)
 	}
@@ -86,9 +88,9 @@ func Labels(cs []Candidate) []string {
 // may end with "@host" ("@local" for this machine). Without a host it
 // names an agent on this machine; an agent elsewhere needs its host. The
 // tiers are tried in order, and the first that matches anything decides:
-// a session id or pid (with Opts.IDs), the exact peer handle, the exact
-// name, the exact alias, then (with Opts.Prefix) a prefix of a name or an
-// alias. Names match case-insensitively. More than one match in the
+// a session id or pid (with Opts.IDs); then the exact peer handle, name or
+// alias, together, so that one session's handle never captures another's
+// name; then (with Opts.Prefix) a prefix of a name or an alias. Names match case-insensitively. More than one match in the
 // deciding tier is *Ambiguous; none here is *NeedsHost when agents
 // elsewhere match, else ErrNoMatch.
 func Resolve(query string, cands []Candidate, o Opts) (Candidate, error) {
@@ -147,11 +149,15 @@ func decide(query, q string, pool []Candidate, o Opts) (Candidate, error, bool) 
 			func(c Candidate) bool { return len(q) >= 4 && strings.HasPrefix(c.ID, q) },
 		)
 	}
-	tiers = append(tiers,
-		func(c Candidate) bool { return c.Peer != "" && strings.EqualFold(c.Peer, q) },
-		func(c Candidate) bool { return c.Name != "" && strings.EqualFold(c.Name, q) },
-		func(c Candidate) bool { return c.Alias != "" && strings.EqualFold(c.Alias, q) },
-	)
+	// The peer handle, the name and the alias are one tier: a peer handle is
+	// not Den's to choose (any session may call itself "Mossy Lemur"), so a
+	// handle never wins over another agent's name, nor a name over another
+	// agent's alias. Two sessions across them is ambiguous.
+	tiers = append(tiers, func(c Candidate) bool {
+		return c.Peer != "" && strings.EqualFold(c.Peer, q) ||
+			c.Name != "" && strings.EqualFold(c.Name, q) ||
+			c.Alias != "" && strings.EqualFold(c.Alias, q)
+	})
 	if o.Prefix {
 		tiers = append(tiers, func(c Candidate) bool {
 			return strings.HasPrefix(strings.ToLower(c.Name), lower) || c.Alias != "" && strings.HasPrefix(strings.ToLower(c.Alias), lower)
