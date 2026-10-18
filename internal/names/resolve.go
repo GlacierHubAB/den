@@ -63,7 +63,7 @@ func (e *NeedsHost) Error() string {
 // two share the name, and the host for one elsewhere.
 func Labels(cs []Candidate) []string {
 	count := map[string]int{}
-	key := func(c Candidate) string { return strings.ToLower(c.Name) + "@" + strings.ToLower(c.Host) }
+	key := func(c Candidate) string { return Fold(c.Name) + "@" + Fold(c.Host) }
 	for _, c := range cs {
 		count[key(c)]++
 	}
@@ -100,7 +100,7 @@ func Resolve(query string, cands []Candidate, o Opts) (Candidate, error) {
 	}
 	host, qualified := "", false
 	if i := strings.LastIndexByte(q, '@'); i >= 0 {
-		host, q, qualified = strings.ToLower(strings.TrimSpace(q[i+1:])), strings.TrimSpace(q[:i]), true
+		host, q, qualified = Fold(strings.TrimSpace(q[i+1:])), strings.TrimSpace(q[:i]), true
 		if host == "local" {
 			host = ""
 		}
@@ -111,7 +111,7 @@ func Resolve(query string, cands []Candidate, o Opts) (Candidate, error) {
 	var pool, elsewhere []Candidate
 	for _, c := range cands {
 		switch {
-		case qualified && strings.EqualFold(c.Host, host), !qualified && c.Host == "":
+		case qualified && Fold(c.Host) == Fold(host), !qualified && c.Host == "":
 			pool = append(pool, c)
 		case !qualified:
 			elsewhere = append(elsewhere, c)
@@ -139,7 +139,7 @@ func Resolve(query string, cands []Candidate, o Opts) (Candidate, error) {
 
 // decide runs the tiers over pool: ok when a tier matched anything.
 func decide(query, q string, pool []Candidate, o Opts) (Candidate, error, bool) {
-	lower := strings.ToLower(q)
+	lower := Fold(q)
 	tiers := []func(Candidate) bool{}
 	if o.IDs {
 		pid, _ := strconv.Atoi(q)
@@ -154,13 +154,13 @@ func decide(query, q string, pool []Candidate, o Opts) (Candidate, error, bool) 
 	// handle never wins over another agent's name, nor a name over another
 	// agent's alias. Two sessions across them is ambiguous.
 	tiers = append(tiers, func(c Candidate) bool {
-		return c.Peer != "" && strings.EqualFold(c.Peer, q) ||
-			c.Name != "" && strings.EqualFold(c.Name, q) ||
-			c.Alias != "" && strings.EqualFold(c.Alias, q)
+		return c.Peer != "" && Fold(c.Peer) == Fold(q) ||
+			c.Name != "" && Fold(c.Name) == Fold(q) ||
+			c.Alias != "" && Fold(c.Alias) == Fold(q)
 	})
 	if o.Prefix {
 		tiers = append(tiers, func(c Candidate) bool {
-			return strings.HasPrefix(strings.ToLower(c.Name), lower) || c.Alias != "" && strings.HasPrefix(strings.ToLower(c.Alias), lower)
+			return strings.HasPrefix(Fold(c.Name), lower) || c.Alias != "" && strings.HasPrefix(Fold(c.Alias), lower)
 		})
 	}
 	for _, match := range tiers {
@@ -180,4 +180,18 @@ func decide(query, q string, pool []Candidate, o Opts) (Candidate, error, bool) 
 		}
 	}
 	return Candidate{}, nil, false
+}
+
+// Fold lowers ASCII letters only, byte by byte, and leaves every other rune
+// as it is: a lookalike (the Kelvin sign for K, a long s, a dotted capital
+// I) never matches the plain letter it resembles. Every name match in Den
+// folds this way.
+func Fold(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }

@@ -35,7 +35,7 @@ func resolveMention(text string, agents []fleet.Agent) mention {
 		return mention{body: text}
 	}
 	rest := strings.TrimPrefix(text, "@")
-	lower := strings.ToLower(rest)
+	lower := names.Fold(rest)
 	cands := fleet.Candidates(agents)
 	// The longest whole name that starts the text, on this machine first:
 	// a longer name on a host never captures a local agent's mention.
@@ -46,7 +46,7 @@ func resolveMention(text string, agents []fleet.Agent) mention {
 				continue
 			}
 			for _, n := range []string{c.Name, c.Alias, c.Peer} {
-				n = strings.ToLower(n)
+				n = names.Fold(n)
 				if n == "" || len(n) <= best || !strings.HasPrefix(lower, n) {
 					continue
 				}
@@ -108,7 +108,7 @@ func hostQualifier(after string) (host, body string, ok bool) {
 		return "", "", false
 	}
 	host, body, _ = strings.Cut(rest, " ")
-	return strings.ToLower(host), strings.TrimSpace(body), true
+	return names.Fold(host), strings.TrimSpace(body), true
 }
 
 // mentionText is what completing a mention inserts: the name, with the
@@ -133,13 +133,13 @@ func completions(text string, agents []fleet.Agent) []fleet.Agent {
 	if resolveMention(text, agents).target != nil && strings.Contains(text, " ") {
 		return nil
 	}
-	partial := strings.ToLower(strings.TrimPrefix(text, "@"))
+	partial := names.Fold(strings.TrimPrefix(text, "@"))
 	var out []fleet.Agent
 	for _, a := range agents {
 		if a.Status == fleet.Gone {
 			continue
 		}
-		if strings.HasPrefix(strings.ToLower(a.Name), partial) || strings.HasPrefix(strings.ToLower(mentionText(a)[1:]), partial) {
+		if strings.HasPrefix(names.Fold(a.Name), partial) || strings.HasPrefix(names.Fold(mentionText(a)[1:]), partial) {
 			out = append(out, a)
 		}
 	}
