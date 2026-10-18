@@ -20,6 +20,20 @@ import (
 	"github.com/GlacierHubAB/den/internal/mission"
 )
 
+// How much of each file is read, newest part first, per file. A source whose
+// records are held in memory while they are counted gets about four times
+// the size Den itself keeps the file to, so a file that grew far past that
+// costs tens of MiB and not hundreds; the chat log is only streamed over, so
+// it gets more. The figures of a file that is cut are those of its newest
+// part, and the report says so (Source.Truncated).
+var (
+	limitEvents   int64 = 4 * events.MaxSize   // Den rotates the stream at events.MaxSize
+	limitMetrics  int64 = 4 * metrics.MaxBytes // and this at metrics.MaxBytes
+	limitMissions int64 = 16 << 20             // Den compacts a record of 256 KiB to a line per mission
+	limitHooks    int64 = 64 << 20             // hooks.log is never rotated: about 6 months at this rate
+	limitChat     int64 = 256 << 20            // orchestrator.jsonl is never rotated either, but not held
+)
+
 // Paths are the state files Compute reads. "" leaves one out, which a
 // report shows as not recorded. events.jsonl.1 and metrics.jsonl.1, the
 // files they move to when they are full, are read first when present.
@@ -182,7 +196,7 @@ func (r *Report) fromEvents(p Paths, since, until time.Time) {
 	src := Source{File: "events.jsonl"}
 	var evs []event
 	for _, path := range withOld(p.Events) {
-		src.read(path, func(line []byte) (time.Time, bool) {
+		src.read(path, limitEvents, func(line []byte) (time.Time, bool) {
 			var e events.Event
 			if json.Unmarshal(line, &e) != nil || e.Time.IsZero() || e.Session == "" {
 				return time.Time{}, false
@@ -336,7 +350,7 @@ func (r *Report) waits(hooks string, needs []need) {
 	}
 	src := Source{File: "hooks.log"}
 	runs := map[string][]time.Time{}
-	src.read(hooks, func(line []byte) (time.Time, bool) {
+	src.read(hooks, limitHooks, func(line []byte) (time.Time, bool) {
 		f := bytes.Fields(line)
 		if len(f) < 4 {
 			return time.Time{}, false
@@ -393,7 +407,7 @@ func short(session string) string {
 func (r *Report) fromChat(path string, since, until time.Time) {
 	src := Source{File: "orchestrator.jsonl"}
 	m := &Messages{}
-	src.read(path, func(line []byte) (time.Time, bool) {
+	src.read(path, limitChat, func(line []byte) (time.Time, bool) {
 		var c struct {
 			Kind    string    `json:"kind"`
 			At      time.Time `json:"at"`
@@ -424,7 +438,7 @@ func (r *Report) fromMissions(path string, since, until time.Time) {
 	src := Source{File: "missions.jsonl"}
 	// A mission is saved as a whole line each time; the last line wins.
 	merges := map[string][]mission.Merge{}
-	src.read(path, func(line []byte) (time.Time, bool) {
+	src.read(path, limitMissions, func(line []byte) (time.Time, bool) {
 		var m struct {
 			ID     string          `json:"id"`
 			Merges []mission.Merge `json:"merges"`
@@ -460,7 +474,7 @@ func (r *Report) fromMetrics(path string, since, until time.Time) {
 	src := Source{File: "metrics.jsonl"}
 	latest := map[string]metrics.Record{}
 	for _, f := range withOld(path) {
-		src.read(f, func(line []byte) (time.Time, bool) {
+		src.read(f, limitMetrics, func(line []byte) (time.Time, bool) {
 			var rec metrics.Record
 			if json.Unmarshal(line, &rec) != nil || rec.Mission == "" || rec.At.IsZero() {
 				return time.Time{}, false

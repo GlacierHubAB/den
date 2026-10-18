@@ -106,7 +106,7 @@ func (s Source) describe(since time.Time) string {
 		}
 	}
 	if s.Truncated {
-		out += "; only the newest " + fmt.Sprint(maxFileBytes>>20) + " MiB was read"
+		out += "; only the newest " + fmt.Sprint(s.Limit>>20) + " MiB of a file was read"
 	}
 	return out
 }

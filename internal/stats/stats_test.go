@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -321,11 +322,9 @@ func TestReadsAreBounded(t *testing.T) {
 	path := write(t, dir, "events.jsonl", lines...)
 	fi, _ := os.Stat(path)
 
-	defer func(old int64) { maxFileBytes = old }(maxFileBytes)
-	maxFileBytes = fi.Size() / 4
 	src := Source{File: "events.jsonl"}
 	n := 0
-	src.read(path, func(line []byte) (time.Time, bool) {
+	src.read(path, fi.Size()/4, func(line []byte) (time.Time, bool) {
 		var ev events.Event
 		if json.Unmarshal(line, &ev) != nil {
 			return time.Time{}, false
@@ -333,7 +332,7 @@ func TestReadsAreBounded(t *testing.T) {
 		n++
 		return ev.Time, true
 	})
-	if !src.Truncated || src.Skipped != 0 || n == 0 || n >= 50 {
+	if !src.Truncated || src.Limit != fi.Size()/4 || src.Skipped != 0 || n == 0 || n >= 50 {
 		t.Errorf("truncated %v, %d lines skipped, %d events read of 50", src.Truncated, src.Skipped, n)
 	}
 	if src.Last == nil || !src.Last.Equal(at(49, 0)) {
@@ -341,13 +340,71 @@ func TestReadsAreBounded(t *testing.T) {
 	}
 
 	// A line over the limit is skipped and the lines after it still read.
-	maxFileBytes = 256 << 20
 	long := write(t, dir, "long.jsonl", `{"pad":"`+strings.Repeat("x", maxLineBytes)+`"}`, evLine(at(1, 0), events.Done, sessA))
 	src = Source{File: "long"}
 	n = 0
-	src.read(long, func(line []byte) (time.Time, bool) { n++; return time.Time{}, true })
+	src.read(long, 1<<30, func(line []byte) (time.Time, bool) { n++; return time.Time{}, true })
 	if src.Skipped != 1 || n != 1 || src.Lines != 1 {
 		t.Errorf("long line: %d skipped, %d read", src.Skipped, n)
+	}
+}
+
+// A file that grew far past the size Den keeps it to is read from its newest
+// part only, so the lines held in memory are bounded, and the figures of a
+// window in that part are those of the whole file.
+func TestLargeFilesAreCappedAndTheWindowIsUnchanged(t *testing.T) {
+	// The caps never cut a file Den wrote and tidied itself.
+	if limitEvents < 2*events.MaxSize || limitMetrics < 2*metrics.MaxBytes {
+		t.Fatalf("limits %d and %d are under twice the sizes Den rotates the files at", limitEvents, limitMetrics)
+	}
+	p := fixture(t)
+	var evFill, hookFill []string
+	for i := range 4000 {
+		tm := base.Add(-48*time.Hour + time.Duration(i)*time.Second)
+		evFill = append(evFill, evLine(tm, events.TurnStart, sessC), evLine(tm.Add(500*time.Millisecond), events.Done, sessC))
+		hookFill = append(hookFill, hookLine(tm, "PostToolUse", sessA))
+	}
+	// The window's own lines stay at the end of each file, where the newest part is.
+	for path, fill := range map[string][]string{p.Events: evFill, p.Hooks: hookFill} {
+		old, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(strings.Join(fill, "\n")+"\n"+string(old)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func(e, h int64) { limitEvents, limitHooks = e, h }(limitEvents, limitHooks)
+	limitEvents, limitHooks = 64<<10, 32<<10
+	capped := Compute(p, base, base.Add(time.Hour))
+	limitEvents, limitHooks = 1<<30, 1<<30
+	full := Compute(p, base, base.Add(time.Hour))
+
+	if capped.Turns == nil || capped.Turns.Finished != 6 || !reflect.DeepEqual(capped.Turns, full.Turns) || !reflect.DeepEqual(capped.Waits, full.Waits) {
+		t.Errorf("the cap changed the figures:\n capped %+v %+v\n full   %+v %+v", capped.Turns, capped.Waits, full.Turns, full.Waits)
+	}
+	find := func(r Report, file string) Source {
+		for _, s := range r.Sources {
+			if s.File == file {
+				return s
+			}
+		}
+		t.Fatalf("no source %s", file)
+		return Source{}
+	}
+	for _, c := range []struct {
+		file         string
+		limit        int64
+		shortestLine int
+	}{{"events.jsonl", 64 << 10, 100}, {"hooks.log", 32 << 10, 50}} {
+		cut, whole := find(capped, c.file), find(full, c.file)
+		if !cut.Truncated || cut.Limit != c.limit || whole.Truncated {
+			t.Errorf("%s: truncated %v limit %d, uncapped truncated %v", c.file, cut.Truncated, cut.Limit, whole.Truncated)
+		}
+		// Every line is at least shortestLine bytes, so what was held is bounded by the limit.
+		if cut.Lines*c.shortestLine > int(c.limit) || cut.Lines >= whole.Lines/2 {
+			t.Errorf("%s: %d lines held under a limit of %d bytes, %d uncapped", c.file, cut.Lines, c.limit, whole.Lines)
+		}
 	}
 }
 
@@ -368,13 +425,13 @@ func TestOnlyRegularFilesAreRead(t *testing.T) {
 		if name != "" {
 			path = filepath.Join(dir, name)
 		}
-		src.read(path, func(line []byte) (time.Time, bool) { t.Errorf("%s: a line was read", name); return time.Time{}, true })
+		src.read(path, 1<<20, func(line []byte) (time.Time, bool) { t.Errorf("%s: a line was read", name); return time.Time{}, true })
 		if src.Problem != want || src.ok() {
 			t.Errorf("%q: problem %q, want %q", name, src.Problem, want)
 		}
 	}
 	src := Source{File: "real"}
-	src.read(real, func(line []byte) (time.Time, bool) { return time.Time{}, true })
+	src.read(real, 1<<20, func(line []byte) (time.Time, bool) { return time.Time{}, true })
 	if !src.ok() || src.Lines != 1 {
 		t.Errorf("a regular file: %+v", src)
 	}

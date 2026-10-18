@@ -64,13 +64,24 @@ Top-level keys: `since`, `until` (UTC), `turns`, `waits`, `messages`, `merges`,
 `metrics`, `not_recorded` and `sources`. Durations are in seconds, except
 `branch_hours_*`. A figure that was not recorded is `null`. `sources` has, for
 each file read, how many records it held, how many lines were skipped, the
-first and last record time, and why it could not be read, if it could not.
+first and last record time, whether it was cut to its newest part
+(`truncated`, `limit_bytes`), and why it could not be read, if it could not.
 
 ## What it reads, and how
 
 The files are untrusted data. `den stats` opens each one read-only, refuses a
-symlink or anything but a regular file, reads at most the newest 256 MiB of it,
-skips a line over 4 MiB, and skips and counts a line that does not parse. It
-does not use the loaders that tidy a file as they read it. It prints counts,
-durations and times, never a message, a prompt, a file path, a session id, an
-agent's name or an agent's output.
+symlink or anything but a regular file, skips a line over 4 MiB, and skips and
+counts a line that does not parse. It does not use the loaders that tidy a
+file as they read it. It prints counts, durations and times, never a message,
+a prompt, a file path, a session id, an agent's name or an agent's output.
+
+A file that has grown large is read from its newest part only: 16 MiB of each
+events file (Den rotates the stream at 4 MiB), 4 MiB of `metrics.jsonl`
+(rotated at 1 MiB), 16 MiB of `missions.jsonl`, 64 MiB of `hooks.log` and 256
+MiB of the chat log. Den never rotates the last two. The first four are held
+in memory while they are counted, so the memory used is bounded by those
+sizes and not by how large a file grew; a 16 MiB events file of the shortest
+possible lines took about 100 MiB. The events stream, `metrics.jsonl` and
+`missions.jsonl` as Den keeps them are never cut. A file that is cut is named
+in the last section of the output, and its figures are those of its newest
+part.
