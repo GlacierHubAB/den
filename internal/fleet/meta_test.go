@@ -267,3 +267,21 @@ func TestWireLenMatchesEncodingJSON(t *testing.T) {
 		}
 	}
 }
+
+// Two agents on this machine with one critter name: the name is neither,
+// and the error names both with their peer handles.
+func TestLookupRefusesASharedName(t *testing.T) {
+	mk := func(id, peer string) Agent {
+		return Agent{Session: discover.Session{SessionID: id, Name: peer}, Name: "Zippy Wombat"}
+	}
+	agents := []Agent{mk("aaaa", "drey-lead"), mk("bbbb", "demo-a")}
+	if _, err := Lookup(agents, "zippy wombat"); err == nil || !strings.Contains(err.Error(), "drey-lead") || !strings.Contains(err.Error(), "demo-a") {
+		t.Errorf("shared name: %v", err)
+	}
+	if _, err := Lookup(agents, "zippy"); err == nil {
+		t.Error("a shared prefix picked one")
+	}
+	if a, err := Lookup(agents, "bbbb"); err != nil || a.Session.Name != "demo-a" {
+		t.Errorf("by session id: %+v %v", a, err)
+	}
+}

@@ -129,7 +129,7 @@ func (m *Model) checkRules(repo string) {
 	default:
 		body = append(body, "rules.md was removed.")
 	}
-	it := m.store.AddRulesEdited("memory:"+repo, "Rules of "+name+" changed outside Den", body)
+	it := m.store.AddRulesEdited(memorySessionPrefix+repo, "Rules of "+name+" changed outside Den", body)
 	if m.mem.edited == nil {
 		m.mem.edited = map[string]string{}
 	}
@@ -303,7 +303,7 @@ func (m *Model) rulesCard(repo string) {
 		p.ids = append(p.ids, pr.ID)
 	}
 	name := strconv.Quote(sanitize.Label(firstNonEmptyS(mt.Name, repo), 60))
-	it := m.store.AddRulesPick("memory:"+repo, "Rules proposed for "+name, m.rulesBody(p))
+	it := m.store.AddRulesPick(memorySessionPrefix+repo, "Rules proposed for "+name, m.rulesBody(p))
 	if m.mem.picks == nil {
 		m.mem.picks = map[string]*rulesPick{}
 	}
@@ -313,11 +313,60 @@ func (m *Model) rulesCard(repo string) {
 
 // rulesBody is a rules card's text: each proposal whole, numbered, picked
 // or not, and where it came from in Den's words.
+// memorySessionPrefix keys a project's memory cards (proposed rules,
+// rules edited outside Den) by its repository id.
+const memorySessionPrefix = "memory:"
+
+// A rules card fences each note it shows between these lines; a console's
+// copy of the card leaves the fenced notes out (withoutNotes).
+const (
+	noteFenceTop    = "    ┌"
+	noteFenceBottom = "    └"
+)
+
+// rulesKeys is the card's keys line, in plain words.
+func rulesKeys(n int) string {
+	if n == 1 {
+		return "1 selects it · ^Y keeps it, once selected · ^N drops it"
+	}
+	return "1–" + strconv.Itoa(n) + " select · ^Y keep the selected rules · ^N drop all"
+}
+
+// rulesBody is the card the human judges proposed rules on, each in place:
+// what approving does, the project's rules now, then each rule with the
+// notes it was drawn from, whole and fenced as the agents' own words (a
+// note is at most memory.MaxNote, so none is cut).
 func (m *Model) rulesBody(p *rulesPick) []string {
 	mt := m.memMeta(p.repo)
-	body := []string{"Press 1-" + strconv.Itoa(len(p.ids)) + " here to pick rules (none picked yet). ^Y makes the picked ones rules, which reach the orchestrator and the agents Den starts on this project as your own words; ^N drops every one shown."}
+	name := sanitize.Label(firstNonEmptyS(mt.Name, p.repo), 60)
+	body := []string{
+		"Approved rules are added to " + name + "'s rules and reach the orchestrator and every agent Den starts on " + name + " as your own instruction.",
+		rulesKeys(len(p.ids)),
+	}
+	var picked []string
+	for i := range p.ids {
+		if p.picked[i] {
+			picked = append(picked, strconv.Itoa(i+1))
+		}
+	}
+	if len(picked) == 0 {
+		body = append(body, "None selected yet.")
+	} else {
+		body = append(body, "Selected: "+strings.Join(picked, ", ")+".")
+	}
 	if len(mt.Pending) > len(p.ids) {
 		body = append(body, strconv.Itoa(len(mt.Pending)-len(p.ids))+" more wait for the next card.")
+	}
+	body = append(body, "", name+"'s rules now:")
+	switch st := memory.ReadRules(m.memDir(p.repo), *mt); {
+	case st.Edited:
+		body = append(body, "  rules.md was changed outside Den: approve it in Den first (its own card)")
+	case len(st.Rules) == 0:
+		body = append(body, "  no rules yet")
+	default:
+		for _, r := range st.Rules {
+			body = append(body, "  - "+memory.QuoteRule(r))
+		}
 	}
 	for i, id := range p.ids {
 		pr, ok := proposal(*mt, id)
@@ -328,22 +377,40 @@ func (m *Model) rulesBody(p *rulesPick) []string {
 		if p.picked[i] {
 			box = "[x]"
 		}
-		body = append(body, box+" "+strconv.Itoa(i+1)+". "+memory.QuoteRule(pr.Text))
-		src := "    proposed by the orchestrator"
-		var froms []string
+		body = append(body, "", box+" "+strconv.Itoa(i+1)+". "+memory.QuoteRule(pr.Text))
+		if len(pr.From) == 0 {
+			body = append(body, "    proposed by the orchestrator, from no note")
+			continue
+		}
+		body = append(body, "    proposed by the orchestrator, from "+notesWord(len(pr.From))+":")
 		for _, n := range pr.From {
-			if rec, ok := mt.Notes[n]; ok {
-				froms = append(froms, n+" by "+sanitize.Label(rec.Author, 60))
+			rec, known := mt.Notes[n]
+			text, read := memory.ReadNote(m.memDir(p.repo), n)
+			if !known || !read {
+				body = append(body, "    - note "+sanitize.Label(n, 40)+": Den has no such note")
+				continue
 			}
+			head := noteFenceTop + " the agent's note, its own words: " + sanitize.Label(rec.Author, 60)
+			if rec.Mission != "" {
+				head += " · mission " + sanitize.Label(rec.Mission, 60)
+			}
+			head += " · " + rec.At.Local().Format("Jan 2 15:04")
+			body = append(body, head, "    │ "+sanitize.Label(rec.Title, 120))
+			for _, l := range strings.Split(text, "\n") {
+				body = append(body, "    │ "+sanitize.Line(l))
+			}
+			body = append(body, noteFenceBottom)
 		}
-		if len(froms) > 0 {
-			src += ", from notes " + strings.Join(froms, ", ")
-		} else {
-			src += ", from no note"
-		}
-		body = append(body, src)
 	}
 	return body
+}
+
+// notesWord is "1 note" or "N notes".
+func notesWord(n int) string {
+	if n == 1 {
+		return "1 note"
+	}
+	return strconv.Itoa(n) + " notes"
 }
 
 func proposal(mt memory.Meta, id string) (memory.Proposal, bool) {
