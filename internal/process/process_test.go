@@ -166,6 +166,103 @@ func TestReadOverlap(t *testing.T) {
 	}
 }
 
+// A branch made from main, where dev also exists and lacks a commit of
+// main's, is measured against main: that commit is not its own work, so
+// two such branches do not overlap on its file, and it is behind main,
+// not dev. A branch made from dev is measured against dev as before.
+func TestReadForkedFromMain(t *testing.T) {
+	main, _, dv := repo(t)
+	ctx := context.Background()
+	sh(t, main, "branch", "main")
+	sh(t, main, "checkout", "-q", "main")
+	write(t, filepath.Join(main, "x.go"), "package p // main only\n")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "main only")
+	root := filepath.Dir(main)
+	one, two := filepath.Join(root, "m1"), filepath.Join(root, "m2")
+	sh(t, main, "worktree", "add", "-q", "-b", "m1", one, "main")
+	sh(t, main, "worktree", "add", "-q", "-b", "m2", two, "main")
+	write(t, filepath.Join(one, "a.go"), "x")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "a")
+	write(t, filepath.Join(two, "b.go"), "x")
+	sh(t, two, "add", ".")
+	sh(t, two, "commit", "-q", "-m", "b")
+	write(t, filepath.Join(main, "later.go"), "x")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "main moves on")
+	write(t, filepath.Join(dv, "d.go"), "x")
+	sh(t, dv, "add", ".")
+	sh(t, dv, "commit", "-q", "-m", "d")
+
+	read := func(key, dir string) Work {
+		t.Helper()
+		w, err := Read(ctx, key, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return w
+	}
+	w1, w2, wd := read("s1", one), read("s2", two), read("s3", dv)
+	if w1.Base != "refs/heads/main" || !reflect.DeepEqual(w1.Files, []string{"a.go"}) || w1.Behind != 1 {
+		t.Errorf("from main: %+v", w1)
+	}
+	if w2.Base != "refs/heads/main" || !reflect.DeepEqual(w2.Files, []string{"b.go"}) {
+		t.Errorf("from main: %+v", w2)
+	}
+	if wd.Base != "refs/heads/dev" || !reflect.DeepEqual(wd.Files, []string{"d.go"}) || wd.Behind != 0 {
+		t.Errorf("from dev: %+v", wd)
+	}
+	if got := Overlaps([]Work{w1, w2, wd}); len(got) != 0 {
+		t.Errorf("overlaps %+v", got)
+	}
+	// Merged into main, a main branch has landed.
+	sh(t, main, "merge", "-q", "--no-edit", "m1")
+	if ok, err := Landed(ctx, one, w1.Tip); err != nil || !ok {
+		t.Errorf("merged into main: %v %v", ok, err)
+	}
+}
+
+// BaseOf: the base a commit lacks the fewest commits against, the first in
+// BaseRefs order on a tie, "" with none.
+func TestBaseOf(t *testing.T) {
+	main, one, _ := repo(t)
+	ctx := context.Background()
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/dev" {
+		t.Errorf("dev only: %q", got)
+	}
+	// main at the same commit as dev: a tie goes to dev, first in order.
+	sh(t, main, "branch", "main")
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/dev" {
+		t.Errorf("tie: %q", got)
+	}
+	// dev moves on, and a branch from it: dev is nearer.
+	write(t, filepath.Join(main, "dev.go"), "x")
+	sh(t, main, "add", ".")
+	sh(t, main, "commit", "-q", "-m", "dev")
+	sh(t, one, "reset", "-q", "--hard", "dev")
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/dev" {
+		t.Errorf("from dev: %q", got)
+	}
+	// main gets a commit dev lacks, and the branch is main's.
+	sh(t, one, "reset", "-q", "--hard", "main")
+	write(t, filepath.Join(one, "main.go"), "x")
+	sh(t, one, "add", ".")
+	sh(t, one, "commit", "-q", "-m", "main")
+	sh(t, one, "branch", "-f", "main", "HEAD")
+	if got := BaseOf(ctx, one, "HEAD"); got != "refs/heads/main" {
+		t.Errorf("from main: %q", got)
+	}
+	dir := t.TempDir()
+	sh(t, dir, "init", "-q", "-b", "topic", dir)
+	write(t, filepath.Join(dir, "f"), "x")
+	sh(t, dir, "add", ".")
+	sh(t, dir, "commit", "-q", "-m", "c")
+	if got := BaseOf(ctx, dir, "HEAD"); got != "" {
+		t.Errorf("no base: %q", got)
+	}
+}
+
 // A branch's name, base, age (its oldest commit since leaving the base)
 // and how far behind the base it is.
 func TestReadBranchAge(t *testing.T) {

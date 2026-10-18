@@ -26,8 +26,9 @@ import (
 // is far past any overlap Den needs to name.
 const MaxFiles = 2000
 
-// BaseRefs are the integration branches Den measures a branch against, the
-// first that exists: the shared one first, then a local one.
+// BaseRefs are the integration branches Den may measure a branch against:
+// the shared ones first, then the local ones. Of those that exist, a branch
+// is measured against the one it forked from (see Base).
 var BaseRefs = []string{
 	"refs/remotes/origin/dev", "refs/remotes/origin/main", "refs/remotes/origin/master",
 	"refs/heads/dev", "refs/heads/main", "refs/heads/master",
@@ -78,15 +79,39 @@ func safeName(name string) string {
 	return s
 }
 
-// Base is the first of BaseRefs that exists in dir's repository, "" for
-// none.
+// Base is the integration branch the checkout at dir forked from, "" for
+// none: see BaseOf.
 func Base(ctx context.Context, dir string) string {
+	return BaseOf(ctx, dir, "HEAD")
+}
+
+// BaseOf is the integration branch rev forked from: of the BaseRefs that
+// exist in dir's repository, the one that lacks the fewest of rev's
+// commits, the first in BaseRefs order on a tie; "" for none. A branch
+// made from main where dev also exists is measured against main, so the
+// commits main has and dev lacks are never taken for its own work.
+func BaseOf(ctx context.Context, dir, rev string) string {
+	best, least := "", -1
 	for _, ref := range BaseRefs {
-		if _, err := git(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err == nil {
-			return ref
+		if _, err := git(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+			continue
+		}
+		if best == "" {
+			best = ref
+		}
+		out, err := git(ctx, dir, "rev-list", "--count", rev, "--not", ref)
+		if err != nil {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+		if err != nil {
+			continue
+		}
+		if least < 0 || n < least {
+			best, least = ref, n
 		}
 	}
-	return ""
+	return best
 }
 
 // ErrNoBase is a repository with none of BaseRefs.
@@ -97,7 +122,11 @@ var ErrNoBase = errors.New("no integration branch (dev, main or master) to measu
 // untracked (not ignored), sorted, at most MaxFiles. Names are as git
 // lists them; a name that is not UTF-8 is left out.
 func Touched(ctx context.Context, dir string) ([]string, error) {
-	base := Base(ctx, dir)
+	return touched(ctx, dir, Base(ctx, dir))
+}
+
+// touched is Touched against base.
+func touched(ctx context.Context, dir, base string) ([]string, error) {
 	if base == "" {
 		return nil, ErrNoBase
 	}
@@ -171,11 +200,12 @@ func Read(ctx context.Context, key, dir string) (Work, error) {
 	if err != nil {
 		return Work{}, err
 	}
-	files, err := Touched(ctx, dir)
+	base := Base(ctx, dir)
+	files, err := touched(ctx, dir, base)
 	if err != nil {
 		return Work{}, err
 	}
-	w := Work{Key: key, Repo: repo, Tree: strings.TrimSpace(string(top)), Files: files, Base: Base(ctx, dir)}
+	w := Work{Key: key, Repo: repo, Tree: strings.TrimSpace(string(top)), Files: files, Base: base}
 	if out, err := git(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		w.Branch = strings.TrimSpace(string(out))
 	}
@@ -315,7 +345,7 @@ func Landed(ctx context.Context, dir, tip string) (bool, error) {
 	if !isCommitID(tip) {
 		return false, errors.New("not a commit id")
 	}
-	base := Base(ctx, dir)
+	base := BaseOf(ctx, dir, tip)
 	if base == "" {
 		return false, ErrNoBase
 	}
