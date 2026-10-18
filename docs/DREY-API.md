@@ -167,20 +167,36 @@ no transcript, and no request body outside `inbox.body`.
   `mode` is the same as hello's. `doing` `{text, at}` says what an agent is doing
   now, in at most 80 runes, from Den's own facts. Only the paired console's
   connections get it; every other app gets it empty (`{"text": "", "at":
-  "0001-01-01T00:00:00Z"}`), and a change in it alone sends such an app nothing. Its state comes first: `waiting
-  for you` (with `: permission`, `: question` or `: plan`), `stalled` or `idle`.
-  For a working agent of this machine, its latest tool comes next: `editing`,
-  `writing` or `reading` with the file's base name, `running` with the command's
-  name, and a plain sub-command for tools known to take one (`running go test`,
-  but `running echo`), or `searching`, `fetching` or `delegating`. With none of
-  those, it is `working on` and the task label Den was given for the agent (never
-  its window title), with every word that could be a path, address or id dropped,
-  or just `working`. An agent on another machine only ever shows its state or `working`:
-  its host's text is never used. Every `text` starts with one of these lead
-  phrases, a closed set: `waiting for you`, `stalled`, `idle`, `editing`,
-  `writing`, `reading`, `running`, `searching`, `fetching`, `delegating`,
-  `working on`, `working`. Style by the lead phrase, and show a text with an
-  unknown lead plainly. `at` (RFC3339, Den's clock) is when `text` last changed.
+  "0001-01-01T00:00:00Z"}`), and a change in it alone sends such an app nothing.
+  It reads as a person would say it, in sentence case, and never names a
+  program. Its state comes first: `Waiting for you…` (or `Waiting for you:
+  permission`, `: question` or `: plan`), `Stuck, needs a look` or `Idle`. For
+  a working agent of this machine, its latest tool comes next, as an activity
+  ending in `…`: `Editing team.go…`, `Writing NOTES.md…` or `Reading team.go…`
+  with the file's base name (`Editing a file…`, `Reading files…` without a
+  plain one), `Searching the code…`, `Fetching a web page…`, `Searching the
+  web…` or `Handing work to a helper…`. A shell command says what it does:
+  `Navigating files and folders…`, `Reading` a file, `Searching the code…`,
+  `Running the tests…`, `Checking the code…`, `Building the project…`,
+  `Installing packages…`, `Looking over the changes…`, `Committing changes…`,
+  `Pushing changes…`, `Working with git…`, `Working on GitHub…`, `Fetching a
+  web page…`, `Working with containers…`, `Managing services…`, or else
+  `Running a command…`; of a chain, the first command that does more than move
+  around says it (`cd x && go test` is `Running the tests…`). With none of
+  those, it is `Working on` and the task label Den was given for the agent
+  (never its window title), with every word that could be a path, address or
+  id dropped, then `…`; or just `Working…`. An agent on another machine only
+  ever shows its state or `Working…`: its host's text is never used. Every
+  `text` is one of these lead phrases, a closed set, alone or followed by
+  ` ` and a target, `:` and a reason, or `…`: `Waiting for you`, `Stuck, needs
+  a look`, `Idle`, `Navigating files and folders`, `Reading`, `Editing`,
+  `Writing`, `Searching the code`, `Running the tests`, `Checking the code`,
+  `Building the project`, `Installing packages`, `Looking over the changes`,
+  `Committing changes`, `Pushing changes`, `Working with git`, `Working on
+  GitHub`, `Fetching a web page`, `Searching the web`, `Handing work to a
+  helper`, `Working with containers`, `Managing services`, `Running a
+  command`, `Working on`, `Working`. Style by the lead phrase, and show a text
+  with an unknown lead plainly. `at` (RFC3339, Den's clock) is when `text` last changed.
   It changes at most once every 10 seconds per agent and arrives with the usual
   fleet changes.
 - **Item** `{id, kind, agent, since, title, digest, host?}`. A **digest** is

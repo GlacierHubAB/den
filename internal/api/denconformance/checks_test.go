@@ -87,20 +87,38 @@ func TestConversationEntryChecks(t *testing.T) {
 }
 
 func TestDoingChecks(t *testing.T) {
-	for _, d := range []string{`{"text":"","at":"0001-01-01T00:00:00Z"}`, `{"text":"editing week.go","at":"2026-10-17T20:00:00Z"}`, `{"text":"waiting for you: permission","at":"2026-10-17T20:00:00Z"}`, `{"text":"working on the cost table","at":"2026-10-17T20:00:00Z"}`} {
+	at := `,"at":"2026-10-17T20:00:00Z"}`
+	for _, d := range []string{
+		`{"text":"","at":"0001-01-01T00:00:00Z"}`,
+		`{"text":"Idle"` + at, `{"text":"Stuck, needs a look"` + at,
+		`{"text":"Waiting for you: permission"` + at, `{"text":"Waiting for you: question"` + at, `{"text":"Waiting for you: plan"` + at,
+		`{"text":"Working\u2026"` + at, `{"text":"Running the tests\u2026"` + at,
+		`{"text":"Editing week.go\u2026"` + at, `{"text":"Reading a file\u2026"` + at, `{"text":"Writing files\u2026"` + at,
+		`{"text":"Working on fix login bug\u2026"` + at, `{"text":"Working on\u2026"` + at,
+	} {
 		if _, err := checkDoing(json.RawMessage(d)); err != nil {
 			t.Errorf("%s refused: %v", d, err)
 		}
 	}
+	for _, l := range doingLeadWords {
+		if _, err := checkDoing(json.RawMessage(`{"text":"` + l + `"` + at)); err != nil {
+			t.Errorf("the lead %q alone is refused: %v", l, err)
+		}
+	}
+	if len(doingLeadWords) != 25 {
+		t.Errorf("%d lead phrases, Den's set has 25", len(doingLeadWords))
+	}
 	for name, d := range map[string]string{
-		"an unknown field": `{"text":"idle","at":"2026-10-17T20:00:00Z","x":1}`,
-		"an unknown lead":  `{"text":"dancing","at":"2026-10-17T20:00:00Z"}`,
-		"81 runes":         `{"text":"idle ` + strings.Repeat("a", 76) + `","at":"2026-10-17T20:00:00Z"}`,
-		"a newline":        `{"text":"editing a\nb","at":"2026-10-17T20:00:00Z"}`,
-		"an escape":        `{"text":"editing a\u001bb","at":"2026-10-17T20:00:00Z"}`,
-		"a bidi override":  `{"text":"editing a\u202eb","at":"2026-10-17T20:00:00Z"}`,
-		"a tag character":  `{"text":"editing a\U000e0041","at":"2026-10-17T20:00:00Z"}`,
-		"no time":          `{"text":"idle"}`,
+		"an unknown field":  `{"text":"Idle","at":"2026-10-17T20:00:00Z","x":1}`,
+		"an unknown lead":   `{"text":"Dancing"` + at,
+		"the old lowercase": `{"text":"editing week.go"` + at,
+		"a lead run on":     `{"text":"Editingweek.go"` + at,
+		"81 runes":          `{"text":"Idle ` + strings.Repeat("a", 76) + `"` + at,
+		"a newline":         `{"text":"Editing a\nb"` + at,
+		"an escape":         `{"text":"Editing a\u001bb"` + at,
+		"a bidi override":   `{"text":"Editing a\u202eb"` + at,
+		"a tag character":   `{"text":"Editing a\U000e0041"` + at,
+		"no time":           `{"text":"Idle"}`,
 	} {
 		if _, err := checkDoing(json.RawMessage(d)); err == nil {
 			t.Errorf("%s accepted", name)

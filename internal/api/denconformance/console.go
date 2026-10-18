@@ -2269,7 +2269,15 @@ var (
 		"desktop": {"den": true, "orchestrator": true},
 	}
 	reservedAgents = []string{"den", "drey", "you", "orchestrator"}
-	doingLeadWords = []string{"waiting for you", "stalled", "idle", "editing", "writing", "reading", "running", "searching", "fetching", "delegating", "working on", "working"}
+	// doingLeadWords is Den's closed set of lead phrases for `doing`, case-sensitive, longest first so "Working on" is tried
+	// before "Working". "Stuck, needs a look" holds a comma.
+	doingLeadWords = []string{
+		"Navigating files and folders", "Looking over the changes", "Handing work to a helper", "Stuck, needs a look",
+		"Working with containers", "Building the project", "Installing packages", "Searching the code", "Committing changes",
+		"Fetching a web page", "Managing services", "Running the tests", "Checking the code", "Searching the web",
+		"Working on GitHub", "Working with git", "Pushing changes", "Running a command", "Waiting for you", "Working on",
+		"Editing", "Writing", "Reading", "Working", "Idle",
+	}
 )
 
 // cutMark is how Den ends a text it cut.
@@ -2465,8 +2473,10 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	return conversationEntry{ID: e.ID, Text: e.Text}, nil
 }
 
-// checkDoing: `doing {text, at}` and no other field; text one plain line of at most 80 runes, empty or starting with one of
-// Den's lead phrases; at RFC3339.
+// checkDoing: `doing {text, at}` and no other field; text one plain line of at most 80 runes, empty or one of Den's lead
+// phrases (case-sensitive) alone or followed by " " and a target, ":" and a reason, or "…". The target is a base name, "a
+// file", "files" or, after "Working on", the cleaned task label; a reason is permission, question or plan. Those shapes are
+// Den's grammar, but only the lead is checked here: what follows is plain text under the same line rules. at RFC3339.
 func checkDoing(raw json.RawMessage) (text string, err error) {
 	var d struct {
 		Text string `json:"text"`
@@ -2485,7 +2495,7 @@ func checkDoing(raw json.RawMessage) (text string, err error) {
 		return "", nil
 	}
 	for _, l := range doingLeadWords {
-		if d.Text == l || strings.HasPrefix(d.Text, l+" ") || strings.HasPrefix(d.Text, l+":") {
+		if d.Text == l || strings.HasPrefix(d.Text, l+" ") || strings.HasPrefix(d.Text, l+":") || strings.HasPrefix(d.Text, l+"\u2026") {
 			return d.Text, nil
 		}
 	}
