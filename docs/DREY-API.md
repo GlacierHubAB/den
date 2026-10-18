@@ -1062,8 +1062,11 @@ where the pointer is.
     sent it is still open, proved and subscribed. A reconnect, a re-pair
     or an unpair takes it down: send `overlay.linked` again from the new
     connection;
-  - Den sees your glow itself: a layer surface with namespace
-    `agent-glow`, of the process of one of your proved connections.
+  - Den sees your overlay itself: on every monitor, a surface on the
+    overlay level (3) with layer namespace `drey-agent-pointer`, of the
+    process of one of your proved connections (the surface the pointer
+    rule above lets clicks through). Another namespace, such as a test
+    instance's, never counts.
 
   While either is down, Den refuses the agent's input with "paused: the
   dock's overlay is down; Den resumes when it is back", says so in its

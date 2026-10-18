@@ -35,7 +35,7 @@ func newPauseRig(t *testing.T) *pauseRig {
 	deskSnapshot = func(context.Context) (desktop.Snapshot, error) {
 		s := d.snap()
 		if p.glow {
-			s.Layers = append(s.Layers, desktop.Layer{Monitor: "DP-1", Level: 1, W: 1920, H: 1080, Namespace: desktop.GlowNamespace, PID: 1500})
+			s.Layers = append(s.Layers, desktop.Layer{Monitor: "DP-1", Level: desktop.OverlayLevel, W: 1920, H: 1080, Namespace: desktop.PointerNamespace, PID: 1500})
 		}
 		return s, nil
 	}

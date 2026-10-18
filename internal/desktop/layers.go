@@ -27,19 +27,27 @@ const OverlayLevel = 3
 // input region): the one surface ExemptConsole lets through.
 const PointerNamespace = "drey-agent-pointer"
 
-// GlowNamespace is the layer namespace of the console's glow, drawn while
-// a desktop agent works.
-const GlowNamespace = "agent-glow"
-
-// ConsoleGlow reports whether the console's glow is on the desktop: a
-// surface named GlowNamespace whose process is one in console.
+// ConsoleGlow reports whether the console's overlay (its glow and pointer
+// outline, one full-monitor surface per monitor) is on every monitor: a
+// surface on the overlay level, named PointerNamespace, whose process is
+// one in console, on each monitor of the snapshot. Read it before
+// ExemptConsole, which drops those surfaces.
 func (s Snapshot) ConsoleGlow(console map[int]bool) bool {
+	if len(s.Monitors) == 0 {
+		return false
+	}
+	on := map[string]bool{}
 	for _, l := range s.Layers {
-		if l.Namespace == GlowNamespace && l.PID > 1 && console[l.PID] {
-			return true
+		if l.Level == OverlayLevel && l.Namespace == PointerNamespace && l.PID > 1 && console[l.PID] {
+			on[l.Monitor] = true
 		}
 	}
-	return false
+	for _, mon := range s.Monitors {
+		if !on[mon.Name] {
+			return false
+		}
+	}
+	return true
 }
 
 // ExemptConsole drops from the snapshot the console's pointer outline: a

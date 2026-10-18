@@ -327,8 +327,8 @@ const deskOverlayWait = 5 * time.Minute
 // linked its overlay to the task (overlay.linked), input goes only while
 // both hold, each Den's own observation: that link stands on a proved,
 // subscribed connection of the paired console (which had its powers when
-// it linked), and Den sees the console's glow, a layer surface of that
-// console's process (glow). Otherwise input pauses, with no grace, and a
+// it linked), and Den sees the console's overlay on every monitor, a layer
+// surface of that console's process (glow, desktop.Snapshot.ConsoleGlow). Otherwise input pauses, with no grace, and a
 // pause longer than deskOverlayWait ends the task, as Den's own window
 // going does. A task the console never linked is never paused. Den's chat
 // hears each pause and resume once.
