@@ -109,8 +109,10 @@ func runMCP() {
 				switch d.Behavior {
 				case "allow":
 					return "Closed with the human's approval: " + d.Message, nil
-				default:
+				case "deny":
 					return "The human declined in Den; nothing was closed. " + d.Message, nil
+				default:
+					return noAnswer("what was closed"), nil
 				}
 			},
 		},
@@ -457,6 +459,13 @@ func ruleTool() mcp.Tool {
 }
 
 // askDen sends a mission call to Den and returns its answer.
+// noAnswer is what an approval tool says when Den's answer is neither an
+// allow nor a deny (empty, or one it does not know): never that the human
+// declined, since they may have approved; Den shows what happened.
+func noAnswer(what string) string {
+	return "Den gave no answer the tool understands: check Den for " + what + "."
+}
+
 func askDen(event string, in any, failed string) (string, error) {
 	payload, _ := json.Marshal(in)
 	env := bridge.Envelope{Seq: time.Now().UnixNano(), Event: event, Payload: payload}

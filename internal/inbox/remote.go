@@ -97,6 +97,7 @@ func (s *Store) ApplyRemote(ev events.Event) *Item {
 		delete(s.streak, agentKey(host, sid))
 		delete(s.heldQ, agentKey(host, sid))
 		s.cancelMessages(host, sid)
+		s.cancelOwnAsks(host, sid)
 		s.resolveSession(host, sid, "session ended", func(it *Item) bool { return true })
 	}
 	return nil

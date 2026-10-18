@@ -68,8 +68,12 @@ func desktopMissionTool(asker string) mcp.Tool {
 			if err != nil {
 				return "", errorString("Den did not answer (" + err.Error() + "); nothing started")
 			}
-			if d.Behavior != "allow" {
+			switch d.Behavior {
+			case "allow":
+			case "deny":
 				return "", errorString(sanitize.Text(d.Message))
+			default:
+				return "", errorString(noAnswer("whether it started"))
 			}
 			return sanitize.Text(d.Message), nil
 		},
