@@ -151,6 +151,12 @@ func TestMemoryRules(t *testing.T) {
 			t.Errorf("card lacks %q:\n%s", want, body)
 		}
 	}
+	// The console's copy of the card has the rules, never a note's words.
+	dock := m.dockCard(card).Body
+	if strings.Contains(dock, "Long branches conflicted twice.") || strings.Contains(dock, "Branches") && strings.Contains(dock, "│") ||
+		!strings.Contains(dock, "(the agent's note is shown in Den's window)") || !strings.Contains(dock, "[ ] 1. \"Merge daily") {
+		t.Errorf("the dock's copy:\n%s", dock)
+	}
 	// ^Y with nothing picked writes nothing; a digit typed into the input
 	// is text; on the selected card with nothing typed it picks.
 	m.tab, m.inboxSel = tabInbox, card.ID

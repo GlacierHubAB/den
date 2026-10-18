@@ -317,6 +317,13 @@ func (m *Model) rulesCard(repo string) {
 // rules edited outside Den) by its repository id.
 const memorySessionPrefix = "memory:"
 
+// A rules card fences each note it shows between these lines; a console's
+// copy of the card leaves the fenced notes out (withoutNotes).
+const (
+	noteFenceTop    = "    ┌"
+	noteFenceBottom = "    └"
+)
+
 // rulesKeys is the card's keys line, in plain words.
 func rulesKeys(n int) string {
 	if n == 1 {
@@ -380,10 +387,10 @@ func (m *Model) rulesBody(p *rulesPick) []string {
 			rec, known := mt.Notes[n]
 			text, read := memory.ReadNote(m.memDir(p.repo), n)
 			if !known || !read {
-				body = append(body, "    ┌ note "+sanitize.Label(n, 40)+": Den has no such note")
+				body = append(body, "    - note "+sanitize.Label(n, 40)+": Den has no such note")
 				continue
 			}
-			head := "    ┌ the agent's note, its own words: " + sanitize.Label(rec.Author, 60)
+			head := noteFenceTop + " the agent's note, its own words: " + sanitize.Label(rec.Author, 60)
 			if rec.Mission != "" {
 				head += " · mission " + sanitize.Label(rec.Mission, 60)
 			}
@@ -392,7 +399,7 @@ func (m *Model) rulesBody(p *rulesPick) []string {
 			for _, l := range strings.Split(text, "\n") {
 				body = append(body, "    │ "+sanitize.Line(l))
 			}
-			body = append(body, "    └")
+			body = append(body, noteFenceBottom)
 		}
 	}
 	return body
