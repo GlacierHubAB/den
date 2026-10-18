@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/GlacierHubAB/den/internal/procs"
 )
 
 // Beacon is hypruse's status file: which process holds the desktop, and
@@ -183,10 +185,12 @@ func startTicks(pid int) string {
 	return f[19]
 }
 
-// exeOf is the executable a process runs, resolved.
+// exeOf is the executable a process runs, resolved, as its path: one
+// updated in place during the mission (Claude Code updates itself) is
+// still the process recorded (procs.Undeleted).
 func exeOf(pid int) string {
 	p, _ := os.Readlink(filepath.Join(procRoot, strconv.Itoa(pid), "exe"))
-	return p
+	return procs.Undeleted(p)
 }
 
 // RecordProc is the Proc for a live pid, read now.
