@@ -90,6 +90,8 @@ func TestMentionMatching(t *testing.T) {
 		{"a_@Plucky", "a_@Plucky"},
 		{"\U0001D400@Plucky", "\U0001D400@Plucky"}, // an astral letter before the "@"
 		{"\U0001D7CE@Plucky", "\U0001D7CE@Plucky"}, // an astral digit
+		{"\u00B2@Plucky", "\u00B2@Plucky"},         // a number that is not a digit (No)
+		{"\u2167@Plucky", "\u2167@Plucky"},         // a letter number (Nl)
 		// "@" mentions fold ASCII case only, drawn as Den spells the name;
 		// a bare name is written exactly.
 		{"@mossy lemur: done", "[@Mossy Lemur:mossy-lemur]: done"},

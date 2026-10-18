@@ -79,7 +79,7 @@ func buildMentions(agents []fleet.Agent, isOrchestrator func(fleet.Agent) bool) 
 // wordRune is a rune that continues a word: a name glued to one is not a
 // mention.
 func wordRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'
+	return unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' || r == '-'
 }
 
 // boundaryBefore reports whether a mention may start at i.
