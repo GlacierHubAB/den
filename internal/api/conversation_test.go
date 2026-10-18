@@ -178,34 +178,39 @@ func TestConversationDenLinesUseCheckedNames(t *testing.T) {
 	}
 	st := &convState{}
 	for range convPerAgent {
-		st.allowReport(agentLabel("Den"), testNow())
+		st.allowReport("s-den", agentLabel("Den"), testNow())
 	}
-	if _, line := st.allowReport(agentLabel("Den"), testNow()); line != "More reports from an agent are in Den." {
+	if _, line := st.allowReport("s-den", agentLabel("Den"), testNow()); line != "More reports from an agent are in Den." {
 		t.Errorf("more line %q", line)
 	}
 }
 
-// Reports: at most convPerAgent a minute per agent; the first one past it
-// becomes Den's line that more are in Den, the rest are dropped; the
-// orchestrator's replies are never limited.
+// Reports: at most convPerAgent a minute per agent, counted by its
+// session id; the first one past it becomes Den's line that more are in
+// Den, the rest are dropped; the orchestrator's replies are never limited.
+// Two agents with one name have a limit each, and an agent whose name
+// changes keeps its own.
 func TestConversationReportLimits(t *testing.T) {
 	st := &convState{}
 	for i := range convPerAgent {
-		if ok, _ := st.allowReport("Mossy Lemur", testNow()); !ok {
+		if ok, _ := st.allowReport("s-mossy", "Mossy Lemur", testNow()); !ok {
 			t.Fatalf("report %d refused", i)
 		}
 	}
-	ok, line := st.allowReport("Mossy Lemur", testNow())
+	ok, line := st.allowReport("s-mossy", "Mossy Lemur", testNow())
 	if ok || line != "More reports from Mossy Lemur are in Den." {
 		t.Errorf("past the limit: %v %q", ok, line)
 	}
-	if ok, line := st.allowReport("Mossy Lemur", testNow()); ok || line != "" {
-		t.Errorf("told twice: %v %q", ok, line)
+	if ok, line := st.allowReport("s-mossy", "backend-engineer", testNow()); ok || line != "" {
+		t.Errorf("a new name escaped the limit: %v %q", ok, line)
+	}
+	if ok, _ := st.allowReport("s-other", "Mossy Lemur", testNow()); !ok {
+		t.Error("another session with the same name was limited")
 	}
 	for i := range convReportsTotal {
-		st.allowReport("agent"+string(rune('a'+i%26))+string(rune('a'+i/26)), testNow())
+		st.allowReport("s-"+string(rune('a'+i%26))+string(rune('a'+i/26)), "agent", testNow())
 	}
-	if ok, _ := st.allowReport("Fresh Agent", testNow()); ok {
+	if ok, _ := st.allowReport("s-fresh", "Fresh Agent", testNow()); ok {
 		t.Error("past the total limit")
 	}
 }

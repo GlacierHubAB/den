@@ -34,8 +34,8 @@ type mirrorState struct {
 }
 
 type mirrorReport struct {
-	agent   string
-	desktop bool
+	agent, id string // the agent's name, and its session id
+	desktop   bool
 }
 
 // mirrorTick keeps the mirror as the human chose: on for the paired
@@ -193,12 +193,12 @@ func (m *Model) mirrorTurn(origin, shown string) {
 // never the report itself.
 func (m *Model) mirrorReportTurn(agent, sessionID string) {
 	desktop := m.isDesktopAgent(sessionID)
-	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, desktop})
+	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, sessionID, desktop})
 	origin := api.OriginReport
 	if desktop {
 		origin = api.OriginDesktop
 	}
-	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, Text: "Report from " + agent + "."})
+	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, AgentID: sessionID, Text: "Report from " + agent + "."})
 }
 
 // isDesktopAgent reports whether a session is a desktop mission's agent.
@@ -251,7 +251,7 @@ func (m *Model) mirrorReply(origin, result string) {
 		if len(m.mirror.reports) > 0 {
 			r := m.mirror.reports[0]
 			m.mirror.reports = m.mirror.reports[1:]
-			c.Agent = r.agent
+			c.Agent, c.AgentID = r.agent, r.id
 			if r.desktop {
 				c.Origin = api.OriginDesktop
 			}
