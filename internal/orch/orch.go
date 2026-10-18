@@ -190,6 +190,9 @@ const (
 	NoteTool  = "mcp__den__note"
 	NotesTool = "mcp__den__notes"
 	RuleTool  = "mcp__den__propose_rule"
+	// OverlapAckTool records that two agents whose branches both change
+	// files agreed who goes first: Den stops warning them about those files.
+	OverlapAckTool = "mcp__den__overlap_ack"
 )
 
 // DenTools are Den's tools the orchestrator always has; SpawnTools those
@@ -198,7 +201,7 @@ const (
 // (humanTools), so a tool can never be offered in one mode and refused in
 // another.
 var (
-	DenTools   = []string{MissionTool, ProposeTool, TuneTool, RuleTool, NoteTool, NotesTool}
+	DenTools   = []string{MissionTool, ProposeTool, TuneTool, RuleTool, NoteTool, NotesTool, OverlapAckTool}
 	SpawnTools = []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool, DesktopMissionTool}
 )
 
