@@ -32,12 +32,36 @@ func runMCP() {
 	// report to it rather than to the orchestrator.
 	lead := os.Getenv("DEN_PEER")
 	exe, _ := os.Executable()
+	s := &mcp.Server{Name: orch.MCPServer, Version: version, Tools: baseTools(orcName, lead, exe)}
+	asker := lead
+	if asker == "" {
+		asker = orcName
+	}
+	s.Tools = append(s.Tools, desktopMissionTool(asker))
+	// Missions are the orchestrator's alone: an agent Den started (which
+	// runs this server too) never gets the tool, and one started with
+	// --missions-only gets nothing else.
+	missionsOnly, control := false, false
+	for _, a := range os.Args[2:] {
+		missionsOnly = missionsOnly || a == orch.MissionsOnly
+		control = control || a == orch.ControlFlag
+	}
+	s.Tools = mcpTools(s.Tools, os.Getenv("DEN_ORCHESTRATOR") == "1", missionsOnly, control)
+	if err := s.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
+		fail("den mcp: %v", err)
+	}
+}
+
+// baseTools are the tools every `den mcp` starts with: starting agents and
+// terminals, closing agents, offering skills. mcpTools then adds or
+// removes by role.
+func baseTools(orcName, lead, exe string) []mcp.Tool {
 	dirSchema := map[string]any{"type": "string", "description": "Working directory, absolute or ~-relative. It must exist."}
 	var when []string
 	for _, m := range spawn.Models {
 		when = append(when, m.Name+": "+m.When)
 	}
-	s := &mcp.Server{Name: orch.MCPServer, Version: version, Tools: []mcp.Tool{
+	return []mcp.Tool{
 		{
 			Name:        strings.TrimPrefix(orch.SpawnAgentTool, "mcp__"+orch.MCPServer+"__"),
 			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. The agent reports to you when done and has this same tool, so a lead can staff its own work. Returns the agent's critter name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
@@ -165,39 +189,23 @@ func runMCP() {
 				return res.Describe(), nil
 			},
 		},
-	}}
-	asker := lead
-	if asker == "" {
-		asker = orcName
-	}
-	s.Tools = append(s.Tools, desktopMissionTool(asker))
-	// Missions are the orchestrator's alone: an agent Den started (which
-	// runs this server too) never gets the tool, and one started with
-	// --missions-only gets nothing else.
-	missionsOnly, control := false, false
-	for _, a := range os.Args[2:] {
-		missionsOnly = missionsOnly || a == orch.MissionsOnly
-		control = control || a == orch.ControlFlag
-	}
-	s.Tools = mcpTools(s.Tools, os.Getenv("DEN_ORCHESTRATOR") == "1", missionsOnly, control)
-	if err := s.Serve(context.Background(), os.Stdin, os.Stdout); err != nil {
-		fail("den mcp: %v", err)
 	}
 }
 
-// mcpTools is what `den mcp` offers: note and notes to everyone;
-// update_mission, propose_mission, tune_process and propose_rule only to
-// the orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the agents it
-// starts), and with missionsOnly nothing else.
+// mcpTools is what `den mcp` offers: note, notes and overlap_ack to
+// everyone; update_mission, propose_mission, tune_process and propose_rule
+// only to the orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the
+// agents it starts), and with missionsOnly nothing else.
 func mcpTools(all []mcp.Tool, orchestrator, missionsOnly, control bool) []mcp.Tool {
 	if !orchestrator {
-		return append(all, noteTools()...)
+		return append(append(all, noteTools()...), overlapAckTool())
 	}
 	if missionsOnly {
 		all = nil
 	}
 	all = append(all, missionTool(), proposeTool(), tuneTool(), ruleTool())
 	all = append(all, noteTools()...)
+	all = append(all, overlapAckTool())
 	if control {
 		all = append(all, sendMessageTool())
 	}
@@ -315,7 +323,7 @@ func proposeTool() mcp.Tool {
 	}
 	return mcp.Tool{
 		Name:        strings.TrimPrefix(orch.ProposeTool, "mcp__"+orch.MCPServer+"__"),
-		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
+		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they select it in Den's chat (↑) and press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -434,6 +442,31 @@ func noteTools() []mcp.Tool {
 				}
 				return askDen(bridge.NotesEvent, in, "no notes were read")
 			},
+		},
+	}
+}
+
+// overlapAckTool is overlap_ack: an agent's word that it and the agent its
+// branch overlaps with agreed who goes first (with), or the orchestrator's
+// decision for two agents (agents); Den then warns neither about the files
+// they overlap on now, only about a file new to them.
+func overlapAckTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        strings.TrimPrefix(orch.OverlapAckTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Tell Den that two agents whose branches both change files have agreed who goes first or how to split the work, so Den stops warning them about those files. An agent gives with: the other agent's name; the orchestrator gives agents: both names. Den warns again only for a file new to the pair.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"with":   map[string]any{"type": "string", "description": "An agent's call: the other agent's critter or peer name."},
+				"agents": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The orchestrator's call: both agents' names."},
+			},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.OverlapAckInput
+			if json.Unmarshal(args, &in) != nil || (strings.TrimSpace(in.With) == "" && len(in.Agents) != 2) {
+				return "", errorString("give with (the other agent), or agents (both, from the orchestrator)")
+			}
+			return askDen(bridge.OverlapAckEvent, in, "nothing was recorded")
 		},
 	}
 }

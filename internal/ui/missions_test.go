@@ -154,6 +154,37 @@ func TestJudgePromptFencesAgentResults(t *testing.T) {
 	}
 }
 
+// A once mission with done criteria is not done when its run's cards
+// settle: the orchestrator is asked to judge the results against the
+// criteria, and only the human marks it done.
+func TestMissionOnceWithCriteriaIsJudgedNotDone(t *testing.T) {
+	m := missionModel()
+	now := time.Now()
+	ms := &mission.Mission{ID: "m-dod", Project: m.proj.cur, Name: "Demo", Mission: "Two agents touch a file", Shape: mission.Once, State: mission.Proposed, Created: now, Updated: now}
+	if err := ms.SetCriteria([]string{"each touches demo/shared.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	ms.State = mission.Running
+	ms.StartRun(now)
+	ms.Runs[0].Cards = []string{"c7"}
+	m.missions.Save(ms)
+	d := &dispatch{ID: "c7", SessionID: "mossy-lemur", Agent: "Mossy Lemur", MissionID: "m-dod", State: cardDone, Result: "Done: appended a line."}
+	m.orch.chat = append(m.orch.chat, chatEntry{role: "card", card: d, at: now})
+	m.settleMissions()
+	if ms.State != mission.Running {
+		t.Fatalf("a once mission with criteria ended as %s when its cards settled", ms.State)
+	}
+	if ms.CurrentRun() != nil || ms.Runs[0].EndedAt.IsZero() {
+		t.Errorf("the run did not end: %+v", ms.Runs[0])
+	}
+	if m.turn.id != ms.ID {
+		t.Errorf("the orchestrator was not asked to judge it (turn %q)", m.turn.id)
+	}
+	if met, _, total := ms.CriteriaCounts(); met != 0 || total != 2 {
+		t.Errorf("criteria met %d of %d", met, total)
+	}
+}
+
 func TestMissionOnceEndsWithItsCardAndScheduleWaitsForItsTick(t *testing.T) {
 	m := missionModel()
 	now := time.Now()

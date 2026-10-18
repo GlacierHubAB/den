@@ -170,26 +170,26 @@ func TestUpdateMissionIsTheOrchestratorsAlone(t *testing.T) {
 		}
 		return strings.Join(n, ",")
 	}
-	if got := names(mcpTools(all, false, false, false)); got != "spawn_agent,open_terminal,note,notes" {
+	if got := names(mcpTools(all, false, false, false)); got != "spawn_agent,open_terminal,note,notes,overlap_ack" {
 		t.Errorf("an agent's server: %s", got)
 	}
-	if got := names(mcpTools(all, false, true, false)); got != "spawn_agent,open_terminal,note,notes" {
+	if got := names(mcpTools(all, false, true, false)); got != "spawn_agent,open_terminal,note,notes,overlap_ack" {
 		t.Errorf("an agent cannot ask for missions only: %s", got)
 	}
-	if got := names(mcpTools(all, true, false, false)); got != "spawn_agent,open_terminal,update_mission,propose_mission,tune_process,propose_rule,note,notes" {
+	if got := names(mcpTools(all, true, false, false)); got != "spawn_agent,open_terminal,update_mission,propose_mission,tune_process,propose_rule,note,notes,overlap_ack" {
 		t.Errorf("the orchestrator's server: %s", got)
 	}
-	if got := names(mcpTools(all, true, true, false)); got != "update_mission,propose_mission,tune_process,propose_rule,note,notes" {
+	if got := names(mcpTools(all, true, true, false)); got != "update_mission,propose_mission,tune_process,propose_rule,note,notes,overlap_ack" {
 		t.Errorf("missions only: %s", got)
 	}
 	// send_message only for the orchestrator with control, never an agent.
-	if got := names(mcpTools(all, false, false, true)); got != "spawn_agent,open_terminal,note,notes" {
+	if got := names(mcpTools(all, false, false, true)); got != "spawn_agent,open_terminal,note,notes,overlap_ack" {
 		t.Errorf("an agent cannot ask for send_message: %s", got)
 	}
-	if got := names(mcpTools(all, true, true, true)); got != "update_mission,propose_mission,tune_process,propose_rule,note,notes,send_message" {
+	if got := names(mcpTools(all, true, true, true)); got != "update_mission,propose_mission,tune_process,propose_rule,note,notes,overlap_ack,send_message" {
 		t.Errorf("control, missions only: %s", got)
 	}
-	if got := names(mcpTools(all, true, false, true)); got != "spawn_agent,open_terminal,update_mission,propose_mission,tune_process,propose_rule,note,notes,send_message" {
+	if got := names(mcpTools(all, true, false, true)); got != "spawn_agent,open_terminal,update_mission,propose_mission,tune_process,propose_rule,note,notes,overlap_ack,send_message" {
 		t.Errorf("control: %s", got)
 	}
 }

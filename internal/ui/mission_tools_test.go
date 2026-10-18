@@ -444,12 +444,12 @@ func TestOnlyTheHumansPathsMeetOrChangeCriteria(t *testing.T) {
 	}
 }
 
-// Two agents with one critter name: an owner by that name is refused,
-// naming both with their peer handles, never the first one found; the
-// peer handle then names one exactly.
-func TestMissionOwnerSharedNameIsRefused(t *testing.T) {
+// Two agents with one critter name: a mission owner by that name is
+// refused, naming both with their peer handles, never the first found; the
+// peer handle names one. /close refuses the same way.
+func TestSharedCritterNameIsRefused(t *testing.T) {
 	m := Model{agents: sample(), store: inbox.New()}
-	m.base = m.agents[:2]
+	m.base = append([]fleet.Agent(nil), m.agents[:2]...)
 	m.base[0].Name, m.base[0].Session.Name, m.base[0].Session.SessionID = "Zippy Wombat", "drey-lead", "s-drey"
 	m.base[1].Name, m.base[1].Session.Name, m.base[1].Session.SessionID = "Zippy Wombat", "demo-a", "s-demo"
 	for i := range m.base {
@@ -462,5 +462,11 @@ func TestMissionOwnerSharedNameIsRefused(t *testing.T) {
 	sid, name, _, err := m.resolveOwner("demo-a", nil)
 	if err != nil || sid != "s-demo" || name != "Zippy Wombat" {
 		t.Fatalf("by peer handle: %q %q %v", sid, name, err)
+	}
+	if _, why := m.closeNamed("Zippy Wombat"); !strings.Contains(why, "more than one agent") {
+		t.Errorf("/close of a shared name: %q", why)
+	}
+	if a, why := m.closeNamed("demo-a"); why != "" || a.Session.SessionID != "s-demo" {
+		t.Errorf("/close by peer handle: %+v %q", a, why)
 	}
 }

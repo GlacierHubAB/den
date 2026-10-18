@@ -74,6 +74,8 @@ type line struct {
 	Error  *WireError      `json:"error,omitempty"`
 	Event  string          `json:"event,omitempty"`
 	Data   json.RawMessage `json:"data,omitempty"`
+	// size is the encoded line with its newline, as read.
+	size int
 }
 
 // reply is the reply part of a line.
@@ -93,6 +95,8 @@ type conn struct {
 	nc   net.Conn
 	r    *bufio.Reader
 	next int64
+	// lastConversationID: the id of the last conversation event on this connection; the next must be higher.
+	lastConversationID int64
 	// lastChallenge paces console.challenge to one a second on this
 	// connection, as the server allows.
 	lastChallenge time.Time
@@ -129,7 +133,67 @@ func (c *conn) read() (*line, error) {
 	if err := json.Unmarshal(buf, &l); err != nil {
 		return nil, fmt.Errorf("not a JSON line: %q", buf)
 	}
+	l.size = len(buf)
+	if err := c.checkEventLine(&l); err != nil {
+		return nil, err
+	}
 	return &l, nil
+}
+
+// The limits of Den's conversation lines (DREY-API.md, "Conversation mirror"), as encoded JSON with the newline:
+// a conversation event line at most 400 KiB, a conversation.history reply line at most 800 KiB.
+const (
+	maxConversationEventLine = 409600
+	maxHistoryReplyLine      = 819200
+	maxStreamChunk           = 64 * 1024 // a joined text chunk of orch or chat
+)
+
+// checkEventLine holds every event line this connection reads to what Den states about it: a conversation event
+// within its line bound and with an id above the last one (the ids strictly increase; a gap is legal, as Den may
+// drop conversation entries and say so), a conversation_gap with a closed shape (`from` an id), and a joined
+// orch or chat text chunk of at most 64 KiB.
+func (c *conn) checkEventLine(l *line) error {
+	switch l.Event {
+	case "conversation":
+		if l.size > maxConversationEventLine {
+			return fmt.Errorf("a conversation event line of %d bytes, the most is %d", l.size, maxConversationEventLine)
+		}
+		var head struct {
+			ID int64 `json:"id"`
+		}
+		if json.Unmarshal(l.Data, &head) == nil && head.ID > 0 {
+			if head.ID <= c.lastConversationID {
+				return fmt.Errorf("conversation event id %d after %d: the ids strictly increase on a connection", head.ID, c.lastConversationID)
+			}
+			c.lastConversationID = head.ID
+		}
+	case "conversation_gap":
+		if err := checkGapEvent(l.Data); err != nil {
+			return err
+		}
+	case "orch", "chat":
+		var ch struct {
+			Delta string `json:"delta"`
+		}
+		if json.Unmarshal(l.Data, &ch) == nil && len(ch.Delta) > maxStreamChunk {
+			return fmt.Errorf("a %s text chunk of %d bytes, the most is %d", l.Event, len(ch.Delta), maxStreamChunk)
+		}
+	}
+	return nil
+}
+
+// checkGapEvent: `conversation_gap {from}` and no other field; from is the id of the first entry not sent.
+func checkGapEvent(raw json.RawMessage) error {
+	var g struct {
+		From int64 `json:"from"`
+	}
+	if err := strictDecode(raw, &g); err != nil {
+		return fmt.Errorf("conversation_gap %s: %w", raw, err)
+	}
+	if g.From <= 0 {
+		return fmt.Errorf("conversation_gap from %d is not an entry id", g.From)
+	}
+	return nil
 }
 
 // call sends op and decodes its reply into result, skipping events.
@@ -148,6 +212,9 @@ func (c *conn) call(ctx context.Context, op string, params, result any) error {
 		}
 		if l.Event != "" || l.ID == nil || *l.ID != id || l.OK == nil {
 			continue
+		}
+		if op == "conversation.history" && l.size > maxHistoryReplyLine {
+			return fmt.Errorf("a conversation.history reply line of %d bytes, the most is %d", l.size, maxHistoryReplyLine)
 		}
 		if !*l.OK {
 			if l.Error == nil {
