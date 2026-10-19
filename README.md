@@ -1052,6 +1052,14 @@ dock with its powers receives it, from that moment on. As with
 `console_powers`, anyone who can write Den's config could set `"always"`. The
 chat note each time it starts is how you would notice.
 
+Your answer, yes or no, belongs to the pairing: the same dock service,
+restarted on this boot, keeps your answer. That is the service's own main
+process, read clean by Den, as when it re-pairs by itself. It is kept in
+Den's console record, so it also survives Den's restart. A new pairing, a new
+boot, or a record changed while Den was stopped asks again. After a dock
+update the mirror stays dark until your `Ctrl+Y` gives the dock its powers
+back, then resumes, and Den's chat says so each time.
+
 Any program running as you can type into Den's window, read its
 screen (and a code on it), or drive the app you paired. A paired console
 answers for you, within the limits above, so pair only an app you trust,
