@@ -1064,7 +1064,14 @@ local socket open to this user only.
   drives a mission run), `desktop` (a desktop mission's agent reported).
 - `speaker` (a closed set): `you`, `den` (Den's own fixed lines only: "Report
   from Mossy Lemur.", a mission run's line, "More reports from … are in Den."),
-  or `orchestrator` (its completed reply).
+  or `orchestrator` (its completed reply). An entry with speaker
+  `orchestrator` always carries the orchestrator's own reply, under every
+  origin (`report` and `desktop` too): Den never passes an agent's report, or
+  any other text an agent or a host wrote, through as the orchestrator's. The
+  reply may still quote such text, as the model chose to (see `text`). If Den
+  ever sends an agent's own words in the mirror, they come under a speaker of
+  their own, new to this set: a client skips it until it supports it, and
+  then renders it plain.
 - `agent` is set for `report` and `desktop`, from Den's fleet, never from the
   report. It is never `Den`, `Drey`, `You` or `orchestrator` (those show as `an
   agent`).
