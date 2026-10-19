@@ -808,6 +808,8 @@ Each connection proves once, at its start:
 | `cmd.run` | `{text}` | `{ok, note}` |
 | `mode.set` | `{mode}` | `{ok, applied, note}` for a lowering, or `{ok, card, note}` for a raise that waits on that card |
 | `god.off` | | `{ok, was_on}`: Den turns God mode off |
+| `overlay.linked` | `{mission}` | `{linked: true}`: your glow for that mission is drawn (see Desktop overlay) |
+| `overlay.unlinked` | `{mission}` | `{linked: false}`: you hid them |
 
 All but `console.challenge`, `console.claim`, `console.auth` and
 `console.unpair {all: true}` need a proved connection, else `forbidden`
@@ -1042,8 +1044,44 @@ where the pointer is.
   surface's input region from Hyprland, so it relies on you for this:
   never give an input-taking surface that namespace. No other surface of
   the console's is ever let through: a click under the dock or any other
-  window of yours is refused. Draw the glow on the bottom layer, which
-  never blocks a click.
+  window of yours is refused. Drey draws the glow (the aurora) and the
+  pointer outline in the `drey-agent-pointer` surface, overlay level 3,
+  one per output, with an empty input region, so it shows above windows
+  and never blocks a click.
+- The link: send `overlay.linked {mission}`, with the `mission` of the
+  `active` desktop event, once your glow for that mission is on every
+  monitor, and `overlay.unlinked {mission}` when you hide it. Send
+  both from a proved connection subscribed to `console.events`
+  (`forbidden` otherwise); `overlay.linked` needs your powers
+  (`powers_locked` without them). A `mission` that is not the one running
+  is `not_found`. At most 30 overlay calls a minute (`unavailable` past
+  that).
+
+  From the first `overlay.linked` the task is overlay-backed. Its input
+  (pointer, keys, binds, window actions, launches; looking at the screen
+  goes on) runs only while both of these hold, with no grace period:
+  - the link stands: no `overlay.unlinked` since, and the connection that
+    sent it is still open, proved and subscribed. A reconnect, a re-pair
+    or an unpair takes it down: send `overlay.linked` again from the new
+    connection;
+  - Den sees your overlay itself: on every monitor `hyprctl monitors`
+    lists (enabled ones; a mirror of another output is skipped), a
+    surface on the overlay level (3) with layer namespace
+    `drey-agent-pointer`, of the process of one of your proved
+    connections (the surface the pointer rule above lets clicks
+    through). Another namespace, such as a test instance's, never counts.
+
+  While either is down, Den refuses the agent's input with "paused: the
+  dock's overlay is down; Den resumes when it is back", says so in its
+  chat, and says so again when it resumes. Down for 5 minutes, the task
+  ends, as when Den's own window goes. The human's stop is never paused.
+  A task that starts while you have a proved connection subscribed to
+  `console.events` waits for its first `overlay.linked`: its input is
+  paused, with the same words, for up to 15 seconds. With no link by
+  then it runs unbacked, and Den's chat says that the dock did not show
+  its overlay. A task that starts with no console watching is never
+  paused: Den's own window and its stop are the human's view of the task
+  then. Missions with apps are not paused.
 
 ### Conversation mirror
 

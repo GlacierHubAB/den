@@ -60,6 +60,7 @@ func (s *Server) SetDesktop(mission string) {
 		return
 	}
 	s.desk.mission = mission
+	s.overlayEnd(mission)
 	if mission != "" {
 		s.desk.asking = false
 	}
