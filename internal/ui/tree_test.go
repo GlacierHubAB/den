@@ -30,7 +30,7 @@ func treeModel() Model {
 	return m
 }
 
-func names(m Model) []string {
+func agentNames(m Model) []string {
 	var out []string
 	for _, a := range m.agents {
 		out = append(out, a.Name)
@@ -40,7 +40,7 @@ func names(m Model) []string {
 
 func TestTreeOrdersChildrenUnderParents(t *testing.T) {
 	m := treeModel()
-	got := strings.Join(names(m), ",")
+	got := strings.Join(agentNames(m), ",")
 	want := "Snug Capybara,Mossy Lemur,Fuzzy Sprite,Maple Owl,Comet Newt"
 	if got != want {
 		t.Fatalf("order = %s, want %s", got, want)

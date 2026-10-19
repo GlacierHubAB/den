@@ -19,6 +19,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -418,73 +419,40 @@ func humanAge(d time.Duration) string {
 	return fmt.Sprintf("%dh", int(d.Hours()))
 }
 
-// Find returns the agent whose name, session id or pid matches query. Names
-// match case-insensitively on a prefix ("mossy", "Mossy Lemur"). A query
-// that is ambiguous across hosts matches nothing; Lookup says why.
+// Find returns the agent whose session id, pid, peer handle or name
+// matches query (names.Resolve, with ids and prefixes). A query that
+// matches more than one agent matches nothing; Lookup says why.
 func Find(agents []Agent, query string) (Agent, bool) {
 	a, err := Lookup(agents, query)
 	return a, err == nil
 }
 
 // Lookup is Find with a reason when nothing matches. A query may name the
-// host after an @ ("mossy@devbox", "mossy@local"); without one, a query
-// that matches agents on more than one host is an error listing them.
+// host after an @ ("mossy@devbox", "mossy@local"); an agent on another
+// host needs it.
 func Lookup(agents []Agent, query string) (Agent, error) {
-	q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "@")))
-	if q == "" {
-		return Agent{}, fmt.Errorf("no agent matches %q", query)
+	c, err := names.Resolve(query, Candidates(agents), names.Opts{IDs: true, Prefix: true})
+	if err != nil {
+		if errors.Is(err, names.ErrNoMatch) {
+			return Agent{}, fmt.Errorf("no agent matches %q", query)
+		}
+		return Agent{}, err
 	}
-	host, qualified := "", false
-	if i := strings.LastIndex(q, "@"); i >= 0 {
-		host, q, qualified = q[i+1:], strings.TrimSpace(q[:i]), true
-		if host == "local" {
-			host = ""
+	for _, a := range agents {
+		if a.Session.SessionID == c.ID && a.Host == c.Host {
+			return a, nil
 		}
 	}
-	// The first match on each host, in the order given; a host is only
-	// considered once so one host's prefix matches stay unambiguous.
-	var hits []Agent
-	seen := map[string]bool{}
-	take := func(match func(Agent) bool) {
-		for _, a := range agents {
-			if (qualified && a.Host != host) || seen[a.Host] || !match(a) {
-				continue
-			}
-			seen[a.Host] = true
-			hits = append(hits, a)
-		}
+	return Agent{}, fmt.Errorf("no agent matches %q", query)
+}
+
+// Candidates are agents as names.Resolve takes them.
+func Candidates(agents []Agent) []names.Candidate {
+	out := make([]names.Candidate, 0, len(agents))
+	for _, a := range agents {
+		out = append(out, names.Candidate{ID: a.Session.SessionID, Peer: a.Session.Name, Name: a.Name, Host: a.Host, PID: a.Session.PID})
 	}
-	take(func(a Agent) bool {
-		return q != "" && (strings.HasPrefix(a.Session.SessionID, q) || (a.Session.PID > 0 && fmt.Sprint(a.Session.PID) == q))
-	})
-	if len(hits) == 0 {
-		// Two agents on one host can share a critter name (or a prefix of
-		// one): then the name is neither, and the error lists them with
-		// their peer handles.
-		perHost := map[string][]string{}
-		for _, a := range agents {
-			if (!qualified || a.Host == host) && strings.HasPrefix(strings.ToLower(a.Name), q) {
-				perHost[a.Host] = append(perHost[a.Host], sanitize.Label(a.Name, 60)+" ("+sanitize.Label(a.Session.Name, 60)+")@"+sanitize.Label(HostName(a.Host), 60))
-			}
-		}
-		for _, same := range perHost {
-			if len(same) > 1 {
-				return Agent{}, fmt.Errorf("%q is more than one agent: %s; give its session id", query, strings.Join(same, ", "))
-			}
-		}
-		take(func(a Agent) bool { return q != "" && strings.HasPrefix(strings.ToLower(a.Name), q) })
-	}
-	switch len(hits) {
-	case 0:
-		return Agent{}, fmt.Errorf("no agent matches %q", query)
-	case 1:
-		return hits[0], nil
-	}
-	var names []string
-	for _, a := range hits {
-		names = append(names, a.Name+"@"+HostName(a.Host))
-	}
-	return Agent{}, fmt.Errorf("%q matches agents on more than one host: %s; add @host", query, strings.Join(names, ", "))
+	return out
 }
 
 // HostName is the label shown for a host: "local" for this machine.

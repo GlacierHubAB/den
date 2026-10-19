@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/transcript"
 	"github.com/GlacierHubAB/den/internal/worktree"
 )
@@ -45,10 +47,23 @@ func (m Model) workFor(args []string) (*work, string) {
 		}
 		return nil, "No agent is selected in Review."
 	}
-	for i := range m.rev.works {
-		w := &m.rev.works[i]
-		if a, ok := m.agentFor(w.SessionID); ok && (strings.EqualFold(a.Name, name) || strings.EqualFold(a.Session.Name, name)) {
-			return w, ""
+	// The agents with work in Review, named the way every command names
+	// one (names.Resolve): two that fit is neither.
+	var agents []fleet.Agent
+	for _, w := range m.rev.works {
+		if a, ok := m.agentFor(w.SessionID); ok {
+			agents = append(agents, a)
+		}
+	}
+	a, err := m.resolveAgent(name, agents, names.Opts{})
+	if err != nil && !errors.Is(err, names.ErrNoMatch) {
+		return nil, err.Error() + "."
+	}
+	if err == nil {
+		for i := range m.rev.works {
+			if w := &m.rev.works[i]; w.SessionID == a.Session.SessionID {
+				return w, ""
+			}
 		}
 	}
 	return nil, "No agent called " + name + " has anything in Review."

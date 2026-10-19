@@ -223,8 +223,10 @@ func TestLookupByHost(t *testing.T) {
 		return Agent{Session: discover.Session{SessionID: id}, Name: name, Host: host}
 	}
 	agents := []Agent{mk("aaaa", "Mossy Lemur", ""), mk("bbbb", "Mossy Lemur", "devbox"), mk("cccc", "Tiny Owl", "devbox")}
-	if _, err := Lookup(agents, "mossy"); err == nil || !strings.Contains(err.Error(), "Mossy Lemur@local") || !strings.Contains(err.Error(), "Mossy Lemur@devbox") {
-		t.Errorf("ambiguous bare name: %v", err)
+	// Without a host a name means this machine; an agent elsewhere needs
+	// its host (names.Resolve).
+	if a, err := Lookup(agents, "mossy"); err != nil || a.Session.SessionID != "aaaa" {
+		t.Errorf("bare name = %v %v", a.Session.SessionID, err)
 	}
 	if a, err := Lookup(agents, "mossy@devbox"); err != nil || a.Session.SessionID != "bbbb" {
 		t.Errorf("mossy@devbox = %v %v", a.Session.SessionID, err)
@@ -232,11 +234,11 @@ func TestLookupByHost(t *testing.T) {
 	if a, err := Lookup(agents, "@Mossy Lemur@local"); err != nil || a.Session.SessionID != "aaaa" {
 		t.Errorf("mossy@local = %v %v", a.Session.SessionID, err)
 	}
-	if a, ok := Find(agents, "tiny"); !ok || a.Host != "devbox" {
-		t.Errorf("tiny = %+v", a)
+	if _, err := Lookup(agents, "tiny"); err == nil || !strings.Contains(err.Error(), "Tiny Owl@devbox") {
+		t.Errorf("a remote agent without its host: %v", err)
 	}
-	if _, ok := Find(agents, "mossy"); ok {
-		t.Error("Find should not pick one of two hosts")
+	if a, ok := Find(agents, "tiny@devbox"); !ok || a.Host != "devbox" {
+		t.Errorf("tiny@devbox = %+v", a)
 	}
 	if _, err := Lookup(agents, "tiny@gpu"); err == nil {
 		t.Error("an unknown host matched")

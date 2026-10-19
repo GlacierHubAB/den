@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
@@ -88,54 +90,37 @@ func (m *Model) handleSendRequest(r *bridge.Request) tea.Cmd {
 	}
 }
 
-// onHostAgent resolves "name@host" among a host's agents: an exact name,
-// peer name or session id, else a prefix of one that fits a single agent.
-// Several fits are listed, never guessed.
+// onHostAgent resolves "name@host" among a host's agents through
+// names.Resolve: a session id or its prefix, a peer handle, a name or an
+// alias, else a prefix of a name. Several fits are listed, never guessed.
 func onHostAgent(agents []fleet.Agent, who string) (fleet.Agent, error) {
 	i := strings.LastIndexByte(who, '@')
-	q, host := strings.ToLower(strings.TrimSpace(who[:i])), strings.ToLower(strings.TrimSpace(who[i+1:]))
-	q = strings.TrimPrefix(q, "@")
-	if q == "" || host == "" {
+	q, host := strings.TrimSpace(who[:i]), strings.ToLower(strings.TrimSpace(who[i+1:]))
+	if strings.TrimPrefix(q, "@") == "" || host == "" {
 		return fleet.Agent{}, fmt.Errorf("no agent matches %q", who)
 	}
 	if host == "local" {
 		host = ""
 	}
-	var exact, prefix, there []fleet.Agent
+	var there []fleet.Agent
 	for _, a := range agents {
-		if a.Host != host {
-			continue
-		}
-		there = append(there, a)
-		keys := []string{strings.ToLower(a.Name), strings.ToLower(a.Session.Name), strings.ToLower(a.Session.SessionID)}
-		for _, k := range keys {
-			if k == q {
-				exact = append(exact, a)
-				break
-			}
-		}
-		for _, k := range keys {
-			if k != "" && strings.HasPrefix(k, q) {
-				prefix = append(prefix, a)
-				break
-			}
+		if a.Host == host {
+			there = append(there, a)
 		}
 	}
-	hits := exact
-	if len(hits) == 0 {
-		hits = prefix
-	}
-	switch len(hits) {
-	case 0:
+	c, err := names.Resolve(who, fleet.Candidates(there), names.Opts{IDs: true, Prefix: true})
+	if errors.Is(err, names.ErrNoMatch) {
 		return fleet.Agent{}, noMatchOnHost(who, host, there)
-	case 1:
-		return hits[0], nil
 	}
-	var names []string
-	for _, h := range hits {
-		names = append(names, h.Name)
+	if err != nil {
+		return fleet.Agent{}, err
 	}
-	return fleet.Agent{}, fmt.Errorf("%q fits more than one agent on %s: %s; use the full name", q, host, strings.Join(names, ", "))
+	for _, a := range there {
+		if a.Session.SessionID == c.ID {
+			return a, nil
+		}
+	}
+	return fleet.Agent{}, noMatchOnHost(who, host, there)
 }
 
 // noMatchOnHost says no agent on host fits who, and names the agents that
