@@ -723,11 +723,11 @@ func (m *Model) migrateGuard() {
 		if qualified && host != "" {
 			seen := false
 			for _, a := range m.remote.agents {
-				if !strings.EqualFold(a.Host, host) {
+				if names.Fold(a.Host) != names.Fold(host) {
 					continue
 				}
 				seen = true
-				if strings.EqualFold(a.Name, name) || strings.EqualFold(a.Session.Name, name) {
+				if names.Fold(a.Name) == names.Fold(name) || names.Fold(a.Session.Name) == names.Fold(name) {
 					hits = append(hits, who{guardKey(a), m.guardLabel(a)})
 				}
 			}
@@ -735,7 +735,7 @@ func (m *Model) migrateGuard() {
 		}
 		keys := map[string]bool{}
 		for _, a := range m.guardAgents() {
-			if (qualified && a.Host != "") || !(strings.EqualFold(a.Name, name) || strings.EqualFold(a.Session.Name, name)) {
+			if (qualified && a.Host != "") || !(names.Fold(a.Name) == names.Fold(name) || names.Fold(a.Session.Name) == names.Fold(name)) {
 				continue
 			}
 			keys[guardKey(a)] = true
@@ -743,7 +743,7 @@ func (m *Model) migrateGuard() {
 		}
 		if m.restore.r != nil {
 			for _, r := range m.restore.r.Agents {
-				if !keys[r.SessionID] && (strings.EqualFold(r.Critter, name) || strings.EqualFold(r.Peer, name)) {
+				if !keys[r.SessionID] && (names.Fold(r.Critter) == names.Fold(name) || names.Fold(r.Peer) == names.Fold(name)) {
 					keys[r.SessionID] = true
 					hits = append(hits, who{r.SessionID, r.Name()})
 				}
