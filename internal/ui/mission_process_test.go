@@ -17,6 +17,7 @@ func tip(c byte) string { return strings.Repeat(string(c), 40) }
 // of an agent on no mission is never counted. The orchestrator's block and
 // the mission view carry the count and the cost per merged change.
 func TestMissionMergesCountOnce(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m, ms := costModel(t)
 	now := time.Now()
 	landed := map[string]bool{}

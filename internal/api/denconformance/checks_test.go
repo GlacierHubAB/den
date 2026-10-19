@@ -16,16 +16,22 @@ func entryJSON(fields string) json.RawMessage {
 
 func TestConversationEntryChecks(t *testing.T) {
 	good := map[string]string{
-		"you":              `"origin":"you","speaker":"you","text":"hi"`,
-		"reply":            `"origin":"you","speaker":"orchestrator","text":"hello"`,
-		"console":          `"origin":"console","speaker":"you","turn":"t-0123456789abcdef0123456789abcdef","console":{"label":"phone","self":false},"text":"hi"`,
-		"report":           `"origin":"report","speaker":"den","agent":"Mossy Lemur","text":"Report from Mossy Lemur."`,
-		"mission":          `"origin":"mission","speaker":"den","text":"Mission run."`,
-		"desktop":          `"origin":"desktop","speaker":"orchestrator","agent":"Otter","text":"done"`,
-		"twenty lines":     `"origin":"you","speaker":"you","text":"` + strings.Repeat("l\\n", 19) + `l"`,
-		"cut":              `"origin":"you","speaker":"you","text":"the start\\n(cut: the rest is in Den)"`,
-		"2000 runes":       `"origin":"you","speaker":"you","text":"` + strings.Repeat("é", 2000) + `"`,
-		"an agent as name": `"origin":"report","speaker":"den","agent":"an agent","text":"Report from an agent."`,
+		"you":                   `"origin":"you","speaker":"you","text":"hi"`,
+		"reply":                 `"origin":"you","speaker":"orchestrator","text":"hello"`,
+		"console":               `"origin":"console","speaker":"you","turn":"t-0123456789abcdef0123456789abcdef","console":{"label":"phone","self":false},"text":"hi"`,
+		"report":                `"origin":"report","speaker":"den","agent":"Mossy Lemur","text":"Report from Mossy Lemur."`,
+		"mission":               `"origin":"mission","speaker":"den","text":"Mission run."`,
+		"desktop":               `"origin":"desktop","speaker":"orchestrator","agent":"Otter","text":"done"`,
+		"five thousand lines":   `"origin":"you","speaker":"you","text":"` + strings.Repeat("l\\n", 5000) + `l"`,
+		"cut":                   `"origin":"you","speaker":"you","text":"the start\n(cut: the rest is in Den)"`,
+		"the words mid-text":    `"origin":"you","speaker":"you","text":"a (cut: the rest is in Den) b"`, // an agent can write them: not Den's cut
+		"65536 bytes":           `"origin":"you","speaker":"you","text":"` + strings.Repeat("x", 65536) + `"`,
+		"a cut at 64 KiB":       `"origin":"you","speaker":"you","text":"` + strings.Repeat("x", 65536) + `\n(cut: the rest is in Den)"`,
+		"32768 two-byte":        `"origin":"you","speaker":"you","text":"` + strings.Repeat("é", 32768) + `"`,
+		"an agent as name":      `"origin":"report","speaker":"den","agent":"an agent","text":"Report from an agent."`,
+		"a report with its id":  `"origin":"report","speaker":"den","agent":"backend-engineer2","agent_id":"0b5e1c1e-7c1e-4a41-9d3a-5f3c1b2a9e10","text":"Report."`,
+		"a desktop with its id": `"origin":"desktop","speaker":"orchestrator","agent":"Otter","agent_id":"a1:b2.c3_d4-5","text":"done"`,
+		"an id of 64":           `"origin":"report","speaker":"den","agent":"Otter","agent_id":"` + strings.Repeat("a", 64) + `","text":"hi"`,
 	}
 	for name, f := range good {
 		if _, err := checkConversationEntry(entryJSON(f)); err != nil {
@@ -51,15 +57,24 @@ func TestConversationEntryChecks(t *testing.T) {
 		"agent with a newline":         `"origin":"report","speaker":"den","agent":"a\nb","text":"hi"`,
 		"agent with a bidi override":   `"origin":"report","speaker":"den","agent":"a\u202eb","text":"hi"`,
 		"agent of only spaces":         `"origin":"report","speaker":"den","agent":"   ","text":"hi"`,
+		"agent_id without agent":       `"origin":"report","speaker":"den","agent_id":"abc","text":"hi"`,
+		"agent_id on origin you":       `"origin":"you","speaker":"you","agent_id":"abc","text":"hi"`,
+		"agent_id on origin mission":   `"origin":"mission","speaker":"den","agent_id":"abc","text":"hi"`,
+		"an empty agent_id":            `"origin":"report","speaker":"den","agent":"Otter","agent_id":"","text":"hi"`,
+		"an agent_id of 65":            `"origin":"report","speaker":"den","agent":"Otter","agent_id":"` + strings.Repeat("a", 65) + `","text":"hi"`,
+		"an agent_id with a space":     `"origin":"report","speaker":"den","agent":"Otter","agent_id":"a b","text":"hi"`,
+		"an agent_id with a slash":     `"origin":"report","speaker":"den","agent":"Otter","agent_id":"a/b","text":"hi"`,
+		"an agent_id with a newline":   `"origin":"report","speaker":"den","agent":"Otter","agent_id":"a\nb","text":"hi"`,
+		"an agent_id that is a number": `"origin":"report","speaker":"den","agent":"Otter","agent_id":7,"text":"hi"`,
+		"an agent_id with a NUL":       `"origin":"report","speaker":"den","agent":"Otter","agent_id":"nul\u0000l","text":"hi"`,
 		"console label of only spaces": `"origin":"console","speaker":"you","console":{"label":"  ","self":false},"text":"hi"`,
 		"console without console":      `"origin":"console","speaker":"you","text":"hi"`,
 		"console with unknown field":   `"origin":"console","speaker":"you","console":{"label":"p","self":true,"x":1},"text":"hi"`,
 		"console on origin you":        `"origin":"you","speaker":"you","console":{"label":"p","self":true},"text":"hi"`,
 		"turn on origin you":           `"origin":"you","speaker":"you","turn":"t-0123456789abcdef0123456789abcdef","text":"hi"`,
 		"a bad turn":                   `"origin":"console","speaker":"you","turn":"x","console":{"label":"p","self":true},"text":"hi"`,
-		"21 lines":                     `"origin":"you","speaker":"you","text":"` + strings.Repeat("l\\n", 20) + `l"`,
-		"20 newlines":                  `"origin":"you","speaker":"you","text":"` + strings.Repeat("l\\n", 20) + `"`,
-		"2001 runes":                   `"origin":"you","speaker":"you","text":"` + strings.Repeat("é", 2001) + `"`,
+		"65537 bytes":                  `"origin":"you","speaker":"you","text":"` + strings.Repeat("x", 65537) + `"`,
+		"32769 two-byte runes":         `"origin":"you","speaker":"you","text":"` + strings.Repeat("é", 32769) + `"`,
 		"empty text":                   `"origin":"you","speaker":"you","text":""`,
 		"an escape":                    `"origin":"you","speaker":"you","text":"a\u001b[31mb"`,
 		"a bidi override":              `"origin":"you","speaker":"you","text":"a\u202eb"`,
@@ -158,5 +173,45 @@ func TestEveryBadRuneIsRefused(t *testing.T) {
 		if badRune(r, false) {
 			t.Errorf("%q is refused", fmt.Sprint(string(r)))
 		}
+	}
+}
+
+// What the connection holds every event line to: the conversation lines' bounds, ids that strictly increase
+// (a gap is legal), a closed conversation_gap, and the joined text chunk bound.
+func TestEventLineChecks(t *testing.T) {
+	ev := func(kind, data string, size int) *line {
+		return &line{Event: kind, Data: json.RawMessage(data), size: size}
+	}
+	c := &conn{}
+	good := []*line{
+		ev("conversation", `{"id":3}`, 100),
+		ev("conversation", `{"id":9}`, maxConversationEventLine), // a gap in the ids is legal; the bound is inclusive
+		ev("conversation_gap", `{"from":4}`, 30),
+		ev("orch", `{"delta":"`+strings.Repeat("x", maxStreamChunk)+`"}`, 70000),
+		ev("chat", `{"delta":"hi"}`, 30),
+		ev("fleet", `{}`, 5),
+	}
+	for i, l := range good {
+		if err := c.checkEventLine(l); err != nil {
+			t.Errorf("good line %d (%s): %v", i, l.Event, err)
+		}
+	}
+	for name, l := range map[string]*line{
+		"an event line over its bound": ev("conversation", `{"id":20}`, maxConversationEventLine+1),
+		"an id that does not rise":     ev("conversation", `{"id":9}`, 10),
+		"an id that falls":             ev("conversation", `{"id":2}`, 10),
+		"a gap without from":           ev("conversation_gap", `{}`, 10),
+		"a gap from 0":                 ev("conversation_gap", `{"from":0}`, 10),
+		"a gap from a string":          ev("conversation_gap", `{"from":"x"}`, 10),
+		"a gap with another field":     ev("conversation_gap", `{"from":3,"x":1}`, 10),
+		"a joined chunk over 64 KiB":   ev("orch", `{"delta":"`+strings.Repeat("x", maxStreamChunk+1)+`"}`, 70000),
+		"a chat chunk over 64 KiB":     ev("chat", `{"delta":"`+strings.Repeat("x", maxStreamChunk+1)+`"}`, 70000),
+	} {
+		if err := c.checkEventLine(l); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+	if maxConversationEventLine != 400*1024 || maxHistoryReplyLine != 800*1024 {
+		t.Error("the line bounds are not Den's stated 400 KiB and 800 KiB")
 	}
 }

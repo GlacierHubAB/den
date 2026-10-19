@@ -19,13 +19,14 @@ import (
 // ([api] mirror_conversation: ask, always or off). An agent's own report
 // text never goes; the orchestrator's words about it do.
 
-// mirrorState is the mirror's state in the Model.
+// mirrorState is the mirror's state in the Model. The human's answer is
+// the console's own (api.Console.Mirror, kept with its pairing's lineage
+// in den-api's record), so a dock service restarted on this boot keeps it.
 type mirrorState struct {
-	// asked is the console the ask card is for, item that card; declined
-	// the console the human said no for; on the console Den last turned
-	// the mirror on for.
-	asked, declined, on string
-	item                string
+	// asked is the lineage the ask card is for, item that card; on the
+	// console Den last turned the mirror on for.
+	asked, on string
+	item      string
 	// reports are the agents of the report turns in flight, oldest first,
 	// and whether each was a desktop agent's.
 	reports []mirrorReport
@@ -34,13 +35,51 @@ type mirrorState struct {
 }
 
 type mirrorReport struct {
-	agent   string
-	desktop bool
+	agent, id string // the agent's name, and its session id
+	desktop   bool
+}
+
+// What mirrorTick does next (mirrorNext).
+type mirrorStep int
+
+const (
+	mirrorStay  mirrorStep = iota // nothing changes
+	mirrorFresh                   // on, under "always" or a fresh yes
+	mirrorAgain                   // on again, under the human's kept yes
+	mirrorAsk                     // put up the ask card for this lineage
+)
+
+// mirrorNext is mirrorTick's decision: whether to turn off the mirror Den
+// shows now (the console went, lost its powers, or is another pairing's),
+// and what to do for the console cur. mode is [api] mirror_conversation,
+// onID and on what den-api mirrors now, asked the lineage the ask card was
+// last put up for.
+func mirrorNext(mode string, cur api.Console, ok bool, onID string, on bool, asked string) (off bool, step mirrorStep) {
+	if !ok || !cur.Powers {
+		return on, mirrorStay
+	}
+	if on && onID == cur.ID {
+		return false, mirrorStay
+	}
+	switch mode {
+	case "always":
+		return on, mirrorFresh
+	case "off":
+		return on, mirrorStay
+	}
+	switch {
+	case cur.Mirror == api.MirrorYes:
+		return on, mirrorAgain
+	case cur.Mirror == api.MirrorNo, cur.Lineage == "", asked == cur.Lineage:
+		return on, mirrorStay
+	}
+	return on, mirrorAsk
 }
 
 // mirrorTick keeps the mirror as the human chose: on for the paired
-// console with its powers under "always", asked once per pairing under
-// "ask", never under "off"; off whenever that console is gone.
+// console with its powers under "always", asked once per pairing lineage
+// under "ask" and then as answered, never under "off"; off whenever that
+// console is gone or without its powers.
 func (m *Model) mirrorTick() {
 	srv := m.api.srv
 	if srv == nil {
@@ -49,32 +88,22 @@ func (m *Model) mirrorTick() {
 	cur, ok := srv.CurrentConsole()
 	defer m.syncMirrorAsking()
 	id, on := srv.Mirroring()
-	if !ok || !cur.Powers {
-		if on {
-			srv.SetMirror("", false)
-			m.mirror.on = ""
-		}
-		return
+	off, step := mirrorNext(m.cfg.API.MirrorConversation, cur, ok, id, on, m.mirror.asked)
+	if off {
+		srv.SetMirror("", false)
+		m.mirror.on = ""
 	}
-	if on && id == cur.ID {
-		return
-	}
-	if on {
-		srv.SetMirror("", false) // another pairing's
-	}
-	switch m.cfg.API.MirrorConversation {
-	case "always":
+	switch step {
+	case mirrorFresh:
 		m.mirrorOn(cur)
-	case "off":
-	default:
-		if m.mirror.asked == cur.ID || m.mirror.declined == cur.ID {
-			return
-		}
-		m.mirror.asked = cur.ID
+	case mirrorAgain:
+		m.mirrorOnAgain(cur)
+	case mirrorAsk:
+		m.mirror.asked = cur.Lineage
 		label := consoleLabelOf(cur)
 		it := m.store.AddMirrorAsk("Show your orchestrator conversation in "+label+"?", []string{
 			"With ^Y, " + label + " (pid " + strconv.Itoa(cur.PID) + ") shows what you and the orchestrator say, from now on: your own words typed in Den, its replies, and its answers to agents' reports and mission runs. An agent's own report text never goes, only Den's line saying who reported.",
-			"Until you unpair it, or /api mirror off. Set [api] mirror_conversation = \"always\" to skip this question, or \"off\" to never be asked.",
+			"Until you unpair it, or /api mirror off; the same dock service, restarted on this boot, keeps your answer. Set [api] mirror_conversation = \"always\" to skip this question, or \"off\" to never be asked.",
 		})
 		m.mirror.item = it.ID
 		m.refresh()
@@ -92,7 +121,7 @@ func (m *Model) syncMirrorAsking() {
 	cur, ok := srv.CurrentConsole()
 	id, on := srv.Mirroring()
 	asking := ""
-	if ok && cur.Powers && m.mirror.asked == cur.ID && !(on && id == cur.ID) {
+	if ok && cur.Powers && cur.Mirror == "" && m.mirror.asked == cur.Lineage && !(on && id == cur.ID) {
 		for _, it := range m.store.Items() {
 			if it.ID == m.mirror.item && it.Answerable() {
 				asking = cur.ID
@@ -107,6 +136,16 @@ func (m *Model) mirrorOn(cur api.Console) {
 	m.api.srv.SetMirror(cur.ID, true)
 	m.mirror.on = cur.ID
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: time.Now(), text: "Den shows this conversation in " + consoleLabelOf(cur) + " (pid " + strconv.Itoa(cur.PID) + "), from now on. /api mirror off stops it."}))
+}
+
+// mirrorOnAgain turns the mirror on again for console cur under the human's
+// kept yes (after the console reconnected, Den restarted, or its powers
+// came back), from the time they said it, and says so in Den's chat each
+// time: the human always hears it.
+func (m *Model) mirrorOnAgain(cur api.Console) {
+	m.api.srv.ResumeMirror(cur.ID, cur.MirrorSince)
+	m.mirror.on = cur.ID
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", at: time.Now(), text: "Den shows this conversation in " + consoleLabelOf(cur) + " again, as you allowed; /api mirror off stops it."}))
 }
 
 // consoleLabelOf is how Den names a console to the human.
@@ -126,7 +165,7 @@ func (m Model) decideMirror(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	cur, ok := srv.CurrentConsole()
-	if !ok || cur.ID != m.mirror.asked || !cur.Powers {
+	if !ok || cur.Lineage == "" || cur.Lineage != m.mirror.asked || !cur.Powers || !srv.SetMirrorConsent(cur.Lineage, verb == "allow") {
 		m.store.Settle(it, false, "the console changed; nothing was shown")
 		m.refresh()
 		return m.say("That console is no longer paired with its powers; nothing is shown.", true)
@@ -135,14 +174,14 @@ func (m Model) decideMirror(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.mirrorOn(cur)
 		m.store.Settle(it, true, "shown in the console")
 	} else {
-		m.mirror.declined = cur.ID
 		m.store.Settle(it, false, "kept in Den")
 	}
 	m.refresh()
 	return m, nil
 }
 
-// mirrorCommand is /api mirror on|off: the human's switch, in Den.
+// mirrorCommand is /api mirror on|off: the human's switch, in Den. Off is
+// the human's no for the console's lineage, kept as the card's no is.
 func (m *Model) mirrorCommand(arg string) (string, bool) {
 	srv := m.api.srv
 	if srv == nil {
@@ -153,15 +192,14 @@ func (m *Model) mirrorCommand(arg string) (string, bool) {
 	case "off":
 		srv.SetMirror("", false)
 		if ok {
-			m.mirror.declined = cur.ID
+			srv.SetMirrorConsent(cur.Lineage, false)
 		}
 		m.mirror.on = ""
 		return "The conversation is no longer shown in any console.", false
 	case "on":
-		if !ok || !cur.Powers {
+		if !ok || !cur.Powers || !srv.SetMirrorConsent(cur.Lineage, true) {
 			return "No paired console with its powers to show it in.", true
 		}
-		m.mirror.declined = ""
 		m.mirrorOn(cur)
 		return "Shown in " + consoleLabelOf(cur) + ".", false
 	}
@@ -193,12 +231,12 @@ func (m *Model) mirrorTurn(origin, shown string) {
 // never the report itself.
 func (m *Model) mirrorReportTurn(agent, sessionID string) {
 	desktop := m.isDesktopAgent(sessionID)
-	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, desktop})
+	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, sessionID, desktop})
 	origin := api.OriginReport
 	if desktop {
 		origin = api.OriginDesktop
 	}
-	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, Text: "Report from " + agent + "."})
+	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, AgentID: sessionID, Text: "Report from " + agent + "."})
 }
 
 // isDesktopAgent reports whether a session is a desktop mission's agent.
@@ -251,7 +289,7 @@ func (m *Model) mirrorReply(origin, result string) {
 		if len(m.mirror.reports) > 0 {
 			r := m.mirror.reports[0]
 			m.mirror.reports = m.mirror.reports[1:]
-			c.Agent = r.agent
+			c.Agent, c.AgentID = r.agent, r.id
 			if r.desktop {
 				c.Origin = api.OriginDesktop
 			}

@@ -45,6 +45,12 @@ type deskMission struct {
 	// or den changed), "" while it holds. nil: no guard to check.
 	Guard func() string
 	Ended string // why the mission ended, "" while it is live
+	// stopFailed is the report of a stop that could not signal one of the
+	// mission's processes, "" for none; stopWhy why it was stopped. The
+	// mission stays live, with every call of its agent refused and its chip
+	// red, until a stop finds nothing of it running (stopDesk).
+	stopFailed, stopWhy string
+	stopRestore         bool // the failed stop was the human's: its retry closes Den's windows too
 	// AskedBy is who dispatched it (its peer name, as it said), AgentName
 	// the agent's peer name once it started.
 	AskedBy, AgentName string
@@ -250,6 +256,9 @@ func (m *Model) consoleProcs() map[int]bool {
 func (dm *deskMission) refusal() string {
 	if dm.Ended != "" {
 		return "the desktop mission has ended (" + dm.Ended + ")"
+	}
+	if dm.stopFailed != "" {
+		return "Den is stopping the desktop mission (" + dm.stopWhy + ")"
 	}
 	if dm.Guard != nil {
 		if why := dm.Guard(); why != "" {

@@ -337,20 +337,22 @@ func TestCloseIdleForPicksByLastActivityAndHonoursTheGuard(t *testing.T) {
 		t.Errorf("bad duration: %q", mm.(Model).flash)
 	}
 
-	// Protected by peer name: skipped and said so, even when named.
-	m.guard.Protect("fuzzy")
-	m.guard.SetFlag("Maple Owl", "issue #11080 pending")
+	// Protected (named by its peer handle): skipped and said so, even when
+	// named.
+	mm, _ = m.guardCommand("/protect", []string{"fuzzy"})
+	m = mm.(Model)
+	m.guard.SetFlag(guardKey(namedAgent(t, m, "Maple Owl")), "Maple Owl", "issue #11080 pending")
 	before := len(closeItems(m))
 	mm, _ = m.closeCommand([]string{"idle", "10m"})
 	m3 := mm.(Model)
 	if n := len(closeItems(m3)); n != before {
 		t.Fatalf("nothing should be proposed, got %d new", n-before)
 	}
-	if !strings.Contains(m3.flash, "skipped Fuzzy Sprite: protected (fuzzy)") || !strings.Contains(m3.flash, "Maple Owl holds context") {
+	if !strings.Contains(m3.flash, "skipped Fuzzy Sprite: protected (Fuzzy Sprite)") || !strings.Contains(m3.flash, "Maple Owl holds context") {
 		t.Errorf("flash = %q", m3.flash)
 	}
 	mm, _ = m.closeCommand([]string{"Fuzzy Sprite"})
-	if !strings.Contains(mm.(Model).flash, "Fuzzy Sprite: protected (fuzzy) · /unprotect fuzzy to allow it") {
+	if !strings.Contains(mm.(Model).flash, "Fuzzy Sprite: protected (Fuzzy Sprite) · /unprotect Fuzzy Sprite to allow it") {
 		t.Errorf("named protected agent: %q", mm.(Model).flash)
 	}
 	// A flagged agent is included when named.
@@ -369,7 +371,7 @@ func TestCloseIdleForPicksByLastActivityAndHonoursTheGuard(t *testing.T) {
 		t.Fatalf("item = %+v", it)
 	}
 	body = strings.Join(it.Body, "\n")
-	for _, want := range []string{"Skipped Fuzzy Sprite: protected (fuzzy)", "Holds context, not selected: Maple Owl (issue #11080 pending) · /close Maple Owl to include it"} {
+	for _, want := range []string{"Skipped Fuzzy Sprite: protected (Fuzzy Sprite)", "Holds context, not selected: Maple Owl (issue #11080 pending) · /close Maple Owl to include it"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body lacks %q:\n%s", want, body)
 		}
@@ -389,8 +391,8 @@ func TestProtectByFolderAndTaskAndTheCommandsPersist(t *testing.T) {
 		}
 	}
 	m.refresh()
-	fuzzy, _ := m.agentNamed("Fuzzy Sprite")
-	maple, _ := m.agentNamed("Maple Owl")
+	fuzzy := namedAgent(t, m, "Fuzzy Sprite")
+	maple := namedAgent(t, m, "Maple Owl")
 	if why := m.guardReason(fuzzy); why != "protected: works in ~/projects/xml-converter" {
 		t.Errorf("folder rule: %q", why)
 	}
@@ -406,7 +408,9 @@ func TestProtectByFolderAndTaskAndTheCommandsPersist(t *testing.T) {
 	mm, _ = m.guardCommand("/flag", []string{"Mossy", "Lemur:", "interview", "in", "progress"})
 	m = mm.(Model)
 	g := closer.LoadGuard(m.guardPath)
-	if len(g.Names) != 1 || g.Names[0] != "Snug Capybara" || len(g.Flagged) != 1 || g.Flagged[0].Note != "interview in progress" {
+	snug, mossy := namedAgent(t, m, "Snug Capybara"), namedAgent(t, m, "Mossy Lemur")
+	if len(g.Sessions) != 1 || g.Sessions[0].Session != snug.Session.SessionID || g.Sessions[0].Name != "Snug Capybara" ||
+		len(g.Flags) != 1 || g.Flags[0].Session != mossy.Session.SessionID || g.Flags[0].Note != "interview in progress" {
 		t.Errorf("saved guard = %+v", g)
 	}
 	mm, _ = m.guardCommand("/protect", nil)
@@ -416,14 +420,14 @@ func TestProtectByFolderAndTaskAndTheCommandsPersist(t *testing.T) {
 	mm, _ = m.guardCommand("/unprotect", []string{"Snug", "Capybara"})
 	mm, _ = mm.(Model).guardCommand("/unflag", []string{"Mossy", "Lemur"})
 	g = closer.LoadGuard(mm.(Model).guardPath)
-	if len(g.Names) != 0 || len(g.Flagged) != 0 {
+	if len(g.Sessions) != 0 || len(g.Flags) != 0 {
 		t.Errorf("after unprotect and unflag: %+v", g)
 	}
 }
 
 func TestOrchestratorIdleForRequestPicksAndWaits(t *testing.T) {
 	m := staleModel(t)
-	m.guard.Protect("Fuzzy Sprite")
+	m.guard.Protect(guardKey(namedAgent(t, m, "Fuzzy Sprite")), "Fuzzy Sprite")
 	m.base = append(m.base, m.base[2])
 	m.base[len(m.base)-1].Name, m.base[len(m.base)-1].Session.Name, m.base[len(m.base)-1].Session.SessionID, m.base[len(m.base)-1].Session.PID = "Dusty Mole", "dusty", "dusty-mole", 50009
 	m.refresh()
@@ -478,5 +482,105 @@ func TestOrchestratorCloseQuestionShowsInTheChat(t *testing.T) {
 	}
 	if out := ansi.Strip(m.View().Content); strings.Contains(out, "It waits for you") {
 		t.Error("the answered question still shows in the chat")
+	}
+}
+
+// namedAgent is the agent /close would mean by name.
+func namedAgent(t *testing.T, m Model, name string) fleet.Agent {
+	t.Helper()
+	a, why := m.closeNamed(name)
+	if why != "" {
+		t.Fatalf("%s: %s", name, why)
+	}
+	return a
+}
+
+// The guard holds a session, not a name: an agent whose name changes stays
+// protected, flagged and closable by its new name; another agent that gets
+// the old name is not protected; and a reopened session (same id) is
+// protected again.
+func TestGuardFollowsTheSessionNotTheName(t *testing.T) {
+	m := staleModel(t)
+	mm, _ := m.guardCommand("/protect", []string{"Fuzzy", "Sprite"})
+	m = mm.(Model)
+	mm, _ = m.guardCommand("/flag", []string{"Maple", "Owl:", "keep"})
+	m = mm.(Model)
+	fuzzyID := namedAgent(t, m, "Fuzzy Sprite").Session.SessionID
+	for i := range m.base {
+		switch m.base[i].Name {
+		case "Fuzzy Sprite":
+			m.base[i].Name = "backend-engineer"
+		case "Mossy Lemur":
+			m.base[i].Name = "Fuzzy Sprite" // another agent now has the old name
+		case "Maple Owl":
+			m.base[i].Name = "technical-writer"
+		}
+	}
+	m.refresh()
+	renamed := namedAgent(t, m, "backend-engineer")
+	if renamed.Session.SessionID != fuzzyID || m.guardReason(renamed) == "" {
+		t.Errorf("a renamed agent lost its guard: %q", m.guardReason(renamed))
+	}
+	if why := m.guardReason(namedAgent(t, m, "Fuzzy Sprite")); why != "" {
+		t.Errorf("an agent that took the old name is protected: %q", why)
+	}
+	if note, ok := m.guardHeld(namedAgent(t, m, "technical-writer")); !ok || note != "keep" {
+		t.Errorf("a renamed agent lost its flag: %q %v", note, ok)
+	}
+	// Closable by its new name, and the guard still says no.
+	mm, _ = m.closeCommand([]string{"backend-engineer"})
+	if !strings.Contains(mm.(Model).flash, "protected") {
+		t.Errorf("close by the new name: %q", mm.(Model).flash)
+	}
+	// The session goes and comes back (a restore or /reopen keeps its id).
+	for i := range m.base {
+		if m.base[i].Session.SessionID == fuzzyID {
+			m.base[i].Session.PID += 1000
+		}
+	}
+	m.refresh()
+	if m.guardReason(namedAgent(t, m, "backend-engineer")) == "" {
+		t.Error("the reopened session lost its guard")
+	}
+}
+
+// An older protected.json by name is turned into sessions once Den sees its
+// agents: every agent with the name is guarded; a name no agent has is
+// dropped; a host not yet seen waits; Den's chat says so once.
+func TestGuardMigratesNamesToSessions(t *testing.T) {
+	m := staleModel(t)
+	m.guard = &closer.Guard{Names: []string{"fuzzy", "Nobody Here", "Tiny Owl@devbox"}, Flagged: []closer.Flag{{Name: "Maple Owl", Note: "pending"}}}
+	m.migrateGuard()
+	fuzzy, maple := namedAgent(t, m, "Fuzzy Sprite"), namedAgent(t, m, "Maple Owl")
+	if _, ok := m.guard.IsProtected(guardKey(fuzzy)); !ok {
+		t.Error("fuzzy (a peer handle) not moved to its session")
+	}
+	if note, ok := m.guard.Held(guardKey(maple)); !ok || note != "pending" {
+		t.Errorf("flag not moved: %q %v", note, ok)
+	}
+	if p, f := m.guard.Legacy(); len(p) != 1 || p[0] != "Tiny Owl@devbox" || len(f) != 0 {
+		t.Errorf("left to migrate: %v %v", p, f)
+	}
+	notes := 0
+	for _, e := range m.orch.chat {
+		if e.role == "note" && strings.Contains(e.text, "by its session, not by name") {
+			notes++
+			if !strings.Contains(e.text, "Nobody Here") {
+				t.Errorf("the dropped name is not named: %q", e.text)
+			}
+		}
+	}
+	if notes != 1 {
+		t.Errorf("%d migration notes, want 1", notes)
+	}
+	m.migrateGuard() // nothing new: no second note
+	n := 0
+	for _, e := range m.orch.chat {
+		if e.role == "note" && strings.Contains(e.text, "by its session, not by name") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d migration notes after a second scan", n)
 	}
 }

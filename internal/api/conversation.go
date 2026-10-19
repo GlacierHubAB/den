@@ -82,6 +82,9 @@ type ConvEntry struct {
 type Converse struct {
 	Turn, Origin, Speaker, Agent, Text string
 	ConsoleID, ConsoleLabel            string
+	// AgentID is the reporting agent's session: the report limits count
+	// by it, never by the name.
+	AgentID string
 }
 
 // convState is the mirror's state, under its own lock.
@@ -93,9 +96,9 @@ type convState struct {
 	on    bool
 	forID string
 	since time.Time
-	// reports are when each agent's report entries went out, and all
-	// reports' together, for the rate limits; told when each agent last
-	// had the "more reports" line.
+	// reports are when each agent's report entries went out, by session
+	// id, and all reports' together, for the rate limits; told when each
+	// agent last had the "more reports" line.
 	reports map[string][]time.Time
 	all     []time.Time
 	told    map[string]time.Time
@@ -125,6 +128,24 @@ func (s *Server) SetMirror(id string, on bool) {
 		st.since = time.Now()
 		st.askingID = ""
 	}
+	st.mu.Unlock()
+	s.pushMirror()
+}
+
+// ResumeMirror turns the mirror on again for console id under the human's
+// kept answer, given at since: conversation.history then reaches back to
+// the later of since and Den's start, as it did before the console
+// restarted, and is never cut to the reconnect.
+func (s *Server) ResumeMirror(id string, since time.Time) {
+	if id == "" {
+		return
+	}
+	if since.IsZero() {
+		since = time.Now()
+	}
+	st := &s.conv
+	st.mu.Lock()
+	st.on, st.forID, st.since, st.askingID = true, id, since, ""
 	st.mu.Unlock()
 	s.pushMirror()
 }
@@ -254,7 +275,7 @@ func (s *Server) Converse(in Converse) bool {
 	st.mu.Lock()
 	now := time.Now()
 	if (in.Origin == OriginReport || in.Origin == OriginDesktop) && in.Speaker != SpeakerOrchestrator {
-		ok, line := st.allowReport(e.Agent, now)
+		ok, line := st.allowReport(in.AgentID, e.Agent, now)
 		if !ok {
 			if line == "" {
 				st.mu.Unlock()
@@ -284,9 +305,11 @@ func (s *Server) Converse(in Converse) bool {
 }
 
 // allowReport applies the report limits: convPerAgent a minute per agent
-// and convReportsTotal across all. Past them, the first entry dropped in a
+// (by its session id; agent is only its name, for the line) and
+// convReportsTotal across all. Past them, the first entry dropped in a
 // minute becomes Den's line saying more are in Den; the rest are dropped.
-func (st *convState) allowReport(agent string, now time.Time) (bool, string) {
+// A report with no session id counts against one shared bucket.
+func (st *convState) allowReport(id, agent string, now time.Time) (bool, string) {
 	if st.reports == nil {
 		st.reports, st.told = map[string][]time.Time{}, map[string]time.Time{}
 	}
@@ -299,16 +322,16 @@ func (st *convState) allowReport(agent string, now time.Time) (bool, string) {
 		}
 		return out
 	}
-	st.reports[agent], st.all = recent(st.reports[agent]), recent(st.all)
-	if len(st.reports[agent]) < convPerAgent && len(st.all) < convReportsTotal {
-		st.reports[agent] = append(st.reports[agent], now)
+	st.reports[id], st.all = recent(st.reports[id]), recent(st.all)
+	if len(st.reports[id]) < convPerAgent && len(st.all) < convReportsTotal {
+		st.reports[id] = append(st.reports[id], now)
 		st.all = append(st.all, now)
 		return true, ""
 	}
-	if now.Sub(st.told[agent]) < time.Minute {
+	if now.Sub(st.told[id]) < time.Minute {
 		return false, ""
 	}
-	st.told[agent] = now
+	st.told[id] = now
 	return false, "More reports from " + agent + " are in Den."
 }
 

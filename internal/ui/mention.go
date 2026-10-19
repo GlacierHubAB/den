@@ -1,9 +1,13 @@
 package ui
 
 import (
+	"errors"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/names"
 )
 
 // A remote agent is mentioned with its host after the name, "@Mossy
@@ -18,135 +22,123 @@ type mention struct {
 	missing   string   // the partial that matched nobody
 }
 
-// resolveMention finds the agent a message is addressed to. A full name at
-// the start wins ("@Mossy Lemur rebase…"); otherwise a single word is matched
-// as a case-insensitive prefix of a name ("@mossy rebase…"). Either may carry
-// a host ("@Mossy Lemur@devbox …", "@mossy@devbox …"); a name that matches
-// agents on more than one host is ambiguous until it does. Text without a
-// leading @ has no target.
+// resolveMention finds the agent a message is addressed to, through
+// names.Resolve. A whole name at the start wins ("@Mossy Lemur rebase…"),
+// the longest one that fits, and a peer handle or an alias counts as a
+// name; otherwise a single word is matched as a case-insensitive prefix of
+// a name ("@mossy rebase…"). Either may carry a host ("@Mossy
+// Lemur@devbox …", "@mossy@devbox …"); without one it names an agent on
+// this machine, and an agent elsewhere needs its host. A mention that fits
+// more than one agent is ambiguous: none is picked. Text without a leading
+// @ has no target.
 func resolveMention(text string, agents []fleet.Agent) mention {
 	text = strings.TrimSpace(text)
 	if !strings.HasPrefix(text, "@") {
 		return mention{body: text}
 	}
-	// An agent on this machine always wins an unqualified mention: one on a
-	// host is reached by writing the host, or when nothing local fits.
-	var local []fleet.Agent
-	for _, a := range agents {
-		if a.Host == "" {
-			local = append(local, a)
-		}
-	}
-	if len(local) < len(agents) {
-		if mt := mentionAmong(text, local); mt.target != nil || len(mt.ambiguous) > 0 {
-			return mt
-		}
-	}
-	return mentionAmong(text, agents)
-}
-
-func mentionAmong(text string, agents []fleet.Agent) mention {
 	rest := strings.TrimPrefix(text, "@")
-	lower := strings.ToLower(rest)
-	var best []*fleet.Agent
-	bestLen := 0
-	for i := range agents {
-		name := strings.ToLower(agents[i].Name)
-		if name == "" || !strings.HasPrefix(lower, name) || len(name) < bestLen {
-			continue
-		}
-		if len(lower) != len(name) && lower[len(name)] != ' ' && lower[len(name)] != '@' {
-			continue
-		}
-		if len(name) > bestLen {
-			best, bestLen = nil, len(name)
-		}
-		best = append(best, &agents[i])
-	}
-	if len(best) > 0 {
-		after := rest[bestLen:]
-		if host, body, ok := hostQualifier(after); ok {
-			best = onHost(best, host)
-			if len(best) == 0 {
-				return mention{missing: rest[:bestLen] + "@" + host}
+	lower := names.Fold(rest)
+	cands := fleet.Candidates(agents)
+	// The longest whole name that starts the text, on this machine first:
+	// a longer name on a host never captures a local agent's mention.
+	longest := func(local bool) int {
+		best := 0
+		for _, c := range cands {
+			if (c.Host == "") != local {
+				continue
 			}
-			return pick(best, body)
+			for _, n := range []string{c.Name, c.Alias, c.Peer} {
+				n = names.Fold(n)
+				if n == "" || len(n) <= best || !strings.HasPrefix(lower, n) {
+					continue
+				}
+				if !boundaryAfter(lower, len(n)) {
+					continue
+				}
+				best = len(n)
+			}
 		}
-		return pick(best, strings.TrimSpace(after))
+		return best
 	}
-	word := rest
-	body := ""
-	if i := strings.IndexByte(rest, ' '); i >= 0 {
-		word, body = rest[:i], strings.TrimSpace(rest[i+1:])
+	best := longest(true)
+	if best == 0 {
+		best = longest(false)
 	}
-	word = strings.Trim(word, `"'`)
-	host, qualified := "", false
-	if i := strings.LastIndexByte(word, '@'); i >= 0 {
-		word, host, qualified = word[:i], word[i+1:], true
-	}
-	if word == "" {
-		return mention{missing: ""}
-	}
-	var hits []*fleet.Agent
-	for i := range agents {
-		if strings.HasPrefix(strings.ToLower(agents[i].Name), strings.ToLower(word)) {
-			hits = append(hits, &agents[i])
+	query, body, opts := "", "", names.Opts{}
+	if best > 0 {
+		query = rest[:best]
+		after := rest[best:]
+		if host, b, ok := hostQualifier(after); ok {
+			query, body = query+"@"+host, b
+		} else {
+			body = mentionBody(after)
+		}
+	} else {
+		query, body = mentionWord(rest)
+		opts.Prefix = true
+		if strings.TrimSuffix(query, "@") == "" || strings.HasPrefix(query, "@") {
+			return mention{missing: ""}
 		}
 	}
-	if qualified {
-		if hits = onHost(hits, host); len(hits) == 0 {
-			return mention{missing: word + "@" + host}
+	c, err := names.Resolve(query, cands, opts)
+	var amb *names.Ambiguous
+	var elsewhere *names.NeedsHost
+	switch {
+	case err == nil:
+		for i := range agents {
+			if agents[i].Session.SessionID == c.ID && agents[i].Host == c.Host {
+				return mention{target: &agents[i], body: body}
+			}
 		}
+		return mention{missing: query}
+	case errors.As(err, &amb):
+		return mention{ambiguous: names.Labels(amb.Candidates), body: body}
+	case errors.As(err, &elsewhere):
+		return mention{ambiguous: names.Labels(elsewhere.Candidates), body: body}
 	}
-	if len(hits) == 0 {
-		return mention{missing: word}
-	}
-	return pick(hits, body)
-}
-
-// pick is the one agent of hits, or the ambiguity: hits on several hosts
-// are listed with theirs.
-func pick(hits []*fleet.Agent, body string) mention {
-	if len(hits) == 1 {
-		return mention{target: hits[0], body: body}
-	}
-	multi := false
-	for _, h := range hits {
-		multi = multi || h.Host != "" || h.Name != hits[0].Name
-	}
-	var names []string
-	for _, h := range hits {
-		n := h.Name
-		if h.Host != "" || (multi && h.Name == hits[0].Name) {
-			n += "@" + fleet.HostName(h.Host)
-		}
-		names = append(names, n)
-	}
-	return mention{ambiguous: names, body: body}
+	return mention{missing: query}
 }
 
 // hostQualifier reads "@devbox rest…" after a name: the host and the body.
+// A host ends at white space or sentence punctuation, but a dot inside it
+// is its own ("@devbox.lan, rebase"); dots at its end are not.
 func hostQualifier(after string) (host, body string, ok bool) {
 	rest, found := strings.CutPrefix(after, "@")
 	if !found {
 		return "", "", false
 	}
-	host, body, _ = strings.Cut(rest, " ")
-	return strings.ToLower(host), strings.TrimSpace(body), true
+	end := strings.IndexFunc(rest, func(r rune) bool { return r != '.' && mentionEndRune(r) })
+	if end < 0 {
+		end = len(rest)
+	}
+	host = strings.TrimRight(rest[:end], ".")
+	return names.Fold(host), mentionBody(rest[len(host):]), true
 }
 
-// onHost keeps the agents on host ("local" or "" is this machine).
-func onHost(as []*fleet.Agent, host string) []*fleet.Agent {
-	if host == "local" {
-		host = ""
+// mentionWord reads a one-word mention, "mossy, rebase…" or
+// "mossy@devbox: rebase…": the word (with its host) and the body. The word
+// ends where a mention ends (mentionEndRune).
+func mentionWord(rest string) (query, body string) {
+	i := strings.IndexFunc(rest, mentionEndRune)
+	if i < 0 {
+		return rest, ""
 	}
-	var out []*fleet.Agent
-	for _, a := range as {
-		if strings.EqualFold(a.Host, host) {
-			out = append(out, a)
-		}
+	if host, b, ok := hostQualifier(rest[i:]); ok {
+		return rest[:i] + "@" + host, b
 	}
-	return out
+	return rest[:i], mentionBody(rest[i:])
+}
+
+// mentionBody is the message after a mention: punctuation that ended the
+// name ("@Name, rebase", "@Name: rebase") is not part of it when white
+// space or the end follows; otherwise it is the message's own ("@Name's
+// branch").
+func mentionBody(after string) string {
+	rest := strings.TrimLeftFunc(after, func(r rune) bool { return strings.ContainsRune(mentionPunct, r) })
+	if r, _ := utf8.DecodeRuneInString(rest); rest == "" || unicode.IsSpace(r) {
+		after = rest
+	}
+	return strings.TrimSpace(after)
 }
 
 // mentionText is what completing a mention inserts: the name, with the
@@ -171,13 +163,13 @@ func completions(text string, agents []fleet.Agent) []fleet.Agent {
 	if resolveMention(text, agents).target != nil && strings.Contains(text, " ") {
 		return nil
 	}
-	partial := strings.ToLower(strings.TrimPrefix(text, "@"))
+	partial := names.Fold(strings.TrimPrefix(text, "@"))
 	var out []fleet.Agent
 	for _, a := range agents {
 		if a.Status == fleet.Gone {
 			continue
 		}
-		if strings.HasPrefix(strings.ToLower(a.Name), partial) || strings.HasPrefix(strings.ToLower(mentionText(a)[1:]), partial) {
+		if strings.HasPrefix(names.Fold(a.Name), partial) || strings.HasPrefix(names.Fold(mentionText(a)[1:]), partial) {
 			out = append(out, a)
 		}
 	}

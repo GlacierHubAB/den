@@ -822,6 +822,10 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.TeamEvent {
 		return m.handleTeamQuery(r)
 	}
+	if r.Event == bridge.OverlapAckEvent {
+		m.handleOverlapAck(r)
+		return nil
+	}
 	if r.Event == bridge.NoteEvent || r.Event == bridge.NotesEvent || r.Event == bridge.RuleEvent {
 		return m.handleMemory(r)
 	}
@@ -1476,6 +1480,11 @@ func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 		return m.say(msg, true)
 	}
 	if it == nil || !it.Answerable() {
+		if len(m.stripProposals()) > 0 {
+			// Never silent, and never a guess: the key may have been meant
+			// for a card, so a proposal is answered only once selected.
+			return m.say(proposalKeyHint, true)
+		}
 		return m.say("Nothing is waiting for an answer.", true)
 	}
 	if m.tab != tabInbox && verb != "deny" && !m.detailShowsWhole(it) {
@@ -1847,6 +1856,14 @@ func (m Model) nameFor(sessionID string) string {
 			return ms.Name
 		}
 		return "mission"
+	}
+	if repo, ok := strings.CutPrefix(sessionID, memorySessionPrefix); ok {
+		// A project's memory card is from that project's memory, named in
+		// full, never a cut id.
+		if mt := m.mem.metas[repo]; mt != nil && mt.Name != "" {
+			return sanitize.Label(mt.Name, 60) + " memory"
+		}
+		return "project memory"
 	}
 	if a, ok := m.agentFor(sessionID); ok {
 		return a.Name

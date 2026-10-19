@@ -316,7 +316,9 @@ func (m *Model) settleMissions() tea.Cmd {
 				ms.Updated = now
 				switch {
 				case ms.State == mission.Paused:
-				case ms.Shape == mission.Once:
+				case ms.Shape == mission.Once && len(ms.Criteria) == 0:
+					// A record from before done criteria: its one run was
+					// all it was.
 					ms.State = mission.Done
 				case ms.Shape == mission.Schedule:
 					// The next tick fires the next run; the orchestrator is

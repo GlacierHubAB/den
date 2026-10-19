@@ -180,13 +180,19 @@ type permission struct {
 	timer           *time.Timer
 }
 
-// humanTools are the tools Den allows outside an app's turn: the ones it
-// allows without control (Argv's allow-list), with send_message for
-// SendMessage.
-func humanTools(o Options) map[string]bool {
-	set := map[string]bool{SendMessageTool: true, MissionTool: true, ProposeTool: true}
-	if o.Spawn {
-		for _, t := range []string{SpawnAgentTool, OpenTerminalTool, CloseAgentTool, SkillsTool, DesktopMissionTool} {
+// humanTools are the tools Den allows outside an app's turn (HumanTurnTools).
+func humanTools(o Options) map[string]bool { return HumanTurnTools(o.Spawn) }
+
+// HumanTurnTools are the tools Den allows the orchestrator in a turn that
+// is not an app's, with control on: send_message, DenTools, and SpawnTools
+// with spawn. Without control the same lists are its --allowedTools.
+func HumanTurnTools(spawn bool) map[string]bool {
+	set := map[string]bool{SendMessageTool: true}
+	for _, t := range DenTools {
+		set[t] = true
+	}
+	if spawn {
+		for _, t := range SpawnTools {
 			set[t] = true
 		}
 	}

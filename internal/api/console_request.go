@@ -162,6 +162,13 @@ func (s *Server) pairAutomatically(c *conn, req Request, was, rec *consoleRec, v
 	}
 	rec.powers = !locked && !god && known
 	rec.verifier, rec.readHere = &v, true
+	if kind == "reconnected" && was != nil {
+		// The same dock service, restarted on this boot, read clean as its
+		// unit's main process: it continues the pairing, and keeps the
+		// human's answer about the mirror. Any other pairing, or any
+		// refusal above, starts a lineage of its own.
+		rec.Lineage, rec.Mirror, rec.MirrorSince = was.Lineage, was.Mirror, was.MirrorSince
+	}
 	if rec.powers {
 		st.given = &v
 	}
@@ -245,7 +252,7 @@ func (s *Server) consoleRequest(c *conn, req Request) {
 	}
 	pub, _ := hex.DecodeString(pubHex)
 	rec := &consoleRec{
-		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: self.PID, Since: time.Now(), PagesSHA: pages},
+		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: self.PID, Since: time.Now(), PagesSHA: pages, Lineage: randHex()},
 		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: pubHex,
 	}
 	rec.Started, _, _ = procInfo(self.PID)

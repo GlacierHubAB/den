@@ -87,3 +87,61 @@ func TestChildOf(t *testing.T) {
 		t.Error("another binary than Den's")
 	}
 }
+
+// A child whose binary was replaced at its path after it started (an
+// install or an update in place) still runs that path's binary and is
+// still the orchestrator's; one whose binary is at another path, replaced
+// too, is not.
+func TestChildOfAfterAnUpdateInPlace(t *testing.T) {
+	me := os.Getpid()
+	mine := StartTicks(me)
+	raw, err := os.ReadFile(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	install := func(path string) {
+		t.Helper()
+		os.Remove(path) // a new file at the path, as an install writes one
+		if err := os.WriteFile(path, raw, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	den, other := filepath.Join(dir, "den"), filepath.Join(dir, "other")
+	install(den)
+	install(other)
+	updated := start(t, den, "procs-test-sleep").Process.Pid
+	stranger := start(t, other, "procs-test-sleep").Process.Pid
+	install(den)
+	install(other)
+	link, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", updated))
+	if link != den+" (deleted)" {
+		t.Fatalf("the kernel's link is %q, not the deleted form this tests", link)
+	}
+	if got := Exe(updated); got != den {
+		t.Errorf("Exe after the update: %q", got)
+	}
+	if !ChildOf(updated, me, mine, den) {
+		t.Error("Den's child after Den's binary was updated in place is not counted")
+	}
+	if ChildOf(stranger, me, mine, den) {
+		t.Error("another binary's process with the same parent counts as Den's")
+	}
+	if ChildOf(updated, me, "1", den) {
+		t.Error("another start time is another parent, after an update too")
+	}
+}
+
+// Undeleted takes off only the kernel's mark for a replaced file.
+func TestUndeleted(t *testing.T) {
+	for in, want := range map[string]string{
+		"/usr/bin/den (deleted)":           "/usr/bin/den",
+		"/usr/bin/den":                     "/usr/bin/den",
+		"/usr/bin/den (deleted) (deleted)": "/usr/bin/den (deleted)",
+		"":                                 "",
+	} {
+		if got := Undeleted(in); got != want {
+			t.Errorf("Undeleted(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

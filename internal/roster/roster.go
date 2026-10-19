@@ -13,10 +13,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/cost"
+	"github.com/GlacierHubAB/den/internal/names"
 )
 
 // Agent is what Den knew of one session the last time it saw it live.
@@ -257,21 +257,24 @@ func (r *Roster) Fork(oldID, newID string) {
 	r.Forks[oldID] = newID
 }
 
-// Find picks an entry by critter or peer name, case-insensitively, the
-// most recently seen first.
-func (r *Roster) Find(name string) (Agent, bool) {
-	name = strings.TrimPrefix(strings.TrimSpace(name), "@")
-	var best Agent
-	found := false
+// Find is the entry name means (names.Resolve: a session id or its
+// prefix, a peer handle, then a name), among the entries not superseded by
+// a fork. A name more than one entry has is refused, listing them: Den
+// never picks the most recent for the human.
+func (r *Roster) Find(name string) (Agent, error) {
+	var cands []names.Candidate
 	for _, a := range r.Agents {
-		if !strings.EqualFold(a.Critter, name) && !strings.EqualFold(a.Peer, name) {
+		if _, forked := r.Forks[a.SessionID]; forked {
 			continue
 		}
-		if !found || a.LastSeen.After(best.LastSeen) {
-			best, found = a, true
-		}
+		cands = append(cands, names.Candidate{ID: a.SessionID, Peer: a.Peer, Name: a.Name()})
 	}
-	return best, found
+	c, err := names.Resolve(name, cands, names.Opts{IDs: true})
+	if err != nil {
+		return Agent{}, err
+	}
+	a, _ := r.Get(c.ID)
+	return a, nil
 }
 
 // ResumeEstimate is an estimate, in US dollars, of what reopening a
