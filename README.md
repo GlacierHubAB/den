@@ -1,26 +1,372 @@
 # Den
 
-See, approve and steer all your Claude Code agents from one terminal screen.
+An orchestration platform for coding agents, in your terminal. See, approve,
+staff and review every Claude Code agent on your machine from one screen.
 
 ![Den's Fleet view: seven Claude Code agents, five of them in the orchestrator's tree of who directs whom, each with its role, task, model and context use, and the selected tech lead's details, critter, usage gauges and recent tool calls on the right.](docs/images/fleet.png)
 
-Den is a small terminal UI that finds the Claude Code sessions already running
-in your terminals, shows who they are (the agent-badge critter, role and task),
-streams everything that needs your answer into one inbox, and lets you talk to
-one agent with an `@mention` or to an orchestrator that speaks to all of them.
-It also draws who directs whom, keeps standing goals as missions, and shows what
-each agent changed as a diff you can comment on and send back to the agent,
-and adds up what the work cost. Over ssh it shows the agents on your other
-machines in the same Fleet, inbox and cost totals, and answers their requests
-from here ([Remote agents](#remote-agents), [docs/REMOTE.md](docs/REMOTE.md)).
+Den finds the Claude Code sessions already running in your terminals and puts
+them on one screen: who each agent is, what it is doing, what it costs and what
+it is waiting on you for. Every permission, plan and question lands in one
+inbox. You talk to one agent with an `@mention`, or to an orchestrator that
+knows the whole fleet. The orchestrator starts agents in their own terminals and
+git worktrees, gives each team a lead that staffs its own people, and runs
+missions: goals on one project, with what done looks like. Den draws who
+directs whom, shows each agent's changes as a diff you can comment on, adds up
+what the work cost, and over ssh brings in the agents on your other machines.
 
-Den is Linux software. It reads `/proc` and `~/.claude/sessions`, brings
-terminals to the front through Hyprland, and starts new ones through
-`xdg-terminal-exec`. See [Requirements](#requirements) for what works without
-Hyprland.
+Den is built on and for [Omarchy](https://omarchy.org), Arch Linux with
+Hyprland. Agents open as ordinary tiled terminal windows on the workspace you
+are on, and `Enter` brings any of them to the front. Den is Linux software and
+works on other desktops without the window placement (see
+[Requirements](#requirements)).
+
+**Status.** The latest release is v0.6.0 (2026-10-18), and everything below
+is in it. What is merged on `dev` since then reaches the next release first
+through the [dev channel](docs/DEV-CHANNEL.md). Den drives Claude Code today;
+other agent CLIs are planned (see
+[Supported agents and roadmap](#supported-agents-and-roadmap)).
+
+## Why Den
+
+Running several agents at once usually means a terminal per agent, with you as
+the switchboard: checking each window for a prompt, copying context from one
+session into another, remembering which branch is whose, and finding out late
+that two agents edited the same file. Den takes over that job.
+
+- **One place to answer.** Requests from every session wait in one inbox, and
+  `Ctrl+Y` or `Ctrl+N` answers them without leaving Den. A desktop
+  notification says when something is waiting, and clicking it focuses that
+  agent's terminal.
+- **Delegation with structure.** You state a goal. The orchestrator proposes a
+  mission with a team and starts it on your `Ctrl+Y`, and each lead starts and
+  coordinates its own people. Den tracks who directs whom, and how each piece
+  stands, from the agents' own hooks and transcripts, never from the model's
+  retelling.
+- **Context that is kept, not re-typed.** Each agent gets a self-contained
+  brief, its own session and, if you want, its own worktree. A mission's
+  constraints ride on every dispatch. Project memory keeps what agents
+  learned for whoever works there next. After a reboot, Den offers to reopen
+  the agents that were live, each back in its place in the tree.
+- **Guardrails Den enforces.** The decisions that matter stay yours, on cards
+  Den shows and checks itself: closing agents, merging branches, installing
+  skills, lowering the permission mode, going over a budget.
+  [Security and quality model](#security-and-quality-model) lists what Den
+  checks, and what it leaves open.
+
+## What you get
+
+**See the whole fleet**
+
+- **Fleet:** every agent with its critter, role, task, repository, branch,
+  model and context use. Group it by state or by project, or show the tree of
+  who directs whom, with a map.
+- **Overview:** one project at a time, with its agents and its missions.
+- **Cost:** exact token counts from each transcript, and a list-price estimate
+  per agent, per team and per mission run. A mission can have a budget, and
+  crossing it pauses the mission.
+- **Usage:** the account's weekly limit in the header, a card at 80% and at
+  90%, and an optional usage stop for the whole fleet.
+- **Remote hosts:** agents on your other machines in the same Fleet, inbox and
+  cost totals, over plain ssh with no daemon and no listener. Each host has a
+  policy, from metadata only up to answering its agents' permissions and
+  reviewing their diffs.
+
+**Answer from one place**
+
+- **Inbox:** permissions, plan reviews and finished turns from every session,
+  and agents' questions if you turn that on. `/always` adds a narrow standing
+  answer, such as one exact command or edits by one tool inside the agent's
+  folder.
+- **Stuck agents:** a turn that failed on an API error, or tool calls that keep
+  failing, and agents that have gone quiet while working, each listed as its
+  own item.
+- **Messages:** `@Name` reaches one agent's session, and Den holds the message
+  while you are at that agent's terminal.
+
+**Delegate**
+
+- **Orchestrator:** a headless Claude Code session with a fresh roster of the
+  fleet on every message. Den's own tools let it spawn, staff, close (always by
+  asking you), propose skills and move missions on. It cannot approve
+  anything.
+- **Spawning:** a new agent opens in your default terminal, on your workspace.
+  Each agent gets a model picked for its task (`haiku`, `sonnet` or `opus`) and
+  can get a git worktree of its own on its own branch. Its role brings vetted
+  skills for you to approve.
+- **Teams:** a lead gets `spawn_agent` too, starts its own people, and reports
+  up when its piece is done. Den draws the tree as the team grows.
+- **Missions:** run once, in a loop, fanned out to a team, or on a schedule. A
+  mission has done criteria and sub-goals with owners, and every
+  mission that is not a schedule ends with a criterion Den adds itself: shown
+  working on your real setup. Four templates ship: code review, bugfix,
+  research and docs pass.
+
+**Keep work small and mergeable**
+
+- **Overlaps:** when two agents' branches change the same files, Den tells both
+  agents which files overlap and with whom.
+- **Short branches:** Den nudges an agent whose branch is more than a day old
+  or more than 30 commits behind.
+- **Team cap:** 3 live agents per repository by default. A spawn past the cap
+  needs a stated reason, which Den shows you.
+- **Cost per merged change and idle agents,** shown on each mission and given
+  to the orchestrator.
+- **Tuning:** the orchestrator can tune a project within bounds Den enforces,
+  and you keep or undo each change.
+
+**Review and land the work**
+
+- **Review:** each agent's changes as a highlighted diff, every line in the
+  colour of the agent that wrote it. Comments go back to that agent and are
+  marked addressed once the lines change.
+- **`/merge` and `/cleanup`:** Den checks a worktree branch with
+  `git merge-tree` before it asks you, checks again before it merges, and never
+  removes a worktree that holds uncommitted work.
+
+**Keep context across agents and restarts**
+
+- **Project memory:** agents keep notes as data. Rules come only from
+  you, on a card, and the folder opens as an Obsidian vault.
+- **Bringing agents back:** one question after a reboot reopens the agents that
+  were live, with `claude --resume`. `/reopen` brings back one agent, and
+  `--fork` opens a copy of its conversation.
+- **The orchestrator's chat persists,** and the orchestrator resumes its own
+  session when Den starts again.
+
+**Go hands-off when you choose**
+
+- **Permission mode:** one mode for every agent Den starts. A mode that asks
+  less waits on a card for your `Ctrl+Y`.
+- **God mode:** turned on only in Den's own window, with a typed phrase. Agents
+  the orchestrator starts then run without asking, and every message to them
+  goes through Den.
+- **Desktop control:** an agent drives the mouse and keyboard on Hyprland,
+  through a gate in Den. In a mission with apps you configured, outward steps
+  ask on a card with a screenshot. A task, which may use the whole desktop,
+  runs on its own after your one `Ctrl+Y`, within its time and action limits.
+  `den desktop stop` is the panic stop.
+
+**Script it, or pair an app**
+
+- `den send`, `den wait`, `den ask`, a versioned `den events -json` stream and
+  `[on]` commands per event kind, all with metadata only.
+- A local API, `den-api.sock`, for apps on your machine. It is off until you
+  turn it on. A paired app or console can follow the fleet and answer most
+  cards, within limits Den sets. See [Apps](#apps-den-apisock).
+
+## How it works
+
+```
+ your terminal windows (tiled by Hyprland)          Den, one TUI
+ +-----------------+  +-----------------+     +-------------------------------+
+ | claude (agent)  |  | claude (agent)  |     | Overview  Fleet  Inbox  Review|
+ +--------+--------+  +--------+--------+     |                               |
+          |  hooks: den hook   |  ----------> | den.sock (same user only):    |
+          |  <----- answers -------------     |   events in, decisions out    |
+          |                                   |                               |
+          |  ~/.claude/sessions, transcripts  |  orchestrator: headless       |
+          +-------------- read -------------> |  claude, with Den's MCP tools |
+                                              +---+-----------+-----------+---+
+                                                  |           |           |
+                         xdg-terminal-exec: new   |  hyprctl: |  ssh: den remote
+                         agent, worktree, model   |  focus,   |  serve on each
+                                                  |  workspace|  host
+```
+
+- **Discovery.** Den reads Claude Code's session files
+  (`~/.claude/sessions/<pid>.json`), the process tree in `/proc`, and each
+  session's transcript for activity, file changes and tokens. It never writes
+  to those files.
+- **Hooks.** `den install-hooks` adds `den hook` to ten Claude Code hook
+  events. The hook passes each event to Den over a Unix socket that only your
+  user may use, and carries your answer back as the hook's decision. If Den is
+  not running, or the hook fails, the request stays with Claude Code's own
+  dialog.
+- **The orchestrator** is a headless Claude Code session that loads only Den's
+  MCP server and none of your settings files. Agents Den starts get Den's
+  tools too, so leads can staff their own work.
+- **Spawning** uses the same launch as Omarchy's terminal key
+  (`uwsm-app -- xdg-terminal-exec`) and Claude Code's own flags:
+  `--worktree`, `--permission-mode`, `--model`, and `--add-dir` for an agent's
+  skills.
+- **State** is plain files under `~/.local/state/den/` (see
+  [Files Den writes](#files-den-writes)).
+
+## Security and quality model
+
+### What Den enforces while it runs
+
+- **You approve; Den does not approve for you.** The orchestrator has no tool
+  that answers a permission. Closing agents, merging, removing a worktree,
+  installing skills, restoring agents, moving a mission, going over a budget
+  and lowering the permission mode each wait on a card, and nothing happens
+  before `Ctrl+Y`. App pairings, God mode, guidance, tuning and desktop tasks
+  are answered only in Den's own window. One exception: your console pairs by
+  itself, with no card, once Den has checked through your systemd user manager
+  that it is the console's own service (see [Apps](#apps-den-apisock)). In God
+  mode Den answers some of its own cards itself, and lists each one in its
+  chat.
+- **Narrow standing answers.** `/always` covers one exact command, or edits by
+  one tool inside the agent's folder. It never covers a command with shell
+  operators, or a file that raises trust (`~/.ssh`, `.git`, `.claude`, shell
+  start-up files and the like).
+- **Den fails open to Claude Code, never to "allow".** A hook that crashes, or
+  a Den that is not running, leaves the request to Claude Code's own dialog.
+- **Agents' words are data.** The orchestrator's own hook stops every peer
+  message first. Den passes one on only from a live session on this machine
+  that it sees in its fleet, fenced as that agent's report. Den tests that hook
+  before every launch. If anything gets past it, Den kills the orchestrator and
+  starts a fresh one. Notes in project memory are data too, and only you make
+  rules.
+- **Text from outside is cleaned.** Escape sequences, other control characters,
+  bidirectional overrides and invalid UTF-8 are removed from agent, transcript,
+  git and host text before Den shows it.
+- **A repository's git config cannot make Den run a program.** Den's git reads
+  turn off fsmonitor, filter and merge drivers, external diff and textconv.
+- **Pinned downloads.** Skills come from a built-in catalogue, each pinned to a
+  full commit SHA with a SHA-256 for every file. Den refuses a skill that sets
+  hooks or `allowed-tools`. The desktop tool, hypruse, is pinned to a
+  commit, every file hash-checked, with dependencies pinned by hash and
+  installed from wheels only.
+- **Close safety.** Den refuses to close an agent that is working or waiting on
+  you, unless you add `--force`. It never closes the orchestrator or Den
+  itself, and stops an agent with SIGTERM before anything harder. It closes
+  only a window it opened for that agent, once nothing else runs in it.
+  `/protect` and `/flag` keep agents out of bulk closes.
+- **Remote hosts.** Den's ssh connections run with `BatchMode=yes` and
+  `StrictHostKeyChecking=yes`. Den forwards nothing and stores no secret, and a
+  host sends metadata only by default.
+
+Each section below says plainly what stays open. Anything running as your user
+can change Den's files, type into its window or drive a paired app. Anything
+that can change the console's service gets the console's reading and chat
+without a question in Den, and an agent in God mode can do anything you can. See [God mode](#god-mode),
+[Apps](#apps-den-apisock) and [Desktop control](#desktop-control).
+
+The orchestrator's prompt (`internal/orch/orch.go`) sets how it staffs work:
+small teams, at most one reviewer for code and security per product, one
+change at a time in an area of a repository, short branches, finished work
+straight to review and CI, and done only when it has been shown working on your
+real setup. It is told to bring you the hard limits: weakening security, publishing,
+spending past a budget, and acts that cannot be undone (see
+[When you are asked](#when-you-are-asked)). These are instructions to a model.
+Den's own checks are the ones listed above.
+
+### How Den itself is checked
+
+`dev` and `main` take changes only by pull request, and a pull request merges
+only when `ci-passed` succeeds. That check needs every job in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml):
+
+- **lint:** `gofmt`, a scan for raw bidirectional controls and line separators
+  in source, `go mod tidy -diff` and `go mod verify`, the
+  `THIRD_PARTY_LICENSES` check, a build for linux/amd64 and linux/arm64, and
+  `actionlint`.
+- **test:** `make test` under the race detector, on the release Go and on the
+  newest Go. The tests need no network (no module proxy) and no git config,
+  and they include the remote acceptance tests against a real `sshd` and `tmux`, plus 30 seconds of
+  fuzzing.
+- **vuln:** `govulncheck`. **secrets:** `gitleaks` over the whole history.
+- **heavy:** the whole tree under the race detector three times on two CPUs,
+  plus the slow suite for pull requests into `main`. It also runs nightly on
+  `dev`, and again before a release builds.
+
+Every action in the workflows is pinned to a full commit SHA. The tools CI
+downloads are checked against a pinned SHA-256, and the jobs in `ci.yml` get
+a read-only token.
+Force-pushes and deletions of `dev` and `main` are refused, and `v*` tags
+cannot be moved or deleted. Releases ship a `SHA256SUMS` file and a build
+provenance attestation (see [From a release](#from-a-release) and
+[docs/RELEASING.md](docs/RELEASING.md)).
+
+## Supported agents and roadmap
+
+- **Today:** Claude Code 2.1.289 or newer, on Linux (amd64 and arm64), on this
+  machine and on hosts you reach over ssh.
+- **Planned, not shipped:** Pi, Codex and other agent CLIs. Nothing in Den
+  talks to them yet, and there is no date.
+
+Den builds on Claude Code's own interfaces: session files, hooks, session
+messaging, and the `--worktree`, `--permission-mode` and `--resume` flags. A
+few features rely on Claude Code behaviour that is not documented, such as
+answering an agent's questions from the inbox. Those have been checked against
+2.1.289.
+
+## How Den relates to Claude Code Projects
+
+Anthropic announced Claude Code Projects as a beta on 17 September 2026
+([Projects redesigned](https://claude.com/resources/articles/projects-redesigned)).
+In that announcement, a project pairs a goal with a repository. Claude splits
+the goal into parallel threads, each a Claude Code cloud session on its own
+branch and copy of the repository, then reviews and assembles the results. A
+shared project memory carries what the threads learn. The threads run in the
+cloud, and running them on your own machine was announced as coming soon.
+
+Den works on the same idea locally. The coordinator and every agent run on your
+machine, as Claude Code sessions in your own terminal windows, tiled the
+Omarchy way. You can see, answer, message or close any of them directly, and
+Den's cards and checks sit between the agents and the decisions that are yours.
+Den picks up the Claude Code sessions you already run, and needs only its
+hooks. Den is an independent, MIT-licensed project and is not affiliated with
+Anthropic. Claude Code Projects may have changed since that announcement, so
+see Anthropic's documentation for how it works today.
+
+## Measurable results
+
+A snapshot at the v0.6.0 tag (957d929, 2026-10-18), with the GitHub figures
+read the same day. The counts grow with every change, so each command prints
+today's figure: run it from a clone of this repository, or check out `v0.6.0`
+to get these.
+
+| Figure | Value | Reproduce |
+| --- | --- | --- |
+| Go packages | 55 | `go list ./... \| wc -l` |
+| Top-level `Test` functions (subtests not counted) | 1,533 in 306 test files | `git grep -h -E '^func Test[A-Z_0-9]' -- '*_test.go' \| wc -l` |
+| Fuzz targets | 13 | `git grep -h -E '^func Fuzz' -- '*_test.go' \| wc -l` |
+| Lines of Go, code and tests | 82,431 and 60,961 | `git ls-files '*.go' \| grep -v '_test.go$' \| xargs cat \| wc -l`, and the same for `'*_test.go'` |
+| CI jobs every pull request must pass | lint, test (2 Go versions), vuln, secrets, heavy (race x3 on 2 CPUs) | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+| Actions pinned to a commit SHA | 18 of 18 `uses:` lines | `grep -h 'uses: [^.]' .github/workflows/*.yml` |
+| Tagged versions | 20, v0.1.0 (2026-10-08) to v0.6.0 (2026-10-18) | `git tag -l 'v*' --sort=creatordate --format='%(refname:short) %(creatordate:short)'` |
+| Merged pull requests | 171 (155 into `dev`, 16 into `main`) on 2026-10-18 | `gh pr list --repo GlacierHubAB/den --state merged --limit 1000 --json baseRefName -q 'group_by(.baseRefName) \| map({(.[0].baseRefName): length})'` |
+| Release binary, v0.6.0 | 23,371,938 bytes (amd64), 22,282,402 bytes (arm64), static | `gh release view v0.6.0 --repo GlacierHubAB/den --json assets -q '.assets[] \| "\(.name) \(.size)"'` |
+| Claude Code hook events Den uses | 10 | `internal/hooks/install.go` |
+| Vetted skills in the catalogue | 7, from 5 repositories | `den skills catalogue` |
+
+**What Den measures for you.** Den keeps its own figures, all on your machine:
+
+- tokens and a list-price estimate per agent, per team, per mission run and for
+  the whole fleet, with a split by host (see [Cost](#cost));
+- the account's weekly usage, as Claude Code reports it (see [Usage](#usage));
+- each mission's merged changes and its cost per merged change,
+  its idle agents, and a record in `~/.local/state/den/metrics.jsonl` of each
+  mission's runs, cost, merged changes, how long the merged branches lived, and
+  the overlaps and nudges Den sent (see
+  [Cost per merged change and idle agents](#cost-per-merged-change-and-idle-agents));
+- the event stream, `den events -json`, for your own counts (see
+  [docs/EVENTS.md](docs/EVENTS.md)).
+
+These figures describe how work moved, not whether it is right. Den can't see
+CI, so CI failures are not in them.
+
+## Documentation
+
+- This README: the overview above, then a reference for every view, command
+  and setting (see [Contents](#contents)).
+- [docs/REMOTE.md](docs/REMOTE.md): agents on other machines over ssh.
+- [docs/EVENTS.md](docs/EVENTS.md): the event stream, `den wait` and `[on]`
+  commands.
+- The local API for apps and a paired console: [Apps](#apps-den-apisock) links
+  the full reference.
+- [docs/DEV-CHANNEL.md](docs/DEV-CHANNEL.md): run what is on `dev`.
+- [docs/RELEASING.md](docs/RELEASING.md): branches, versions and releases.
+- [CONTRIBUTING.md](CONTRIBUTING.md), [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+  and [docs/GITHUB-SETUP.md](docs/GITHUB-SETUP.md): building, testing and
+  the repository's setup.
 
 ## Contents
 
+- [Why Den](#why-den) · [What you get](#what-you-get) · [How it works](#how-it-works) · [Security and quality model](#security-and-quality-model) · [Supported agents and roadmap](#supported-agents-and-roadmap) · [Claude Code Projects](#how-den-relates-to-claude-code-projects) · [Measurable results](#measurable-results) · [Documentation](#documentation)
 - [Install](#install) · [Requirements](#requirements) · [On Omarchy](#on-omarchy) · [Quick start](#quick-start)
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
 - [Notifications](#notifications) · [Events for scripts](#events-for-scripts)
@@ -130,6 +476,11 @@ part of it works. On Omarchy:
   one-process-many-windows by title and directory.
 - **Colours follow the current Omarchy theme**, read from
   `~/.local/state/omarchy/current/theme/colors.toml` (`internal/theme`).
+- **Agent view and User view.** A paired app can hide the agents'
+  windows on Hyprland's `special:den` workspace and bring them back, so the
+  agents keep working while your workspaces stay yours. `/view` says which
+  view is on, and `/view rescue`, typed in Den, brings back every window on
+  `special:den` (see [Slash commands](#slash-commands)).
 
 Install it the usual way: download a release binary into `~/.local/bin`
 (already on Omarchy's `PATH`), or build it with `make install` (Go 1.26 or
