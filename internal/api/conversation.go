@@ -132,6 +132,24 @@ func (s *Server) SetMirror(id string, on bool) {
 	s.pushMirror()
 }
 
+// ResumeMirror turns the mirror on again for console id under the human's
+// kept answer, given at since: conversation.history then reaches back to
+// the later of since and Den's start, as it did before the console
+// restarted, and is never cut to the reconnect.
+func (s *Server) ResumeMirror(id string, since time.Time) {
+	if id == "" {
+		return
+	}
+	if since.IsZero() {
+		since = time.Now()
+	}
+	st := &s.conv
+	st.mu.Lock()
+	st.on, st.forID, st.since, st.askingID = true, id, since, ""
+	st.mu.Unlock()
+	s.pushMirror()
+}
+
 // SetMirrorAsking says whether Den's card asking the human to show the
 // conversation in console id waits in Den's own window ("" for none).
 func (s *Server) SetMirrorAsking(id string) {

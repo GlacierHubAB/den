@@ -204,7 +204,7 @@ func (s *Server) consoleReconnect(c *conn, req Request) {
 	}
 	pub, _ := hex.DecodeString(pubHex)
 	rec := &consoleRec{
-		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: self.PID, Since: time.Now(), PagesSHA: pages},
+		Console:  Console{ID: randHex(), Exe: c.peer.Exe, PID: self.PID, Since: time.Now(), PagesSHA: pages, Lineage: randHex()},
 		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: pubHex,
 	}
 	rec.Started, _, _ = procInfo(self.PID)
