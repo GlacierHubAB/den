@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
@@ -50,13 +51,15 @@ func buildMentions(agents []fleet.Agent, isOrchestrator func(fleet.Agent) bool) 
 		if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) {
 			continue
 		}
-		count[name]++
+		// Two names equal but for the case of their letters count for
+		// neither: "@name" matches either.
+		count[names.Fold(name)]++
 		sid[name] = a.Session.SessionID
 	}
 	s := &mentionSet{}
-	for name, n := range count {
-		if n == 1 {
-			s.names = append(s.names, mentionName{name, sid[name]})
+	for name, id := range sid {
+		if count[names.Fold(name)] == 1 {
+			s.names = append(s.names, mentionName{name, id})
 		}
 	}
 	sort.Slice(s.names, func(i, j int) bool {
@@ -76,7 +79,7 @@ func buildMentions(agents []fleet.Agent, isOrchestrator func(fleet.Agent) bool) 
 // wordRune is a rune that continues a word: a name glued to one is not a
 // mention.
 func wordRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '-'
+	return unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' || r == '-'
 }
 
 // boundaryBefore reports whether a mention may start at i.
@@ -88,13 +91,30 @@ func boundaryBefore(s string, i int) bool {
 	return !wordRune(r) && r != '@'
 }
 
+// hasPrefixASCIIFold reports whether s starts with prefix, the case of
+// ASCII letters aside (names.Fold: no other rune is taken for a letter).
+func hasPrefixASCIIFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && names.Fold(s[:len(prefix)]) == names.Fold(prefix)
+}
+
+// mentionPunct is the sentence punctuation a mention may end at, the same
+// set as Drey's dock: the punctuation is never part of the name.
+const mentionPunct = ",:;.!?)]}\"\u201d'\u2019\u2026"
+
+// mentionEndRune is a rune a mention ends at: white space, "@" (a host
+// follows) or mentionPunct. Den's routing and its colouring, and the
+// dock's chips, share it, so a chip is only ever drawn where Den routes.
+func mentionEndRune(r rune) bool {
+	return unicode.IsSpace(r) || r == '@' || strings.ContainsRune(mentionPunct, r)
+}
+
 // boundaryAfter reports whether a mention may end at j.
 func boundaryAfter(s string, j int) bool {
 	if j >= len(s) {
 		return true
 	}
 	r, _ := utf8.DecodeRuneInString(s[j:])
-	return !wordRune(r)
+	return mentionEndRune(r)
 }
 
 // match is the mention at s[i:], if any: its length and the agent.
@@ -105,7 +125,7 @@ func (ms *mentionSet) match(s string, i int) (int, mentionName, bool) {
 	at := s[i] == '@'
 	for _, n := range ms.names {
 		switch {
-		case at && strings.HasPrefix(s[i+1:], n.name) && boundaryAfter(s, i+1+len(n.name)):
+		case at && hasPrefixASCIIFold(s[i+1:], n.name) && boundaryAfter(s, i+1+len(n.name)):
 			return 1 + len(n.name), n, true
 		case !at && strings.Contains(n.name, " ") && strings.HasPrefix(s[i:], n.name) && boundaryAfter(s, i+len(n.name)):
 			return len(n.name), n, true

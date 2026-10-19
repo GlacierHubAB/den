@@ -243,7 +243,10 @@ func TestDreyInterface(t *testing.T) {
 				case "asking":
 					m.mirrorCommand("off")
 					m.cfg.API.MirrorConversation = "ask"
-					m.mirror.asked, m.mirror.declined = "", ""
+					if cur, ok := m.api.srv.CurrentConsole(); ok {
+						m.api.srv.ForgetMirrorConsent(cur.Lineage)
+					}
+					m.mirror.asked = ""
 					m.mirrorTick()
 				default:
 					return errors.New("no such mirror state: " + state)

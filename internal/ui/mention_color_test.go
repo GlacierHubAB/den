@@ -73,6 +73,33 @@ func TestMentionMatching(t *testing.T) {
 		{"`Mossy Lemur` in code", "Mossy Lemur in code"},
 		{"[Mossy Lemur](https://x.test)", "Mossy Lemur (https://x.test)"},
 		{"**Mossy Lemur** bold", "[@Mossy Lemur:mossy-lemur] bold"},
+		// Where a mention ends: Drey's dock's set (mentionPunct), white
+		// space and "@", nothing else.
+		{"@Mossy Lemur: done", "[@Mossy Lemur:mossy-lemur]: done"},
+		{"@Plucky, then", "[@Plucky:plucky], then"},
+		{"@Plucky's turn", "[@Plucky:plucky]'s turn"},
+		{"@Plucky\u2019s turn", "[@Plucky:plucky]\u2019s turn"},
+		{"@Plucky\u2026", "[@Plucky:plucky]\u2026"},
+		{"[@Plucky]", "[[@Plucky:plucky]]"},
+		{"{@Plucky}", "{[@Plucky:plucky]}"},
+		{"@Plucky@build1", "[@Plucky:plucky]@build1"},
+		{"@Plucky/x", "@Plucky/x"},
+		{"@Plucky*", "@Plucky*"},
+		{"@Plucky+1", "@Plucky+1"},
+		{"@Plucky_x", "@Plucky_x"},
+		{"a_@Plucky", "a_@Plucky"},
+		{"\U0001D400@Plucky", "\U0001D400@Plucky"}, // an astral letter before the "@"
+		{"\U0001D7CE@Plucky", "\U0001D7CE@Plucky"}, // an astral digit
+		{"\u00B2@Plucky", "\u00B2@Plucky"},         // a number that is not a digit (No)
+		{"\u2167@Plucky", "\u2167@Plucky"},         // a letter number (Nl)
+		// "@" mentions fold ASCII case only, drawn as Den spells the name;
+		// a bare name is written exactly.
+		{"@mossy lemur: done", "[@Mossy Lemur:mossy-lemur]: done"},
+		{"@PLUCKY", "[@Plucky:plucky]"},
+		{"MOSSY LEMUR shouts", "MOSSY LEMUR shouts"},
+		{"@Pluc\u212Ay", "@Pluc\u212Ay"},               // a Kelvin sign for the k
+		{"@\u017Fnug Capybara", "@\u017Fnug Capybara"}, // a long s
+		{"@Mo\u017F\u017Fy Lemur", "@Mo\u017F\u017Fy Lemur"},
 	} {
 		if got := mentioned(m.ments.apply(parseInline(c.in))); got != c.want {
 			t.Errorf("%q\n got %s\nwant %s", c.in, got, c.want)

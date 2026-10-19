@@ -3,6 +3,8 @@ package ui
 import (
 	"errors"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/names"
@@ -50,7 +52,7 @@ func resolveMention(text string, agents []fleet.Agent) mention {
 				if n == "" || len(n) <= best || !strings.HasPrefix(lower, n) {
 					continue
 				}
-				if len(lower) != len(n) && lower[len(n)] != ' ' && lower[len(n)] != '@' {
+				if !boundaryAfter(lower, len(n)) {
 					continue
 				}
 				best = len(n)
@@ -69,14 +71,10 @@ func resolveMention(text string, agents []fleet.Agent) mention {
 		if host, b, ok := hostQualifier(after); ok {
 			query, body = query+"@"+host, b
 		} else {
-			body = strings.TrimSpace(after)
+			body = mentionBody(after)
 		}
 	} else {
-		query = rest
-		if i := strings.IndexByte(rest, ' '); i >= 0 {
-			query, body = rest[:i], strings.TrimSpace(rest[i+1:])
-		}
-		query = strings.Trim(query, `"'`)
+		query, body = mentionWord(rest)
 		opts.Prefix = true
 		if strings.TrimSuffix(query, "@") == "" || strings.HasPrefix(query, "@") {
 			return mention{missing: ""}
@@ -102,13 +100,45 @@ func resolveMention(text string, agents []fleet.Agent) mention {
 }
 
 // hostQualifier reads "@devbox rest…" after a name: the host and the body.
+// A host ends at white space or sentence punctuation, but a dot inside it
+// is its own ("@devbox.lan, rebase"); dots at its end are not.
 func hostQualifier(after string) (host, body string, ok bool) {
 	rest, found := strings.CutPrefix(after, "@")
 	if !found {
 		return "", "", false
 	}
-	host, body, _ = strings.Cut(rest, " ")
-	return names.Fold(host), strings.TrimSpace(body), true
+	end := strings.IndexFunc(rest, func(r rune) bool { return r != '.' && mentionEndRune(r) })
+	if end < 0 {
+		end = len(rest)
+	}
+	host = strings.TrimRight(rest[:end], ".")
+	return names.Fold(host), mentionBody(rest[len(host):]), true
+}
+
+// mentionWord reads a one-word mention, "mossy, rebase…" or
+// "mossy@devbox: rebase…": the word (with its host) and the body. The word
+// ends where a mention ends (mentionEndRune).
+func mentionWord(rest string) (query, body string) {
+	i := strings.IndexFunc(rest, mentionEndRune)
+	if i < 0 {
+		return rest, ""
+	}
+	if host, b, ok := hostQualifier(rest[i:]); ok {
+		return rest[:i] + "@" + host, b
+	}
+	return rest[:i], mentionBody(rest[i:])
+}
+
+// mentionBody is the message after a mention: punctuation that ended the
+// name ("@Name, rebase", "@Name: rebase") is not part of it when white
+// space or the end follows; otherwise it is the message's own ("@Name's
+// branch").
+func mentionBody(after string) string {
+	rest := strings.TrimLeftFunc(after, func(r rune) bool { return strings.ContainsRune(mentionPunct, r) })
+	if r, _ := utf8.DecodeRuneInString(rest); rest == "" || unicode.IsSpace(r) {
+		after = rest
+	}
+	return strings.TrimSpace(after)
 }
 
 // mentionText is what completing a mention inserts: the name, with the

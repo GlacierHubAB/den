@@ -53,6 +53,13 @@ type storedConsole struct {
 	// Verifier is what Den last read of the console's service; read back
 	// after a Den start, it only names what changed since.
 	Verifier *sysd.Verifier `json:"verifier,omitempty"`
+	// Lineage, Mirror and MirrorSince are the pairing's lineage and the
+	// human's answer about the mirror (Console). They are inside the
+	// record, so its hash and the clean mark cover them: a record Den
+	// cannot trust drops the console, and with it the answer.
+	Lineage     string    `json:"lineage,omitempty"`
+	Mirror      string    `json:"mirror,omitempty"`
+	MirrorSince time.Time `json:"mirror_since,omitzero"`
 }
 
 type storedConsoles struct {
@@ -117,7 +124,8 @@ func (s *Server) saveConsoleLocked() {
 		rec.AutoHold = s.con.autoHold.Unix()
 	}
 	if c := s.con.cur; c != nil {
-		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier}}
+		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier,
+			Lineage: c.Lineage, Mirror: c.Mirror, MirrorSince: c.MirrorSince}}
 	}
 	b, _ := json.Marshal(rec)
 	if err := writeAtomic(s.consolePath(), b); err != nil {
@@ -219,9 +227,20 @@ func (s *Server) loadConsole() string {
 	if start, _, err := procStatFn(c.PID); err != nil || start != c.Start {
 		return drop("the console's process is gone or was started again, so it was not restored", false)
 	}
+	// The human's answer about the mirror comes back only with a lineage
+	// of Den's own shape and an answer Den knows; anything else is a
+	// lineage of its own, not asked yet.
+	lineage, mirror, mirrorSince := c.Lineage, c.Mirror, c.MirrorSince
+	if !isHex(lineage, 32) || (mirror != "" && mirror != MirrorYes && mirror != MirrorNo) {
+		lineage, mirror, mirrorSince = randHex(), "", time.Time{}
+	}
+	if mirror != MirrorYes {
+		mirrorSince = time.Time{}
+	}
 	s.con.mu.Lock()
 	restored := &consoleRec{
-		Console:  Console{ID: c.ID, Exe: c.Exe, PID: c.PID, Started: c.Started, Since: c.Since, PagesSHA: c.Pages},
+		Console: Console{ID: c.ID, Exe: c.Exe, PID: c.PID, Started: c.Started, Since: c.Since, PagesSHA: c.Pages,
+			Lineage: lineage, Mirror: mirror, MirrorSince: mirrorSince},
 		identity: c.Identity, start: c.Start, pub: ed25519.PublicKey(pub), pubHex: c.Key, restored: true,
 		verifier: c.Verifier,
 	}
@@ -364,4 +383,43 @@ func (s *Server) writeCleanMark() {
 	}
 	b, _ := json.Marshal(cleanMark{Record: want, Key: sha256Hex([]byte(s.ckey.pubHex)), Consoles: n})
 	writeAtomic(s.markPath(), b)
+}
+
+// SetMirrorConsent records the human's answer about the mirror for the
+// console's lineage, in its record, and reports whether that lineage is
+// the console's now. yes keeps the time of an earlier yes.
+func (s *Server) SetMirrorConsent(lineage string, yes bool) bool {
+	st := &s.con
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.cur
+	if c == nil || lineage == "" || c.Lineage != lineage {
+		return false
+	}
+	switch {
+	case !yes:
+		c.Mirror, c.MirrorSince = MirrorNo, time.Time{}
+	case c.Mirror != MirrorYes:
+		c.Mirror, c.MirrorSince = MirrorYes, time.Now().UTC()
+	}
+	s.saveConsoleLocked()
+	return true
+}
+
+// ForgetMirrorConsent forgets the human's answer about the mirror for the
+// console's lineage, so that Den asks again, and reports whether that
+// lineage is the console's now. TEST ONLY: the conformance test's "asking"
+// state uses it. Never wire it to a verb, a command or the dock: only the
+// human's own answer in Den sets or clears it.
+func (s *Server) ForgetMirrorConsent(lineage string) bool {
+	st := &s.con
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.cur
+	if c == nil || lineage == "" || c.Lineage != lineage {
+		return false
+	}
+	c.Mirror, c.MirrorSince = "", time.Time{}
+	s.saveConsoleLocked()
+	return true
 }
