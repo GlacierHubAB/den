@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -15,6 +16,8 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/names"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/tree"
 	"github.com/GlacierHubAB/den/internal/winmark"
 )
@@ -48,56 +51,47 @@ func idleFor(a fleet.Agent, now time.Time) (time.Duration, bool) {
 	return now.Sub(a.LastActive), true
 }
 
-// guardNames are the names the guard knows an agent by: its critter and
-// peer names, and for an agent on a host also both written "name@host",
-// so "/protect Mossy Lemur@devbox" covers that host's agent alone while a
-// bare name covers every agent called so.
-func guardNames(a fleet.Agent) []string {
-	names := []string{a.Name, a.Session.Name}
-	if a.Host != "" {
-		names = append(names, a.Name+"@"+a.Host)
-		if a.Session.Name != "" {
-			names = append(names, a.Session.Name+"@"+a.Host)
-		}
-	}
-	return names
-}
+// guardKey is the guard's key for an agent: its session id as Den keys it
+// (an agent on a host carries the host, "id@host"). The guard never
+// matches a name.
+func guardKey(a fleet.Agent) string { return a.Session.SessionID }
 
 // guardReason says why the guard keeps an agent out of a bulk close.
 func (m Model) guardReason(a fleet.Agent) string {
 	if m.guard == nil {
 		return ""
 	}
-	if n := m.guard.ProtectedName(guardNames(a)...); n != "" {
-		return "protected (" + n + ")"
+	if _, ok := m.guard.IsProtected(guardKey(a)); ok {
+		return "protected (" + m.guardLabel(a) + ")"
 	}
 	// Folder rules are folders on this machine: an agent on a host has no
-	// path here, so only a rule by name, or by a task that mentions the
-	// folder's name, can protect it.
+	// path here, so only its session, or a task that mentions the folder's
+	// name, can protect it.
 	dirs := append([]string{a.Session.CWD}, rootsOf(a)...)
-	return m.guard.Protected("", "", dirs, a.Labels.Task)
+	return m.guard.Protected(guardKey(a), dirs, a.Labels.Task)
 }
 
-// unprotectHint says how the human lets a protected agent be closed: the
-// name rule that holds it, or the folder in protected.json.
+// unprotectHint says how the human lets a protected agent be closed:
+// /unprotect for the agent itself, or the folder in protected.json.
 func (m Model) unprotectHint(a fleet.Agent) string {
-	if n := m.guard.ProtectedName(guardNames(a)...); n != "" {
-		return "/unprotect " + n + " to allow it"
+	if _, ok := m.guard.IsProtected(guardKey(a)); ok {
+		return "/unprotect " + m.guardLabel(a) + " to allow it"
 	}
 	return "remove its folder from protected.json to allow it"
 }
 
-// guardHeld is the flag note of a flagged agent, by any of its names.
+// guardHeld is the flag note of a flagged agent.
 func (m Model) guardHeld(a fleet.Agent) (string, bool) {
-	for _, n := range guardNames(a) {
-		if n == "" {
-			continue
-		}
-		if note, ok := m.guard.Held(n, ""); ok {
-			return note, true
-		}
+	return m.guard.Held(guardKey(a))
+}
+
+// guardLabel is how a guard command names an agent back to the human: its
+// name, with its host when it is elsewhere.
+func (m Model) guardLabel(a fleet.Agent) string {
+	if a.Host != "" {
+		return a.Name + "@" + a.Host
 	}
-	return "", false
+	return a.Name
 }
 
 // staleAgents picks the agents idle for at least d: idle by status, with a
@@ -358,18 +352,23 @@ func (m Model) askStale(d time.Duration, force bool, among map[string]bool) (tea
 	return m.showClose(it)
 }
 
-// guardCommand is /protect, /unprotect, /flag and /unflag.
+// guardCommand is /protect, /unprotect, /flag and /unflag. Each names an
+// agent the way /close does (names.Resolve) and guards its session: the
+// agent stays guarded through a restore or /reopen, and another agent that
+// later gets its name does not.
 func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 	m.ensureGuard()
 	if len(args) == 0 {
 		if verb == "/protect" || verb == "/flag" {
 			var names []string
-			names = append(names, m.guard.Names...)
+			for _, e := range m.guard.Sessions {
+				names = append(names, m.guardEntryLabel(e))
+			}
 			for _, p := range m.guard.Paths {
 				names = append(names, "folder "+p)
 			}
-			for _, f := range m.guard.Flagged {
-				names = append(names, "flagged "+f.Name)
+			for _, e := range m.guard.Flags {
+				names = append(names, "flagged "+m.guardEntryLabel(e))
 			}
 			if len(names) == 0 {
 				return m.say("Nothing is protected. /protect <Name> keeps an agent out of every close.", false)
@@ -385,27 +384,31 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 			name, note = strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+1:])
 		}
 	}
-	name = m.guardName(name)
+	a, why := m.closeNamed(name)
+	if why != "" {
+		return m.say(name+": "+why+".", true)
+	}
+	key, label := guardKey(a), m.guardLabel(a)
 	var msg string
 	switch verb {
 	case "/protect":
-		if !m.guard.Protect(name) {
-			return m.say(name+" is protected already.", false)
+		if !m.guard.Protect(key, label) {
+			return m.say(label+" is protected already.", false)
 		}
-		msg = name + " is protected: no close will propose it."
+		msg = label + " is protected: no close will propose it."
 	case "/unprotect":
-		if !m.guard.Unprotect(name) {
-			return m.say(name+" was not protected by name.", true)
+		if !m.guard.Unprotect(key) {
+			return m.say(label+" was not protected.", true)
 		}
-		msg = name + " is no longer protected."
+		msg = label + " is no longer protected."
 	case "/flag":
-		m.guard.SetFlag(name, note)
-		msg = name + " is flagged: a bulk close lists it without selecting it."
+		m.guard.SetFlag(key, label, note)
+		msg = label + " is flagged: a bulk close lists it without selecting it."
 	case "/unflag":
-		if !m.guard.Unflag(name) {
-			return m.say(name+" was not flagged.", true)
+		if !m.guard.Unflag(key) {
+			return m.say(label+" was not flagged.", true)
 		}
-		msg = name + " is no longer flagged."
+		msg = label + " is no longer flagged."
 	}
 	if err := m.guard.Save(m.guardPath); err != nil {
 		return m.say(msg+" (not saved: "+err.Error()+")", true)
@@ -413,34 +416,24 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 	return m.say(msg, false)
 }
 
-// guardName is the name /protect, /unprotect, /flag and /unflag record
-// for what the human typed: an agent's critter name as Den writes it, with
-// its host when it was named "name@host" ("@local" is this machine). A
-// name that fits no agent is kept as typed, so an agent can be protected
-// before it starts.
-func (m Model) guardName(name string) string {
-	if i := strings.LastIndexByte(name, '@'); i > 0 {
-		if a, why := m.closeNamed(name); why == "" {
-			if a.Host == "" {
-				return a.Name
-			}
-			return a.Name + "@" + a.Host
-		}
-		host := strings.ToLower(strings.TrimSpace(name[i+1:]))
-		if host == "local" {
-			return strings.TrimSpace(name[:i])
-		}
-		return strings.TrimSpace(name[:i]) + "@" + host
-	}
-	if a, ok, _ := m.agentNamed(name); ok {
-		return a.Name
-	}
-	for _, r := range m.remote.agents {
-		if strings.EqualFold(r.Name, name) {
-			return r.Name
+// guardEntryLabel names a guarded session in /protect's list: the agent's
+// name now when Den sees it, else the name it had when guarded.
+func (m Model) guardEntryLabel(e closer.Entry) string {
+	for _, a := range m.guardAgents() {
+		if guardKey(a) == e.Session {
+			return m.guardLabel(a)
 		}
 	}
-	return name
+	if e.Name != "" {
+		return e.Name
+	}
+	return e.Session
+}
+
+// guardAgents are the agents a guard entry may be: this machine's and the
+// hosts'.
+func (m Model) guardAgents() []fleet.Agent {
+	return append(append([]fleet.Agent(nil), m.base...), m.remote.agents...)
 }
 
 // askClose proposes and shows the question in the inbox.
@@ -475,9 +468,16 @@ func (m *Model) handleCloseRequest(r *bridge.Request) {
 		among = map[string]bool{}
 	}
 	for _, peer := range in.Peers {
-		a, ok := m.agentByPeer(peer)
-		if !ok {
-			refused = append(refused, closer.Refusal{Target: closer.Target{Name: peer}, Why: "not in the fleet"})
+		// The orchestrator names agents by peer handle; a name it gives
+		// instead is resolved the same way, and refused when it fits more
+		// than one.
+		a, err := m.resolveAgent(peer, m.base, names.Opts{})
+		if err != nil {
+			why := "not in the fleet"
+			if !errors.Is(err, names.ErrNoMatch) {
+				why = err.Error()
+			}
+			refused = append(refused, closer.Refusal{Target: closer.Target{Name: peer}, Why: why})
 			continue
 		}
 		if among != nil {
@@ -629,79 +629,48 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 	return tea.Batch(snapshot, flashTick(4*time.Second, m.flash))
 }
 
-// closeNamed finds the agent a /close name means: on this machine, or on a
-// host when written "name@host". A name that fits agents on more than one
-// host is refused, listing them. why is "" when an agent was found.
+// closeNamed finds the agent a /close name means, through names.Resolve:
+// a peer handle, a name or an alias on this machine, or on a host when
+// written "name@host". A name that fits more than one agent is refused,
+// listing them. why is "" when an agent was found.
 func (m Model) closeNamed(name string) (a fleet.Agent, why string) {
-	host, qualified := "", false
-	if i := strings.LastIndexByte(name, '@'); i > 0 {
-		name, host, qualified = strings.TrimSpace(name[:i]), strings.ToLower(strings.TrimSpace(name[i+1:])), true
-		if host == "local" {
-			host = ""
+	a, err := m.resolveAgent(name, m.guardAgents(), names.Opts{})
+	if err != nil {
+		if errors.Is(err, names.ErrNoMatch) {
+			return fleet.Agent{}, "not in the fleet"
 		}
+		return fleet.Agent{}, err.Error()
 	}
-	var hits []fleet.Agent
-	if !qualified || host == "" {
-		l, ok, shared := m.agentNamed(name)
-		if shared != "" {
-			return fleet.Agent{}, "that name is more than one agent: " + shared + "; name it by its peer handle"
-		}
-		if ok {
-			hits = append(hits, l)
-		}
-	}
-	for _, r := range m.remote.agents {
-		if (!qualified || strings.EqualFold(r.Host, host)) && (strings.EqualFold(r.Name, name) || strings.EqualFold(r.Session.Name, name)) {
-			hits = append(hits, r)
-		}
-	}
-	switch len(hits) {
-	case 0:
-		return fleet.Agent{}, "not in the fleet"
-	case 1:
-		return hits[0], ""
-	}
-	var where []string
-	for _, h := range hits {
-		where = append(where, h.Name+"@"+fleet.HostName(h.Host))
-	}
-	return fleet.Agent{}, "that name fits " + strings.Join(where, " and ") + "; add @host"
+	return a, ""
 }
 
-// agentByPeer finds an agent by its session name.
+// resolveAgent is the agent among agents that query names
+// (names.Resolve), or why none is.
+func (m Model) resolveAgent(query string, agents []fleet.Agent, o names.Opts) (fleet.Agent, error) {
+	c, err := names.Resolve(query, fleet.Candidates(agents), o)
+	if err != nil {
+		return fleet.Agent{}, err
+	}
+	for _, a := range agents {
+		if a.Session.SessionID == c.ID && a.Host == c.Host {
+			return a, nil
+		}
+	}
+	return fleet.Agent{}, names.ErrNoMatch
+}
+
+// agentByPeer finds this machine's agent with exactly that peer handle;
+// two with it is none.
 func (m Model) agentByPeer(peer string) (fleet.Agent, bool) {
 	p := strings.TrimPrefix(peer, "@")
+	var hit fleet.Agent
+	n := 0
 	for _, a := range m.base {
-		if a.Session.Name == p {
-			return a, true
+		if p != "" && a.Session.Name == p {
+			hit, n = a, n+1
 		}
 	}
-	return fleet.Agent{}, false
-}
-
-// agentNamed finds an agent by critter name or peer name, case-insensitively.
-// A name two agents share finds neither: shared lists them, each with its
-// peer handle, which names one.
-func (m Model) agentNamed(name string) (a fleet.Agent, ok bool, shared string) {
-	var byPeer, byName []fleet.Agent
-	for _, a := range m.base {
-		if strings.EqualFold(a.Session.Name, name) {
-			byPeer = append(byPeer, a)
-		} else if strings.EqualFold(a.Name, name) {
-			byName = append(byName, a)
-		}
-	}
-	hits := byPeer
-	if len(hits) == 0 {
-		hits = byName
-	}
-	switch len(hits) {
-	case 0:
-		return fleet.Agent{}, false, ""
-	case 1:
-		return hits[0], true, ""
-	}
-	return fleet.Agent{}, false, withPeers(hits)
+	return hit, n == 1
 }
 
 // splitNames splits "Mossy Lemur, Snug Capybara" or "mossy snug"; a
@@ -727,4 +696,105 @@ func splitNames(s string) []string {
 		out = append(out, words[i])
 	}
 	return out
+}
+
+// migrateGuard turns an older protected.json's name entries into sessions,
+// once Den has seen its agents: every agent with the name now, live or in
+// the roster, is guarded by its session (a name used to cover them all).
+// An entry for a host that has not reported yet waits for it; a name no
+// agent has is dropped. Den's chat says what changed, once.
+func (m *Model) migrateGuard() {
+	if m.guard == nil {
+		return
+	}
+	protect, flags := m.guard.Legacy()
+	if len(protect) == 0 && len(flags) == 0 {
+		return
+	}
+	type who struct{ key, label string }
+	matching := func(name string) (hits []who, wait bool) {
+		host, qualified := "", false
+		if i := strings.LastIndexByte(name, '@'); i > 0 {
+			name, host, qualified = strings.TrimSpace(name[:i]), strings.ToLower(strings.TrimSpace(name[i+1:])), true
+			if host == "local" {
+				host = ""
+			}
+		}
+		if qualified && host != "" {
+			seen := false
+			for _, a := range m.remote.agents {
+				if !strings.EqualFold(a.Host, host) {
+					continue
+				}
+				seen = true
+				if strings.EqualFold(a.Name, name) || strings.EqualFold(a.Session.Name, name) {
+					hits = append(hits, who{guardKey(a), m.guardLabel(a)})
+				}
+			}
+			return hits, !seen
+		}
+		keys := map[string]bool{}
+		for _, a := range m.guardAgents() {
+			if (qualified && a.Host != "") || !(strings.EqualFold(a.Name, name) || strings.EqualFold(a.Session.Name, name)) {
+				continue
+			}
+			keys[guardKey(a)] = true
+			hits = append(hits, who{guardKey(a), m.guardLabel(a)})
+		}
+		if m.restore.r != nil {
+			for _, r := range m.restore.r.Agents {
+				if !keys[r.SessionID] && (strings.EqualFold(r.Critter, name) || strings.EqualFold(r.Peer, name)) {
+					keys[r.SessionID] = true
+					hits = append(hits, who{r.SessionID, r.Name()})
+				}
+			}
+		}
+		return hits, false
+	}
+	var moved, dropped []string
+	var keepProtect []string
+	var keepFlags []closer.Flag
+	for _, name := range protect {
+		hits, wait := matching(name)
+		if wait {
+			keepProtect = append(keepProtect, name)
+			continue
+		}
+		if len(hits) == 0 {
+			dropped = append(dropped, name)
+		}
+		for _, h := range hits {
+			m.guard.Protect(h.key, h.label)
+			moved = append(moved, h.label)
+		}
+	}
+	for _, f := range flags {
+		hits, wait := matching(f.Name)
+		if wait {
+			keepFlags = append(keepFlags, f)
+			continue
+		}
+		if len(hits) == 0 {
+			dropped = append(dropped, "flagged "+f.Name)
+		}
+		for _, h := range hits {
+			m.guard.SetFlag(h.key, h.label, f.Note)
+			moved = append(moved, "flagged "+h.label)
+		}
+	}
+	if len(moved) == 0 && len(dropped) == 0 {
+		return
+	}
+	m.guard.TakeLegacy(keepProtect, keepFlags)
+	text := "Den now protects and flags each agent by its session, not by name: a protect or flag covers that agent through a restore or /reopen, and no other agent that later gets its name."
+	if len(moved) > 0 {
+		text += " Moved: " + strings.Join(moved, ", ") + "."
+	}
+	if len(dropped) > 0 {
+		text += " No agent has these names now, so they are no longer kept: " + strings.Join(dropped, ", ") + "."
+	}
+	if err := m.guard.Save(m.guardPath); err != nil {
+		text += " (Not saved: " + sanitize.Line(err.Error()) + ".)"
+	}
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: text, at: time.Now()}))
 }

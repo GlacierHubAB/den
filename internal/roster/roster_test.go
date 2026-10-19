@@ -1,6 +1,7 @@
 package roster
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/cost"
+	"github.com/GlacierHubAB/den/internal/names"
 )
 
 var t0 = time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
@@ -141,6 +143,8 @@ func TestObserveDropsOldEntries(t *testing.T) {
 	}
 }
 
+// Find never picks among entries that share a name: it refuses, listing
+// them. A session id, or the entry a fork took over from, settles it.
 func TestFind(t *testing.T) {
 	r := &Roster{}
 	older := lemur()
@@ -148,15 +152,20 @@ func TestFind(t *testing.T) {
 	newer := lemur()
 	newer.SessionID = "s3"
 	r.Observe([]Agent{newer}, t0.Add(time.Hour), t0)
-	a, ok := r.Find("mossy lemur")
-	if !ok || a.SessionID != "s3" {
-		t.Fatalf("want the newest Mossy Lemur, got %+v", a)
+	var amb *names.Ambiguous
+	if _, err := r.Find("mossy lemur"); !errors.As(err, &amb) || len(amb.Candidates) != 2 {
+		t.Fatalf("two Mossy Lemurs: %v", err)
 	}
-	if a, ok := r.Find("@demo-app-1a2b"); !ok || a.SessionID != "s3" {
-		t.Fatalf("peer names work too: %+v", a)
+	if a, err := r.Find(newer.SessionID); err != nil || a.SessionID != "s3" {
+		t.Fatalf("by session id: %+v %v", a, err)
 	}
-	if _, ok := r.Find("Nobody"); ok {
-		t.Fatal("unknown name")
+	// Once one is a fork of the other, only the fork is a candidate.
+	r.Fork(older.SessionID, newer.SessionID)
+	if a, err := r.Find("@demo-app-1a2b"); err != nil || a.SessionID != "s3" {
+		t.Fatalf("peer names work too: %+v %v", a, err)
+	}
+	if _, err := r.Find("Nobody"); !errors.Is(err, names.ErrNoMatch) {
+		t.Fatalf("unknown name: %v", err)
 	}
 }
 

@@ -186,28 +186,40 @@ func TestRunWithAnEndedProcess(t *testing.T) {
 }
 
 func TestGuardRulesAndIdleParsing(t *testing.T) {
-	g := &Guard{Names: []string{"Pebble Capybara", "user-44"}, Paths: []string{"/srv/xml-converter"}, Flagged: []Flag{{Name: "Plucky Narwhal", Note: "issue pending"}}}
-	if why := g.Protected("Pebble Capybara", "x", nil, ""); why != "protected (Pebble Capybara)" {
+	g := &Guard{Sessions: []Entry{{Session: "s-pebble", Name: "Pebble Capybara"}, {Session: "s-remote@devbox"}}, Paths: []string{"/srv/xml-converter"}, Flags: []Entry{{Session: "s-plucky", Name: "Plucky Narwhal", Note: "issue pending"}}}
+	if why := g.Protected("s-pebble", nil, ""); why != "protected (Pebble Capybara)" {
+		t.Errorf("by session: %q", why)
+	}
+	if why := g.Protected("s-remote@devbox", nil, ""); why != "protected" {
+		t.Errorf("a remote session: %q", why)
+	}
+	// A name is never matched: another session with that name is free.
+	if why := g.Protected("Pebble Capybara", nil, ""); why != "" {
 		t.Errorf("by name: %q", why)
 	}
-	if why := g.Protected("Fuzzy Sprite", "user-44", nil, ""); why != "protected (user-44)" {
-		t.Errorf("by peer: %q", why)
-	}
-	if why := g.Protected("A", "a", []string{"/srv/xml-converter/src"}, ""); why != "protected: works in /srv/xml-converter" {
+	if why := g.Protected("s-a", []string{"/srv/xml-converter/src"}, ""); why != "protected: works in /srv/xml-converter" {
 		t.Errorf("by folder: %q", why)
 	}
-	if why := g.Protected("A", "a", []string{"/srv/xml-converter-old"}, ""); why != "" {
+	if why := g.Protected("s-a", []string{"/srv/xml-converter-old"}, ""); why != "" {
 		t.Errorf("a sibling folder is not inside: %q", why)
 	}
-	if why := g.Protected("A", "a", nil, "fix the XML-Converter build"); why != "protected: its task mentions xml-converter" {
+	if why := g.Protected("s-a", nil, "fix the XML-Converter build"); why != "protected: its task mentions xml-converter" {
 		t.Errorf("by task: %q", why)
 	}
-	if note, ok := g.Held("plucky narwhal", ""); !ok || note != "issue pending" {
+	if note, ok := g.Held("s-plucky"); !ok || note != "issue pending" {
 		t.Errorf("held: %q %v", note, ok)
 	}
-	if !g.Protect("New One") || g.Protect("new one") || !g.Unprotect("NEW ONE") || g.Unprotect("New One") {
+	if _, ok := g.Held("Plucky Narwhal"); ok {
+		t.Error("a flag matched a name")
+	}
+	if !g.Protect("s-new", "New One") || g.Protect("s-new", "Other") || !g.Unprotect("s-new") || g.Unprotect("s-new") || g.Protect("", "x") {
 		t.Error("protect/unprotect bookkeeping")
 	}
+	g.SetFlag("s-plucky", "Plucky Narwhal", "still pending")
+	if note, _ := g.Held("s-plucky"); note != "still pending" || len(g.Flags) != 1 || !g.Unflag("s-plucky") || g.Unflag("s-plucky") {
+		t.Error("flag bookkeeping")
+	}
+	g.SetFlag("s-plucky", "Plucky Narwhal", "issue pending")
 	for in, want := range map[string]time.Duration{"30m": 30 * time.Minute, "1h": time.Hour, "2h": 2 * time.Hour, "1h30m": 90 * time.Minute, "1d": 24 * time.Hour, " 45M ": 45 * time.Minute} {
 		if d, err := ParseIdle(in); err != nil || d != want {
 			t.Errorf("ParseIdle(%q) = %v %v", in, d, err)
@@ -233,8 +245,18 @@ func TestGuardRulesAndIdleParsing(t *testing.T) {
 	if err := g.Save(path); err != nil {
 		t.Fatal(err)
 	}
-	if back := LoadGuard(path); len(back.Names) != 2 || len(back.Paths) != 1 || back.Flagged[0].Note != "issue pending" {
+	if back := LoadGuard(path); len(back.Sessions) != 2 || len(back.Paths) != 1 || back.Flags[0].Note != "issue pending" || back.Names != nil {
 		t.Errorf("round trip = %+v", back)
+	}
+	// An older file's name entries are read, for Den to turn into sessions.
+	os.WriteFile(path, []byte(`{"names":["Pebble Capybara"],"paths":[],"flagged":[{"name":"Plucky Narwhal","note":"n"}]}`), 0o600)
+	old := LoadGuard(path)
+	if p, f := old.Legacy(); len(p) != 1 || len(f) != 1 || f[0].Note != "n" {
+		t.Errorf("legacy %v %v", p, f)
+	}
+	old.TakeLegacy(nil, nil)
+	if p, f := old.Legacy(); p != nil || f != nil {
+		t.Error("legacy kept after TakeLegacy")
 	}
 }
 
