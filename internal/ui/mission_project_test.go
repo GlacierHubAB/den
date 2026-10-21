@@ -200,7 +200,9 @@ func TestFleetByProjectGolden(t *testing.T) {
 		m.base[i].Session.SessionID = strings.ToLower(strings.ReplaceAll(m.base[i].Name, " ", "-"))
 	}
 	m.missions = mission.New("")
-	at := time.Date(2026, 10, 11, 15, 0, 0, 0, time.UTC)
+	// The view's ages read the real clock: three hours ago reads "3h" on
+	// any day, where a fixed date grew a digit on the tenth day (#138).
+	at := time.Now().Add(-3 * time.Hour)
 	for _, x := range []struct{ id, root, sid string }{{"m1", "/home/x/tasklog", "mossy-lemur"}, {"m2", "/home/x/den", "fuzzy-sprite"}} {
 		ms := &mission.Mission{ID: x.id, Name: x.id, Shape: mission.Once, State: mission.Running, Created: at, Updated: at}
 		ms.SetProject(x.root)
