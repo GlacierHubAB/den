@@ -112,6 +112,7 @@ var held = map[string]bool{
 	UsageEvent:          true,
 	ModeEvent:           true,
 	TeamEvent:           true,
+	SpawnedEvent:        true,
 	OrchSendEvent:       true,
 	ConsolePairEvent:    true,
 	ConsoleUnpairEvent:  true,

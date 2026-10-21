@@ -206,6 +206,17 @@ type TeamQueryInput struct {
 	Lead   string `json:"lead,omitempty"`
 }
 
+// SpawnedEvent is not a hook event: `den mcp` sends it after spawn_agent
+// started an agent, with SpawnedInput, so that Den can tell a lead's real
+// spawn from a hook that only says so: Den names a lead's spawn only when
+// both came.
+const SpawnedEvent = "Spawned"
+
+// SpawnedInput is a SpawnedEvent's payload: the peer handle it launched.
+type SpawnedInput struct {
+	Peer string `json:"peer"`
+}
+
 // TuneEvent is not a hook event: `den mcp` sends it for the
 // orchestrator's tune_process call, with TuneInput. Den applies each change
 // within its bounds and puts a notice card to the human, who can undo it;

@@ -24,6 +24,7 @@ type Agent struct {
 	SessionID string `json:"session_id"`
 	Peer      string `json:"peer,omitempty"` // the session's --name
 	Critter   string `json:"critter"`
+	Given     string `json:"given,omitempty"` // the name Den gave it at spawn, "" for none
 	Role      string `json:"role,omitempty"`
 	Model     string `json:"model,omitempty"` // raw model id from the transcript
 	CWD       string `json:"cwd"`
@@ -44,8 +45,12 @@ type Agent struct {
 	Dismissed time.Time `json:"dismissed,omitzero"`
 }
 
-// Name is the critter name, else the peer name.
+// Name is the name Den gave it, else the critter name, else the peer
+// name.
 func (a Agent) Name() string {
+	if a.Given != "" {
+		return a.Given
+	}
 	if a.Critter != "" {
 		return a.Critter
 	}
@@ -267,7 +272,11 @@ func (r *Roster) Find(name string) (Agent, error) {
 		if _, forked := r.Forks[a.SessionID]; forked {
 			continue
 		}
-		cands = append(cands, names.Candidate{ID: a.SessionID, Peer: a.Peer, Name: a.Name()})
+		c := names.Candidate{ID: a.SessionID, Peer: a.Peer, Name: a.Name()}
+		if a.Given != "" {
+			c.Alias = a.Critter
+		}
+		cands = append(cands, c)
 	}
 	c, err := names.Resolve(name, cands, names.Opts{IDs: true})
 	if err != nil {

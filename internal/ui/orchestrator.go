@@ -243,7 +243,7 @@ func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 			continue
 		}
 		r := orch.RosterAgent{
-			Critter: a.Name, Peer: a.Session.Name, Role: a.Labels.Role,
+			Name: a.Name, Alias: a.Alias, Peer: a.Session.Name, Role: a.Labels.Role,
 			Status: a.Status.String(), Task: a.Task(), Where: a.Where(),
 			Title: a.Title, Files: fleet.TouchedFolders(a), Recent: fleet.RecentActivity(a),
 			Earlier: a.Labels.History,
@@ -542,7 +542,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 		} else {
 			note := chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now}
 			if in, ok := orch.ParseSpawn(ev.Input); ok && ev.Tool == orch.SpawnAgentTool {
-				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, now)
+				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, in.Role, in.Title, now)
 				note.full = in.Brief
 			} else if mm, ok := parseMessageCall(ev.Tool, ev.Input); ok {
 				// Another tool that messages someone: one line, like a
@@ -574,7 +574,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 					e.status = "failed: " + firstLineOf(ev.Text)
 				case strings.HasPrefix(e.text, "▶"):
 					e.status = firstLineOf(ev.Text)
-					m.learnSpawn(ev.Text, tree.Orchestrator, ev.ToolUseID, "")
+					m.learnSpawn(ev.Text, tree.Orchestrator, ev.ToolUseID, "", "", "")
 				}
 			case failed:
 				e.status = "failed: " + firstLineOf(ev.Text)
@@ -683,7 +683,7 @@ func (m Model) agentForPeer(peer string) (name, sid string) {
 	}
 	for _, hits := range [][]fleet.Agent{live, all} {
 		if len(hits) == 1 {
-			return hits[0].Name, hits[0].Session.SessionID
+			return shownName(hits[0]), hits[0].Session.SessionID
 		}
 		if len(hits) > 1 {
 			break

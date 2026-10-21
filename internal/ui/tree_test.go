@@ -170,7 +170,7 @@ func TestSpawnsMakeEdgesUnderWhoeverStartedThem(t *testing.T) {
 	m.refresh()
 
 	// A lead's own spawn, seen through its PostToolUse hook.
-	m.learnSpawn(`Started Fuzzy Sprite (peer "designer") in ~/site on opus. It has the brief as its first prompt.`, "mossy-lemur", "", "Design the site.\nUse the design file.")
+	m.learnSpawn(`Started Fuzzy Sprite (peer "designer") in ~/site on opus. It has the brief as its first prompt.`, "mossy-lemur", "", "Design the site.\nUse the design file.", "", "")
 	if e := m.edgeFor("fuzzy-sprite"); e.Parent != "mossy-lemur" || e.Brief != "Design the site. …" || e.Source != "spawn" {
 		t.Errorf("lead's spawn edge = %+v", e)
 	}
@@ -178,8 +178,8 @@ func TestSpawnsMakeEdgesUnderWhoeverStartedThem(t *testing.T) {
 	// The orchestrator's spawn: its note becomes the agent's card.
 	now := time.Now()
 	m.orch.chat = append(m.orch.chat, chatEntry{role: "note", text: "▶ starting an agent in ~/site", toolUseID: "t9", at: now})
-	m.noteSpawn("t9", "Lead the website build.", "", now)
-	m.learnSpawn(`Started Maple Owl (peer "copy") in ~/site on workspace 2 on opus.`, tree.Orchestrator, "t9", "")
+	m.noteSpawn("t9", "Lead the website build.", "", "", "", now)
+	m.learnSpawn(`Started Maple Owl (peer "copy") in ~/site on workspace 2 on opus.`, tree.Orchestrator, "t9", "", "", "")
 	if e := m.edgeFor("maple-owl"); e.Parent != tree.Orchestrator || e.Brief != "Lead the website build." {
 		t.Errorf("orchestrator's spawn edge = %+v", e)
 	}
@@ -189,7 +189,7 @@ func TestSpawnsMakeEdgesUnderWhoeverStartedThem(t *testing.T) {
 	}
 
 	// A session not in the fleet yet waits.
-	m.learnSpawn(`Started Someone (peer "nobody") in ~/site.`, "mossy-lemur", "", "x")
+	m.learnSpawn(`Started Someone (peer "nobody") in ~/site.`, "mossy-lemur", "", "x", "", "")
 	if len(m.tree.pending) != 1 || m.tree.pending[0].peer != "nobody" {
 		t.Errorf("pending = %+v", m.tree.pending)
 	}

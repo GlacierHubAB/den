@@ -47,14 +47,18 @@ func buildMentions(agents []fleet.Agent, isOrchestrator func(fleet.Agent) bool) 
 		if a.Host != "" || a.Status == fleet.Gone || isOrchestrator(a) {
 			continue
 		}
-		name := sanitize.Line(a.Name)
-		if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) {
-			continue
+		// The name Den gave and the critter name it had both count; a role
+		// name is one word, so it only ever matches written "@name".
+		for _, n := range []string{a.Name, a.Alias} {
+			name := sanitize.Line(n)
+			if strings.TrimSpace(name) == "" || name != strings.TrimSpace(name) {
+				continue
+			}
+			// Two names equal but for the case of their letters count for
+			// neither: "@name" matches either.
+			count[names.Fold(name)]++
+			sid[name] = a.Session.SessionID
 		}
-		// Two names equal but for the case of their letters count for
-		// neither: "@name" matches either.
-		count[names.Fold(name)]++
-		sid[name] = a.Session.SessionID
 	}
 	s := &mentionSet{}
 	for name, id := range sid {
