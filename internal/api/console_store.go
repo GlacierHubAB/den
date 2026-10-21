@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -325,8 +327,12 @@ func (s *Server) checkConsoleRecord() {
 	if path == "" {
 		return
 	}
-	raw, err := os.ReadFile(path)
+	// The file is read under the lock every save holds while it writes the
+	// file and its hash: read outside it, a save between the read and the
+	// hash looked like another program's change, and Den unpaired its own
+	// console (#179).
 	s.con.mu.Lock()
+	raw, err := readRecord(path)
 	want := s.con.recordHash
 	s.con.mu.Unlock()
 	if want == "" {
@@ -422,4 +428,38 @@ func (s *Server) ForgetMirrorConsent(lineage string) bool {
 	c.Mirror, c.MirrorSince = "", time.Time{}
 	s.saveConsoleLocked()
 	return true
+}
+
+// recordMax is the most of consoles.json a check reads: Den's own record
+// is a few KiB.
+const recordMax = 1 << 20
+
+// readRecord reads the console record for a check, which holds con.mu: a
+// FIFO, a symlink, a device or an outsized file planted at the path never
+// blocks or stalls it. Each is an error, which the check takes for a
+// change by another program, as it does a missing file.
+func readRecord(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	if fi.Size() > recordMax {
+		return nil, errors.New("too large")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, recordMax+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > recordMax {
+		return nil, errors.New("too large")
+	}
+	return raw, nil
 }
