@@ -273,8 +273,14 @@ type Manager struct {
 	qsig    chan struct{}
 	qdone   chan struct{}
 
+	// mu guards state. No disk write happens under it: Hosts and Agents
+	// answer the views while a host floods (#175).
 	mu    sync.Mutex
 	state map[string]*hostState
+
+	// emu serialises the sessions' appends to the shared events file,
+	// whose rotation is a stat and a rename.
+	emu sync.Mutex
 
 	// rmu serialises reload's reads of remotes.toml; lastRead is the last
 	// one it read, starting from the Config NewManager was given; unread
@@ -608,6 +614,15 @@ var reloadSettle = 100 * time.Millisecond
 // hosts say so: an editor's save is over well within it.
 var unreadAfter = 30 * time.Second
 
+// writeKnown and appendEvent are the session's writes to disk; tests slow
+// them down. They run after mu is let go, with what was copied under it;
+// a host's writes all come from its one session goroutine, so they land
+// in order.
+var (
+	writeKnown  = saveKnown
+	appendEvent = events.Append
+)
+
 // noteUnread marks every host with when remotes.toml stopped reading
 // cleanly, once that has lasted unreadAfter, and clears the mark when it
 // reads again. It returns the hosts' updates.
@@ -792,9 +807,10 @@ func (m *Manager) setState(h Host, s State, reason string) {
 	if s == Live || s == AttachedElsewhere {
 		st.known.Heartbeat = m.o.Now()
 	}
-	saveKnown(m.o.StateDir, st.known)
+	k := st.known
 	u := Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(h)}
 	m.mu.Unlock()
+	writeKnown(m.o.StateDir, k)
 	m.send(u)
 }
 
@@ -1040,8 +1056,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.mu.Lock()
 				st := m.state[h.Label]
 				st.known.Heartbeat = m.o.Now()
-				saveKnown(m.o.StateDir, st.known)
+				k := st.known
 				m.mu.Unlock()
+				writeKnown(m.o.StateDir, k)
 			}
 			continue
 		case <-ping.C:
@@ -1148,9 +1165,10 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				st.status.Offset = off
 				st.known.Offset = st.status.Offset
 			}
-			saveKnown(m.o.StateDir, st.known)
+			k := st.known
 			u := Update{Kind: FleetChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(h)}
 			m.mu.Unlock()
+			writeKnown(m.o.StateDir, k)
 			m.send(u)
 			if !sane {
 				m.flag(h, "an implausible clock")
@@ -1205,11 +1223,14 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				}
 				continue
 			}
-			if !m.o.NoEventLog {
-				events.Append(m.o.EventsPath, ev)
-			}
-			saveKnown(m.o.StateDir, st.known)
+			k := st.known
 			m.mu.Unlock()
+			if !m.o.NoEventLog {
+				m.emu.Lock()
+				appendEvent(m.o.EventsPath, ev)
+				m.emu.Unlock()
+			}
+			writeKnown(m.o.StateDir, k)
 			if v == logOnly {
 				continue
 			}
