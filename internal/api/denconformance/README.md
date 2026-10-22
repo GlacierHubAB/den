@@ -5,7 +5,9 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Package SHA-256 `6c2244979c6a6403d41d31af449829d08b360b79f0702b456b501a36576415b6`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
+Package SHA-256 `bc6e488fc71534f16b48dd8455e031eef1a910a9abc983cbc42390236ceadb78`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
+
+`MentionCases` (mention.go) is the table of the mention rule that Den's routing and a shell's colouring both follow: where an "@" starts a mention, how a name ends it (the end, white space, "@" or sentence punctuation) and what is no mention; a server runs its own resolver over it, offsets in runes.
 
 The package SHA-256 is computed over the Go files in name order, in the
 package's directory:
@@ -167,6 +169,13 @@ What only the server's own test can do is passed in:
   on; Working), alone or followed by " " and a target, ":" and a reason, or
   "…" (only the lead is checked), `at` in RFC3339, and at least
   one agent non-empty. Skipped when the server has no agent.
+- `overlay link`: `overlay.linked {mission}` and `overlay.unlinked {mission}` are `forbidden`
+  before any proof and from a proved connection that is not subscribed to `console.events`;
+  `bad_request` without a mission; and, with no task running, `not_found`. With `Desktop` set
+  (the server runs a desktop task with a mission, or none), `overlay.linked` for the running
+  mission answers `{linked: true}`, `overlay.unlinked` `{linked: false}`, another mission is
+  `not_found`, and past 30 overlay calls a minute the answer is `unavailable`. (`powers_locked`
+  for `overlay.linked` without the console's powers is not driven here.)
 - `chat.history` holds only Den's two roles, user and orchestrator.
 - Console events of a kind a subtest is not waiting for (Den's `paired`,
   `reconnected`, `powers`) are skipped, as a client ignores kinds it does
@@ -227,7 +236,7 @@ Because three refused proofs in ten minutes unpair a console, the
 signature refusals and the thief run late, each group on a fresh pairing
 with at most two failures. The suite also paces `console.challenge` at one a
 second per connection. The subtests then check the
-console event about this console, a thief in another process refused, `card.get`'s hash over kind, agent, tool, title, note and body,
+console event about this console, a thief in another process refused, `card.get`'s hash over kind, agent, tool, title, note and body (and, last, the `mission` of a `mission stop`, `mission restart` or `mission done` card, the seventh field of those three kinds; a `mission done` card also carries structured `criteria` `[{id, state, text?, evidence?}]` (at most eight, ids `c1`.., state open, claimed or met, evidence only on claimed or met, texts of at most 300 runes), which are its eighth and last hashed field: each criterion's id, state, text and evidence joined by U+001F, the criteria joined by U+001E in card order, a left-out text or evidence being empty; no other kind carries `criteria`; `CardTextSHA256`),
 `card.answer` with a changed hash, another connection's nonce, a spent
 nonce and the settled event (result `denied`, by `console`, no
 `text_sha256`; result and by from their closed sets), the read timer on a long card, the replay of waiting cards after
