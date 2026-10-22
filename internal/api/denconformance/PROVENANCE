@@ -6,18 +6,19 @@ against the same suite. Den changes none of it: a finding is fixed upstream
 and the copy pinned again.
 
 Source        the client's conformance package, pinned at commit
-              01d6cc35a9b65cf95ca6743533c7b670e10e4e62
-Code          checks_test.go, client.go, console.go, d1.go, denconformance.go
-              at that commit
-              checks_test.go    1e9b4e804308ce9f5140ac40ada8809634df3449f946fcad7e5370f1421d91db
+              71d08cbdb5ea62f1202f990a8ee4c58136846c20
+Code          checks_test.go, client.go, console.go, d1.go, denconformance.go,
+              mention.go at that commit
+              checks_test.go    e5f201fa83e74cc4a9deb951dd975427ed0380a32cfce82a7f8a995d1cccf6e8
               client.go         912bea7e150aace693040f9c37df49f3ceb3180b7f692fe417f5066ad41ab8c0
-              console.go        e7d185cb248b581f701f597f25f0e6c24b81522d2380ed28e5ddbab8ed2a036f
+              console.go        105767d862c5df59cdb01a7879fce47bd3405ed38a5bf0b38aa5e7fdce5e0a36
               d1.go             e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416
               denconformance.go d2b71446ae741b6bd340add1eb4a4c43bbb51506d42c1e374a3ae3b697641b0d
+              mention.go        0657dcef747ef52fd99a231f03bf1c79946381bea0b294b82df7bb77fb2cb041
               package hash (sha256sum of the .go files in name order, hashed)
-                                6c2244979c6a6403d41d31af449829d08b360b79f0702b456b501a36576415b6
+                                bc6e488fc71534f16b48dd8455e031eef1a910a9abc983cbc42390236ceadb78
 README.md     at the same commit; byte-identical, as every file here
-              840322a8be7689ee1b17fc1a576983a8cb63a16e04b10bf1fe20410bee248137
+              f4d9a9a455bc588584ed556bafde37c4c5b3408f19649c055a0eb6f88b6b5100
 License       MIT, in README.md and the files' own headers
 
 It is test-only. It imports nothing but the standard library, only

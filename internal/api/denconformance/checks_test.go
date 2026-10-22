@@ -1,8 +1,11 @@
 package denconformance
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -213,5 +216,107 @@ func TestEventLineChecks(t *testing.T) {
 	}
 	if maxConversationEventLine != 400*1024 || maxHistoryReplyLine != 800*1024 {
 		t.Error("the line bounds are not Den's stated 400 KiB and 800 KiB")
+	}
+}
+
+// Den's fixed text_sha256 vectors (recomputed independently): the mission is the seventh field, last, for the three mission kinds only.
+func TestCardTextHashVectors(t *testing.T) {
+	const body = "Stop the mission and its run. No agent is touched."
+	// the vectors are for kind "mission stop" with m1 and m12 and, six fields only, the same text under a kind that is not a mission one
+	if got := CardTextSHA256("mission stop", "", "", "Stop the mission?", "", body, "m1", nil); got != "ebcd19504c06e36065a619f828fcebd544f9eb7ac5fdf1f1757e01121ef50e7b" {
+		t.Errorf("m1: %s", got)
+	}
+	if got := CardTextSHA256("mission stop", "", "", "Stop the mission?", "", body, "m12", nil); got != "cddac4ea934efdc421d8ed683df7f3a7347213d71e6530be247522989b0b77bf" {
+		t.Errorf("m12: %s", got)
+	}
+	const six = "dc79822212cf160275753d859032fcccdd07f91b226577e6cf2d3a06df9c5ded"
+	// the six-field form: the same kind and text, hashed without a mission (what every other kind does)
+	sum := sha256.Sum256([]byte("mission stop\n\n\nStop the mission?\n\n" + body))
+	if got := hex.EncodeToString(sum[:]); got != six {
+		t.Errorf("six fields only: %s", got)
+	}
+	for _, kind := range []string{"permission", "plan", "question", "mission pause", "mission", "Mission stop", ""} {
+		if CardTextSHA256(kind, "", "", "Stop the mission?", "", body, "m1", nil) != CardTextSHA256(kind, "", "", "Stop the mission?", "", body, "", nil) {
+			t.Errorf("kind %q: the mission changed the hash of a card that is not a mission card", kind)
+		}
+	}
+	for _, kind := range []string{"mission stop", "mission restart", "mission done"} {
+		a, b := CardTextSHA256(kind, "den", "", "t", "", body, "m1", nil), CardTextSHA256(kind, "den", "", "t", "", body, "m2", nil)
+		if a == b {
+			t.Errorf("%s: the same body under another mission hashes the same", kind)
+		}
+		if a == CardTextSHA256(kind, "den", "", "t", "", body, "", nil) {
+			t.Errorf("%s: a missing mission hashes like a present one", kind)
+		}
+	}
+}
+
+// Den's fixed vectors for "mission done": the eighth field is the criteria, id US state US text US evidence, joined by RS.
+func TestMissionDoneHashVectors(t *testing.T) {
+	const body = "Confirm the mission is done."
+	full := []Criterion{
+		{ID: "c1", State: "met", Text: "Tests pass", Evidence: "PR #97 merged"},
+		{ID: "c2", State: "claimed", Text: "Docs updated", Evidence: "README section added"},
+		{ID: "c3", State: "open", Text: "Released"},
+	}
+	bare := []Criterion{{ID: "c1", State: "met"}, {ID: "c2", State: "claimed"}, {ID: "c3", State: "open"}}
+	if got := CardTextSHA256("mission done", "", "", "Is it done?", "", body, "m1", full); got != "2274768428161c7f2c78b89f885bca7663a48fc20888ddd76a7b3711637128a5" {
+		t.Errorf("with texts: %s", got)
+	}
+	if got := CardTextSHA256("mission done", "", "", "Is it done?", "", body, "m1", bare); got != "ecc54dae1673c025b0b8fcafa33d324b5af1b43da185c5d591ebdab9d9479357" {
+		t.Errorf("ids and states only: %s", got)
+	}
+	base := CardTextSHA256("mission done", "", "", "Is it done?", "", body, "m1", full)
+	for name, mut := range map[string]func(c []Criterion){
+		"a text":     func(c []Criterion) { c[0].Text += "!" },
+		"a state":    func(c []Criterion) { c[1].State = "met" },
+		"evidence":   func(c []Criterion) { c[1].Evidence = "x" },
+		"an id":      func(c []Criterion) { c[2].ID = "c9" },
+		"the order":  func(c []Criterion) { c[0], c[1] = c[1], c[0] },
+		"one fewer":  func(c []Criterion) { c[2] = Criterion{} },
+		"a boundary": func(c []Criterion) { c[0].Text, c[0].Evidence = "Tests passPR #97 merged", "" },
+	} {
+		c := append([]Criterion(nil), full...)
+		mut(c)
+		if name == "one fewer" {
+			c = c[:2]
+		}
+		if CardTextSHA256("mission done", "", "", "Is it done?", "", body, "m1", c) == base {
+			t.Errorf("changing %s leaves the hash alone", name)
+		}
+	}
+	// stop and restart stay seven fields: criteria are not part of them; every other kind stays six
+	for _, kind := range []string{"mission stop", "mission restart", "permission"} {
+		if CardTextSHA256(kind, "den", "", "t", "", body, "m1", full) != CardTextSHA256(kind, "den", "", "t", "", body, "m1", nil) {
+			t.Errorf("%s: criteria changed the hash of a card that is not mission done", kind)
+		}
+	}
+}
+
+func TestCheckCriteria(t *testing.T) {
+	ok := []Criterion{{ID: "c1", State: "met", Text: "a", Evidence: "b"}, {ID: "c2", State: "open"}}
+	if err := checkCriteria(ok); err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("x", 301)
+	var nine []Criterion
+	for i := 1; i <= 9; i++ {
+		nine = append(nine, Criterion{ID: "c" + strconv.Itoa(i), State: "open"})
+	}
+	for name, bad := range map[string][]Criterion{
+		"nine":             nine,
+		"a bad id":         {{ID: "x1", State: "open"}},
+		"a duplicate":      {{ID: "c1", State: "open"}, {ID: "c1", State: "open"}},
+		"an unknown state": {{ID: "c1", State: "done"}},
+		"open evidence":    {{ID: "c1", State: "open", Evidence: "e"}},
+		"a long text":      {{ID: "c1", State: "met", Text: long}},
+		"a separator":      {{ID: "c1", State: "met", Text: "a\x1fb"}},
+		"a record sep":     {{ID: "c1", State: "met", Evidence: "a\x1eb"}},
+		"a newline":        {{ID: "c1", State: "met", Text: "a\nb"}},
+		"a bidi mark":      {{ID: "c1", State: "met", Text: "a\u202eb"}},
+	} {
+		if checkCriteria(bad) == nil {
+			t.Errorf("%s was accepted", name)
+		}
 	}
 }
