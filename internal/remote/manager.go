@@ -608,6 +608,13 @@ var reloadSettle = 100 * time.Millisecond
 // hosts say so: an editor's save is over well within it.
 var unreadAfter = 30 * time.Second
 
+// writeKnown and appendEvent are the session's writes to disk; tests slow
+// them down.
+var (
+	writeKnown  = saveKnown
+	appendEvent = events.Append
+)
+
 // noteUnread marks every host with when remotes.toml stopped reading
 // cleanly, once that has lasted unreadAfter, and clears the mark when it
 // reads again. It returns the hosts' updates.
@@ -792,7 +799,7 @@ func (m *Manager) setState(h Host, s State, reason string) {
 	if s == Live || s == AttachedElsewhere {
 		st.known.Heartbeat = m.o.Now()
 	}
-	saveKnown(m.o.StateDir, st.known)
+	writeKnown(m.o.StateDir, st.known)
 	u := Update{Kind: HostChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(h)}
 	m.mu.Unlock()
 	m.send(u)
@@ -1040,7 +1047,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				m.mu.Lock()
 				st := m.state[h.Label]
 				st.known.Heartbeat = m.o.Now()
-				saveKnown(m.o.StateDir, st.known)
+				writeKnown(m.o.StateDir, st.known)
 				m.mu.Unlock()
 			}
 			continue
@@ -1148,7 +1155,7 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				st.status.Offset = off
 				st.known.Offset = st.status.Offset
 			}
-			saveKnown(m.o.StateDir, st.known)
+			writeKnown(m.o.StateDir, st.known)
 			u := Update{Kind: FleetChanged, Host: h.Label, Status: st.status, Agents: m.agentsLocked(h)}
 			m.mu.Unlock()
 			m.send(u)
@@ -1206,9 +1213,9 @@ func (m *Manager) session(h Host) (State, string, bool) {
 				continue
 			}
 			if !m.o.NoEventLog {
-				events.Append(m.o.EventsPath, ev)
+				appendEvent(m.o.EventsPath, ev)
 			}
-			saveKnown(m.o.StateDir, st.known)
+			writeKnown(m.o.StateDir, st.known)
 			m.mu.Unlock()
 			if v == logOnly {
 				continue
