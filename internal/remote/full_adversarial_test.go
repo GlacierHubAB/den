@@ -124,17 +124,30 @@ func TestAdvPolicyChangesBetweenConnections(t *testing.T) {
 		t.Errorf("SECRET written down while connected under full: %v", hits)
 	}
 	g.stop()
+	// The first session's serve, and the tee that copies its output, can
+	// outlive Den's side on a loaded box: the mark comes after both, or
+	// their last full snapshot lands after it (#180).
+	g.wait("the first serve gone", 10*time.Second, func() bool { return len(g.r.ServePIDs()) == 0 })
 	mark := len(g.r.PipeOut())
+	g.wait("the capture settled", 10*time.Second, func() bool {
+		time.Sleep(200 * time.Millisecond)
+		n := len(g.r.PipeOut())
+		settled := n == mark
+		mark = n
+		return settled
+	})
 	g.l.Local.WriteRemotes(g.l.RemotesTOML("approve"))
 	g.start()
 	g.live()
 	g.wait("the agent", 10*time.Second, func() bool { return len(g.m.Agents()) == 1 })
-	time.Sleep(700 * time.Millisecond)
+	// Waited for, not slept on: on a loaded box the first snapshot can take
+	// longer than any fixed pause.
+	g.wait("a snapshot under approve", 15*time.Second, func() bool { return bytes.Contains(g.r.PipeOut()[mark:], []byte(`"snapshot"`)) })
 	if a := g.m.Agents()[0]; a.Title != "" || a.RemoteCWD != "" || len(a.Tail) != 0 {
 		t.Errorf("content survived the policy change: %+v", a.Title)
 	}
-	if out := g.r.PipeOut()[mark:]; bytes.Contains(out, []byte("SECRET")) || !bytes.Contains(out, []byte(`"snapshot"`)) {
-		t.Errorf("after the change (%d bytes) the pipe carried content or nothing", len(out))
+	if out := g.r.PipeOut()[mark:]; bytes.Contains(out, []byte("SECRET")) {
+		t.Errorf("after the change the pipe carried content (%d bytes):\n%s", len(out), out)
 	}
 	if _, err := g.m.Diff("b", idA); err == nil {
 		t.Error("a diff was allowed after the policy fell to approve")
