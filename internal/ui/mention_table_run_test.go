@@ -7,18 +7,19 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/GlacierHubAB/den/internal/api/denconformance"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/fleet"
 )
 
 // TestMentionTable runs the mention table Den and Drey's dock share
-// (mention_table_test.go) through Den's colouring, every hit, and its
+// (denconformance.MentionCases) through Den's colouring, every hit, and its
 // routing, the first hit when the text starts with it. A host after the
 // name ("@Lemur@host") is routing's own and not the table's: the chip ends
 // at the "@", and routing then looks on that host, so those cases are left
 // to TestMentionEndsAtPunctuation.
 func TestMentionTable(t *testing.T) {
-	for i, c := range tableCases {
+	for i, c := range denconformance.MentionCases {
 		var agents []fleet.Agent
 		names := map[string]string{}
 		for j, n := range c.Names {
@@ -27,12 +28,12 @@ func TestMentionTable(t *testing.T) {
 			agents = append(agents, fleet.Agent{Name: n, Status: fleet.Working, Session: discover.Session{SessionID: sid, Alive: true}})
 		}
 		ms := buildMentions(agents, func(fleet.Agent) bool { return false })
-		var got []tableHit
+		var got []denconformance.Hit
 		pos := 0
 		for _, sp := range ms.apply([]mdSpan{{text: c.Text}}) {
 			n := utf8.RuneCountInString(sp.text)
 			if sp.a.mention != "" {
-				got = append(got, tableHit{names[sp.a.mention], pos, pos + n})
+				got = append(got, denconformance.Hit{Name: names[sp.a.mention], Start: pos, End: pos + n})
 			}
 			pos += n
 		}
