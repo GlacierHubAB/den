@@ -60,6 +60,7 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
 		Agent:       m.dockName(itemKey(it)),
+		AgentID:     m.dockAgentID(itemKey(it)),
 		Tool:        it.Tool,
 		Title:       it.Title,
 		Note:        m.twinNote(itemKey(it)),
@@ -125,6 +126,15 @@ func (m Model) dockName(key string) string {
 		n = strings.TrimPrefix(n, "@")
 	}
 	return n
+}
+
+// dockAgentID is the id of the agent a card is for, "" for a card from a
+// host or from Den.
+func (m Model) dockAgentID(key string) string {
+	if a, ok := m.agentFor(key); ok && a.Host == "" {
+		return a.Session.SessionID
+	}
+	return ""
 }
 
 // answerFromDock carries out a console's answer, or says why not.

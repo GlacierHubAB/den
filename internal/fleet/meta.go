@@ -9,6 +9,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
 )
@@ -30,6 +31,7 @@ type Meta struct {
 	Session string `json:"session"`          // Claude Code session id
 	Status  string `json:"status"`           // Status.Key()
 	Name    string `json:"name"`             // critter name
+	Given   string `json:"given,omitempty"`  // the name its Den gave it from its role
 	Peer    string `json:"peer,omitempty"`   // Claude Code's session name, --name
 	Role    string `json:"role,omitempty"`   // badge role, capped; withheld without labels
 	Task    string `json:"task,omitempty"`   // badge task, capped; withheld without labels
@@ -134,7 +136,8 @@ func (a Agent) Meta(index int, now time.Time, labels bool) Meta {
 		Index:      index,
 		Session:    sanitize.Label(a.Session.SessionID, LabelMax),
 		Status:     a.Status.Key(),
-		Name:       sanitize.Label(a.Name, LabelMax),
+		Name:       sanitize.Label(critterOf(a), LabelMax),
+		Given:      givenOf(a),
 		Peer:       sanitize.Label(a.Session.Name, LabelMax),
 		Model:      sanitize.Label(a.Model, LabelMax),
 		Claude:     sanitize.Label(a.Session.Version, 40),
@@ -351,6 +354,22 @@ func age(now time.Time, ms int64) int64 {
 	return max(0, now.UnixMilli()-ms)
 }
 
+// critterOf is an agent's critter name: its alias when it has a given name.
+func critterOf(a Agent) string {
+	if a.Alias != "" {
+		return a.Alias
+	}
+	return a.Name
+}
+
+// givenOf is the name Den gave an agent, "" when it shows its critter name.
+func givenOf(a Agent) string {
+	if a.Alias != "" {
+		return a.Name
+	}
+	return ""
+}
+
 // FromMeta turns a projection received from host back into an Agent for
 // Den's views. received is the local time the projection arrived: the
 // remote's ages are counted back from it, so durations shown are the
@@ -382,9 +401,15 @@ func FromMeta(m Meta, host string, received time.Time, prices cost.Table) Agent 
 		Host:           host,
 	}
 	// The critter name is computed here from the session id, as the badge on
-	// the host does, never taken from the host: a host that picked its
-	// agents' names could capture @mentions meant for others.
+	// the host does, never taken from the host. The name the host's Den gave
+	// is shown only when it is one this Den could have given (names.Valid),
+	// and always with its host: a name with no host means this machine, so
+	// a host's name never captures a mention or a command meant for a local
+	// agent (sec's N7).
 	a.Name = badge.Name(a.Session.SessionID)
+	if g := m.Given; g != "" && names.Valid(g) {
+		a.Name, a.Alias = g, a.Name
+	}
 	switch a.Status {
 	case Working:
 		a.Session.Status = "busy"

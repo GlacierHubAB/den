@@ -195,8 +195,11 @@ const (
 
 // Agent is one agent, metadata only.
 type Agent struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Alias is the critter name an agent had before Den named it by its
+	// role, "" when Name is it. Name and Alias are labels: ID is the agent.
+	Alias    string    `json:"alias,omitempty"`
 	Role     string    `json:"role,omitempty"`
 	State    string    `json:"state"`
 	Waiting  string    `json:"waiting,omitempty"`
@@ -231,6 +234,7 @@ type Agent struct {
 type Window struct {
 	Address string `json:"address"`
 	Agent   string `json:"agent,omitempty"`
+	AgentID string `json:"agent_id,omitempty"` // the agent's id: Agent is only its name
 	Class   string `json:"class"`
 	Title   string `json:"title"`
 	PID     int    `json:"pid"`
@@ -238,10 +242,11 @@ type Window struct {
 
 // MissionRef is a mission as the fleet carries it.
 type MissionRef struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	State string `json:"state"`
-	Agent string `json:"agent,omitempty"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	State   string `json:"state"`
+	Agent   string `json:"agent,omitempty"`
+	AgentID string `json:"agent_id,omitempty"` // the agent's id: Agent is only its name
 }
 
 // Cost is the fleet's estimated spend.
@@ -262,13 +267,16 @@ const (
 
 // Item is an inbox item with a digest of its body, never the body.
 type Item struct {
-	ID     string    `json:"id"`
-	Kind   string    `json:"kind"`
-	Agent  string    `json:"agent"`
-	Since  time.Time `json:"since"`
-	Title  string    `json:"title"`
-	Digest Digest    `json:"digest"`
-	Host   string    `json:"host,omitempty"`
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Agent string `json:"agent"`
+	// AgentID is the agent's id, "" for an item from a host or from Den:
+	// Agent is only its name.
+	AgentID string    `json:"agent_id,omitempty"`
+	Since   time.Time `json:"since"`
+	Title   string    `json:"title"`
+	Digest  Digest    `json:"digest"`
+	Host    string    `json:"host,omitempty"`
 }
 
 // Digest describes a body without carrying it.
@@ -340,6 +348,7 @@ type Mission struct {
 	State     string    `json:"state"`
 	Agent     string    `json:"agent,omitempty"`
 	Agents    []string  `json:"agents,omitempty"`
+	AgentIDs  []string  `json:"agent_ids,omitempty"` // the ids of the agents its sub-goals name
 	Lines     []string  `json:"lines"`
 	Done      int       `json:"done,omitempty"`
 	SpendUSD  float64   `json:"spendUsd,omitempty"`

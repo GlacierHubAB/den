@@ -73,6 +73,7 @@ type ConvEntry struct {
 	Origin  string       `json:"origin"`
 	Speaker string       `json:"speaker"`
 	Agent   string       `json:"agent,omitempty"`
+	AgentID string       `json:"agent_id,omitempty"` // the reporting agent's id: Agent is only its name
 	Console *ConvConsole `json:"console,omitempty"`
 	Text    string       `json:"text"`
 }
@@ -257,7 +258,7 @@ func (s *Server) Converse(in Converse) bool {
 	}
 	e := ConvEntry{Turn: sanitize.Label(in.Turn, 80), Origin: in.Origin, Speaker: in.Speaker, Text: convText(in.Text)}
 	if in.Origin == OriginReport || in.Origin == OriginDesktop {
-		e.Agent = agentLabel(in.Agent)
+		e.Agent, e.AgentID = agentLabel(in.Agent), sanitize.Label(in.AgentID, 64)
 		if e.Speaker == SpeakerDen {
 			// Den's line is built here, from the checked name, whatever
 			// the caller sent: an agent's chosen name never writes Den's
@@ -434,6 +435,15 @@ func convText(s string) string {
 // agentName is a name the mirror shows as it is: a short, plain name, no
 // sentence in it.
 var agentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$`)
+
+// aliasLabel is an agent's alias as the API shows it: agentLabel's rule,
+// and "" rather than "an agent" when it has none or fails it.
+func aliasLabel(alias string) string {
+	if l := agentLabel(alias); l != "an agent" {
+		return l
+	}
+	return ""
+}
 
 // agentLabel is an agent's name in the mirror: a plain name, never one that
 // could pass for Den, Drey, the human, the orchestrator or the console, and

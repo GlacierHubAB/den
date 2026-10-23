@@ -2,6 +2,7 @@ package names
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -107,6 +108,23 @@ func Reserved(name string) string {
 		}
 	}
 	return ""
+}
+
+// Valid reports whether name is one Den could have given: a base Normalise
+// leaves as it is and Reserved allows, then nothing or a number from 2 to
+// maxN with no leading zero; the whole not reserved either. A name from
+// another host is shown only when it is (sec's N7).
+func Valid(name string) bool {
+	base := strings.TrimRight(name, "0123456789")
+	num := name[len(base):]
+	if base == "" || Normalise(base) != base || Reserved(base) != "" || Reserved(name) != "" {
+		return false
+	}
+	if num == "" {
+		return true
+	}
+	n, err := strconv.Atoi(num)
+	return err == nil && num[0] != '0' && n >= 2 && n <= maxN
 }
 
 // genericWords make a role too vague to name an agent by.

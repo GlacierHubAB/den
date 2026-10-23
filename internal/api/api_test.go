@@ -1113,3 +1113,40 @@ func TestAskRefusedAfterItsReplyIsForgotten(t *testing.T) {
 		t.Errorf("a refused ask is still findable: %+v", l)
 	}
 }
+
+// A name is a label beside the agent's id: an agent Den named by its role
+// carries its critter name as its alias, every name-valued field has the
+// agent's id beside it, and a name that could pass for Den or the human is
+// "an agent" (sec's N14).
+func TestNamesAreLabelsBesideIDs(t *testing.T) {
+	s := snapshot()
+	s.Agents[0].Name, s.Agents[0].Alias = "backend-engineer", "Mossy Lemur"
+	s.Agents[1].Name = "the orchestrator"
+	v := Project(s)
+	by := map[string]Agent{}
+	for _, a := range v.Fleet.Agents {
+		by[a.ID] = a
+	}
+	if a := by["s-1"]; a.Name != "backend-engineer" || a.Alias != "Mossy Lemur" {
+		t.Errorf("named agent %+v", a)
+	}
+	if a := by["s-2"]; a.Name != "an agent" || a.Alias != "" {
+		t.Errorf("a name that passes for the orchestrator: %+v", a)
+	}
+	for _, it := range v.Items {
+		switch it.ID {
+		case "i-1":
+			if it.AgentID != "s-2" {
+				t.Errorf("item agent_id %q", it.AgentID)
+			}
+		case "i-2":
+			if it.AgentID != "" {
+				t.Errorf("a host's item carries an agent id: %q", it.AgentID)
+			}
+		}
+	}
+	c := projectCard(Card{ID: "c", Kind: "permission", Agent: "backend-engineer", AgentID: "s-1", Title: "t"})
+	if c.AgentID != "s-1" || c.Hash != projectCard(Card{ID: "c", Kind: "permission", Agent: "backend-engineer", Title: "t"}).Hash {
+		t.Errorf("card agent_id %q, or it changed the hash", c.AgentID)
+	}
+}
