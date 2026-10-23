@@ -15,6 +15,14 @@ import (
 	"github.com/GlacierHubAB/den/internal/peermsg"
 )
 
+// reportAsk is Den's fixed last line on every send_message, so the work
+// always comes back as a report. It names no one: the agent answers the
+// envelope's from address, which no other session can take, as a name
+// could be. It goes on after everything else is done to the message, so
+// nothing cuts it. It carries no authority: the orchestrator could write
+// the same words, and nothing treats a "From Den:" line as Den speaking.
+const reportAsk = "\n\n(From Den: when you are done, or blocked, report back in a few lines with SendMessage to the sender of this message, at its from address.)"
+
 // handleOrchSend delivers the orchestrator's send_message (control on) the
 // way SendMessage would: framed as a message from the orchestrator's own
 // inbox socket and name, so the agent sees what it always saw and its
@@ -64,7 +72,7 @@ func (m *Model) handleOrchSend(r *bridge.Request) tea.Cmd {
 		}
 	}
 	from, name, sock, peerName := "uds:"+self.Session.Socket, self.Session.Name, to.Session.Socket, to.Session.Name
-	body := peermsg.Defuse(in.Message)
+	body := peermsg.Defuse(in.Message) + reportAsk
 	send, err := m.deliverTo(to.Session.SessionID, sock, from, name, body)
 	if err != nil {
 		r.Reply(bridge.Decision{Behavior: "deny", Message: peerName + ": " + err.Error()})

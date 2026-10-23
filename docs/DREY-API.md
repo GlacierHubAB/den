@@ -531,7 +531,9 @@ screen:
   takes its place and asks like any other tool. Den delivers it the way
   SendMessage does, from the orchestrator's own address and name, to live
   sessions on this machine only, so agents see what they always saw and
-  report back the same way.
+  report back the same way. Den ends each message with one fixed line of
+  its own asking the agent to report back to the sender when it is done or
+  blocked; the line names no one and carries no authority.
 - If Den's guard finds a tool that ran in an app's turn without Den
   allowing it, Den stops the orchestrator, notes why, revokes every
   pairing and unpairs the console.
