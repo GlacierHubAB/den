@@ -143,8 +143,10 @@ func (s *Server) pairAutomatically(c *conn, req Request, was, rec *consoleRec, v
 	changes = append(changes, extra...)
 	// The powers come with what this Den run already gave them to, as it
 	// read it itself; anything else, or anything at all when the human
-	// chose "always", as said.
-	known, since := s.opts.ConsolePowersAlways, ""
+	// allowed config.toml's "always" on its card in this run, as said.
+	// "always" changes only when the powers come, never who may pair:
+	// every check above holds either way.
+	known, since := st.always, ""
 	if !known {
 		switch g := st.given; {
 		case g == nil:

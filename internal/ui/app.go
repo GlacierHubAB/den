@@ -120,6 +120,8 @@ type Model struct {
 	use usageGuard
 	// mode is the global permission mode agents start in (mode.go).
 	mode modeState
+	// powers is config.toml's api.console_powers as Den watches it.
+	powers powersState
 	// god is God mode (god.go): in memory only, off at every start.
 	god godUI
 	// med is the mediation of messages to guarded agents (mediate.go).
@@ -267,6 +269,7 @@ func New(cfg config.Config) Model {
 		// Only the Den that holds den.sock serves the API too.
 		if m.srv != nil {
 			m.startAPI()
+			m.startPowers("written to config.toml while Den was stopped")
 		} else {
 			m.api.err = "another Den is running"
 		}
@@ -563,7 +566,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript()
 		m.restartForGuidance()
 		m.mirrorTick()
-		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
+		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.pollPowers(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
 		m.deskAskSync()
 		if cmd := m.reconcileView(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -629,6 +632,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case modeReadMsg:
 		m.applyModeRead(msg)
+		m.refresh()
+		return m, nil
+	case powersReadMsg:
+		m.applyPowersRead(msg)
 		m.refresh()
 		return m, nil
 	case apiActMsg:
@@ -1620,6 +1627,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.UsageSet {
 		return m.decideUsageSet(it, verb)
+	}
+	if it.Kind == inbox.PowersSet {
+		return m.decidePowersSet(it, verb)
 	}
 	if it.Kind == inbox.ModeSet {
 		return m.decideModeSet(it, verb)
