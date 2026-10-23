@@ -774,6 +774,10 @@ type Say struct {
 	Exe     string // the program, as Den read it
 	Pairing string // the pairing the connection proved, "" for a console
 	Console string // the console the connection proved as, "" for an app
+	// Lineage is that console's pairing lineage when the turn began, ""
+	// for an app's turn: a report about work from this turn carries the
+	// turn only while the same pairing lasts (Converse).
+	Lineage string
 
 	c      *conn
 	s      *Server
@@ -877,6 +881,10 @@ func (s *Server) say(c *conn, req Request) {
 	paired := c.paired
 	c.mu.Unlock()
 	console := s.consoleOf(c)
+	lineage := ""
+	if cur, ok := s.CurrentConsole(); ok && console != "" && cur.ID == console {
+		lineage = cur.Lineage
+	}
 	st := s.ctl
 	st.mu.Lock()
 	pr := st.pairings[paired]
@@ -898,7 +906,7 @@ func (s *Server) say(c *conn, req Request) {
 		return
 	}
 	if pr != nil {
-		console = "" // a connection that proved both speaks as the pairing
+		console, lineage = "", "" // a connection that proved both speaks as the pairing
 	}
 	st.mu.Unlock()
 	if s.leaked(p.Text) {
@@ -937,7 +945,7 @@ func (s *Server) say(c *conn, req Request) {
 	} else {
 		st.consoleSays, paired = append(recent, now), ""
 	}
-	y := &Say{Turn: "t-" + randHex(), Text: text, Exe: c.peer.Exe, Pairing: paired, Console: console, c: c, s: s, cancel: make(chan struct{}), fin: make(chan struct{})}
+	y := &Say{Turn: "t-" + randHex(), Text: text, Exe: c.peer.Exe, Pairing: paired, Console: console, Lineage: lineage, c: c, s: s, cancel: make(chan struct{}), fin: make(chan struct{})}
 	st.turn = y
 	st.mu.Unlock()
 	c.mu.Lock()

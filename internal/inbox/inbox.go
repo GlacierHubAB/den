@@ -64,6 +64,7 @@ const (
 	PromptProposal              // Den shows: the orchestrator proposes a change to its own instructions; Den applies nothing, in Den only
 	RulesPick                   // Den asks: which proposed rules become the project's rules? 1-9 pick, y writes the picked, n drops them, in Den only
 	RulesEdited                 // Den asks: rules.md changed outside Den; take it as the rules again? y/n, in Den only
+	PowersSet                   // Den asks: let config.toml's console_powers = "always" hold until Den restarts? y/n, in Den only
 )
 
 func (k Kind) String() string {
@@ -122,6 +123,8 @@ func (k Kind) String() string {
 		return "console"
 	case ModeSet:
 		return "mode raise"
+	case PowersSet:
+		return "automatic powers"
 	case UsageSet:
 		return "usage figure"
 	case GuardNote:
@@ -220,7 +223,7 @@ func (it *Item) DenAsks() bool {
 	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
 		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
 		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal ||
-		it.Kind == RulesPick || it.Kind == RulesEdited
+		it.Kind == RulesPick || it.Kind == RulesEdited || it.Kind == PowersSet
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -888,6 +891,19 @@ func (s *Store) AddModeSet(title string, body []string) *Item {
 		return nil
 	}
 	return s.add(&Item{SessionID: ModeSession, Kind: ModeSet, Tool: "mode_set", Title: title, Body: body})
+}
+
+// PowersSession is the session id of Den's automatic-powers cards.
+const PowersSession = "den:powers"
+
+// AddPowersSet adds Den's question: let config.toml's "always" hold until
+// Den restarts? One at a time; nil while one is open, which the caller
+// settles first to put a newer request in its place.
+func (s *Store) AddPowersSet(title string, body []string) *Item {
+	if s.hasOpen("", PowersSession, PowersSet) {
+		return nil
+	}
+	return s.add(&Item{SessionID: PowersSession, Kind: PowersSet, Tool: "powers_set", Title: title, Body: body})
 }
 
 // AddMissionMove adds Den's question: move this mission to another
