@@ -111,7 +111,7 @@ func (m Model) proposal(in bridge.ProposeInput) (*mission.Mission, error) {
 	ms.Goals, ms.Agents = nil, nil
 	for i, g := range in.Goals {
 		if strings.TrimSpace(g.Owner) == "" {
-			return nil, fmt.Errorf("sub-goal %d needs its owner: a running agent's critter name or a team role", i+1)
+			return nil, fmt.Errorf("sub-goal %d needs its owner: a running agent's name or a team role", i+1)
 		}
 		sid, name, role, err := m.resolveOwner(g.Owner, ms.Team)
 		if err != nil {

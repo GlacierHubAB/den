@@ -28,6 +28,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
@@ -169,6 +170,8 @@ type Model struct {
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard           *closer.Guard              // agents a close must leave alone or only propose when named
 	guardPath       string
+	names           *names.Live // the names Den gave (names.go)
+	spawnReports    []spawnReport
 	srvErr          error
 	store           *inbox.Store
 	inboxCur        int
@@ -235,6 +238,7 @@ func New(cfg config.Config) Model {
 	m.tree.edges = tree.Load(m.tree.path)
 	m.missions = mission.Load(mission.Path())
 	m.guard, m.guardPath = closer.LoadGuard(closer.GuardPath()), closer.GuardPath()
+	m.useNames(names.OpenLive(names.RegistryPath()))
 	m.loadProjectPick()
 	fleet.Recent = cfg.Detail.Recent
 	fleet.Prices = cost.NewTable(config.Prices())
@@ -826,6 +830,10 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 		m.handleOverlapAck(r)
 		return nil
 	}
+	if r.Event == bridge.SpawnedEvent {
+		m.handleSpawned(r)
+		return nil
+	}
 	if r.Event == bridge.NoteEvent || r.Event == bridge.NotesEvent || r.Event == bridge.RuleEvent {
 		return m.handleMemory(r)
 	}
@@ -855,7 +863,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == "PostToolUse" && r.Input.ToolName == orch.SpawnAgentTool {
 		in, _ := orch.ParseSpawn(r.Input.ToolInput)
-		m.learnSpawn(orch.ResultText(r.Input.ToolResponse), r.SessionID, "", in.Brief)
+		m.learnSpawn(orch.ResultText(r.Input.ToolResponse), r.SessionID, "", in.Brief, in.Role, in.Title)
 	}
 	it := m.store.Apply(r)
 	m.trackHook(r, it)
@@ -1865,8 +1873,10 @@ func (m Model) nameFor(sessionID string) string {
 		}
 		return "project memory"
 	}
+	// "@" marks a name Den gave from a role, everywhere in Den; a critter
+	// name shows as it is.
 	if a, ok := m.agentFor(sessionID); ok {
-		return a.Name
+		return shownName(a)
 	}
 	if name := m.rosterName(sessionID); name != "" {
 		return name

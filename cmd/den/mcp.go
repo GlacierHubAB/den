@@ -64,7 +64,7 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 	return []mcp.Tool{
 		{
 			Name:        strings.TrimPrefix(orch.SpawnAgentTool, "mcp__"+orch.MCPServer+"__"),
-			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. The agent reports to you when done and has this same tool, so a lead can staff its own work. Returns the agent's critter name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
+			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. The agent reports to you when done and has this same tool, so a lead can staff its own work. Returns the agent's name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -109,7 +109,7 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 				if err != nil {
 					return "", err
 				}
-				nameSpawned(res, in)
+				reportSpawn(res.Name)
 				return strings.TrimSpace(res.Describe() + " " + note), nil
 			},
 		},
@@ -258,7 +258,7 @@ func missionTool() mcp.Tool {
 		"properties": map[string]any{
 			"id":    map[string]any{"type": "string", "description": "The sub-goal's id (g1, g2...). Leave it out to add a sub-goal."},
 			"text":  map[string]any{"type": "string", "description": "What the sub-goal is, in a few words."},
-			"owner": map[string]any{"type": "string", "description": "Who owns it: a running agent's critter name from the roster, or a team role to start."},
+			"owner": map[string]any{"type": "string", "description": "Who owns it: a running agent's name from the roster (its peer handle when two share a name), or a team role to start."},
 			"state": map[string]any{"type": "string", "enum": []string{"todo", "doing", "blocked", "done"}},
 			"note":  map[string]any{"type": "string", "description": "One line: what it is blocked on, or what it produced."},
 		},
@@ -317,13 +317,13 @@ func proposeTool() mcp.Tool {
 		"type": "object",
 		"properties": map[string]any{
 			"text":  map[string]any{"type": "string", "description": "The sub-goal in a few words."},
-			"owner": map[string]any{"type": "string", "description": "A running agent's critter name from the roster, or a role from team."},
+			"owner": map[string]any{"type": "string", "description": "A running agent's name from the roster (its peer handle when two share a name), or a role from team."},
 		},
 		"required": []string{"text", "owner"},
 	}
 	return mcp.Tool{
 		Name:        strings.TrimPrefix(orch.ProposeTool, "mcp__"+orch.MCPServer+"__"),
-		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they select it in Den's chat (↑) and press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
+		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (its name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they select it in Den's chat (↑) and press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

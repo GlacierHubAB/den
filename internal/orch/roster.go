@@ -39,7 +39,8 @@ func Untrusted(s string) string {
 
 // RosterAgent is what Den tells the orchestrator about one agent.
 type RosterAgent struct {
-	Critter string // the human's name for it
+	Name    string // the human's name for it: Den's, from its role, or its critter name
+	Alias   string // its critter name when Name is another, "" otherwise
 	Peer    string // Claude Code's session name, for SendMessage
 	Role    string
 	Status  string
@@ -91,11 +92,16 @@ func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []Missi
 			continue
 		}
 		n++
-		// The critter name leads; the peer name closes the line, marked as
-		// a handle for tools, so it is not mistaken for the agent's name.
-		b.WriteString("- " + a.Critter)
+		// The name leads, quoted: it is data, however it reads. The peer
+		// name closes the line, marked as a handle for tools, so it is not
+		// mistaken for the agent's name.
+		fmt.Fprintf(&b, "- %q", a.Name)
+		if a.Alias != "" {
+			fmt.Fprintf(&b, " (also %q)", a.Alias)
+		}
+		// The role is quoted too: Den may have it from the spawn's words.
 		if a.Role != "" {
-			b.WriteString(" · " + a.Role)
+			fmt.Fprintf(&b, " · role %q", a.Role)
 		}
 		b.WriteString(" · " + a.Status)
 		if a.Task != "" {
@@ -137,7 +143,7 @@ func ComposeAll(agents []RosterAgent, templates []TemplateInfo, missions []Missi
 		}
 		n++
 		remote++
-		fmt.Fprintf(&b, "- %s @%s → on host %s, your messages cannot reach it · %s\n", a.Critter, a.Host, a.Host, a.Status)
+		fmt.Fprintf(&b, "- %q @%s → on host %s, your messages cannot reach it · %s\n", a.Name, a.Host, a.Host, a.Status)
 		var said []string
 		for _, f := range []struct{ name, v string }{{"session name", a.Peer}, {"role", a.Role}, {"task", a.Task}, {"in", a.Where}} {
 			if f.v != "" {

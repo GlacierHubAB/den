@@ -85,7 +85,7 @@ func TestOverlapWarnings(t *testing.T) {
 	}
 	var r1 []string
 	for _, r := range m.roster() {
-		if r.Critter == "Mossy Lemur" {
+		if r.Name == "Mossy Lemur" {
 			r1 = r.Overlaps
 		}
 	}
@@ -467,7 +467,7 @@ func TestBranchNudges(t *testing.T) {
 		}
 	}
 	for _, r := range m.roster() {
-		if r.Critter == "Snug Capybara" && r.Branch != `"fresh" is 41 commits behind main` {
+		if r.Name == "Snug Capybara" && r.Branch != `"fresh" is 41 commits behind main` {
 			t.Errorf("roster %q", r.Branch)
 		}
 	}

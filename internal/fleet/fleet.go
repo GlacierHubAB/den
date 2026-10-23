@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/badge"
@@ -71,7 +72,12 @@ func (s Status) Key() string {
 // Agent is one coding agent as Den sees it.
 type Agent struct {
 	Session discover.Session
+	// Name is the name Den shows: the one it gave at spawn from the
+	// agent's role (names.Assign), else its critter name. Alias is the
+	// critter name when Name is not it; it still resolves. Both are labels
+	// only: Den keys everything on the session id.
 	Name    string
+	Alias   string `json:",omitempty"`
 	Labels  badge.Labels
 	Git     gitinfo.Info
 	HasGit  bool
@@ -211,9 +217,14 @@ func Snapshot() ([]Agent, error) {
 	}
 	host, _ := os.Hostname()
 
+	given := GivenNames()
 	agents := make([]Agent, 0, len(sessions))
 	for _, s := range sessions {
 		a := Agent{Session: s, Name: badge.Name(s.SessionID), Labels: labels[s.SessionID]}
+		a.Name, a.Alias = Named(a.Name, given[s.SessionID])
+		if a.Labels.Role == "" {
+			a.Labels.Role = given[s.SessionID].Role
+		}
 		if u, ok := limits[s.SessionID]; ok {
 			a.Limits, a.HasLimit = u, true
 		}
@@ -446,11 +457,33 @@ func Lookup(agents []Agent, query string) (Agent, error) {
 	return Agent{}, fmt.Errorf("no agent matches %q", query)
 }
 
+// GivenNames is the names Den gave, by session id. A Den process that
+// holds the registry (the TUI) sets it to its own copy; anything else reads
+// the file once, checked (names.Load), and never again.
+var GivenNames = func() map[string]names.Entry {
+	givenOnce.Do(func() { given = names.Load(names.RegistryPath()) })
+	return given
+}
+
+var (
+	givenOnce sync.Once
+	given     map[string]names.Entry
+)
+
+// Named is the name and alias an agent shows: the name Den gave it, with
+// its critter name as the alias, or the critter name alone.
+func Named(critter string, e names.Entry) (name, alias string) {
+	if n := e.Name(); n != "" {
+		return n, critter
+	}
+	return critter, ""
+}
+
 // Candidates are agents as names.Resolve takes them.
 func Candidates(agents []Agent) []names.Candidate {
 	out := make([]names.Candidate, 0, len(agents))
 	for _, a := range agents {
-		out = append(out, names.Candidate{ID: a.Session.SessionID, Peer: a.Session.Name, Name: a.Name, Host: a.Host, PID: a.Session.PID})
+		out = append(out, names.Candidate{ID: a.Session.SessionID, Peer: a.Session.Name, Name: a.Name, Alias: a.Alias, Host: a.Host, PID: a.Session.PID})
 	}
 	return out
 }

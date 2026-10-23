@@ -6,6 +6,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/names"
 )
@@ -150,6 +152,35 @@ func mentionText(a fleet.Agent) string {
 	return "@" + a.Name
 }
 
+// shownName is how a row names an agent: "@name" for the name Den gave
+// it, the critter name as it is otherwise.
+func shownName(a fleet.Agent) string {
+	if a.Alias != "" {
+		return "@" + a.Name
+	}
+	return a.Name
+}
+
+// cutName cuts a name to w columns, keeping a trailing number, so that
+// two agents of one role stay apart: "@technical-wri…2".
+func cutName(name string, w int) string {
+	if w <= 0 || ansi.StringWidth(name) <= w {
+		return name
+	}
+	num := name[strings.LastIndexFunc(name, func(r rune) bool { return r < '0' || r > '9' })+1:]
+	if num == "" || len(num)+2 > w {
+		return ansi.Truncate(name, w, "…")
+	}
+	return ansi.Truncate(strings.TrimSuffix(name, num), w-len(num), "…") + num
+}
+
+// roleShown reports whether a row shows the agent's role beside its name:
+// not when the name already says it.
+func roleShown(a fleet.Agent) bool {
+	r := names.Normalise(a.Labels.Role)
+	return a.Labels.Role != "" && (a.Alias == "" || r == "" || !strings.HasPrefix(a.Name, r))
+}
+
 // mentionLabel is how a completion row names an agent: "Mossy Lemur
 // @devbox" for a remote one.
 func mentionLabel(a fleet.Agent) string { return a.Name + hostChip(a) }
@@ -169,7 +200,8 @@ func completions(text string, agents []fleet.Agent) []fleet.Agent {
 		if a.Status == fleet.Gone {
 			continue
 		}
-		if strings.HasPrefix(names.Fold(a.Name), partial) || strings.HasPrefix(names.Fold(mentionText(a)[1:]), partial) {
+		if strings.HasPrefix(names.Fold(a.Name), partial) || strings.HasPrefix(names.Fold(mentionText(a)[1:]), partial) ||
+			a.Alias != "" && strings.HasPrefix(names.Fold(a.Alias), partial) {
 			out = append(out, a)
 		}
 	}

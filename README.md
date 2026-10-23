@@ -1315,7 +1315,12 @@ by its role, or by the title when the role says nothing about the work
 refused, so the orchestrator is told to always give one. The name is
 lower-case with hyphens; a second agent of the same role gets a number
 ("backend-engineer2"). A name is only a label: Den keys everything on the
-session, and no name grants anything.
+session, and no name grants anything. Den keeps the names in `names.json` in its
+state folder, reads it once at start, drops any entry it would not have
+written, and holds the names in memory while it runs. It cannot tell an
+edit made between runs from its own writes: anything that can write Den's
+state folder can rename agents at the next start. That changes labels
+only; Den still routes by session, and refuses a name two agents share.
 
 **A worktree per agent.** `spawn_agent` takes `worktree`: `true`, or a name.
 The agent is then started with `claude --worktree <name>`, so Claude Code gives

@@ -146,7 +146,8 @@ func (m Model) rosterEntry(a fleet.Agent) roster.Agent {
 	return roster.Agent{
 		SessionID: id,
 		Peer:      a.Session.Name,
-		Critter:   a.Name,
+		Critter:   critterOfAgent(a),
+		Given:     givenOf(a),
 		Role:      a.Labels.Role,
 		Model:     a.Model,
 		CWD:       a.Session.CWD,
@@ -155,6 +156,23 @@ func (m Model) rosterEntry(a fleet.Agent) roster.Agent {
 		Mission:   m.missionOf(id),
 		Spawned:   e.Source == "spawn",
 	}
+}
+
+// critterOfAgent is the critter name an agent was born with: its alias
+// when Den gave it a name, else its name.
+func critterOfAgent(a fleet.Agent) string {
+	if a.Alias != "" {
+		return a.Alias
+	}
+	return a.Name
+}
+
+// givenOf is the name Den gave an agent, "" when it shows its critter name.
+func givenOf(a fleet.Agent) string {
+	if a.Alias != "" {
+		return a.Name
+	}
+	return ""
 }
 
 // observeRoster records the live agents and writes the roster when it
@@ -624,5 +642,8 @@ func (m Model) rosterName(id string) string {
 		return ""
 	}
 	a, _ := m.restore.r.Get(id)
+	if a.Given != "" {
+		return "@" + a.Given
+	}
 	return a.Name()
 }

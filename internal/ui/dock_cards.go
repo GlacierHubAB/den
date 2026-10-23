@@ -59,7 +59,7 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 	return api.Card{
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
-		Agent:       m.nameFor(itemKey(it)),
+		Agent:       m.dockName(itemKey(it)),
 		Tool:        it.Tool,
 		Title:       it.Title,
 		Note:        m.twinNote(itemKey(it)),
@@ -114,6 +114,17 @@ func dockMayAnswer(it *inbox.Item) bool {
 		return false
 	}
 	return true
+}
+
+// dockName is how a card names its agent for the console: Den's name for
+// it without the "@" Den's window puts before a name it gave (the console
+// styles names itself); an item from a host keeps its "@host".
+func (m Model) dockName(key string) string {
+	n := m.nameFor(key)
+	if hostOf(key) == "" && !strings.HasPrefix(key, inbox.HostPrefix) {
+		n = strings.TrimPrefix(n, "@")
+	}
+	return n
 }
 
 // answerFromDock carries out a console's answer, or says why not.
