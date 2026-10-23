@@ -248,12 +248,13 @@ func (m *Model) startAPI() tea.Cmd {
 	} else if fresh {
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den made a new console key (" + consoleKeyFile + "): a dock paired with an earlier one sees Den's key changed and must pair again.", at: time.Now()}))
 	}
+	// No automatic powers at start, whatever config.toml says: "always"
+	// waits on its card (startPowers), set on the server only by the ^Y.
 	srv, err := api.Listen(api.Options{
-		Version:             Version,
-		ConsoleKey:          key,
-		ConsoleStore:        filepath.Join(state, "consoles.json"),
-		ConsolePowersAlways: cfg.API.ConsolePowers == "always",
-		ChatLog:             filepath.Join(state, "api-chat.jsonl"),
+		Version:      Version,
+		ConsoleKey:   key,
+		ConsoleStore: filepath.Join(state, "consoles.json"),
+		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,
@@ -477,6 +478,7 @@ func (m Model) decideAPIOn(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	m.store.Settle(it, true, "API on")
 	m.logEntry(m.addChat(chatEntry{role: "note", text: "den-api.sock is on at " + m.api.srv.Path() + " (api.enabled = true). /api lists apps; /api off turns it off.", at: time.Now()}))
+	m.startPowers("set in config.toml")
 	m.refresh()
 	mm, flash := m.say("API on.", false)
 	return mm, tea.Batch(cmd, flash)

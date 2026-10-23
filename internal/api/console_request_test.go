@@ -150,10 +150,11 @@ func TestConsoleRequestLimits(t *testing.T) {
 	}
 }
 
-// What Den read of the service is kept with the pairing; after a Den
-// start it comes back, and the console gets its powers again once its
-// process reads clean as the service.
-func TestConsoleRestoredGetsItsPowersOnACleanRead(t *testing.T) {
+// A console restored after a Den start never gets its powers back by
+// itself, "always" or not: the record and config.toml are on disk, which
+// anything of the user's may rewrite while Den is down. It asks on Den's
+// powers card and has none meanwhile, though its service reads clean.
+func TestConsoleRestoredAsksEvenWithAlways(t *testing.T) {
 	store := filepath.Join(t.TempDir(), "consoles.json")
 	_, priv, _ := ed25519.GenerateKey(rand.Reader)
 	h := alwaysStore(t, store, priv)
@@ -162,18 +163,17 @@ func TestConsoleRestoredGetsItsPowersOnACleanRead(t *testing.T) {
 	requestPaired(t, h, d, "")
 	cleanExit(h.s)
 	h2 := alwaysStore(t, store, priv)
-	noteWith(t, h2.s, "the restored console is "+ConsoleUnitName+" ("+ConsoleUnit+") pid "+itoa(os.Getpid())+", read clean now")
-	h2.s.con.mu.Lock()
-	cur := h2.s.con.cur
-	h2.s.con.mu.Unlock()
-	if cur == nil || cur.verifier == nil || cur.verifier.Exe.SHA256 != testVerifier().Exe.SHA256 || !cur.powers {
-		t.Fatalf("restored %+v", cur)
+	pw := ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
+	if pw.Why != "Den restarted" {
+		t.Errorf("powers card: %+v", pw)
+	}
+	if cur, ok := h2.s.CurrentConsole(); !ok || cur.Powers {
+		t.Errorf("restored %+v %v", cur, ok)
 	}
 }
 
-// The powers came back before the dock reconnected, with no one to hear
-// them: its first subscribed connection hears "restored", then where its
-// powers stand, so a dock never reads "restored" as without them.
+// A restored console's first subscribed connection hears "restored", then
+// where its powers stand: without them, "always" or not, until the ^Y.
 func TestRestoredConsoleHearsItsPowers(t *testing.T) {
 	for _, always := range []bool{true, false} {
 		store := filepath.Join(t.TempDir(), "consoles.json")
@@ -188,11 +188,7 @@ func TestRestoredConsoleHearsItsPowers(t *testing.T) {
 		p := requestPaired(t, h, d, "")
 		cleanExit(h.s)
 		h2 := harness(t, store, priv)
-		if always {
-			noteWith(t, h2.s, "read clean now")
-		} else {
-			ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil })
-		}
+		ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil })
 		d.h = h2
 		c := h2.dial()
 		c.hello()
@@ -204,30 +200,9 @@ func TestRestoredConsoleHearsItsPowers(t *testing.T) {
 		if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "restored" {
 			t.Fatalf("first event %+v", ev)
 		}
-		if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "powers" || ev.On == nil || *ev.On != always {
+		if e := c.next(); json.Unmarshal(e.Data, &ev) != nil || ev.Kind != "powers" || ev.On == nil || *ev.On {
 			t.Errorf("always %v: then %+v", always, ev)
 		}
-	}
-}
-
-// A restored console that does not read clean now asks on Den's powers
-// card, and has none meanwhile.
-func TestConsoleRestoredNotCleanAsks(t *testing.T) {
-	store := filepath.Join(t.TempDir(), "consoles.json")
-	_, priv, _ := ed25519.GenerateKey(rand.Reader)
-	h := alwaysStore(t, store, priv)
-	fakeUnit(t, testVerifier(), nil)
-	d := newDock(t, h)
-	requestPaired(t, h, d, "")
-	cleanExit(h.s)
-	fakeUnit(t, testVerifier(), sysd.Problems{`its Type is "forking", not simple or exec`})
-	h2 := alwaysStore(t, store, priv)
-	pw := ctlAct(t, h2.s, func(a Act) bool { return a.ConsolePowers != nil }).ConsolePowers
-	if !strings.Contains(pw.Why, "did not read clean") {
-		t.Errorf("powers card: %+v", pw)
-	}
-	if cur, ok := h2.s.CurrentConsole(); !ok || cur.Powers {
-		t.Errorf("restored %+v %v", cur, ok)
 	}
 }
 
