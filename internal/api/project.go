@@ -162,7 +162,8 @@ func Project(s Snapshot) *View {
 		}
 		ag := Agent{
 			ID:       sanitize.Label(a.Session.SessionID, labelMax),
-			Name:     sanitize.Label(a.Name, labelMax),
+			Name:     agentLabel(a.Name),
+			Alias:    aliasLabel(a.Alias),
 			Role:     sanitize.Label(a.Labels.Role, labelMax),
 			Model:    sanitize.Label(a.Model, labelMax),
 			Worktree: sanitize.Label(a.Where(), labelMax),
@@ -210,6 +211,7 @@ func Project(s Snapshot) *View {
 			v.Fleet.Windows = append(v.Fleet.Windows, Window{
 				Address: ag.Window,
 				Agent:   ag.Name,
+				AgentID: ag.ID,
 				Class:   sanitize.Label(c.Class, labelMax),
 				Title:   sanitize.Label(c.Title, labelMax),
 				PID:     c.PID,
@@ -232,6 +234,9 @@ func Project(s Snapshot) *View {
 			Since: it.At.UTC(),
 			Title: sanitize.Label(it.Title, labelMax),
 			Host:  sanitize.Label(it.Host, labelMax),
+		}
+		if _, known := s.Names[it.SessionID]; known && it.Host == "" {
+			item.AgentID = sanitize.Label(it.SessionID, labelMax)
 		}
 		if it.Host != "" {
 			// A host's request body is the host's own text: never served,
@@ -268,6 +273,9 @@ func Project(s Snapshot) *View {
 		if len(m.Agents) > 0 {
 			ref.Agent = m.Agents[0]
 		}
+		if len(m.AgentIDs) > 0 {
+			ref.AgentID = m.AgentIDs[0]
+		}
 		v.Fleet.Missions = append(v.Fleet.Missions, ref)
 	}
 	return v
@@ -285,6 +293,7 @@ func projectCard(c Card) Card {
 		ID:          sanitize.Label(c.ID, labelMax),
 		Kind:        sanitize.Label(c.Kind, labelMax),
 		Agent:       sanitize.Label(c.Agent, labelMax),
+		AgentID:     sanitize.Label(c.AgentID, labelMax),
 		Tool:        sanitize.Label(c.Tool, labelMax),
 		Title:       sanitize.Line(c.Title),
 		Note:        sanitize.Line(c.Note),
@@ -349,6 +358,13 @@ func projectMission(ms *mission.Mission) Mission {
 	}
 	for _, a := range ms.Agents {
 		m.Agents = append(m.Agents, sanitize.Label(a, labelMax))
+	}
+	seen := map[string]bool{}
+	for _, g := range ms.Goals {
+		if g.Owner != "" && g.Host == "" && !seen[g.Owner] {
+			seen[g.Owner] = true
+			m.AgentIDs = append(m.AgentIDs, sanitize.Label(g.Owner, labelMax))
+		}
 	}
 	if ms.Mission != "" {
 		m.Lines = append(m.Lines, sanitize.Label(ms.Mission, summaryMax))

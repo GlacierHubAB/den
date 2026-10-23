@@ -21,7 +21,7 @@ import (
 // fails this test until it is added here, which is the moment to check it
 // is metadata under the observe policy (docs/REMOTE.md).
 var metaAllowed = []string{
-	"index", "session", "status", "name", "peer", "role", "task", "model", "claude", "repo", "branch", "dirty",
+	"index", "session", "status", "name", "given", "peer", "role", "task", "model", "claude", "repo", "branch", "dirty",
 	"status_age_ms", "started_age_ms", "last_active_ms",
 	"context_tokens", "context_window", "has_usage", "usage_from_badge",
 	"limits", "tokens", "subagent_tokens", "reported_usd", "reported_unpriced",
@@ -264,6 +264,32 @@ func TestFromMetaIgnoresTheHostsName(t *testing.T) {
 	a := FromMeta(Meta{Session: id, Name: "Mossy Lemur fix the login", Peer: "worker", Status: "idle"}, "devbox", time.Now(), cost.NewTable(nil))
 	if want := badge.Name(id); a.Name != want || a.Session.Name != "worker" {
 		t.Errorf("name %q (want %q), peer %q", a.Name, want, a.Session.Name)
+	}
+}
+
+// A host's given name is shown, with the critter name as its alias, only
+// when it is one this Den could have given; anything else leaves the
+// critter name. A local agent sends its given name and its critter name.
+func TestFromMetaTakesOnlyAValidGivenName(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	for given, want := range map[string]string{
+		"backend-engineer2":    "backend-engineer2",
+		"orchestrator":         badge.Name(id),
+		"Backend Engineer":     badge.Name(id),
+		"backend-engineer1":    badge.Name(id),
+		"backend-engineer02":   badge.Name(id),
+		"backend-engineer1000": badge.Name(id),
+		"deadbeef":             badge.Name(id),
+		"x\u202eevil":          badge.Name(id),
+	} {
+		a := FromMeta(Meta{Session: id, Name: "Mossy Lemur", Given: given, Status: "idle"}, "devbox", time.Now(), cost.NewTable(nil))
+		if a.Name != want || (want != badge.Name(id)) != (a.Alias == badge.Name(id)) {
+			t.Errorf("given %q: name %q alias %q", given, a.Name, a.Alias)
+		}
+	}
+	local := Agent{Session: discover.Session{SessionID: id}, Name: "backend-engineer", Alias: "Mossy Lemur"}
+	if m := local.Meta(0, time.Now(), true); m.Name != "Mossy Lemur" || m.Given != "backend-engineer" {
+		t.Errorf("meta name %q given %q", m.Name, m.Given)
 	}
 }
 

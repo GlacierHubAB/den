@@ -144,8 +144,20 @@ exits.
 Metadata only: names, states, ids, times, counts and digests. No prompt text,
 no transcript, and no request body outside `inbox.body`.
 
+- **Names are labels, not identities.** An agent is its `id`; its `name`
+  is how Den shows it, and grants nothing. Den names an agent it started by
+  its role, lower-case with hyphens and a number for a second one of the
+  role (`backend-engineer2`); its critter name (`Mossy Lemur`) is then its
+  `alias`, which still works in Den. An agent with no role keeps its critter
+  name, with no `alias`. A name that could pass for Den, Drey, the human,
+  the orchestrator or the console shows as `an agent`. Wherever a name
+  stands for an agent, its `agent_id` stands beside it: key on that, never
+  on the name. Den writes its own role names with an `@`; draw yours as you
+  draw names, the `@` is not part of the name. An agent on another machine
+  shows the name its host gave only when Den could have given it, and always
+  with its host.
 - **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?, view?}`. An agent is
-  `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
+  `{id, name, alias?, role?, state, waiting?, worktree?, model?, since, window?, host?,
   remote?, costUsd, turns, lastSeen, color?, permission_mode?, doing}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
   `plan`. `hooks` says whether Den can see the agent's prompts (see
@@ -199,13 +211,16 @@ no transcript, and no request body outside `inbox.body`.
   with an unknown lead plainly. `at` (RFC3339, Den's clock) is when `text` last changed.
   It changes at most once every 10 seconds per agent and arrives with the usual
   fleet changes.
-- **Item** `{id, kind, agent, since, title, digest, host?}`. A **digest** is
+- **Item** `{id, kind, agent, agent_id?, since, title, digest, host?}`;
+  `agent_id` is the agent's id, absent for an item from a host or from Den. A **digest** is
   `{firstLine, bytes, hash}`, with `hash` `"sha256:"` + the hex SHA-256 of the
   body; `inbox.body` returns the same hash. For a request from another machine
   the digest describes it in Den's words ("a permission request") and hashes
   that, never the host's text.
-- **Mission** `{id, title, state, agents?, lines, done?, spendUsd?,
-  budgetUsd?, proposed}`; `state` is `proposed`, `running`, `done` or
+- **Mission** `{id, title, state, agents?, agent_ids?, lines, done?, spendUsd?,
+  budgetUsd?, proposed}`; `agent_ids` are the ids of the agents its
+  sub-goals name, and a fleet mission and a window carry `agent_id` beside
+  their `agent` too; `state` is `proposed`, `running`, `done` or
   `dropped`.
 - **Chunk**, the `ask` stream: `{"type":"text","delta":"…"}`,
   `{"type":"status","seq":n,"text":"…"}`, `{"type":"done","session":"…"}`
@@ -910,8 +925,9 @@ same way. A later kind that carries state joins the snapshot.
 
 ### Cards
 
-- `card.get {id}` answers `{id, kind, agent, tool, title, note, body,
-  text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`: the card
+- `card.get {id}` answers `{id, kind, agent, agent_id?, tool, title, note, body,
+  text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}` (`agent_id`
+  is not in the hash): the card
   as Den shows it, and a nonce for one answer, on this connection, for ten
   minutes. `text_sha256` is the SHA-256 of `kind`, `agent`, `tool`,
   `title`, `note` and `body` joined by `\n`. Show all of it, `note` (a
@@ -1101,7 +1117,7 @@ powers receives it, and every console is on this machine: den-api.sock is a
 local socket open to this user only.
 
 - Each `conversation` entry is `{id, at, turn?, origin, speaker, agent?,
-  console?, text}`. `id` rises with each entry and is the same in
+  agent_id?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
   `conversation.history`, so merge the backfill and the live entries by it.
   `at` is RFC3339 UTC, Den's clock.
 - `origin` (a closed set): `you` (the human typed it in Den), `console` (a

@@ -59,6 +59,18 @@ func TestReserved(t *testing.T) {
 	}
 }
 
+func TestValid(t *testing.T) {
+	for name, want := range map[string]bool{
+		"backend-engineer": true, "backend-engineer2": true, "backend-engineer999": true, "k8s-operator": true,
+		"backend-engineer1": false, "backend-engineer02": false, "backend-engineer1000": false,
+		"orchestrator": false, "den-bot": false, "Backend": false, "deaf": false, "": false, "2": false, "a": false,
+	} {
+		if got := Valid(name); got != want {
+			t.Errorf("Valid(%q) = %v", name, got)
+		}
+	}
+}
+
 func TestGenericRolesTakeTheTitle(t *testing.T) {
 	for _, role := range []string{"coding agent", "dev agent", "general engineer", "Engineer", "AI assistant", ""} {
 		if !Generic(role) {

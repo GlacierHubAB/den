@@ -38,8 +38,11 @@ type Card struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
 	Agent string `json:"agent"`
-	Tool  string `json:"tool"` // the tool asked for, "" for none
-	Title string `json:"title"`
+	// AgentID is the agent's id, "" for a card from a host or from Den:
+	// Agent is only its name. Not in the card's hash.
+	AgentID string `json:"agent_id,omitempty"`
+	Tool    string `json:"tool"` // the tool asked for, "" for none
+	Title   string `json:"title"`
 	// Note is a warning Den shows with the card (two agents share the
 	// name), "" for none.
 	Note        string   `json:"note"`
