@@ -65,6 +65,7 @@ const (
 	RulesPick                   // Den asks: which proposed rules become the project's rules? 1-9 pick, y writes the picked, n drops them, in Den only
 	RulesEdited                 // Den asks: rules.md changed outside Den; take it as the rules again? y/n, in Den only
 	PowersSet                   // Den asks: let config.toml's console_powers = "always" hold until Den restarts? y/n, in Den only
+	RenamePick                  // Den asks: which agents get the names suggested from their own labels? 1-9 pick, y renames the picked, in Den only
 )
 
 func (k Kind) String() string {
@@ -149,6 +150,8 @@ func (k Kind) String() string {
 		return "rules proposed"
 	case RulesEdited:
 		return "rules changed"
+	case RenamePick:
+		return "rename agents"
 	case MissionDone:
 		return "mission done"
 	case MirrorAsk:
@@ -223,7 +226,7 @@ func (it *Item) DenAsks() bool {
 	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
 		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
 		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal ||
-		it.Kind == RulesPick || it.Kind == RulesEdited || it.Kind == PowersSet
+		it.Kind == RulesPick || it.Kind == RulesEdited || it.Kind == PowersSet || it.Kind == RenamePick
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -985,6 +988,16 @@ func (s *Store) AddProcessTuned(sessionID, title string, body []string) *Item {
 func (s *Store) AddPromptProposal(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: PromptProposal, Tool: "tune_process", Title: title, Body: body})
 }
+
+// AddRenamePick adds Den's question: which agents get the names Den
+// suggests from their own labels. Asked by the human's /rename, answered
+// only in Den.
+func (s *Store) AddRenamePick(title string, body []string) *Item {
+	return s.add(&Item{SessionID: RenameSession, Kind: RenamePick, Tool: "rename", Title: title, Body: body})
+}
+
+// RenameSession is the rename card's session key: Den's own.
+const RenameSession = "den:rename"
 
 // AddRulesPick adds Den's question: which of these proposed rules
 // become the project's rules?

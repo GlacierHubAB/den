@@ -73,7 +73,7 @@ var godTTYKinds = map[inbox.Kind]bool{
 	// instructions, are the human's to keep or undo.
 	inbox.ProcessTuned: true, inbox.PromptProposal: true,
 	// What becomes a project's rules reaches prompts as the human's words.
-	inbox.RulesPick: true, inbox.RulesEdited: true,
+	inbox.RulesPick: true, inbox.RulesEdited: true, inbox.RenamePick: true,
 	// The console's automatic powers, as config.toml asks for them.
 	inbox.PowersSet: true,
 }

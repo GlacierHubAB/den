@@ -104,6 +104,11 @@ func (m *Model) ensureRestore() {
 // updates the roster.
 func (m *Model) afterScan() {
 	m.ensureRestore()
+	if !m.namesChecked {
+		// Before this scan's roster write: the roster as Den last saved it.
+		m.namesChecked = true
+		m.checkNames()
+	}
 	if !m.restore.asked {
 		m.restore.asked = true
 		if m.cfg.Restore.Ask {

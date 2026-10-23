@@ -192,6 +192,9 @@ var dockVerbs = []dockVerb{
 		return api.DockDenScreen, whyScreen
 	}},
 	{"/help", []string{"/?"}, "/help", "Den's help", always(api.DockDenScreen, whyScreen)},
+	// Naming agents is the human's own act, in Den's window only: never
+	// the dock's, whatever its words (sec's N5).
+	{"/rename", nil, "/rename [<agent> <name>]", "name agents by their role, in Den's window", always(api.DockDenScreen, whyScreen)},
 	{"/quit", []string{"/q", "/exit"}, "/quit", "quit Den", always(api.DockRefused, whyNever)},
 }
 

@@ -77,7 +77,7 @@ var CommandWords = set(
 	"resume", "god", "usage", "mode", "budget", "memory", "orchestrator", "help", "quit", "exit", "yes", "no",
 	"off", "disconnect", "unpair", "lock", "disallow", "control", "retry", "idle", "force", "fork", "add", "drop",
 	"move", "save", "rescue", "flat", "set", "clear", "rm", "rules", "new", "restart", "dontask", "plan", "default",
-	"acceptedits", "auto", "on", "local",
+	"acceptedits", "auto", "on", "local", "rename", "kill", "del", "dur", "missions", "templates", "name", "note", "orch",
 )
 
 // idLike is a name or word that reads as an id: eight or more hex digits

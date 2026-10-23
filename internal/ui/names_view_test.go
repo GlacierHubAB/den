@@ -10,11 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/orch"
+	"github.com/GlacierHubAB/den/internal/roster"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -286,5 +288,172 @@ func TestRunsFileIsTheFileNotThePath(t *testing.T) {
 	}
 	if runsFile(cp.Process.Pid, "", filepath.Join(t.TempDir(), "missing")) {
 		t.Error("an unreadable file matched")
+	}
+}
+
+// renameModel is a model holding names, with three live local agents.
+func renameModel(t *testing.T) *Model {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "names.json")
+	old := fleet.GivenNames
+	t.Cleanup(func() { fleet.GivenNames = old })
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	m := &Model{st: newStyles(theme.Deepharness), store: inbox.New(), tree: newTreeState()}
+	m.useNames(names.OpenLive(path))
+	m.base = sample()[:3]
+	for i := range m.base {
+		m.base[i].Session.SessionID = fmt.Sprintf("0000000%d-1111-4222-8333-444444444444", i)
+		m.base[i].Session.Name = fmt.Sprintf("peer-%d", i)
+		m.base[i].Session.Alive = true
+		m.base[i].Status = fleet.Idle
+		m.base[i].Name = badge.Name(m.base[i].Session.SessionID)
+	}
+	m.base[0].Labels.Role = "backend engineer"
+	m.base[1].Labels.Role = "coding agent" // too vague: no usable name
+	m.base[2].Labels.Role = "security reviewer"
+	m.refresh()
+	return m
+}
+
+// /rename <agent> <name> renames one agent of this machine through Den's
+// checks; the name it had stays its own, still resolving, and no other
+// agent can take it while it lives. Nothing renames an agent by itself.
+func TestRenameOne(t *testing.T) {
+	m := renameModel(t)
+	critter := m.base[0].Name
+	mm, _ := m.renameCommand([]string{critter, "Security", "Reviewer"})
+	*m = mm.(Model)
+	if a, _ := m.agentFor(m.base[0].Session.SessionID); a.Name != "security-reviewer" || a.Alias != critter {
+		t.Fatalf("renamed %+v; flash %q", a, m.flash)
+	}
+	mm, _ = m.renameCommand([]string{"security-reviewer", "backend", "engineer"})
+	*m = mm.(Model)
+	a, _ := m.agentFor(m.base[0].Session.SessionID)
+	if a.Name != "backend-engineer" || len(a.Former) != 1 || a.Former[0] != "security-reviewer" {
+		t.Fatalf("second rename %+v", a)
+	}
+	if got, why := m.closeNamed("security-reviewer"); why != "" || got.Session.SessionID != a.Session.SessionID {
+		t.Errorf("a former name does not reach the same agent: %+v %q", got, why)
+	}
+	// Another agent asking for the former name gets a number.
+	mm, _ = m.renameCommand([]string{m.base[2].Name, "security", "reviewer"})
+	*m = mm.(Model)
+	if b, _ := m.agentFor(m.base[2].Session.SessionID); b.Name != "security-reviewer2" {
+		t.Errorf("a former name was taken: %+v", b)
+	}
+	for _, bad := range []string{"orchestrator", "den bot", "close"} {
+		mm, _ = m.renameCommand([]string{m.base[1].Name, bad})
+		if g := mm.(Model); !g.flashErr {
+			t.Errorf("renamed to %q", bad)
+		}
+	}
+	n := 0
+	for _, e := range m.orch.chat {
+		if e.role == "note" && strings.HasPrefix(e.text, "Renamed ") && strings.Contains(e.text, "(by you)") {
+			n++
+		}
+	}
+	if n != 3 {
+		t.Errorf("%d rename notes, want 3", n)
+	}
+}
+
+// /rename alone puts a TTY-only card: each agent with the name Den would
+// apply from its own label, quoted, the label beneath; an unusable label
+// cannot be picked; only the picked are renamed.
+func TestRenameCard(t *testing.T) {
+	m := renameModel(t)
+	mm, _ := m.renameCommand(nil)
+	*m = mm.(Model)
+	var it *inbox.Item
+	for _, x := range m.store.Items() {
+		if x.Kind == inbox.RenamePick {
+			it = x
+		}
+	}
+	if it == nil {
+		t.Fatalf("no card; flash %q", m.flash)
+	}
+	body := strings.Join(it.Body, "\n")
+	for _, want := range []string{`"@backend-engineer"`, "no usable name", `the agent's own label: "coding agent"`, `"@security-reviewer"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("card lacks %q:\n%s", want, body)
+		}
+	}
+	if dockMayAnswer(it) || !godTTYKinds[it.Kind] {
+		t.Error("the rename card is not Den's window only")
+	}
+	if !m.toggleRename(it, 2) || strings.Contains(strings.Join(it.Body, "\n"), "[x] 2.") {
+		t.Error("an unusable label was picked")
+	}
+	m.toggleRename(it, 3)
+	mm, _ = m.decideRename(it, "allow")
+	*m = mm.(Model)
+	if a, _ := m.agentFor(m.base[2].Session.SessionID); a.Name != "security-reviewer" {
+		t.Errorf("the picked agent: %+v", a)
+	}
+	if a, _ := m.agentFor(m.base[0].Session.SessionID); a.Alias != "" {
+		t.Errorf("an agent not picked was renamed: %+v", a)
+	}
+}
+
+// At start, a name whose two records disagree (names.json and the roster's
+// Given), or that one has and the other lacks, is dropped, with a note.
+func TestNamesCheckedAgainstTheRoster(t *testing.T) {
+	m := renameModel(t)
+	for _, i := range []int{0, 2} {
+		mm, _ := m.renameCommand([]string{m.base[i].Name, "reviewer"})
+		*m = mm.(Model)
+	}
+	m.ensureRestore()
+	m.restore.r.Agents = []roster.Agent{
+		{SessionID: m.base[0].Session.SessionID, Critter: badge.Name(m.base[0].Session.SessionID), Given: "reviewer2"}, // swapped
+		{SessionID: m.base[2].Session.SessionID, Critter: badge.Name(m.base[2].Session.SessionID), Given: "reviewer2"},
+		{SessionID: m.base[1].Session.SessionID, Critter: badge.Name(m.base[1].Session.SessionID), Given: "builder"}, // names.json lacks it
+	}
+	m.checkNames()
+	if a, _ := m.agentFor(m.base[0].Session.SessionID); a.Alias != "" {
+		t.Errorf("a disagreeing name was kept: %+v", a)
+	}
+	if a, _ := m.agentFor(m.base[2].Session.SessionID); a.Name != "reviewer2" {
+		t.Errorf("an agreeing name was dropped: %+v", a)
+	}
+	n := 0
+	for _, e := range m.orch.chat {
+		if e.role == "note" && strings.HasSuffix(e.text, ": its records disagree.") {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("%d disagree notes, want 2", n)
+	}
+}
+
+// Before renaming, Den copies names.json and roster.json aside, once, and
+// keeps the first copy.
+func TestBackupBeforeRoles(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "names.json"), filepath.Join(dir, "roster.json")
+	os.WriteFile(a, []byte("names-before"), 0o600)
+	os.WriteFile(b, []byte("roster-before"), 0o600)
+	if got := backupBeforeRoles(a, b, filepath.Join(dir, "missing.json")); len(got) != 2 {
+		t.Fatalf("copies %v", got)
+	}
+	os.WriteFile(a, []byte("names-after"), 0o600)
+	backupBeforeRoles(a, b)
+	// A link planted where the copy goes is never written through.
+	c := filepath.Join(dir, "other.json")
+	os.WriteFile(c, []byte("other"), 0o600)
+	target := filepath.Join(dir, "target")
+	os.Symlink(target, c+backupSuffix)
+	backupBeforeRoles(c)
+	if _, err := os.Stat(target); err == nil {
+		t.Error("a copy was written through a link")
+	}
+	if raw, _ := os.ReadFile(a + backupSuffix); string(raw) != "names-before" {
+		t.Errorf("the first copy was replaced: %q", raw)
+	}
+	if fi, err := os.Stat(b + backupSuffix); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("copy mode %v %v", fi, err)
 	}
 }

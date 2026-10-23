@@ -16,11 +16,12 @@ import (
 
 // Candidate is one agent a name may point to.
 type Candidate struct {
-	ID    string // its session id: what the caller keeps
-	Peer  string // its peer handle (Claude Code's --name)
-	Name  string // the name Den shows for it
-	Alias string // an older name that still resolves, "" for none
-	Host  string // "" for this machine
+	ID    string   // its session id: what the caller keeps
+	Peer  string   // its peer handle (Claude Code's --name)
+	Name  string   // the name Den shows for it
+	Alias string   // an older name that still resolves, "" for none
+	Also  []string // names it had before a rename, which still resolve
+	Host  string   // "" for this machine
 	PID   int
 }
 
@@ -154,9 +155,17 @@ func decide(query, q string, pool []Candidate, o Opts) (Candidate, error, bool) 
 	// handle never wins over another agent's name, nor a name over another
 	// agent's alias. Two sessions across them is ambiguous.
 	tiers = append(tiers, func(c Candidate) bool {
-		return c.Peer != "" && Fold(c.Peer) == Fold(q) ||
+		if c.Peer != "" && Fold(c.Peer) == Fold(q) ||
 			c.Name != "" && Fold(c.Name) == Fold(q) ||
-			c.Alias != "" && Fold(c.Alias) == Fold(q)
+			c.Alias != "" && Fold(c.Alias) == Fold(q) {
+			return true
+		}
+		for _, a := range c.Also {
+			if Fold(a) == Fold(q) {
+				return true
+			}
+		}
+		return false
 	})
 	if o.Prefix {
 		tiers = append(tiers, func(c Candidate) bool {
