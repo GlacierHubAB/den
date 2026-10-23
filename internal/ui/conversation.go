@@ -295,11 +295,31 @@ func (m *Model) mirrorReportTurn(agent, sessionID string) {
 	desktop := m.isDesktopAgent(sessionID)
 	turn, lineage := m.reportTurn(sessionID, desktop, time.Now())
 	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, sessionID, desktop, turn, lineage})
-	origin := api.OriginReport
+	for _, e := range m.orch.chat {
+		if d := e.card; d != nil && sessionID != "" && d.SessionID == sessionID {
+			d.reported, d.noReportDue = true, time.Time{}
+		}
+	}
+	origin, ending := api.OriginReport, ""
 	if desktop {
 		origin = api.OriginDesktop
+		if turn != "" && m.deskFinishedSilent(sessionID) {
+			ending = api.EndingNoReport
+		}
 	}
-	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, AgentID: sessionID, Turn: turn, TurnLineage: lineage, Text: "Report from " + agent + "."})
+	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, AgentID: sessionID, Turn: turn, TurnLineage: lineage, Ending: ending, Text: "Report from " + agent + "."})
+}
+
+// deskFinishedSilent reports whether sid's desktop mission ended because
+// its agent finished, with no report from it: not a limit, the overlay's
+// timeout or a stop, which say why in their own note.
+func (m Model) deskFinishedSilent(sid string) bool {
+	for _, dm := range m.desk.missions {
+		if dm != nil && dm.SessionID == sid && dm.Ended == deskAgentFinished && strings.TrimSpace(dm.report) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // isDesktopAgent reports whether a session is a desktop mission's agent.
