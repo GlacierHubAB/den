@@ -5,7 +5,9 @@
 //
 // An event carries metadata only: kind, session, agent name, time and a
 // few kind-specific fields. Never a command, tool input, prompt, message
-// or file text. The schema is versioned by the v field; see docs/EVENTS.md.
+// or file text; a turn_start names where its prompt came from (source) and
+// keeps nothing of the prompt. The schema is versioned by the v field; see
+// docs/EVENTS.md.
 package events
 
 import (
@@ -18,6 +20,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/peermsg"
 )
 
 // Version is the schema version every event carries in v.
@@ -37,6 +40,12 @@ const (
 	StillWaiting = "still_waiting" // request, minutes: a needs_you unanswered that long (from Den)
 )
 
+// Sources of a turn_start: where the prompt came from.
+const (
+	SourcePeer     = "peer"     // a message from another session, Den's own included
+	SourceTerminal = "terminal" // any other prompt: typed in the agent's terminal, or Den's brief for a spawned agent
+)
+
 // Kinds lists every kind, in the order the docs give them.
 var Kinds = []string{SessionStart, SessionEnd, TurnStart, Done, NeedsYou, Idle, TurnFailed, ToolFailed, Stalled, StillWaiting}
 
@@ -52,6 +61,10 @@ type Event struct {
 	Error   string    `json:"error,omitempty"`
 	Minutes int       `json:"minutes,omitempty"`
 	Reason  string    `json:"reason,omitempty"`
+	// Source, on a turn_start, is where the prompt came from: SourcePeer or
+	// SourceTerminal. Absent in a stream written before the field, and when
+	// Claude Code sent no prompt. Additive: v stays 1.
+	Source string `json:"source,omitempty"`
 	// Host is the remote host the event happened on, as the local Den
 	// labels it (remotes.toml); left out for this machine. Additive: v
 	// stays 1.
@@ -79,7 +92,7 @@ func FromHook(in bridge.HookInput) (ev Event, ok bool) {
 	case "SessionEnd":
 		ev.Kind, ev.Reason = SessionEnd, in.SessionEndReason()
 	case "UserPromptSubmit":
-		ev.Kind = TurnStart
+		ev.Kind, ev.Source = TurnStart, promptSource(in.Prompt)
 	case "Stop":
 		ev.Kind = Done
 	case "StopFailure":
@@ -116,6 +129,22 @@ func FromHook(in bridge.HookInput) (ev Event, ok bool) {
 		return Event{}, false
 	}
 	return ev, true
+}
+
+// promptSource names where a prompt came from, "" when there is none to
+// look at. Only the name is kept, never the prompt. A prompt that holds
+// anything like a peer envelope is a peer's, as Den's inbound hook takes it
+// (peermsg.HasEnvelope); one without is not delivered by a peer. The name is
+// a label for counting, not a check: a prompt can be written to look like
+// either.
+func promptSource(prompt string) string {
+	switch {
+	case prompt == "":
+		return ""
+	case peermsg.HasEnvelope(prompt):
+		return SourcePeer
+	}
+	return SourceTerminal
 }
 
 // Path is the stream: $XDG_STATE_HOME/den/events.jsonl.

@@ -1372,6 +1372,9 @@ func cleanEvent(ev events.Event, host string) (events.Event, bool) {
 	if !ToolName(ev.Tool) {
 		ev.Tool = "" // not a tool name Claude Code uses: shown nowhere
 	}
+	if ev.Source != events.SourcePeer && ev.Source != events.SourceTerminal {
+		ev.Source = "" // not a name den hook writes
+	}
 	ev.Host = host
 	return ev, true
 }

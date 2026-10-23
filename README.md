@@ -369,7 +369,7 @@ CI, so CI failures are not in them.
 - [Why Den](#why-den) · [What you get](#what-you-get) · [How it works](#how-it-works) · [Security and quality model](#security-and-quality-model) · [Supported agents and roadmap](#supported-agents-and-roadmap) · [Claude Code Projects](#how-den-relates-to-claude-code-projects) · [Measurable results](#measurable-results) · [Documentation](#documentation)
 - [Install](#install) · [Requirements](#requirements) · [On Omarchy](#on-omarchy) · [Quick start](#quick-start)
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
-- [Notifications](#notifications) · [Events for scripts](#events-for-scripts)
+- [Notifications](#notifications) · [Events for scripts](#events-for-scripts) · [Statistics](#statistics)
 - [The command line](#the-command-line) · [Keys](#keys)
 - [Orchestrator](#orchestrator) · [Dispatch cards](#dispatch-cards)
 - [Who directs whom](#who-directs-whom) · [Spawning agents and teams](#spawning-agents-and-teams) · [Closing agents](#closing-agents) · [Bringing agents back](#bringing-agents-back) · [Desktop control](#desktop-control) · [Skills for roles](#skills-for-roles)
@@ -526,6 +526,7 @@ den explain mossy       how Den arrived at that agent's name, status, window…
 den send mossy "rebase on main first"   message an agent from a script; --wait for its turn to end
 den send mossy@devbox "…"               the same for an agent on a remote host, through the running Den, after your ^Y in its inbox (no --wait)
 den wait mossy --until done             block until an agent is idle, needs you, or done
+den stats [--days N]    what the state files prove about a window: turns, working time, waits on you, merges (docs/STATS.md)
 den ask "who is blocked on what?"       one orchestrator turn from a script
 den events -json        follow the event stream, one JSON object per line
 den events              headless: print hook events as they arrive
@@ -723,6 +724,18 @@ Messages you send to an agent arrive in its session the way messages from other
 Claude Code sessions do, with a first line saying they come from you via Den.
 While you are at that agent's terminal Den holds the message and delivers it
 when you leave, so it never lands under something you are typing.
+
+### Statistics
+
+`den stats` counts what Den's own state files prove about a window of time:
+the turns the agents finished and the time they worked, how many agents worked
+at once, the requests that waited on you and for how long, what you said to
+the orchestrator, and the mission branches Den saw land. It reads the files
+and writes nothing, prints counts and durations only, and says "not recorded"
+for what no file holds (merged pull requests, Den's own cards, CI). It makes no
+claim about hours saved or quality. `--days N`, or `--since` and `--until`,
+fix the window so a figure can be reproduced; `--json` is for scripts. What
+each figure means, and its limits, is in [docs/STATS.md](docs/STATS.md).
 
 ## The command line
 
