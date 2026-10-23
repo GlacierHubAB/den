@@ -65,13 +65,27 @@ func (s *Server) consolePowers(c *conn) bool {
 	return id != "" && cur != nil && cur.ID == id && cur.powers
 }
 
-// SetConsolePowersAlways sets whether the console's service gets its
-// powers whenever it pairs by itself: true only on the human's ^Y on Den's
-// card for config.toml's "always", false on a lowering. It sets one bool
-// under the console's lock and nothing else.
-func (s *Server) SetConsolePowersAlways(on bool) {
+// AllowConsolePowersAlways turns "always" on, on the human's ^Y on Den's
+// card for config.toml's "always": the console's service then gets its
+// powers whenever it pairs by itself. gen is ConsolePowersLockGen as it was
+// when the card was raised; a lock of the powers since (God mode, /api
+// lock, another program, a wrong proof) refuses it, so a card that
+// predates a lock never undoes it. It takes the console's lock for the
+// check and one assignment, nothing else.
+func (s *Server) AllowConsolePowersAlways(gen uint64) bool {
 	s.con.mu.Lock()
-	s.con.always = on
+	defer s.con.mu.Unlock()
+	if gen != s.con.lockGen {
+		return false
+	}
+	s.con.always = true
+	return true
+}
+
+// EndConsolePowersAlways turns "always" off: a lowering, always allowed.
+func (s *Server) EndConsolePowersAlways() {
+	s.con.mu.Lock()
+	s.con.always = false
 	s.con.mu.Unlock()
 }
 
@@ -80,6 +94,14 @@ func (s *Server) ConsolePowersAlways() bool {
 	s.con.mu.Lock()
 	defer s.con.mu.Unlock()
 	return s.con.always
+}
+
+// ConsolePowersLockGen counts the locks of the console's powers in this
+// run: a card for "always" keeps the count it was raised at.
+func (s *Server) ConsolePowersLockGen() uint64 {
+	s.con.mu.Lock()
+	defer s.con.mu.Unlock()
+	return s.con.lockGen
 }
 
 // LockConsolePowers takes the console's powers until the human's next ^Y
@@ -91,6 +113,7 @@ func (s *Server) ConsolePowersAlways() bool {
 func (s *Server) LockConsolePowers(why string) {
 	s.con.mu.Lock()
 	s.con.always, s.con.given = false, nil
+	s.con.lockGen++
 	cur := s.con.cur
 	locked := cur != nil && cur.powers
 	if locked {

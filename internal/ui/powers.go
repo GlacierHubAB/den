@@ -28,8 +28,10 @@ type powersState struct {
 	reading bool
 	// load reads the setting; tests replace it.
 	load func() powersReadMsg
-	// askedID is the open card, "" for none.
+	// askedID is the open card, "" for none; gen is the server's count of
+	// locks of the powers when it was raised, so a lock since stales it.
 	askedID string
+	gen     uint64
 	// on is "always" as Den last set it on the server, to say so when a
 	// lock ends it.
 	on bool
@@ -93,6 +95,10 @@ func (m *Model) pollPowers() tea.Cmd {
 		m.powers.on = false
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Your console's powers were locked, so config.toml's \"always\" is off for the rest of this run: the console's service gets its powers again only by your ^Y. Den asks for \"always\" again when it restarts, or when config.toml changes.", at: time.Now()}))
 	}
+	// A card raised before a lock is spent: its ^Y would be refused anyway.
+	if m.powers.askedID != "" && m.api.srv.ConsolePowersLockGen() != m.powers.gen {
+		m.dropPowersCard("your console's powers were locked since")
+	}
 	if m.powers.reading {
 		return nil
 	}
@@ -119,7 +125,7 @@ func (m *Model) applyPowersRead(r powersReadMsg) {
 	default:
 		m.dropPowersCard("config.toml no longer asks for it")
 		was := m.powers.on || m.api.srv.ConsolePowersAlways()
-		m.api.srv.SetConsolePowersAlways(false)
+		m.api.srv.EndConsolePowersAlways()
 		m.powers.on = false
 		if was {
 			m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config.toml: console_powers is \"unchanged\" again: your console's service gets its powers by itself only as you last gave them in this run.", at: time.Now()}))
@@ -137,6 +143,7 @@ func (m *Model) powersRefusedNote(value string) {
 // card for every change, so a ^Y aimed at the one before finds it gone.
 func (m *Model) askPowers(by string) {
 	m.dropPowersCard("replaced by a newer request")
+	gen := m.api.srv.ConsolePowersLockGen()
 	it := m.store.AddPowersSet("Let your console get its powers by itself whenever it pairs again, until Den restarts?", []string{
 		"config.toml: api.console_powers = \"always\", " + sanitize.Label(by, 80) + ".",
 		"Now: your console's service gets its powers by itself only as you last gave them in this run; anything else asks on Den's powers card.",
@@ -146,7 +153,7 @@ func (m *Model) askPowers(by string) {
 	if it == nil {
 		return
 	}
-	m.powers.askedID = it.ID
+	m.powers.askedID, m.powers.gen = it.ID, gen
 }
 
 // dropPowersCard settles the open card, if any, unanswered.
@@ -181,8 +188,12 @@ func (m Model) decidePowersSet(it *inbox.Item, verb string) (tea.Model, tea.Cmd)
 		return m.say("config.toml changed since that card was raised: nothing changed.", true)
 	}
 	m.powers.askedID = ""
+	if !m.api.srv.AllowConsolePowersAlways(m.powers.gen) {
+		m.store.Settle(it, false, "your console's powers were locked since")
+		m.refresh()
+		return m.say("Your console's powers were locked since that card was raised: nothing changed.", true)
+	}
 	m.store.Settle(it, true, "allowed until Den restarts")
-	m.api.srv.SetConsolePowersAlways(true)
 	m.powers.on = true
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Your console's service gets its powers by itself whenever it pairs again, until Den restarts or the powers are locked (config.toml's \"always\", allowed by you in Den).", at: time.Now()}))
 	m.refresh()

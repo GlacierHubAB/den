@@ -256,9 +256,11 @@ type consoleState struct {
 	last  *sysd.Verifier
 	given *sysd.Verifier
 	// always is config.toml's api.console_powers = "always" as the human
-	// allowed it on Den's card in this run (SetConsolePowersAlways): false
+	// allowed it on Den's card in this run (AllowConsolePowersAlways): false
 	// at every start, and set false again by every lock of the powers.
-	always bool
+	// lockGen counts those locks, so a card raised before one is refused.
+	always  bool
+	lockGen uint64
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches

@@ -20,14 +20,14 @@ import (
 func alwaysHarness(t *testing.T) *harness {
 	t.Helper()
 	h := newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey = mustKey(t) })
-	h.s.SetConsolePowersAlways(true)
+	h.s.AllowConsolePowersAlways(h.s.ConsolePowersLockGen())
 	return h
 }
 
 func alwaysStore(t *testing.T, store string, priv ed25519.PrivateKey) *harness {
 	t.Helper()
 	h := newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore = priv, store })
-	h.s.SetConsolePowersAlways(true)
+	h.s.AllowConsolePowersAlways(h.s.ConsolePowersLockGen())
 	return h
 }
 

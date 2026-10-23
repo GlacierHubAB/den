@@ -173,6 +173,33 @@ func TestPowersLockEndsAlways(t *testing.T) {
 	}
 }
 
+// L1: a card raised before a lock never undoes it. A ^Y on it right after
+// the lock is refused; on the next tick the card is settled.
+func TestPowersCardFromBeforeALock(t *testing.T) {
+	for name, lock := range map[string]func(m *Model){
+		"another program": func(m *Model) { m.api.srv.LockConsolePowers("another program tried your console") },
+		"God mode":        func(m *Model) { lockConsolePowers(m, "God mode turned on") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := powersModel(t, `"always"`)
+			old := powersCards(m)[0]
+			lock(&m)
+			mm, _ := m.decidePowersSet(old, "allow")
+			m = mm.(Model)
+			if m.api.srv.ConsolePowersAlways() || m.powers.on {
+				t.Error("a ^Y on a card from before the lock turned always on")
+			}
+			m = powersModel(t, `"always"`)
+			lock(&m)
+			setPowersFile(&m, "always", "")
+			poll(&m)
+			if len(powersCards(m)) != 0 {
+				t.Error("the card from before the lock is still open after a tick")
+			}
+		})
+	}
+}
+
 // The card is answered in Den's own window only, God mode or not.
 func TestPowersSetNeverFromTheDock(t *testing.T) {
 	m := powersModel(t, `"always"`)

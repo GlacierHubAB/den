@@ -90,14 +90,41 @@ func TestAlwaysNeverPairsAnotherProgram(t *testing.T) {
 	}
 }
 
-// C5: the setter takes the console's lock for one assignment and returns;
-// held by another goroutine, it waits, and nothing else blocks on it.
-func TestSetConsolePowersAlwaysUnderTheLock(t *testing.T) {
+// L1: a card raised before a lock never undoes it. Its ^Y carries the lock
+// count it saw; any lock since (another program, God mode) refuses it.
+func TestAlwaysRefusedAfterALockSinceTheCard(t *testing.T) {
+	locks := map[string]func(h *harness){
+		"another program": func(h *harness) { h.s.LockConsolePowers("another program tried your console") },
+		"God mode": func(h *harness) {
+			h.s.SetGodMode(func() bool { return true })
+			h.s.LockConsolePowers("God mode is on")
+			h.s.SetGodMode(func() bool { return false })
+		},
+	}
+	for name, lock := range locks {
+		t.Run(name, func(t *testing.T) {
+			h, _ := consoleHarness(t)
+			seen := h.s.ConsolePowersLockGen() // the card is raised
+			lock(h)
+			if h.s.AllowConsolePowersAlways(seen) || h.s.ConsolePowersAlways() {
+				t.Error("a ^Y on a card from before the lock turned always on")
+			}
+			if !h.s.AllowConsolePowersAlways(h.s.ConsolePowersLockGen()) {
+				t.Error("a card raised after the lock was refused")
+			}
+		})
+	}
+}
+
+// C5: the setter takes the console's lock for the check and one
+// assignment and returns; held by another goroutine, it waits.
+func TestAllowConsolePowersAlwaysUnderTheLock(t *testing.T) {
 	h, _ := consoleHarness(t)
+	gen := h.s.ConsolePowersLockGen()
 	h.s.con.mu.Lock()
 	done := make(chan struct{})
 	go func() {
-		h.s.SetConsolePowersAlways(true)
+		h.s.AllowConsolePowersAlways(gen)
 		close(done)
 	}()
 	select {
@@ -115,7 +142,7 @@ func TestSetConsolePowersAlwaysUnderTheLock(t *testing.T) {
 	if !h.s.ConsolePowersAlways() {
 		t.Error("not set")
 	}
-	h.s.SetConsolePowersAlways(false)
+	h.s.EndConsolePowersAlways()
 	if h.s.ConsolePowersAlways() {
 		t.Error("not lowered")
 	}
