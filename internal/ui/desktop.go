@@ -66,6 +66,9 @@ type deskMission struct {
 	kept, purged bool      // the human kept its files; they were deleted
 	tokens       map[string]deskToken
 	turn         string // the open your-turn card's item id
+	// consoleTurn and turnLineage come from its offer (deskOffer): the
+	// console turn it was asked in. In memory only.
+	consoleTurn, turnLineage string
 	// A task mission: view is the agent view's address, placed says it is
 	// recorded (no call is answered before), and the limits from the
 	// human's config with the calls forwarded so far.

@@ -212,3 +212,78 @@ func TestReaderReadsTheOldFileBeforeTheNew(t *testing.T) {
 		t.Errorf("events %v, want last-in-old, half, then first-in-new", got)
 	}
 }
+
+func TestTurnStartNamesWhereThePromptCameFrom(t *testing.T) {
+	envelope := "<cross-session-message from=\"uds:/run/user/1000/cc-socks/4242.sock\" from-name=\"peer\" from-mode=\"prompting\">\nrebase on main, password hunter2\n</cross-session-message>"
+	cases := []struct{ name, prompt, want string }{
+		{"a peer's message", envelope, SourcePeer},
+		{"an envelope somewhere in the prompt", "look at this: <Cross-Session-Message from=\"x\">hunter2", SourcePeer},
+		{"typed text", "fix the failing test, password hunter2", SourceTerminal},
+		{"a slash command", "/compact hunter2", SourceTerminal},
+		{"no prompt", "", ""},
+	}
+	for _, c := range cases {
+		ev, ok := FromHook(hook("UserPromptSubmit", map[string]any{"prompt": c.prompt}))
+		if !ok || ev.Kind != TurnStart || ev.Source != c.want {
+			t.Errorf("%s: kind %q source %q (%v), want %q", c.name, ev.Kind, ev.Source, ok, c.want)
+		}
+		raw, _ := json.Marshal(ev)
+		if strings.Contains(string(raw), "hunter2") || strings.Contains(string(raw), "rebase") || strings.Contains(string(raw), "failing") {
+			t.Errorf("%s: the event keeps the prompt: %s", c.name, raw)
+		}
+	}
+	if ev, _ := FromHook(hook("UserPromptSubmit", map[string]any{})); ev.Source != "" {
+		t.Errorf("a hook with no prompt field has source %q", ev.Source)
+	}
+	// Only a turn_start has a source.
+	for _, ev := range []Event{
+		mustHook(t, hook("Stop", map[string]any{"prompt": envelope})),
+		mustHook(t, hook("SessionStart", map[string]any{"prompt": envelope, "source": "startup"})),
+		mustHook(t, hook("PostToolUseFailure", map[string]any{"prompt": envelope, "tool_name": "Bash"})),
+	} {
+		if ev.Source != "" {
+			t.Errorf("%s has source %q", ev.Kind, ev.Source)
+		}
+	}
+}
+
+func mustHook(t *testing.T, in bridge.HookInput) Event {
+	t.Helper()
+	ev, ok := FromHook(in)
+	if !ok {
+		t.Fatalf("%s left out", in.HookEventName)
+	}
+	return ev
+}
+
+func TestEventsWithoutASourceStillParse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "den", "events.jsonl")
+	old := `{"v":1,"time":"2026-10-11T21:22:46.685Z","kind":"turn_start","session":"11111111-2222-4333-8444-555555555555","agent":"Mossy Lemur"}`
+	var ev Event
+	if err := json.Unmarshal([]byte(old), &ev); err != nil || ev.Kind != TurnStart || ev.Source != "" {
+		t.Fatalf("an event from before the field: %+v, %v", ev, err)
+	}
+	if raw, _ := json.Marshal(ev); strings.Contains(string(raw), "source") {
+		t.Errorf("an event with no source writes one: %s", raw)
+	}
+	// A reader that follows the stream passes the new line, and the old one, whole.
+	rd := Open(path)
+	stop := make(chan struct{})
+	defer close(stop)
+	got := make(chan Event, 2)
+	go rd.Run(stop, func(raw []byte, ev Event) { got <- ev })
+	new := New(TurnStart, sid)
+	new.Source = SourceTerminal
+	Append(path, new)
+	Append(path, New(TurnStart, sid))
+	for _, want := range []string{SourceTerminal, ""} {
+		select {
+		case ev := <-got:
+			if ev.Source != want {
+				t.Errorf("source %q, want %q", ev.Source, want)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("no event with source %q", want)
+		}
+	}
+}

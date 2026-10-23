@@ -86,6 +86,11 @@ type Converse struct {
 	// AgentID is the reporting agent's session: the report limits count
 	// by it, never by the name.
 	AgentID string
+	// TurnLineage is the pairing lineage of the console turn the work of
+	// a report or desktop entry came from (Say.Lineage). Its Turn goes out
+	// only while that pairing is the current one, and only in a turn's
+	// own shape; else the entry carries none.
+	TurnLineage string
 }
 
 // convState is the mirror's state, under its own lock.
@@ -116,6 +121,21 @@ type convState struct {
 type convStored struct {
 	ConvEntry
 	consoleID string
+	// turnLineage is the pairing a report or desktop entry's Turn belongs
+	// to: a console of another pairing gets the entry without it.
+	turnLineage string
+}
+
+// turnShape is a console turn's id as orch.say mints it.
+var turnShape = regexp.MustCompile(`^t-[0-9a-f]{32}$`)
+
+// currentLineage is the current pairing's lineage, "" for none.
+func (s *Server) currentLineage() string {
+	cur, ok := s.CurrentConsole()
+	if !ok {
+		return ""
+	}
+	return cur.Lineage
 }
 
 // SetMirror turns the mirror on for console id (the human's choice, made
@@ -269,6 +289,13 @@ func (s *Server) Converse(in Converse) bool {
 	if in.Origin == OriginConsole {
 		e.Console = &ConvConsole{Label: sanitize.Label(in.ConsoleLabel, 60)}
 	}
+	reportTurn := in.Origin == OriginReport || in.Origin == OriginDesktop
+	if reportTurn && (!turnShape.MatchString(in.Turn) || in.TurnLineage == "" || in.TurnLineage != s.currentLineage()) {
+		e.Turn = ""
+	}
+	if !reportTurn && in.Origin != OriginConsole {
+		e.Turn = ""
+	}
 	if strings.TrimSpace(e.Text) == "" {
 		return false
 	}
@@ -282,12 +309,15 @@ func (s *Server) Converse(in Converse) bool {
 				st.mu.Unlock()
 				return false
 			}
-			e.Speaker, e.Text = SpeakerDen, line
+			e.Speaker, e.Text, e.Turn = SpeakerDen, line, "" // about the agent, not one turn
 		}
 	}
 	st.seq++
 	e.ID, e.At = st.seq, now.UTC()
 	stored := convStored{ConvEntry: e, consoleID: in.ConsoleID}
+	if e.Turn != "" && reportTurn {
+		stored.turnLineage = in.TurnLineage
+	}
 	st.entries = append(st.entries, stored)
 	if n := len(st.entries) - convKeep; n > 0 {
 		st.entries = append([]convStored(nil), st.entries[n:]...)
@@ -297,9 +327,10 @@ func (s *Server) Converse(in Converse) bool {
 	if !on {
 		return true
 	}
+	lineage := s.currentLineage()
 	for _, c := range s.consoleConns(forID) {
 		if c.subscribed(EventConsole) && s.mayMirror(c) {
-			c.push(Event{Event: EventConversation, Data: stored.forConn(c)}, true)
+			c.push(Event{Event: EventConversation, Data: stored.forConn(c, lineage)}, true)
 		}
 	}
 	return true
@@ -338,8 +369,11 @@ func (st *convState) allowReport(id, agent string, now time.Time) (bool, string)
 
 // forConn is the entry as connection c receives it: Self set only on the
 // connection of the console that sent the turn.
-func (e convStored) forConn(c *conn) ConvEntry {
+func (e convStored) forConn(c *conn, lineage string) ConvEntry {
 	out := e.ConvEntry
+	if e.turnLineage != "" && e.turnLineage != lineage {
+		out.Turn = "" // a turn of another pairing than the current one
+	}
 	if out.Console != nil {
 		cc := *out.Console
 		c.mu.Lock()
@@ -387,6 +421,7 @@ func (s *Server) conversationHistory(c *conn, req Request) {
 	if p.Limit <= 0 || p.Limit > convHistoryMax {
 		p.Limit = convHistoryMax
 	}
+	lineage := s.currentLineage()
 	st := &s.conv
 	st.mu.Lock()
 	since := st.since
@@ -396,7 +431,7 @@ func (s *Server) conversationHistory(c *conn, req Request) {
 		if e.At.Before(since.UTC()) {
 			break
 		}
-		out = append(out, e.forConn(c))
+		out = append(out, e.forConn(c, lineage))
 	}
 	st.mu.Unlock()
 	if out == nil {

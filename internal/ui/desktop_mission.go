@@ -47,6 +47,20 @@ type deskOffer struct {
 	// setup is the hypruse install ^Y does first, nil when it is installed
 	// and checks out.
 	setup *deskSetup
+	// consoleTurn and turnLineage are the console turn the request came
+	// in (deskTurn), taken when it came, not at ^Y: by then that turn may
+	// be over, or another one running.
+	consoleTurn, turnLineage string
+}
+
+// deskTurn is the console turn a desktop request from r came in: only
+// the orchestrator's own, in a console's turn, the same test as the start
+// card's origin line (deskOrigin).
+func (m Model) deskTurn(r *bridge.Request) (turn, lineage string) {
+	if r.PeerPID <= 0 || !fromOrchestrator(&m, r.PeerPID) {
+		return "", ""
+	}
+	return m.consoleTurnNow()
 }
 
 // deskLaunched is one app window Den opened for a mission.
@@ -246,7 +260,9 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	m.desk.offers[it.ID] = deskOffer{in: in, apps: apps, setup: setup}
+	o := deskOffer{in: in, apps: apps, setup: setup}
+	o.consoleTurn, o.turnLineage = m.deskTurn(r)
+	m.desk.offers[it.ID] = o
 	m.flash, m.flashErr = it.Title+" ^Y starts it, ^N declines.", false
 	m.refresh()
 	return nil
@@ -407,6 +423,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		Guard:     m.med.guards[sid].check,
 		AskedBy:   p.offer.in.AskedBy,
 	}
+	dm.consoleTurn, dm.turnLineage = p.offer.consoleTurn, p.offer.turnLineage
 	if task {
 		// The whole desktop, with Den's window off limits from the start;
 		// the agent view joins it once it is up, and until then no call

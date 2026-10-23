@@ -74,6 +74,8 @@ var godTTYKinds = map[inbox.Kind]bool{
 	inbox.ProcessTuned: true, inbox.PromptProposal: true,
 	// What becomes a project's rules reaches prompts as the human's words.
 	inbox.RulesPick: true, inbox.RulesEdited: true,
+	// The console's automatic powers, as config.toml asks for them.
+	inbox.PowersSet: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

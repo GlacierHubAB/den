@@ -60,6 +60,11 @@ type dispatch struct {
 	Expanded bool
 	// App is set for a dispatch made in a paired app's turn.
 	App bool
+	// consoleTurn is the console turn the dispatch was made in, and
+	// turnLineage that pairing's lineage: the agent's report carries the
+	// turn to the console (reportTurn). In memory only: a restored card
+	// has none.
+	consoleTurn, turnLineage string
 
 	// rawBrief is the brief as the orchestrator sent it, for the log;
 	// Brief is that text sanitised, for everything Den draws.

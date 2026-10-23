@@ -107,11 +107,12 @@ func dockMayAnswer(it *inbox.Item) bool {
 	// so no merge can leave a kind in a case of its own with no return:
 	// a Go case does not fall through. Desktop control is the human's own
 	// window only; a mission's done criteria decide when it is done, so
-	// they are the human's in Den.
+	// they are the human's in Den. The console's own automatic powers
+	// would be the console granting itself more.
 	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message,
 		inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn,
 		inbox.MissionCriteria, inbox.MissionDone, inbox.MirrorAsk, inbox.ProcessTuned, inbox.PromptProposal,
-		inbox.RulesPick, inbox.RulesEdited:
+		inbox.RulesPick, inbox.RulesEdited, inbox.PowersSet:
 		return false
 	}
 	return true
