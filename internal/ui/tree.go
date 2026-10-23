@@ -205,6 +205,7 @@ func (m *Model) cardForSpawn(p pendingSpawn, name, sid string) {
 		if d.SentAt.IsZero() {
 			d.SentAt = now
 		}
+		d.consoleTurn, d.turnLineage = e.consoleTurn, e.turnLineage
 		e.role, e.card, e.text, e.status = "card", d, "", ""
 		m.attachCardTo(d, p.mission)
 		m.logCard(d)

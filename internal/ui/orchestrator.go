@@ -54,6 +54,10 @@ type chatEntry struct {
 	// app is set for an entry added in a paired app's turn: the app's
 	// words, and what the orchestrator wrote and dispatched for it.
 	app bool
+	// consoleTurn and turnLineage are the console turn the entry was made
+	// in and its pairing's lineage (consoleTurnNow), "" outside one; a
+	// spawn's card takes them from its note. Never written down.
+	consoleTurn, turnLineage string
 	// memo keeps the entry's rendered text between frames; the chat draws
 	// every entry on every frame, so a long chat must not lean on the
 	// shared cache, which it would cycle through.
@@ -364,6 +368,10 @@ func (m Model) resumable() string {
 // it, for logging.
 func (m *Model) addChat(e chatEntry) chatEntry {
 	e.mission = m.orch.thread
+	e.consoleTurn, e.turnLineage = m.consoleTurnNow()
+	if e.card != nil {
+		e.card.consoleTurn, e.card.turnLineage = e.consoleTurn, e.turnLineage
+	}
 	if m.ctl.turn != nil && m.ctl.sent {
 		e.app = true
 		if e.card != nil {

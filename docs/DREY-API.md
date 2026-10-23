@@ -1120,6 +1120,22 @@ local socket open to this user only.
   origin `you` and for `self`, else "you, from" and the label. `turn` is then
   the turn id of that console's `orch.say`, so a reply you already streamed can
   be matched and not drawn twice.
+- `turn` on origin `report` and `desktop` (Den's "Report from …" line and the
+  orchestrator's reply to the report) is the console turn the reported work
+  came from: the `orch.say` turn in which the orchestrator dispatched or
+  started that agent, or asked for that desktop mission (taken when the
+  request came, not when the human started it). It is always "t-" and 32
+  lowercase hex digits, the same id as that turn's own `console` entries,
+  and Den sets it from its own record, never from anything an agent sent.
+  It is absent for work from Den's own chat, a mission run or an app
+  pairing's turn, once the pairing that sent the turn is no longer the
+  current one (also in `conversation.history`), and after Den restarts. A
+  report goes with its agent's newest card from a console turn of the
+  current pairing that is still running or ended within 10 minutes: an
+  agent given work in two turns has its later report under the newer one.
+  A report about another console's turn reaches this console with that
+  turn: thread it under your own request only when the turn is one of
+  yours.
 - `text` is the human's words, Den's line, or the orchestrator's reply, never
   an agent's or a host's own text. The orchestrator's reply may still quote
   what an agent reported: show it as the orchestrator's text, as data, and
