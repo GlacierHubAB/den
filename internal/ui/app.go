@@ -486,6 +486,7 @@ func (m *Model) refresh() {
 		m.reconcileCards()
 	}
 	m.settleCards()
+	m.missedReports(time.Now())
 	m.releaseAssignments(time.Now())
 	sort.SliceStable(m.agents, func(i, j int) bool {
 		if oi, oj := m.remoteOrder(m.agents[i]), m.remoteOrder(m.agents[j]); oi != oj {
