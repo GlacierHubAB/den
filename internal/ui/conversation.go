@@ -37,6 +37,68 @@ type mirrorState struct {
 type mirrorReport struct {
 	agent, id string // the agent's name, and its session id
 	desktop   bool
+	// turn and lineage are the console turn the reported work came from
+	// (reportTurn), "" for none.
+	turn, lineage string
+}
+
+// reportTurnFor is how long after its card ended a report still belongs
+// to the console turn the card was made in.
+const reportTurnFor = 10 * time.Minute
+
+// consoleTurnNow is the console's turn in flight, as the desktop start
+// card's origin line sees it (deskOrigin): its id and its pairing's
+// lineage, "" outside a console's turn. An app pairing's turn is not a
+// console's.
+func (m Model) consoleTurnNow() (turn, lineage string) {
+	if y := m.ctl.turn; y != nil && m.ctl.sent && !m.ctl.ended && y.Console != "" {
+		return y.Turn, y.Lineage
+	}
+	return "", ""
+}
+
+// currentLineage is the current pairing's lineage, "" for none; tests
+// replace it.
+var currentLineage = func(m Model) string {
+	if m.api.srv == nil {
+		return ""
+	}
+	cur, ok := m.api.srv.CurrentConsole()
+	if !ok {
+		return ""
+	}
+	return cur.Lineage
+}
+
+// reportTurn is the console turn a report from session sid is about: a
+// desktop agent's mission's, else the newest card of sid's that was made
+// in a console's turn of the current pairing and is live or ended within
+// reportTurnFor. "" for none: then the report carries no turn, rather
+// than an older one.
+func (m Model) reportTurn(sid string, desktop bool, now time.Time) (turn, lineage string) {
+	cur := currentLineage(m)
+	if cur == "" {
+		return "", ""
+	}
+	recent := func(ended time.Time) bool { return ended.IsZero() || now.Sub(ended) <= reportTurnFor }
+	if desktop {
+		for _, dm := range m.desk.missions {
+			if dm != nil && dm.SessionID == sid && dm.consoleTurn != "" && dm.turnLineage == cur && recent(dm.endedAt) {
+				return dm.consoleTurn, dm.turnLineage
+			}
+		}
+		return "", ""
+	}
+	for i := len(m.orch.chat) - 1; i >= 0; i-- {
+		d := m.orch.chat[i].card
+		if d == nil || d.SessionID != sid || d.consoleTurn == "" || d.turnLineage != cur {
+			continue
+		}
+		if d.live() || recent(d.EndedAt) {
+			return d.consoleTurn, d.turnLineage
+		}
+	}
+	return "", ""
 }
 
 // What mirrorTick does next (mirrorNext).
@@ -231,16 +293,20 @@ func (m *Model) mirrorTurn(origin, shown string) {
 // never the report itself.
 func (m *Model) mirrorReportTurn(agent, sessionID string) {
 	desktop := m.isDesktopAgent(sessionID)
-	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, sessionID, desktop})
+	turn, lineage := m.reportTurn(sessionID, desktop, time.Now())
+	m.mirror.reports = append(m.mirror.reports, mirrorReport{agent, sessionID, desktop, turn, lineage})
 	origin := api.OriginReport
 	if desktop {
 		origin = api.OriginDesktop
 	}
-	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, AgentID: sessionID, Text: "Report from " + agent + "."})
+	m.converse(api.Converse{Origin: origin, Speaker: api.SpeakerDen, Agent: agent, AgentID: sessionID, Turn: turn, TurnLineage: lineage, Text: "Report from " + agent + "."})
 }
 
 // isDesktopAgent reports whether a session is a desktop mission's agent.
 func (m Model) isDesktopAgent(sessionID string) bool {
+	if sessionID == "" {
+		return false // a mission that ended before its agent started has none
+	}
 	for _, dm := range m.desk.missions {
 		if dm != nil && dm.SessionID == sessionID {
 			return true
@@ -290,6 +356,7 @@ func (m *Model) mirrorReply(origin, result string) {
 			r := m.mirror.reports[0]
 			m.mirror.reports = m.mirror.reports[1:]
 			c.Agent, c.AgentID = r.agent, r.id
+			c.Turn, c.TurnLineage = r.turn, r.lineage
 			if r.desktop {
 				c.Origin = api.OriginDesktop
 			}
