@@ -111,7 +111,9 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	m.desk.offers[it.ID] = deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup}
+	o := deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup}
+	o.consoleTurn, o.turnLineage = m.deskTurn(r)
+	m.desk.offers[it.ID] = o
 	m.flash, m.flashErr = "Desktop control asked: ^Y starts it, ^N declines.", false
 	m.refresh()
 	return nil

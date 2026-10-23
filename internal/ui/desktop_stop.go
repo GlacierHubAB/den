@@ -283,7 +283,11 @@ func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 	if name == "" {
 		name = "desktop agent"
 	}
-	return m.sendReport(fleet.Agent{Name: name}, body)
+	// Its session, so the mirror shows it as a desktop report (origin
+	// desktop) with the console turn the mission was asked in.
+	a := fleet.Agent{Name: name}
+	a.Session.SessionID = dm.SessionID
+	return m.sendReport(a, body)
 }
 
 // startDeskWatch begins the tick and says desktop control is on.
