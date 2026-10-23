@@ -77,7 +77,7 @@ type Agent struct {
 	// critter name when Name is not it; it still resolves. Both are labels
 	// only: Den keys everything on the session id.
 	Name    string
-	Alias   string
+	Alias   string `json:",omitempty"`
 	Labels  badge.Labels
 	Git     gitinfo.Info
 	HasGit  bool

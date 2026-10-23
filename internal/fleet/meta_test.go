@@ -212,6 +212,14 @@ func TestLocalJSONHasNoHostFields(t *testing.T) {
 			t.Errorf("a local agent's JSON has %s: %s", f, raw)
 		}
 	}
+	// No alias either: an agent Den never named prints what it did
+	// before role names (remote acceptance test 8 pins den list -json).
+	if strings.Contains(string(raw), `"Alias"`) {
+		t.Errorf("an agent without an alias has Alias: %s", raw)
+	}
+	if raw, _ := json.Marshal(Agent{Name: "backend-engineer", Alias: "Fizzy Moth"}); !strings.Contains(string(raw), `"Alias":"Fizzy Moth"`) {
+		t.Errorf("named agent json = %s", raw)
+	}
 	raw, _ = json.Marshal(Agent{Name: "X", Host: "b", Stale: true})
 	if !strings.Contains(string(raw), `"Host":"b"`) || !strings.Contains(string(raw), `"Stale":true`) {
 		t.Errorf("remote agent json = %s", raw)
