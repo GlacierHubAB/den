@@ -65,10 +65,32 @@ func (s *Server) consolePowers(c *conn) bool {
 	return id != "" && cur != nil && cur.ID == id && cur.powers
 }
 
+// SetConsolePowersAlways sets whether the console's service gets its
+// powers whenever it pairs by itself: true only on the human's ^Y on Den's
+// card for config.toml's "always", false on a lowering. It sets one bool
+// under the console's lock and nothing else.
+func (s *Server) SetConsolePowersAlways(on bool) {
+	s.con.mu.Lock()
+	s.con.always = on
+	s.con.mu.Unlock()
+}
+
+// ConsolePowersAlways reports whether "always" holds now.
+func (s *Server) ConsolePowersAlways() bool {
+	s.con.mu.Lock()
+	defer s.con.mu.Unlock()
+	return s.con.always
+}
+
 // LockConsolePowers takes the console's powers until the human's next ^Y
-// in Den, and asks for them on a card.
+// in Den, and asks for them on a card. Every lock (God mode, /api lock,
+// another program, a wrong proof) also ends "always" for this run, and
+// forgets the read the human last gave the powers to, so no automatic
+// re-pairing, the same program's included, brings them back: only the
+// human's ^Y does (on the powers card, or on "always"'s own).
 func (s *Server) LockConsolePowers(why string) {
 	s.con.mu.Lock()
+	s.con.always, s.con.given = false, nil
 	cur := s.con.cur
 	locked := cur != nil && cur.powers
 	if locked {

@@ -13,16 +13,22 @@ import (
 	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
-// alwaysHarness is consoleHarness with api.console_powers = "always";
-// alwaysStore is storeHarness with it.
+// alwaysHarness is consoleHarness with api.console_powers = "always", as
+// the human allowed it on Den's card; alwaysStore is storeHarness with it.
+// It holds from the harness's start on: a console the store restores at
+// start is asked for, as at every start.
 func alwaysHarness(t *testing.T) *harness {
 	t.Helper()
-	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsolePowersAlways = mustKey(t), true })
+	h := newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey = mustKey(t) })
+	h.s.SetConsolePowersAlways(true)
+	return h
 }
 
 func alwaysStore(t *testing.T, store string, priv ed25519.PrivateKey) *harness {
 	t.Helper()
-	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore, o.ConsolePowersAlways = priv, store, true })
+	h := newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore = priv, store })
+	h.s.SetConsolePowersAlways(true)
+	return h
 }
 
 // requestLine sends d's console.request from a new connection and returns

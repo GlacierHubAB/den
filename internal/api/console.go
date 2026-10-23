@@ -252,10 +252,13 @@ type consoleState struct {
 	// last is what Den last read of the console's service, for the changes
 	// an automatic pairing names. given is the read this Den process last
 	// gave the powers to, itself (never one read back from disk): unless
-	// ConsolePowersAlways, only the same program, unit and pins pair with
-	// them.
+	// always, only the same program, unit and pins pair with them.
 	last  *sysd.Verifier
 	given *sysd.Verifier
+	// always is config.toml's api.console_powers = "always" as the human
+	// allowed it on Den's card in this run (SetConsolePowersAlways): false
+	// at every start, and set false again by every lock of the powers.
+	always bool
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches

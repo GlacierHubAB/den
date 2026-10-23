@@ -990,7 +990,9 @@ since last time). It pairs again by itself after either restarts. Its powers
 (answering cards, running commands) come with it when the program, unit and
 pins are what you last gave them to since Den started; the first pairing
 after Den starts, and one after a new Drey build, wait for one `Ctrl+Y` on
-Den's powers card (`api.console_powers = "always"` skips that). `den pair`
+Den's powers card (`api.console_powers = "always"` skips that, but only
+once you allow it on its own card in Den's window, until Den restarts).
+`den pair`
 in a terminal (or `/api console` in Den) shows a console code the same way
 as above, for pairing by hand. The console may:
 
@@ -1035,9 +1037,14 @@ on Den's powers card.
 What stays: anything running as you that can change drey-host.service's
 unit or program (both in your home dir) gets the dock's reading and chat
 with no question in Den, and its full powers once you press `Ctrl+Y` on the
-powers card after a change; with `api.console_powers = "always"` it gets
-them with no question at all. Your levers are `/api lock`, `/api unpair`, and
-God mode staying off.
+powers card after a change; with `api.console_powers = "always"`, once you
+have allowed it, it gets them with no question until Den restarts. Den never
+takes `"always"` from the file alone: at every start, and whenever the line
+changes, it waits on a card in Den's own window ("written to config.toml
+while Den was stopped" or "changed in config.toml while Den runs"), never
+in the dock. Any lock of the powers (God mode, `/api lock`, another program,
+a wrong proof) ends it for the rest of the run. Your levers are `/api lock`,
+`/api unpair`, and God mode staying off.
 
 The dock can also show your whole orchestrator conversation:
 - what you type in Den, and the orchestrator's replies;
@@ -1048,9 +1055,10 @@ With `api.mirror_conversation = "ask"` (the default), Den asks once per pairing
 on a card in its own window. `"always"` skips the question and `"off"` never
 shows it. Den says in its chat when it starts showing it. `/api mirror off`
 stops it, `/api mirror on` starts it, and unpairing ends it. Only the paired
-dock with its powers receives it, from that moment on. As with
-`console_powers`, anyone who can write Den's config could set `"always"`. The
-chat note each time it starts is how you would notice.
+dock with its powers receives it, from that moment on. Anyone who can write
+Den's config could set `"always"` here (unlike `console_powers`, whose
+`"always"` waits on a card). The chat note each time it starts is how you
+would notice.
 
 Your answer, yes or no, belongs to the pairing: the same dock service,
 restarted on this boot, keeps your answer. That is the service's own main
@@ -2111,7 +2119,7 @@ idle_minutes = 30           # an agent on a mission with no turn for this long a
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
-console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed, once you allow it on a card in Den (until Den restarts)
 mirror_conversation = "ask" # show your orchestrator conversation in the paired dock: "ask" (a card once per pairing), "always" or "off"
 
 # A shell command per event kind, run by Den with the event's metadata as

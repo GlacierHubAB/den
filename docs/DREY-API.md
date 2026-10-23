@@ -640,7 +640,10 @@ match. It comes with its powers when the program, its unit and its pins
 are what you last gave them to in this Den's run; the first pairing after
 Den starts, and one after any such change (a new Drey build, say), waits
 for one `Ctrl+Y` on Den's powers card. `api.console_powers = "always"` in
-Den's config gives them whatever changed.
+Den's config gives them whatever changed, but only after the human allows
+it on its own card in Den's window, and only until Den restarts or the
+powers are locked; Den never takes it from the file alone, and the dock can
+never answer that card.
 
 - `hello`'s reply carries `console_public_key`, Den's console key (64 hex
   digits): the key a request's reply names, and the one `den_sig` is
@@ -685,7 +688,7 @@ Den's config gives them whatever changed.
   powers}`, where `den_public_key` is `hello`'s `console_public_key`, and
   `powers` is false, with a card in Den for them, when Den has not given
   them to this program, unit and pins in its run (unless
-  `api.console_powers = "always"`), while you have locked them (`/api
+  `api.console_powers = "always"`, allowed in Den), while you have locked them (`/api
   lock`), or while God mode is on. Then prove as above. Den notes in
   its chat the unit, pid, start, the program and its SHA-256, and what
   changed since it last read the service; the first connection that
@@ -752,9 +755,11 @@ answer cards and run commands`) from `card.answer`, `cmd.run` and
   run, as Den read them itself; else, as after every Den start, it waits
   for your `Ctrl+Y` on Den's card, and that `Ctrl+Y` counts for the same
   build's later re-pairs. A console restored after Den restarted waits for
-  it too. With `api.console_powers = "always"`, every request and
-  reconnect has them, and a restored console once its process reads clean
-  as `drey-host.service`.
+  it too, `"always"` or not. With `api.console_powers = "always"`, once
+  the human has allowed it on its card in Den in this run, every request
+  and reconnect has them. Any lock of the powers (God mode, `/api lock`,
+  another program, a wrong proof) ends that, and forgets the build the
+  human last gave them to: the next re-pair waits for a `Ctrl+Y` again.
 - `/api lock` (from Den or the dock) takes them, and every console paired
   after, by any way and across Den's restarts, comes without them, until
   your `Ctrl+Y` on Den's powers card. While God mode is on, a console
@@ -1166,10 +1171,11 @@ local socket open to this user only.
   unit or pins pairs without the powers until your `Ctrl+Y`, so a program
   that swaps the dock's program gets the dock's reading and chat, not its
   powers, unless you press it; read the card before you do. With
-  `api.console_powers = "always"`, anything running as you that can
-  change `drey-host.service`'s unit or program (both in your home
-  directory) gets the dock's full powers with no question in Den, and so
-  can anything that can write Den's config. Den names a changed program,
+  `api.console_powers = "always"` allowed in Den, anything running as you
+  that can change `drey-host.service`'s unit or program (both in your home
+  directory) gets the dock's full powers with no question in Den until Den
+  restarts. Writing Den's config alone gets nothing: `"always"` waits on a
+  card in Den's window at every start and change. Den names a changed program,
   unit, pin or manager in its chat either way. Your levers are `/api
   lock`, `/api unpair`, and God mode staying off. Where your manager's program
   cannot be read, Den knows it by `CAP_WAKE_ALARM`, which no program of

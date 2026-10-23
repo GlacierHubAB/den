@@ -524,6 +524,33 @@ func ModeSetting() (mode, refused string, err error) {
 	return "", v, nil
 }
 
+// PowersSetting reads api.console_powers as Den watches it: "unchanged"
+// when the file or the key is missing, the value when it is "unchanged" or
+// "always", else refused holds what was written. err is a file Den could
+// not read, which changes nothing.
+func PowersSetting() (value, refused string, err error) {
+	f, err := os.Open(Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return "unchanged", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+	kv, err := parseFrom(f)
+	if err != nil {
+		return "", "", err
+	}
+	v, ok := kv["api.console_powers"]
+	switch {
+	case !ok:
+		return "unchanged", "", nil
+	case v == "unchanged" || v == "always":
+		return v, "", nil
+	}
+	return "", v, nil
+}
+
 // parse reads a flat TOML subset: [section] headers and key = value lines
 // with string, integer or boolean values. Keys come back as section.key.
 func parse(path string) map[string]string {
@@ -623,7 +650,7 @@ weekly_usd = 0              # none; a weekly $ budget to estimate usage against 
 [api]
 enabled = false             # den-api.sock for apps on this machine; turn it on with /api on in Den
 ask_budget_usd = 2          # what apps' questions to the read-only orchestrator may spend a day
-console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed
+console_powers = "unchanged" # the dock pairs by itself; "unchanged": with its powers only as Den last gave them in this run, "always": whatever changed, once you allow it on a card in Den (until Den restarts)
 mirror_conversation = "ask" # show your orchestrator conversation in the paired dock: "ask" (a card once per pairing), "always" or "off"
 
 # A shell command per event kind, run by Den with the event's metadata as
