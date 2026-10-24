@@ -174,6 +174,9 @@ type Model struct {
 	guardPath       string
 	names           *names.Live // the names Den gave (names.go)
 	spawnReports    []spawnReport
+	renames         map[string]*renamePick // open rename cards by item id
+	namesChecked    bool                   // the names were checked against the roster
+	renameBackedUp  bool                   // the chat said where the backups are
 	srvErr          error
 	store           *inbox.Store
 	inboxCur        int
@@ -1254,6 +1257,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RenamePick {
+			if m.toggleRename(it, int(msg.String()[0]-'0')) {
+				return m, nil
+			}
+		}
 	case "ctrl+y":
 		if m.tab == tabOrch && m.selectedProposal() != nil {
 			return m.answerProposal(true)
@@ -1613,6 +1621,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.RulesEdited {
 		return m.decideRulesEdited(it, verb)
 	}
+	if it.Kind == inbox.RenamePick {
+		return m.decideRename(it, verb)
+	}
 	if it.Kind == inbox.MissionCriteria {
 		return m.decideMissionCriteria(it, verb)
 	}
@@ -1700,6 +1711,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.closeCommand(fields[1:])
 	case "/reopen":
 		return m.reopenCommand(fields[1:])
+	case "/rename":
+		return m.renameCommand(fields[1:])
 	case "/protect", "/unprotect", "/flag", "/unflag":
 		return m.guardCommand(strings.ToLower(fields[0]), fields[1:])
 	case "/dismiss", "/x":

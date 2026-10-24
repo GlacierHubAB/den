@@ -112,7 +112,7 @@ func dockMayAnswer(it *inbox.Item) bool {
 	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message,
 		inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn,
 		inbox.MissionCriteria, inbox.MissionDone, inbox.MirrorAsk, inbox.ProcessTuned, inbox.PromptProposal,
-		inbox.RulesPick, inbox.RulesEdited, inbox.PowersSet:
+		inbox.RulesPick, inbox.RulesEdited, inbox.PowersSet, inbox.RenamePick:
 		return false
 	}
 	return true

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,9 @@ type Entry struct {
 	N    int    `json:"n,omitempty"`
 	// Alias is the critter name it had, which still resolves.
 	Alias string `json:"alias,omitempty"`
+	// Former are names Den gave this session before the human renamed it:
+	// they still resolve to it, and stay taken while it lives.
+	Former []string `json:"former,omitempty"`
 	// Role and Title are what the spawn asked for, as labels.
 	Role  string    `json:"role,omitempty"`
 	Title string    `json:"title,omitempty"`
@@ -119,6 +123,13 @@ func valid(es []Entry) map[string]Entry {
 			continue
 		}
 		e.Alias, e.Role, e.Title = sanitize.Label(e.Alias, 60), sanitize.Label(e.Role, 80), sanitize.Label(e.Title, 80)
+		var former []string
+		for _, f := range e.Former {
+			if Valid(f) && len(former) < 8 {
+				former = append(former, f)
+			}
+		}
+		e.Former = former
 		out[e.Session] = e
 	}
 	return out
@@ -128,14 +139,112 @@ func valid(es []Entry) map[string]Entry {
 // changed only by its own Assign. Nothing written to the file while Den
 // runs changes a name it shows.
 type Live struct {
-	mu   sync.Mutex
-	path string
-	by   map[string]Entry
+	mu       sync.Mutex
+	path     string
+	by       map[string]Entry
+	migrated bool
 }
 
 // OpenLive reads the registry once.
 func OpenLive(path string) *Live {
-	return &Live{path: path, by: Load(path)}
+	r, _ := load(path)
+	return &Live{path: path, by: valid(r.Entries), migrated: r.Migrated}
+}
+
+// Migrated reports whether Den has named the agents that ran before it
+// named agents by role (once, at start).
+func (l *Live) Migrated() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.migrated
+}
+
+// MarkMigrated records that it has.
+func (l *Live) MarkMigrated() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.migrated = true
+	return l.save()
+}
+
+// Rename gives session the name the human typed (Base of it as a title:
+// normalised, checked, numbered by Den), keeping a name it had as a former
+// one, which still resolves to it and stays taken while it lives. alias is
+// its critter name. It is the human's /rename in Den, and nothing else.
+func (l *Live) Rename(session, text, alias string, ns Namespace, now time.Time) (Entry, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	e, err := l.renamed(session, text, alias, ns, now)
+	if err != nil {
+		return Entry{}, err
+	}
+	l.by[session] = e
+	return e, l.save()
+}
+
+// Preview is the entry Rename would make now, changing nothing.
+func (l *Live) Preview(session, text, alias string, ns Namespace) (Entry, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.renamed(session, text, alias, ns, time.Time{})
+}
+
+// renamed is the entry renaming session would make; l.mu is held.
+func (l *Live) renamed(session, text, alias string, ns Namespace, now time.Time) (Entry, error) {
+	if Generic(text) {
+		return Entry{}, errors.New("no name Den may use: it says nothing about the work; give a few words on the agent's job")
+	}
+	base, why := Base("", text)
+	if base == "" {
+		return Entry{}, errors.New("no name Den may use: " + why)
+	}
+	if !sessionID.MatchString(session) {
+		return Entry{}, errors.New("not a session id")
+	}
+	old, had := l.by[session]
+	var held []Entry
+	for sid, e := range l.by {
+		if sid == session {
+			// Its own former names stay taken; its current one is free to
+			// keep if the base is the same.
+			held = append(held, Entry{Former: e.Former})
+			continue
+		}
+		if ns.Held == nil || ns.Held(sid) {
+			held = append(held, e)
+		}
+	}
+	e := Entry{Session: session, Alias: sanitize.Label(alias, 60), Title: sanitize.Label(text, 80), Base: base, Since: now}
+	if had {
+		e.Role, e.Former = old.Role, old.Former
+		if n := old.Name(); n != "" && !slices.Contains(e.Former, n) {
+			e.Former = append(e.Former, n)
+		}
+	}
+	e.N = freeNumber(base, held, ns)
+	if n := e.Name(); slices.Contains(e.Former, n) {
+		e.Former = slices.DeleteFunc(e.Former, func(f string) bool { return f == n })
+	}
+	return e, nil
+}
+
+// Drop forgets session's name: it shows its critter name again.
+func (l *Live) Drop(session string) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.by, session)
+	return l.save()
+}
+
+// save writes the held registry whole; l.mu is held.
+func (l *Live) save() error {
+	all := make([]Entry, 0, len(l.by))
+	for _, x := range l.by {
+		all = append(all, x)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Since.Before(all[j].Since) })
+	migrated := l.migrated
+	return update(l.path, func(r *registry) { r.Entries, r.Migrated = all, migrated })
 }
 
 // All is a copy of the names Den holds.
@@ -178,12 +287,7 @@ func (l *Live) Assign(session, role, title, alias string, ns Namespace, now time
 		e.N = freeNumber(e.Base, held, ns)
 	}
 	l.by[session] = e
-	all := make([]Entry, 0, len(l.by))
-	for _, x := range l.by {
-		all = append(all, x)
-	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Since.Before(all[j].Since) })
-	return e, update(l.path, func(r *registry) { r.Entries = all })
+	return e, l.save()
 }
 
 // freeNumber is the lowest n that makes base's name free.
@@ -192,6 +296,9 @@ func freeNumber(base string, held []Entry, ns Namespace) int {
 	for _, e := range held {
 		if n := e.Name(); n != "" {
 			used[strings.ToLower(n)] = true
+		}
+		for _, f := range e.Former {
+			used[f] = true
 		}
 	}
 	for n := 1; ; n++ {

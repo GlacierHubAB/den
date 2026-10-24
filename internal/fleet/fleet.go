@@ -77,7 +77,8 @@ type Agent struct {
 	// critter name when Name is not it; it still resolves. Both are labels
 	// only: Den keys everything on the session id.
 	Name    string
-	Alias   string `json:",omitempty"`
+	Alias   string   `json:",omitempty"`
+	Former  []string `json:",omitempty"` // names Den gave it before the human renamed it; they still resolve
 	Labels  badge.Labels
 	Git     gitinfo.Info
 	HasGit  bool
@@ -222,6 +223,7 @@ func Snapshot() ([]Agent, error) {
 	for _, s := range sessions {
 		a := Agent{Session: s, Name: badge.Name(s.SessionID), Labels: labels[s.SessionID]}
 		a.Name, a.Alias = Named(a.Name, given[s.SessionID])
+		a.Former = given[s.SessionID].Former
 		if a.Labels.Role == "" {
 			a.Labels.Role = given[s.SessionID].Role
 		}
@@ -483,7 +485,7 @@ func Named(critter string, e names.Entry) (name, alias string) {
 func Candidates(agents []Agent) []names.Candidate {
 	out := make([]names.Candidate, 0, len(agents))
 	for _, a := range agents {
-		out = append(out, names.Candidate{ID: a.Session.SessionID, Peer: a.Session.Name, Name: a.Name, Alias: a.Alias, Host: a.Host, PID: a.Session.PID})
+		out = append(out, names.Candidate{ID: a.Session.SessionID, Peer: a.Session.Name, Name: a.Name, Alias: a.Alias, Also: a.Former, Host: a.Host, PID: a.Session.PID})
 	}
 	return out
 }

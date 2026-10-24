@@ -217,6 +217,10 @@ func TestLocalJSONHasNoHostFields(t *testing.T) {
 	if strings.Contains(string(raw), `"Alias"`) {
 		t.Errorf("an agent without an alias has Alias: %s", raw)
 	}
+	// Nor former names: an agent never renamed prints no Former key.
+	if strings.Contains(string(raw), `"Former"`) {
+		t.Errorf("an agent never renamed has Former: %s", raw)
+	}
 	if raw, _ := json.Marshal(Agent{Name: "backend-engineer", Alias: "Fizzy Moth"}); !strings.Contains(string(raw), `"Alias":"Fizzy Moth"`) {
 		t.Errorf("named agent json = %s", raw)
 	}

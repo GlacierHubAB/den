@@ -1336,7 +1336,13 @@ by its role, or by the title when the role says nothing about the work
 refused, so the orchestrator is told to always give one. The name is
 lower-case with hyphens; a second agent of the same role gets a number
 ("backend-engineer2"). A name is only a label: Den keys everything on the
-session, and no name grants anything. Den keeps the names in `names.json` in its
+session, and no name grants anything. Agents that ran before keep their critter names:
+`/rename <agent> <name>` names one, and `/rename` alone shows names
+suggested from each agent's own label, to pick with 1-9 and `^Y`. Only you
+rename, in Den's window; an agent keeps the names it had, which still work.
+Before the first rename Den copies `names.json` and `roster.json` aside
+(`*.before-role-names`) and says where. If the two files disagree about an
+agent's name at start, Den drops it and says so. Den keeps the names in `names.json` in its
 state folder, reads it once at start, drops any entry it would not have
 written, and holds the names in memory while it runs. It cannot tell an
 edit made between runs from its own writes: anything that can write Den's
