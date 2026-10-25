@@ -71,7 +71,7 @@ Error codes: `unsupported` (an unknown op or version: hide the feature),
 
 ## Versioning
 
-`v` is 1. `hello {v, client, version, group?}` returns `{version,
+`v` is 1. `hello {v, client, version, group?, card_hash?}` returns `{version,
 versions:[1], host, control?, features?, mode?}`; `mode` is `{global,
 mixed}` (see Permission mode); `features` lists `"console"`
 when Den serves a console (see Console); a `v` Den does not serve gets
@@ -87,14 +87,17 @@ of them count as one app's (see Asking); any other shape gets
 `bad_request`. Without it, each connection is on its own. A group is not a
 secret like an ask id, but whoever holds it can replace the group's
 questions: keep it in the process that drew it, and never pass it to a
-child process or another program. Added fields never change
-`v`; a removed or changed verb does.
+child process or another program. `card_hash` is optional: `2` makes
+every card's `text_sha256` on this connection card hash v2 (see Cards),
+`1` or none keeps v1; any other value gets `bad_request`. It is chosen in
+the connection's first `hello`, and a later `hello` with another value gets
+`bad_request`. Added fields never change `v`; a removed or changed verb does.
 
 ## Verbs
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?, view?, view_workspaces?}` |
+| `hello` | `{v, client, version, group?, card_hash?}` | `{version, versions, host, control?, features?, mode?, view?, view_workspaces?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -925,19 +928,42 @@ same way. A later kind that carries state joins the snapshot.
 
 ### Cards
 
-- `card.get {id}` answers `{id, kind, agent, agent_id?, tool, title, note, body,
-  text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}` (`agent_id`
-  is not in the hash): the card
+- `card.get {id}` answers `{id, kind, agent, agent_id?, tool, title, note, class,
+  step, body, text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`
+  (`agent_id` is not in the hash): the card
   as Den shows it, and a nonce for one answer, on this connection, for ten
-  minutes. `text_sha256` is the SHA-256 of `kind`, `agent`, `tool`,
-  `title`, `note` and `body` joined by `\n`. Show all of it, `note` (a
-  warning Den shows) too.
+  minutes. Show all of it, `note` (a warning Den shows) too.
+- `class` and `step` are what your `allow` on the card does, as Den classed
+  it from its own record: `class` is `routine`, `destructive`, `code`,
+  `desktop`, `outward` or `den_only`; `step` is the class's step, routine
+  1–4, destructive 1–2, code 1, desktop 1–2, outward 1–3, and 0 only for
+  `den_only` (answered only in Den's own window once levels are enforced).
+  They gate nothing yet; Den never takes them from you.
+- `text_sha256`, v1 (the default): the SHA-256 of `kind`, `agent`, `tool`,
+  `title`, `note` and `body` joined by `\n`.
+- `text_sha256`, v2 (`card_hash: 2` in `hello`): the SHA-256 of `kind`,
+  `agent`, `tool`, `title`, `note`, `class`, `step`, `mission`, `criteria`
+  and `body` joined by `\n`, the body last for every kind. `step` is a bare
+  decimal; `mission` and `criteria` are `""` on a card without them; each
+  criterion is its id, state, text and evidence joined by U+001F, the
+  criteria joined by U+001E in card order. Every field before the body,
+  `mission` and each criterion's text and evidence included, is one line:
+  Den refuses to hash a card that breaks it (a newline before the body, a
+  separator or newline in a criterion, a class outside the set, a step its
+  class lacks), and so must you. The rows of
+  `internal/api/convcases/cardhash.go` (`CardHashCases`, `CardHashV2Cases`)
+  pin both versions, refused rows included. Card events carry the hash in
+  your connection's version, and a card is `changed` for you when that hash
+  changes (a class or step moving changes only the v2 hash).
 - `card.answer` takes `verb` `allow`, `deny` or `always`, one of the card's
   `verbs`, with the hash and nonce of a `card.get`. Den answers it as your
   `Ctrl+Y` would, and replies once it is settled. Refusals:
   - `not_found`: no such card, or it was answered;
   - `nonce_expired`: spent, too old, or from another connection;
   - `card_changed`: the card is not what you read: get it again;
+  - `hash_version`: the `text_sha256` is the card's hash in the other
+    version than your connection's: final, do not get the card again and
+    retry; the nonce is spent;
   - `refused_from_dock`: `dock_answers` is false or the verb is not the
     card's;
   - `read_it_first`: a card of more than ten lines, answered within 300 ms
