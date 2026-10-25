@@ -9,11 +9,17 @@ import (
 )
 
 // everyKind is every inbox Kind: from Permission up to the first one
-// String does not name.
-func everyKind() []inbox.Kind {
+// String does not name. It must reach RenamePick, the last kind: a kind
+// added without a String case would end the walk early and hide the kinds
+// after it.
+func everyKind(t *testing.T) []inbox.Kind {
+	t.Helper()
 	var out []inbox.Kind
 	for k := inbox.Permission; k.String() != "?"; k++ {
 		out = append(out, k)
+	}
+	if len(out) == 0 || out[len(out)-1] < inbox.RenamePick {
+		t.Fatalf("the kinds stop after %d, before RenamePick: give every kind its String", len(out))
 	}
 	return out
 }
@@ -45,7 +51,7 @@ func reachesAConsole(k inbox.Kind) bool {
 // through; they never reach a console, so in effect nothing moves.
 func TestDockGateUnchanged(t *testing.T) {
 	notices := 0
-	for _, k := range everyKind() {
+	for _, k := range everyKind(t) {
 		it := &inbox.Item{SessionID: "s1", Kind: k, State: inbox.Waiting}
 		before, now := !neverBefore[k], dockMayAnswer(it)
 		if r := reachesAConsole(k); (before && r) != (now && r) {
@@ -72,7 +78,7 @@ func TestDockGateUnchanged(t *testing.T) {
 // TestClassesNeverWidenTheDock: no kind outside todayDock is ever in a
 // class other than den_only, whatever Den knows of it.
 func TestClassesNeverWidenTheDock(t *testing.T) {
-	for _, k := range everyKind() {
+	for _, k := range everyKind(t) {
 		if todayDock[k] {
 			continue
 		}
@@ -87,7 +93,7 @@ func TestClassesNeverWidenTheDock(t *testing.T) {
 // TestDockNeverAnswersAHostCard: for every kind, a card from a remote
 // host, or about one, is not the console's, and it is den_only.
 func TestDockNeverAnswersAHostCard(t *testing.T) {
-	for _, k := range everyKind() {
+	for _, k := range everyKind(t) {
 		for _, it := range []*inbox.Item{{Host: "build", SessionID: "s1", Kind: k, State: inbox.Waiting}, {SessionID: inbox.HostPrefix + "build", Kind: k, State: inbox.Waiting}} {
 			if dockMayAnswer(it) {
 				t.Errorf("%v from %q %q: dock may answer", k, it.Host, it.SessionID)

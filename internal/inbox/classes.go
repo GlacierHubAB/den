@@ -149,7 +149,7 @@ func classifyTool(it *Item) (Class, int) {
 // sensitive. A call with no path reads cwd itself, which is not strictly
 // under it. Anything Den cannot parse is out of scope.
 func readInScope(tool string, args map[string]any, cwd, home string) bool {
-	named := false
+	named, base := false, ""
 	for _, field := range readTools[tool] {
 		raw, present := args[field]
 		if !present {
@@ -163,7 +163,7 @@ func readInScope(tool string, args map[string]any, cwd, home string) bool {
 			continue
 		}
 		if field == "pattern" || field == "glob" {
-			if !globInScope(v, cwd, home) {
+			if !globInScope(v, base, cwd, home) {
 				return false
 			}
 			named = named || filepath.IsAbs(v) || strings.HasPrefix(v, "~")
@@ -173,18 +173,21 @@ func readInScope(tool string, args map[string]any, cwd, home string) bool {
 		if !editRealInScope(v, cwd, home) || readSensitive(v, cwd, home) {
 			return false
 		}
+		base, _ = editPath(v, cwd, home)
 	}
 	return named
 }
 
-// globInScope reports whether a glob pattern stays under cwd: a relative
-// pattern is taken from the path the call names (checked on its own), an
-// absolute or ~ one is checked as a path up to its first wildcard. No part
-// of either is sensitive or "..", and no part may reach a hidden name by a
-// wildcard (".g*", "?git", "[.]git"): the sensitive names are hidden ones.
-// Accepted residual: "*" and "**" lean on the tools leaving hidden files
-// out, as Glob and Grep (ripgrep) do by default.
-func globInScope(pattern, cwd, home string) bool {
+// globInScope reports whether a glob pattern stays under cwd. Its fixed
+// start, up to the first wildcard, is checked as a path with symlinks
+// resolved: for an absolute or ~ pattern on its own, for a relative one
+// under base, the path the call names (already checked); a relative
+// pattern with no base is out. No part is sensitive or "..", and no part
+// may reach a hidden name by a wildcard (".g*", "?git", "[.]git"): the
+// sensitive names are hidden ones. Accepted residual: "*" and "**" lean on
+// the tools leaving hidden files out, as Glob and Grep (ripgrep) do by
+// default, and a symlink a wildcard matches is not resolved here.
+func globInScope(pattern, base, cwd, home string) bool {
 	for _, part := range strings.Split(filepath.ToSlash(pattern), "/") {
 		lp := strings.ToLower(part)
 		if part == ".." || sensitiveParts[lp] || sensitiveNames[lp] {
@@ -194,28 +197,46 @@ func globInScope(pattern, cwd, home string) bool {
 			return false
 		}
 	}
-	if !filepath.IsAbs(pattern) && !strings.HasPrefix(pattern, "~") {
-		return !strings.ContainsAny(pattern, "{}") // a brace can name a path outside
-	}
 	fixed := pattern
 	if i := strings.IndexAny(pattern, "*?[{"); i >= 0 {
 		fixed = filepath.Dir(pattern[:i] + "x")
+	}
+	if !filepath.IsAbs(pattern) && !strings.HasPrefix(pattern, "~") {
+		if base == "" || strings.ContainsAny(pattern, "{}") { // a brace can name a path outside
+			return false
+		}
+		fixed = filepath.Join(base, fixed)
 	}
 	return editRealInScope(fixed+"/x", cwd, home) && !readSensitive(fixed+"/x", cwd, home)
 }
 
 // readSensitive reports whether a read of path reaches what edits never
 // would but reads still should not: keys and Den's and Drey's own state.
+// The path is checked as written and with symlinks resolved, against each
+// directory as named and resolved; a path that cannot be resolved is
+// sensitive.
 func readSensitive(path, cwd, home string) bool {
 	p, ok := editPath(path, cwd, home)
 	if !ok {
 		return true
 	}
-	lp := strings.ToLower(p)
+	real, ok := realPath(p)
+	if !ok {
+		return true
+	}
+	var dirs []string
 	for _, d := range readSensitiveDirs(home) {
-		ld := strings.ToLower(filepath.Clean(d))
-		if lp == ld || strings.HasPrefix(lp, ld+"/") {
-			return true
+		dirs = append(dirs, filepath.Clean(d))
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			dirs = append(dirs, r)
+		}
+	}
+	for _, q := range []string{strings.ToLower(p), strings.ToLower(real)} {
+		for _, d := range dirs {
+			ld := strings.ToLower(d)
+			if q == ld || strings.HasPrefix(q, ld+"/") {
+				return true
+			}
 		}
 	}
 	return false
