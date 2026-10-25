@@ -39,6 +39,10 @@ const (
 	SpeakerOrchestrator = "orchestrator"
 )
 
+// Endings of a report or desktop entry (ConvEntry.Ending), a closed set:
+// EndingNoReport is Den's line that the agent finished without a report.
+const EndingNoReport = "no_report"
+
 var (
 	convOrigins  = map[string]bool{OriginYou: true, OriginConsole: true, OriginReport: true, OriginMission: true, OriginDesktop: true}
 	convSpeakers = map[string]bool{SpeakerYou: true, SpeakerDen: true, SpeakerOrchestrator: true}
@@ -74,6 +78,7 @@ type ConvEntry struct {
 	Speaker string       `json:"speaker"`
 	Agent   string       `json:"agent,omitempty"`
 	AgentID string       `json:"agent_id,omitempty"` // the reporting agent's id: Agent is only its name
+	Ending  string       `json:"ending,omitempty"`
 	Console *ConvConsole `json:"console,omitempty"`
 	Text    string       `json:"text"`
 }
@@ -91,6 +96,10 @@ type Converse struct {
 	// only while that pairing is the current one, and only in a turn's
 	// own shape; else the entry carries none.
 	TurnLineage string
+	// Ending is EndingNoReport for Den's line that the agent finished
+	// without a report (origin report or desktop, speaker den); any other
+	// value, or on another entry, refuses it.
+	Ending string
 }
 
 // convState is the mirror's state, under its own lock.
@@ -296,6 +305,13 @@ func (s *Server) Converse(in Converse) bool {
 	if !reportTurn && in.Origin != OriginConsole {
 		e.Turn = ""
 	}
+	if in.Ending != "" {
+		if in.Ending != EndingNoReport || !reportTurn || in.Speaker != SpeakerDen {
+			return false
+		}
+		// Den's fixed line, from the checked name like "Report from".
+		e.Ending, e.Text = EndingNoReport, "No report from "+e.Agent+": it finished without one."
+	}
 	if strings.TrimSpace(e.Text) == "" {
 		return false
 	}
@@ -309,7 +325,7 @@ func (s *Server) Converse(in Converse) bool {
 				st.mu.Unlock()
 				return false
 			}
-			e.Speaker, e.Text, e.Turn = SpeakerDen, line, "" // about the agent, not one turn
+			e.Speaker, e.Text, e.Turn, e.Ending = SpeakerDen, line, "", "" // about the agent, not one turn
 		}
 	}
 	st.seq++

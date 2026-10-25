@@ -906,7 +906,7 @@ same way. A later kind that carries state joins the snapshot.
   mode); in the snapshot, the mode in force, once Den has one.
 - `desktop {state, mission}`: a desktop agent's mission started or ended
   (see Desktop overlay); in the snapshot, whether one runs now.
-- `conversation {id, at, turn?, origin, speaker, agent?, console?, text}`: one
+- `conversation {id, at, turn?, origin, speaker, agent?, agent_id?, ending?, console?, text}`: one
   entry of the human's orchestrator conversation, as Den shows it. Den sends
   these only while the conversation is shown in this console (see Conversation
   mirror). They are not part of the snapshot: backfill with
@@ -1117,14 +1117,15 @@ powers receives it, and every console is on this machine: den-api.sock is a
 local socket open to this user only.
 
 - Each `conversation` entry is `{id, at, turn?, origin, speaker, agent?,
-  agent_id?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
+  agent_id?, ending?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
   `conversation.history`, so merge the backfill and the live entries by it.
   `at` is RFC3339 UTC, Den's clock.
 - `origin` (a closed set): `you` (the human typed it in Den), `console` (a
   console or app sent the turn), `report` (an agent reported), `mission` (Den
   drives a mission run), `desktop` (a desktop mission's agent reported).
 - `speaker` (a closed set): `you`, `den` (Den's own fixed lines only: "Report
-  from Mossy Lemur.", a mission run's line, "More reports from … are in Den."),
+  from Mossy Lemur.", "No report from Mossy Lemur: it finished without one.", a
+  mission run's line, "More reports from … are in Den."),
   or `orchestrator` (its completed reply). An entry with speaker
   `orchestrator` always carries the orchestrator's own reply, under every
   origin (`report` and `desktop` too): Den never passes an agent's report, or
@@ -1157,6 +1158,17 @@ local socket open to this user only.
   A report about another console's turn reaches this console with that
   turn: thread it under your own request only when the turn is one of
   yours.
+- `ending` (a closed set, on origin `report` and `desktop` with speaker `den`
+  only): `no_report` is Den's line "No report from Mossy Lemur: it finished
+  without one.", for work from a console turn whose agent finished without
+  reporting. Den waits 30 seconds after the agent's card ended done, and any
+  report from that agent in the meantime cancels it; it comes once per card,
+  with the card's `turn`, never for a card that failed or one outside a
+  console turn. For a desktop mission it replaces the report line when the
+  mission ended because its agent finished and said nothing; one that ended
+  on a limit or a stop has its own line in Den. Past the report limits it
+  becomes the plain "More reports from … are in Den." line, with no `ending`
+  and no `turn`. Treat an unknown value as a plain Den line.
 - `text` is the human's words, Den's line, or the orchestrator's reply, never
   an agent's or a host's own text. The orchestrator's reply may still quote
   what an agent reported: show it as the orchestrator's text, as data, and
