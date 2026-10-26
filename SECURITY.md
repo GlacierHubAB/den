@@ -8,9 +8,9 @@ the checks Den makes before it acts.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue. Use GitHub's private vulnerability
-reporting on this repository (the Security tab, "Report a vulnerability"), or
-email <security contact: HUMAN>.
+Please do not open a public issue. Report it privately through GitHub: on
+this repository's Security tab, choose "Report a vulnerability". Only the
+maintainers and you can see the report.
 
 We aim to acknowledge a report within 3 working days and to fix it, or publish
 a mitigation, within 90 days of the report. We will credit you in the release
