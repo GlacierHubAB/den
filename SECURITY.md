@@ -65,7 +65,8 @@ Only the latest release. Den is pre-1.0; there is no backport policy yet.
   `main`, and weekly.
 - The race detector runs three times on two CPUs for every pull request.
   Adversarial tests cover remote hosts, hostile git configuration and untrusted
-  text, and parsers of other processes' messages have fuzz targets.
+  text. The remote-host protocol, the systemd message reader and the text
+  sanitiser have fuzz targets.
 - Releases are built by CI from a tag on `main`, with a build provenance
   attestation and published checksums.
 - The skills catalogue and the desktop tool are pinned by commit and hashed,
