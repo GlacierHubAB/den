@@ -313,7 +313,15 @@ func projectCard(c Card) Card {
 			out.Verbs = append(out.Verbs, v)
 		}
 	}
+	out.Class, out.Step = c.Class, c.Step
+	if !inbox.StepFits(inbox.Class(out.Class), out.Step) {
+		out.Class, out.Step = string(inbox.DenOnly), 0
+	}
 	out.Hash = CardHash(out.Kind, out.Agent, out.Tool, out.Title, out.Note, out.Body)
+	// No card Den makes yet carries a mission or criteria. A card the v2
+	// hasher refuses has no v2 hash, and no v2 connection answers it
+	// (Card.forVersion).
+	out.HashV2, _ = CardHashV2(out.Kind, out.Agent, out.Tool, out.Title, out.Note, out.Class, out.Step, "", nil, out.Body)
 	return out
 }
 
