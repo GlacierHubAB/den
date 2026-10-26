@@ -36,7 +36,7 @@ func TestCardHashV2Table(t *testing.T) {
 func TestCardHashV2TableFromDen(t *testing.T) {
 	raw := map[string]Card{
 		"a command, code 1": {Kind: "permission", Agent: "Mossy Lemur", Tool: "Bash", Title: "Run the tests?", Class: "code", Step: 1, Body: "go test ./...\nin /home/x/den"},
-		"a read inside the working directory, routine 3":      {Kind: "permission", Agent: "Mossy‮ Lemur", Tool: "Read", Title: "Read README.md?", Class: "routine", Step: 3, Body: "/home/x/den/README.md"},
+		"a read inside the working directory, routine 3":      {Kind: "permission", Agent: "Mossy\u202e Lemur", Tool: "Read", Title: "Read README.md?", Class: "routine", Step: 3, Body: "/home/x/den/README.md"},
 		"a write to the project's Claude settings, den_only":  {Kind: "permission", Agent: "Mossy Lemur", Tool: "Write", Title: "Write settings.json?", Class: "code", Step: 7, Body: "/home/x/den/.claude/settings.json"},
 		"a cleanup that deletes ignored files, destructive 2": {Kind: "cleanup", Agent: "Mossy Lemur", Tool: "worktree_cleanup", Title: "Remove the worktree of feature?", Class: "destructive", Step: 2, Body: "Ignored files it deletes:\nnode_modules"},
 	}
