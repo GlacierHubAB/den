@@ -10,11 +10,17 @@ import (
 )
 
 // allKinds is every Kind there is: from Permission up to the first one
-// String does not name.
-func allKinds() []Kind {
+// String does not name. It must reach RenamePick, the last kind: a kind
+// added without a String case would end the walk early and hide the
+// kinds after it.
+func allKinds(t *testing.T) []Kind {
+	t.Helper()
 	var out []Kind
 	for k := Permission; k.String() != "?"; k++ {
 		out = append(out, k)
+	}
+	if len(out) == 0 || out[len(out)-1] < RenamePick {
+		t.Fatalf("the kinds stop after %d, before RenamePick: give every kind its String", len(out))
 	}
 	return out
 }
@@ -61,7 +67,7 @@ func TestClassifyEveryKind(t *testing.T) {
 		MirrorAsk: {DenOnly, 0}, ProcessTuned: {DenOnly, 0}, PromptProposal: {DenOnly, 0},
 		RulesPick: {DenOnly, 0}, RulesEdited: {DenOnly, 0}, PowersSet: {DenOnly, 0}, RenamePick: {DenOnly, 0},
 	}
-	kinds := allKinds()
+	kinds := allKinds(t)
 	if len(kinds) != len(want) {
 		t.Errorf("%d kinds, %d rows: give every new kind its row", len(kinds), len(want))
 	}
@@ -134,6 +140,12 @@ func TestClassifyPermissionByTool(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(cwd, "keys")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Symlink(filepath.Join(home, ".ssh"), filepath.Join(cwd, "src", "skeys")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cwd, "src", "pkg"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	type cs struct {
 		c    Class
 		step int
@@ -170,6 +182,10 @@ func TestClassifyPermissionByTool(t *testing.T) {
 		{"a grep whose glob names keys", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": "~/.ssh/*"}, den},
 		{"a grep whose glob reaches a hidden dir", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": ".g*/**"}, den},
 		{"a grep whose glob has a brace", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": "{a,b}/*.go"}, den},
+		{"a relative glob through a symlink to keys", "Glob", map[string]any{"pattern": "skeys/*", "path": filepath.Join(cwd, "src")}, den},
+		{"a relative grep glob through a symlink to keys", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": "skeys/**"}, den},
+		{"a relative glob under a real dir", "Glob", map[string]any{"pattern": "pkg/*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a grep glob with no path", "Grep", map[string]any{"pattern": "x", "glob": "*.go"}, den},
 		{"a glob under a path inside", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src")}, routine3},
 		{"an absolute glob inside", "Glob", map[string]any{"pattern": filepath.Join(cwd, "src") + "/*.go"}, routine3},
 		{"an absolute glob outside", "Glob", map[string]any{"pattern": "/etc/*"}, den},
@@ -214,5 +230,51 @@ func TestClassifyReadsNotInDenOrDreyState(t *testing.T) {
 		if c, step := Classify(it, Facts{}); c != DenOnly || step != 0 {
 			t.Errorf("a read in %s's state: %s %d, want den_only 0", app, c, step)
 		}
+	}
+}
+
+// TestClassifyReadsResolveIntoDenOrDreyState: a symlink inside the cwd
+// into Den's or Drey's dirs, which here lie under the cwd's own tree, is
+// den_only, and so is a read of those dirs when XDG names them through a
+// symlink.
+func TestClassifyReadsResolveIntoDenOrDreyState(t *testing.T) {
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	cwd := filepath.Join(home, "ws")
+	data := filepath.Join(cwd, "xdg")
+	for _, d := range []string{filepath.Join(data, "drey"), filepath.Join(data, "den"), filepath.Join(cwd, "src")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(data, "drey"), filepath.Join(cwd, "src", "cache")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(data, filepath.Join(home, "xdglink")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("GNUPGHOME", "")
+	for _, tc := range []struct {
+		name, xdgData, path string
+	}{
+		{"a symlink into Drey's data dir", data, filepath.Join(cwd, "src", "cache", "key.json")},
+		{"Den's data dir, named by XDG through a symlink", filepath.Join(home, "xdglink"), filepath.Join(data, "den", "state.json")},
+	} {
+		t.Setenv("XDG_DATA_HOME", tc.xdgData)
+		it := permItem(t, cwd, "Read", map[string]any{"file_path": tc.path})
+		if c, step := Classify(it, Facts{}); c != DenOnly || step != 0 {
+			t.Errorf("%s: %s %d, want den_only 0", tc.name, c, step)
+		}
+	}
+	// An ordinary file next to them stays routine.
+	t.Setenv("XDG_DATA_HOME", data)
+	it := permItem(t, cwd, "Read", map[string]any{"file_path": filepath.Join(cwd, "src", "main.go")})
+	if c, step := Classify(it, Facts{}); c != Routine || step != 3 {
+		t.Errorf("a plain read beside them: %s %d, want routine 3", c, step)
 	}
 }

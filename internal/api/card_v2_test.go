@@ -112,16 +112,17 @@ func TestCardClassChangeIsAChangeInV2(t *testing.T) {
 	}
 }
 
-// card_hash is 1 or 2 (or absent), chosen once per connection.
+// card_hash is the integer 1 or 2, or absent, chosen once per connection:
+// a string, 0, null or any other value is refused, never read as v1. A
+// refused hello chooses nothing, so the same connection may still choose.
 func TestHelloCardHash(t *testing.T) {
 	h := newHarness(t, 0)
-	for _, bad := range []any{3, -1} {
-		c := h.dial()
+	c := h.dial()
+	for _, bad := range []any{3, -1, 0, "2", "1", 2.5, nil, true} {
 		if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "card_hash": bad}); code(l) != CodeBadRequest {
 			t.Errorf("card_hash %v: %+v", bad, l)
 		}
 	}
-	c := h.dial()
 	if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "card_hash": 2}); !l.OK {
 		t.Fatalf("card_hash 2: %+v", l.Error)
 	}
