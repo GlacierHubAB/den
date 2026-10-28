@@ -128,26 +128,35 @@ func editRealInScope(path, cwd, home string) bool {
 	if h, err := filepath.EvalSymlinks(home); err == nil {
 		realHome = h
 	}
-	// Resolve the deepest existing parent, then add back what does not
-	// exist yet (a file Write is about to create).
+	cur, ok := realPath(p)
+	if !ok {
+		return false
+	}
+	return EditInScope(cur, realCwd, realHome) && !sensitivePath(cur, home)
+}
+
+// realPath is p with symlinks resolved: the deepest part of it that exists
+// read through EvalSymlinks, then what does not exist yet added back (a
+// file Write is about to create). ok is false when it cannot be told: an
+// error other than "not there", or a symlink to nothing yet, whose target
+// a write would create wherever that is.
+func realPath(p string) (string, bool) {
 	rest := ""
 	cur := p
 	for {
 		if real, err := filepath.EvalSymlinks(cur); err == nil {
-			cur = filepath.Join(real, rest)
-			break
+			return filepath.Join(real, rest), true
 		} else if !os.IsNotExist(err) {
-			return false
+			return "", false
 		}
 		if _, err := os.Lstat(cur); err == nil {
-			return false // a symlink to nothing yet: a write would create its target, wherever that is
+			return "", false
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
-			return false
+			return "", false
 		}
 		rest = filepath.Join(filepath.Base(cur), rest)
 		cur = parent
 	}
-	return EditInScope(cur, realCwd, realHome) && !sensitivePath(cur, home)
 }

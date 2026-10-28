@@ -372,8 +372,10 @@ only when `ci-passed` succeeds. That check needs every job in
   fuzzing.
 - **vuln:** `govulncheck`. **secrets:** `gitleaks` over the whole history.
 - **heavy:** the whole tree under the race detector three times on two CPUs,
-  plus the slow suite for pull requests into `main`. It also runs nightly on
-  `dev`, and again before a release builds.
+  plus the slow suite for pull requests into `main` and for those that change
+  `internal/remote`, `internal/names`, `internal/ui`, `internal/fleet`,
+  `internal/sshtest`, `cmd/den`, `go.mod`, `go.sum` or the `ci` and `heavy`
+  workflows. It also runs nightly on `dev`, and again before a release builds.
 
 Every action in the workflows is pinned to a full commit SHA. The tools CI
 downloads are checked against a pinned SHA-256, and the jobs in `ci.yml` get
