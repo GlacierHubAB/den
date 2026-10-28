@@ -384,6 +384,9 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 			name, note = strings.TrimSpace(name[:i]), strings.TrimSpace(name[i+1:])
 		}
 	}
+	if verb == "/protect" || verb == "/flag" {
+		return m.guardAll(verb, name, note)
+	}
 	a, why := m.closeNamed(name)
 	if why != "" {
 		return m.say(name+": "+why+".", true)
@@ -391,19 +394,11 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 	key, label := guardKey(a), m.guardLabel(a)
 	var msg string
 	switch verb {
-	case "/protect":
-		if !m.guard.Protect(key, label) {
-			return m.say(label+" is protected already.", false)
-		}
-		msg = label + " is protected: no close will propose it."
 	case "/unprotect":
 		if !m.guard.Unprotect(key) {
 			return m.say(label+" was not protected.", true)
 		}
 		msg = label + " is no longer protected."
-	case "/flag":
-		m.guard.SetFlag(key, label, note)
-		msg = label + " is flagged: a bulk close lists it without selecting it."
 	case "/unflag":
 		if !m.guard.Unflag(key) {
 			return m.say(label+" was not flagged.", true)
@@ -414,6 +409,89 @@ func (m Model) guardCommand(verb string, args []string) (tea.Model, tea.Cmd) {
 		return m.say(msg+" (not saved: "+err.Error()+")", true)
 	}
 	return m.say(msg, false)
+}
+
+// guardAll is /protect and /flag. Guarding only keeps an agent out of
+// closes, so they guard every agent the name names (guardTargets): a bare
+// name covers this machine's agent of that name and every host's, and the
+// message names each one. /unprotect, /unflag and /close, which let a
+// close through, name one agent and take name@host for a host's.
+func (m Model) guardAll(verb, name, note string) (tea.Model, tea.Cmd) {
+	targets, why := m.guardTargets(name)
+	if why != "" {
+		return m.say(name+": "+why+".", true)
+	}
+	var labels, fresh []string
+	for _, a := range targets {
+		key, label := guardKey(a), m.guardLabel(a)
+		labels = append(labels, label)
+		if verb == "/flag" {
+			m.guard.SetFlag(key, label, note)
+			fresh = append(fresh, label)
+		} else if m.guard.Protect(key, label) {
+			fresh = append(fresh, label)
+		}
+	}
+	isAre, it := " is", "it"
+	if len(fresh) > 1 {
+		isAre, it = " are", "them"
+	}
+	var msg string
+	switch {
+	case len(fresh) == 0 && len(labels) > 1:
+		return m.say(strings.Join(labels, ", ")+" are protected already.", false)
+	case len(fresh) == 0:
+		return m.say(labels[0]+" is protected already.", false)
+	case verb == "/flag":
+		msg = strings.Join(fresh, ", ") + isAre + " flagged: a bulk close lists " + it + " without selecting " + it + "."
+	default:
+		msg = strings.Join(fresh, ", ") + isAre + " protected: no close will propose " + it + "."
+	}
+	if err := m.guard.Save(m.guardPath); err != nil {
+		return m.say(msg+" (not saved: "+err.Error()+")", true)
+	}
+	return m.say(msg, false)
+}
+
+// guardTargets are the agents /protect or /flag name: the one the name
+// names as /close would, and for a bare name every host's agent of that
+// name as well (names.NeedsHost's candidates among the hosts' agents). A
+// name two of this machine's agents share is refused as /close refuses it.
+func (m Model) guardTargets(name string) ([]fleet.Agent, string) {
+	agents := m.guardAgents()
+	var out []fleet.Agent
+	a, err := m.resolveAgent(name, agents, names.Opts{})
+	var elsewhere *names.NeedsHost
+	switch {
+	case err == nil:
+		out = append(out, a)
+	case errors.Is(err, names.ErrNoMatch), errors.As(err, &elsewhere):
+	default:
+		return nil, err.Error()
+	}
+	if !strings.Contains(strings.TrimPrefix(strings.TrimSpace(name), "@"), "@") {
+		var hosts []fleet.Agent
+		for _, h := range agents {
+			if h.Host != "" {
+				hosts = append(hosts, h)
+			}
+		}
+		_, err := names.Resolve(name, fleet.Candidates(hosts), names.Opts{})
+		var there *names.NeedsHost
+		if errors.As(err, &there) {
+			for _, c := range there.Candidates {
+				for _, h := range hosts {
+					if h.Session.SessionID == c.ID && h.Host == c.Host {
+						out = append(out, h)
+					}
+				}
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil, "not in the fleet"
+	}
+	return out, ""
 }
 
 // guardEntryLabel names a guarded session in /protect's list: the agent's

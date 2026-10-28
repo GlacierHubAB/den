@@ -955,18 +955,26 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 			V     int    `json:"v"`
 			Group string `json:"group"`
 			// CardHash chooses the card hash version for the whole
-			// connection: 2, or 1 (or none) for v1.
-			CardHash int `json:"card_hash"`
+			// connection: 2, or 1 (or none) for v1. Anything else, a
+			// string or 0 included, is refused, never read as v1.
+			CardHash json.RawMessage `json:"card_hash"`
 		}
 		json.Unmarshal(req.Params, &p)
-		if p.CardHash < 0 || p.CardHash > 2 {
-			c.fail(req.ID, CodeBadRequest, "card_hash: 1 or 2")
-			return
+		cardHash := 1
+		if p.CardHash != nil {
+			switch string(p.CardHash) {
+			case "1":
+			case "2":
+				cardHash = 2
+			default:
+				c.fail(req.ID, CodeBadRequest, "card_hash: 1 or 2")
+				return
+			}
 		}
 		c.mu.Lock()
 		again, had := c.hello, c.cardHash
 		c.mu.Unlock()
-		if again && had != max(p.CardHash, 1) {
+		if again && had != cardHash {
 			c.fail(req.ID, CodeBadRequest, "card_hash is chosen once, in the connection's first hello")
 			return
 		}
@@ -989,7 +997,7 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		}
 		c.mu.Lock()
 		c.hello, c.agent = true, isAgent
-		c.cardHash = max(p.CardHash, 1)
+		c.cardHash = cardHash
 		if p.Group != "" {
 			// The program is part of the scope: another program naming
 			// the same group shares nothing with it. The group itself is
