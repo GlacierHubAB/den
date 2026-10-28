@@ -778,3 +778,111 @@ func TestOldFlashTimerKeepsANewerFlash(t *testing.T) {
 		t.Errorf("the flash's own timer left it: %q", got)
 	}
 }
+
+// A bare name that names exactly one agent, on a host, protects or flags
+// it: guarding only keeps it out of closes. Unguarding it and closing it
+// still take name@host, and two agents of that name on hosts ask for it.
+func TestProtectByBareNameOfAHostsAgent(t *testing.T) {
+	const comet = "33333333-2222-4333-8444-666666666666"
+	m, feed, _ := remoteModel(t)
+	feed.agents = append(feed.agents, remoteAgent("devbox", comet, "Comet Puffin", fleet.Idle, 0.05))
+	remoteIdle(m, feed)
+	m.ensureGuard()
+	m.guardPath = filepath.Join(t.TempDir(), "protected.json")
+	g := func(mm tea.Model, _ tea.Cmd) Model { return mm.(Model) }
+	// proposed: an open close names Comet Puffin other than in the list of
+	// what it skipped and why.
+	proposed := func(m Model) bool {
+		for _, it := range closeItems(m) {
+			if !it.Answerable() {
+				continue
+			}
+			for _, l := range append([]string{it.Title}, it.Body...) {
+				if strings.Contains(l, "Comet Puffin") && !strings.Contains(l, "Skipped Comet Puffin: protected") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	skipped := func(m Model) bool {
+		for _, it := range closeItems(m) {
+			if it.Answerable() && strings.Contains(strings.Join(it.Body, "\n"), "Skipped Comet Puffin: protected") {
+				return true
+			}
+		}
+		return false
+	}
+
+	*m = g(m.guardCommand("/protect", []string{"Comet", "Puffin"}))
+	if len(m.guard.Sessions) != 1 || m.guard.Sessions[0].Session != comet+"@devbox" || !strings.Contains(m.flash, "is protected") {
+		t.Fatalf("/protect by the bare name: %+v, flash %q", m.guard.Sessions, m.flash)
+	}
+	if got := g(m.closeCommand([]string{"Comet", "Puffin@devbox"})); proposed(got) || !strings.Contains(got.flash, "protected") {
+		t.Errorf("/close name@host after a bare protect: flash %q", got.flash)
+	}
+	if got := g(m.closeCommand([]string{"Comet", "Puffin"})); proposed(got) || !strings.Contains(got.flash, "add the host") {
+		t.Errorf("/close by the bare name: flash %q", got.flash)
+	}
+	if got := g(m.closeCommand([]string{"idle"})); proposed(got) || !skipped(got) {
+		t.Errorf("/close idle: proposed the protected agent %v, listed it as skipped %v", proposed(got), skipped(got))
+	}
+	*m = g(m.guardCommand("/unprotect", []string{"Comet", "Puffin"}))
+	if len(m.guard.Sessions) != 1 || !strings.Contains(m.flash, "add the host") {
+		t.Errorf("/unprotect by the bare name: %+v, flash %q", m.guard.Sessions, m.flash)
+	}
+	*m = g(m.guardCommand("/flag", []string{"Comet", "Puffin"}))
+	if len(m.guard.Flags) != 1 || m.guard.Flags[0].Session != comet+"@devbox" {
+		t.Errorf("/flag by the bare name: %+v, flash %q", m.guard.Flags, m.flash)
+	}
+	*m = g(m.guardCommand("/unflag", []string{"Comet", "Puffin"}))
+	if len(m.guard.Flags) != 1 || !strings.Contains(m.flash, "add the host") {
+		t.Errorf("/unflag by the bare name: %+v, flash %q", m.guard.Flags, m.flash)
+	}
+	// A bare name this machine's agent shares with hosts' agents: all of
+	// them, each named; again, nothing new.
+	*m = g(m.guardCommand("/protect", []string{"Mossy", "Lemur"}))
+	want := map[string]bool{comet + "@devbox": true, dupSession: true, dupSession + "@devbox": true, dupSession + "@gpu": true}
+	got := map[string]bool{}
+	for _, e := range m.guard.Sessions {
+		got[e.Session] = true
+	}
+	if len(m.guard.Sessions) != 4 || len(got) != 4 || !want[m.guard.Sessions[1].Session] || !strings.Contains(m.flash, "Mossy Lemur, Mossy Lemur@devbox, Mossy Lemur@gpu are protected") {
+		t.Errorf("/protect of a name here and on hosts: %+v, flash %q", m.guard.Sessions, m.flash)
+	}
+	for k := range want {
+		if !got[k] {
+			t.Errorf("%s is not protected", k)
+		}
+	}
+	*m = g(m.guardCommand("/protect", []string{"Mossy", "Lemur"}))
+	if len(m.guard.Sessions) != 4 || !strings.Contains(m.flash, "are protected already") {
+		t.Errorf("/protect again: %+v, flash %q", m.guard.Sessions, m.flash)
+	}
+
+	// Two hosts' agents of that name: the bare name guards both, and
+	// /close idle proposes neither.
+	m2, feed2, _ := remoteModel(t)
+	const comet2 = "44444444-2222-4333-8444-666666666666"
+	feed2.agents = append(feed2.agents,
+		remoteAgent("devbox", comet, "Comet Puffin", fleet.Idle, 0.05),
+		remoteAgent("gpu", comet2, "Comet Puffin", fleet.Idle, 0.05))
+	remoteIdle(m2, feed2)
+	m2.ensureGuard()
+	m2.guardPath = filepath.Join(t.TempDir(), "protected.json")
+	*m2 = g(m2.guardCommand("/protect", []string{"Comet", "Puffin"}))
+	if len(m2.guard.Sessions) != 2 || m2.guard.Sessions[0].Session != comet+"@devbox" || m2.guard.Sessions[1].Session != comet2+"@gpu" || !strings.Contains(m2.flash, "Comet Puffin@devbox, Comet Puffin@gpu are protected: no close will propose them") {
+		t.Errorf("/protect with two hosts' agents of the name: %+v, flash %q", m2.guard.Sessions, m2.flash)
+	}
+	if got := g(m2.closeCommand([]string{"idle"})); proposed(got) {
+		t.Error("/close idle proposed a protected agent")
+	}
+	*m2 = g(m2.guardCommand("/flag", []string{"Comet", "Puffin:", "keep"}))
+	if len(m2.guard.Flags) != 2 || m2.guard.Flags[1].Note != "keep" || !strings.Contains(m2.flash, "are flagged: a bulk close lists them without selecting them") {
+		t.Errorf("/flag with two hosts' agents of the name: %+v, flash %q", m2.guard.Flags, m2.flash)
+	}
+	*m2 = g(m2.guardCommand("/unprotect", []string{"Comet", "Puffin"}))
+	if len(m2.guard.Sessions) != 2 || !strings.Contains(m2.flash, "add the host") {
+		t.Errorf("/unprotect by the bare name: %+v, flash %q", m2.guard.Sessions, m2.flash)
+	}
+}
