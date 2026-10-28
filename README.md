@@ -35,17 +35,21 @@ section says what stays with you, how to install Den, and how to remove it.
 **What stays in your hands:**
 
 - One inbox holds every permission, plan and question from every session.
-- Nothing Den does for you happens until you answer its card: closing an
+- Nothing Den does for you happens until its card is answered: closing an
   agent, merging a branch, installing a skill, reopening agents, or starting
-  agents in a mode that asks less. You answer in Den, or from a console you
-  paired. In God mode, Den answers some of its own cards itself and says so
-  in its chat.
-- A paired console can't switch on the riskiest settings. From the console,
-  God mode can only be turned off and a desktop task can only be stopped.
-  Pairings, skills, guidance, desktop control and a mission's done criteria
-  are answered only in Den's own window.
-- If Den is not running, or its hook fails, the request stays with Claude
-  Code's own dialog. A failure never turns into an "allow".
+  agents in a mode that asks less. You answer it in Den, or a console you
+  paired answers it once you gave that console powers with `Ctrl+Y` in Den.
+  In God mode, Den answers some of its own cards itself and says so in its
+  chat.
+- A paired console with powers answers most cards, including a mode that asks
+  less. It can't turn God mode on: from the console, God mode can only be
+  turned off and a desktop task can only be stopped. Pairings, skills,
+  guidance, desktop control and a mission's done criteria are answered only
+  in Den's own window. `/api lock` takes a console's powers away.
+- If Den is not running, or its hook fails, Claude Code handles the request
+  as it would without Den: with its dialog, or by its own mode's rules. A
+  failure never makes Den answer "allow", but Den's own checks don't apply
+  until it is back.
 - To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 **Install** the latest release (Linux, amd64; for arm64 use
@@ -120,9 +124,11 @@ den uninstall-hooks && den uninstall-mods && rm ~/.local/bin/den
 ```
 
 This removes Den's hooks from `~/.claude/settings.json`, keeping a backup,
-then the badge mod and the binary. Den's own state stays in
-`~/.local/state/den` and `~/.config/den`; delete those as well to remove
-everything (see [Files Den writes](#files-den-writes)).
+then the badge mod and the binary. It leaves Den's state in
+`~/.local/state/den`, its settings in `~/.config/den`, desktop control's
+Python environment in `~/.local/share/den`, and any skills Den installed for
+you (`skills.json` in the state folder says where each one went). See
+[Files Den writes](#files-den-writes).
 
 ## Why Den
 
@@ -2323,6 +2329,8 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 
 Templates you save go to `~/.config/den/templates.json`, and the remote hosts
 you add to `~/.config/den/remotes.toml`, both beside `config.toml`.
+Desktop control keeps its Python environment under
+`$XDG_DATA_HOME/den/hypruse/` (`~/.local/share/den/hypruse/` by default).
 Den also edits `~/.claude/settings.json` (hooks, with a backup beside it) and
 `~/.claude/skills` (the badge mod), writes `<project>/.claude/skills` only
 for skills you approved for that project, and listens on a Unix socket in
