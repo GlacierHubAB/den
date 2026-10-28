@@ -56,8 +56,9 @@ func TestClassifyEveryKind(t *testing.T) {
 		MissionUpdate: {Destructive, 2},
 		MissionMove:   {Routine, 1},
 		Merge:         {Outward, 2},
+		Restore:       {Destructive, 1}, // back in permmode.Lower(its mode at close, the global mode)
 		Question:      {DenOnly, 0}, Done: {DenOnly, 0}, Idle: {DenOnly, 0}, Sent: {DenOnly, 0},
-		Skills: {DenOnly, 0}, Budget: {DenOnly, 0}, Restore: {DenOnly, 0}, Stalled: {DenOnly, 0},
+		Skills: {DenOnly, 0}, Budget: {DenOnly, 0}, Stalled: {DenOnly, 0},
 		Failed: {DenOnly, 0}, Install: {DenOnly, 0}, Message: {DenOnly, 0}, Guidance: {DenOnly, 0},
 		Usage: {DenOnly, 0}, UsageResume: {DenOnly, 0}, APIOn: {DenOnly, 0}, Grant: {DenOnly, 0},
 		Pair: {DenOnly, 0}, ControlAsk: {DenOnly, 0}, Console: {DenOnly, 0}, ConsoleNote: {DenOnly, 0},

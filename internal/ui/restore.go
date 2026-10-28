@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/names"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/roster"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
@@ -155,6 +156,7 @@ func (m Model) rosterEntry(a fleet.Agent) roster.Agent {
 		Given:     givenOf(a),
 		Role:      a.Labels.Role,
 		Model:     a.Model,
+		Mode:      m.modeOfAgent(id),
 		CWD:       a.Session.CWD,
 		Parent:    e.Parent,
 		Brief:     e.Brief,
@@ -361,6 +363,7 @@ func (m Model) restoreLines(a roster.Agent) (lines []string, usd float64, priced
 	if !a.LastSeen.IsZero() {
 		more = append(more, "last seen "+humanAge(restoreNow().Sub(a.LastSeen))+" ago")
 	}
+	more = append(more, "reopens in "+m.reopenMode(a))
 	if u, ok := transcript.ReadUsage(transcript.Path(a.SessionID)); ok {
 		model := reopenModel(a)
 		if model == "" {
@@ -452,12 +455,19 @@ func reopenModel(a roster.Agent) string {
 	return a.Model
 }
 
+// reopenMode is the mode an agent is reopened in: the lower of its mode
+// at close and the global mode now (permmode.Lower), so a reopen never
+// gives it more than it had nor more than Den allows. A mode Den never
+// saw, or one not ranked (God mode's), counts as default.
+func (m Model) reopenMode(a roster.Agent) string {
+	return permmode.Lower(a.Mode, m.agentMode())
+}
+
 func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 	exe, _ := os.Executable()
 	var out []spawn.Request
 	for _, a := range plan.agents {
-		// The mode in force now: nothing in the agent's record picks it.
-		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: m.agentMode()}
+		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: m.reopenMode(a)}
 		if model := reopenModel(a); strings.HasPrefix(model, "claude-") {
 			req.Model = model
 		}

@@ -106,11 +106,14 @@ func Classify(it *Item, f Facts) (Class, int) {
 		return Routine, 1
 	case Merge:
 		return Outward, 2
+	case Restore:
+		// An agent comes back in the lower of its mode at close and the
+		// global mode (permmode.Lower), never in more than it had.
+		return Destructive, 1
 	}
-	// Restore waits on the agent coming back in the lower of its own and
-	// the global mode; ControlAsk carries its tool only as text, and the
-	// orchestrator's tools are Den's own MCP tools; Budget, UsageResume,
-	// UsageSet and ModeSet spend or widen. Every other kind is the human's.
+	// ControlAsk carries its tool only as text, and the orchestrator's
+	// tools are Den's own MCP tools; Budget, UsageResume, UsageSet and
+	// ModeSet spend or widen. Every other kind is the human's.
 	return DenOnly, 0
 }
 
