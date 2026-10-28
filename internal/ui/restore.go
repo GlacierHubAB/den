@@ -58,6 +58,10 @@ type restoreState struct {
 // restorePlan is what a restore question would reopen.
 type restorePlan struct {
 	agents []roster.Agent
+	// modes are the modes the card said each agent reopens in, by session
+	// id: a raise of the global mode before the answer never reopens one
+	// in more than its card showed.
+	modes  map[string]string
 	fork   bool
 	reopen bool // asked by /reopen, not at startup: ^N dismisses nothing
 }
@@ -300,6 +304,10 @@ func (m Model) missionVia(id string, byCard map[string]string) string {
 func (m *Model) askRestore(agents []roster.Agent, plan restorePlan) *inbox.Item {
 	m.ensureRestore()
 	plan.agents = agents
+	plan.modes = map[string]string{}
+	for _, a := range agents {
+		plan.modes[a.SessionID] = m.reopenMode(a)
+	}
 	var title string
 	switch {
 	case plan.fork:
@@ -467,7 +475,13 @@ func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 	exe, _ := os.Executable()
 	var out []spawn.Request
 	for _, a := range plan.agents {
-		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: m.reopenMode(a)}
+		// The mode the card showed, lowered by any lowering since: the
+		// global mode now may only take it down.
+		mode := m.reopenMode(a)
+		if shown, ok := plan.modes[a.SessionID]; ok {
+			mode = permmode.Lower(shown, mode)
+		}
+		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: mode}
 		if model := reopenModel(a); strings.HasPrefix(model, "claude-") {
 			req.Model = model
 		}
