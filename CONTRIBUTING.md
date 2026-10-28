@@ -90,7 +90,8 @@ helps to include:
 Remove anything private from pasted output (paths, prompts, transcripts).
 Security problems: please do not file a public issue. Report vulnerabilities
 through GitHub's private vulnerability reporting (the repository's Security
-tab, "Report a vulnerability").
+tab, "Report a vulnerability"); [SECURITY.md](SECURITY.md) says what counts and
+how quickly we answer.
 
 ## Branches and pull requests
 
