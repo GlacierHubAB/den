@@ -349,6 +349,37 @@ to get these.
 These figures describe how work moved, not whether it is right. Den can't see
 CI, so CI failures are not in them.
 
+**Den in daily use.** `den stats` (see [Statistics](#statistics)) prints these
+figures for any window. On the maintainer's machine, for 14 whole days in UTC,
+an excerpt of its output:
+
+```
+$ den stats --since 2026-10-12T00:00:00Z --until 2026-10-26T00:00:00Z
+  turns                 8159 finished, by 89 agents; 32 more ended on an API error
+  working time          101.3 h, over 8020 turns with a recorded start (a lower bound)
+  agents at once        most 10, average 0.30 over the window
+  requests              97: 50 permission, 0 plan, 47 question, 0 other
+  wait                  median 37 s, longest 8.0 h, measured for 95 of 97
+  from you              90
+  from paired apps      41
+  merges                0 branches Den saw land
+```
+
+So, across 8,159 agent turns, agents waited on the human 97 times, and the
+human sent the orchestrator 90 messages from Den and 41 from a paired app.
+These figures leave out three things:
+
+- **Prompts typed straight into an agent's terminal.** On this machine, Den
+  has recorded where a prompt came from only since 2026-10-26.
+- **Merges.** Den saw no mission branch land in this window, so there is no
+  cost per merged change to show yet.
+- **Hours saved and the quality of the work.** No file holds either.
+
+The command reads your own state files, so it prints your figures, not these.
+The event stream keeps only about two to three weeks, so this window will not
+reproduce later on this machine either. What each figure means is in
+[docs/STATS.md](docs/STATS.md).
+
 ## Documentation
 
 - This README: the overview above, then a reference for every view, command
