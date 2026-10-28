@@ -360,6 +360,8 @@ CI, so CI failures are not in them.
   the full reference.
 - [docs/DEV-CHANNEL.md](docs/DEV-CHANNEL.md): run what is on `dev`.
 - [docs/RELEASING.md](docs/RELEASING.md): branches, versions and releases.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability, what counts, and
+  which versions are supported.
 - [CONTRIBUTING.md](CONTRIBUTING.md), [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
   and [docs/GITHUB-SETUP.md](docs/GITHUB-SETUP.md): building, testing and
   the repository's setup.
