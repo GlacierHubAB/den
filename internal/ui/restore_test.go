@@ -139,7 +139,7 @@ func TestRestartAsksOnceAboutTheGoneAgents(t *testing.T) {
 	body := strings.Join(items[0].Body, "\n")
 	for _, want := range []string{
 		"Snug Capybara · release lead · Sonnet 5.5 · /home/u/code/demo-app",
-		"under the orchestrator · mission ship 2.0 · last seen 2h ago · 123k tokens to reload, ≈ $0.309",
+		"under the orchestrator · mission ship 2.0 · last seen 2h ago · reopens in default · 123k tokens to reload, ≈ $0.309",
 		"Mossy Lemur · coding agent · Haiku 4.5",
 		"under Snug Capybara",
 		"≈ $0.359 in all",
