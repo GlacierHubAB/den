@@ -27,6 +27,109 @@ through the [dev channel](docs/DEV-CHANNEL.md). Den drives Claude Code today;
 other agent CLIs are planned (see
 [Supported agents and roadmap](#supported-agents-and-roadmap)).
 
+## First 10 minutes
+
+Den shows you what your agents are asking for and waits for your answer. This
+section says what stays with you, how to install Den, and how to remove it.
+
+**What stays in your hands:**
+
+- One inbox holds every permission, plan and question from every session.
+- Nothing Den does for you happens until its card is answered: closing an
+  agent, merging a branch, installing a skill, reopening agents, or starting
+  agents in a mode that asks less. You answer it in Den, or a console you
+  paired answers it once you gave that console powers with `Ctrl+Y` in Den.
+  In God mode, Den answers some of its own cards itself and says so in its
+  chat.
+- A paired console with powers answers most cards, including a mode that asks
+  less. It can't turn God mode on: from the console, God mode can only be
+  turned off and a desktop task can only be stopped. Pairings, skills,
+  guidance, desktop control and a mission's done criteria are answered only
+  in Den's own window. `/api lock` takes a console's powers away.
+- If Den is not running, or its hook fails, Claude Code handles the request
+  as it would without Den: with its dialog, or by its own mode's rules. A
+  failure never makes Den answer "allow", but Den's own checks don't apply
+  until it is back.
+- To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+**Install** the latest release (Linux, amd64; for arm64 use
+`den_linux_arm64`; to build from source, see [Install](#install)):
+
+```
+curl -fLO "https://github.com/GlacierHubAB/den/releases/latest/download/{den_linux_amd64,SHA256SUMS}"
+sha256sum -c --ignore-missing SHA256SUMS && install -Dm755 den_linux_amd64 ~/.local/bin/den
+den install-hooks && den install-mods && den
+```
+
+The first line downloads the binary and its checksums, and the second checks
+the binary and installs it. The third wires Den into Claude Code and starts
+it.
+
+**Then:**
+
+1. The Fleet lists the Claude Code sessions already running. Sessions you
+   start from now on also report to Den, because hooks apply only to new
+   sessions.
+2. Start a new `claude` session in another terminal, give it a task, and
+   switch back to Den. When the agent asks for a permission, the request
+   waits in Den's Inbox: `Ctrl+Y` allows it and `Ctrl+N` denies it. The
+   agent's own terminal can still answer it, and while you are at that
+   terminal Den leaves the request to it.
+3. Type a plain sentence on Den's command line to ask the orchestrator, for
+   example "who is waiting on me?", or `@Name` to message one agent.
+
+**What you need:**
+
+| | Needed? | For |
+| --- | --- | --- |
+| Linux, amd64 or arm64 | required | Den reads the process tree from `/proc` |
+| Claude Code 2.1.289 or newer, `claude` on `PATH` | required | finding sessions, the orchestrator, spawning |
+| Hyprland | optional | focusing an agent's terminal, placing new windows, hiding agents' windows, desktop control |
+| A terminal launcher (`xdg-terminal-exec` or `$TERMINAL`) | optional | starting agents in new terminals |
+| `notify-send` | optional | desktop notifications |
+| git 2.38 or newer | optional | the merge check in Review |
+| `ssh` and `scp` | optional | agents on other machines |
+| `python3` | optional | desktop control (Den builds its own venv) |
+| A terminal with the kitty graphics protocol | optional | thumbnails of pasted images |
+| Go 1.26 | only to build from source | |
+
+[Requirements](#requirements) has the details.
+
+**Words you'll meet:**
+
+- **Hook:** a command Claude Code runs at set points in a session, such as a
+  prompt, a permission request or a finished turn. Den's hook passes each one
+  to Den.
+- **Orchestrator:** a Claude Code session Den runs for you. It knows the whole
+  fleet and can message, start and staff agents, but it can't approve
+  anything.
+- **Mission:** a goal on one project, with what done looks like, which the
+  orchestrator runs with a team.
+- **Fan-out:** a mission shape in which a lead runs several agents side by
+  side until it says the work is done.
+- **Dispatch card:** the card in Den's chat for work the orchestrator gave an
+  agent. It shows that agent's progress and requests, taken from the agent's
+  own hooks.
+- **Card:** a question from Den in the Inbox, answered with `Ctrl+Y` or
+  `Ctrl+N`.
+- **Console powers:** what a paired console may do beyond reading: answer most
+  cards and send Den's commands. `/api lock` takes them away.
+- **Mirror:** showing your orchestrator conversation in the paired console.
+  Den asks once per pairing, and `/api mirror off` stops it.
+
+**Uninstall:**
+
+```
+den uninstall-hooks && den uninstall-mods && rm ~/.local/bin/den
+```
+
+This removes Den's hooks from `~/.claude/settings.json`, keeping a backup,
+then the badge mod and the binary. It leaves Den's state in
+`~/.local/state/den`, its settings in `~/.config/den`, desktop control's
+Python environment in `~/.local/share/den`, and any skills Den installed for
+you (`skills.json` in the state folder says where each one went). See
+[Files Den writes](#files-den-writes).
+
 ## Why Den
 
 Running several agents at once usually means a terminal per agent, with you as
@@ -401,7 +504,7 @@ reproduce later on this machine either. What each figure means is in
 
 ## Contents
 
-- [Why Den](#why-den) · [What you get](#what-you-get) · [How it works](#how-it-works) · [Security and quality model](#security-and-quality-model) · [Supported agents and roadmap](#supported-agents-and-roadmap) · [Claude Code Projects](#how-den-relates-to-claude-code-projects) · [Measurable results](#measurable-results) · [Documentation](#documentation)
+- [First 10 minutes](#first-10-minutes) · [Why Den](#why-den) · [What you get](#what-you-get) · [How it works](#how-it-works) · [Security and quality model](#security-and-quality-model) · [Supported agents and roadmap](#supported-agents-and-roadmap) · [Claude Code Projects](#how-den-relates-to-claude-code-projects) · [Measurable results](#measurable-results) · [Documentation](#documentation)
 - [Install](#install) · [Requirements](#requirements) · [On Omarchy](#on-omarchy) · [Quick start](#quick-start)
 - [Views](#views): Overview, Fleet, Inbox, Review, Orchestrator
 - [Notifications](#notifications) · [Events for scripts](#events-for-scripts) · [Statistics](#statistics)
@@ -2228,6 +2331,8 @@ State lives under `$XDG_STATE_HOME/den/` (`~/.local/state/den/` by default):
 
 Templates you save go to `~/.config/den/templates.json`, and the remote hosts
 you add to `~/.config/den/remotes.toml`, both beside `config.toml`.
+Desktop control keeps its Python environment under
+`$XDG_DATA_HOME/den/hypruse/` (`~/.local/share/den/hypruse/` by default).
 Den also edits `~/.claude/settings.json` (hooks, with a backup beside it) and
 `~/.claude/skills` (the badge mod), writes `<project>/.claude/skills` only
 for skills you approved for that project, and listens on a Unix socket in
