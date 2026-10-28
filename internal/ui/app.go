@@ -560,6 +560,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.anim++
 		return m, animTick()
 	case tickMsg:
+		for _, it := range m.store.LoseStarted() {
+			m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den lost track of " + sanitize.Label(it.Title, 80) + ": check the agents.", at: time.Now()}))
+		}
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
 		m.checkGuards()
@@ -1477,6 +1480,12 @@ func (m Model) answerTarget() *inbox.Item {
 func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	m.store.LetGo(m.permissionWait()) // a hook gone since the last tick takes no answer
 	it := m.answerTarget()
+	if it != nil && it.Started && it.State != inbox.Resolved {
+		if m.desk.installing == it.ID {
+			return m.say("hypruse is still installing; Den starts the mission when it is done.", false)
+		}
+		return m.say(refusedNote("That request was answered and is "+it.Resolved+"; nothing more was sent.", m.unboundNote()), true)
+	}
 	if m.tab == tabInbox {
 		switch {
 		case it == nil && m.inboxLost:
@@ -1537,7 +1546,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 			it.AnsweredBy = "den"
 		}
 		defer func() {
-			if it.State != inbox.Resolved {
+			// An answer that started the item's action keeps who gave it:
+			// the action's end settles it with that answer.
+			if it.State != inbox.Resolved && !it.Started {
 				it.Answer, it.AnsweredBy = "", ""
 			}
 		}()

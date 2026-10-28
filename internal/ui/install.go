@@ -135,7 +135,7 @@ func (m Model) decideInstall(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m.say("Declined the install.", false)
 	}
-	it.Resolved = "installing…"
+	m.store.Start(it, "installing…", 5*time.Minute)
 	id, host := it.ID, plan.Host.Label
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

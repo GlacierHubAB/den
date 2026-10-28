@@ -219,7 +219,7 @@ func (m Model) decideSend(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m.say(err.Error(), true)
 	}
-	it.Resolved = "sending…"
+	m.store.Start(it, "sending…", 5*time.Minute)
 	feed, id := m.remote.feed, it.ID
 	cmd := func() tea.Msg {
 		return askedSentMsg{itemID: id, name: s.name, host: s.host, err: feed.Send(s.host, s.sid, s.text)}

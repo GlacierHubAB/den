@@ -429,7 +429,7 @@ func (m Model) decideRestore(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m.say("They are running already.", false)
 	}
-	it.Resolved = "reopening…"
+	m.store.Start(it, "reopening…", time.Duration(len(plan.agents))*(spawn.SessionWait+spawn.WindowWait+5*time.Second))
 	reqs := m.restoreRequests(plan)
 	id := it.ID
 	cmd := func() tea.Msg {

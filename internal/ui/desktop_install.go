@@ -112,7 +112,7 @@ func (m Model) decideDesktopInstall(it *inbox.Item, verb string) (tea.Model, tea
 		m.refresh()
 		return m.say("Declined the hypruse install.", false)
 	}
-	it.Resolved = "installing…"
+	m.store.Start(it, "installing…", 15*time.Minute)
 	id := it.ID
 	m.desk.installing = id
 	cmd := func() tea.Msg {

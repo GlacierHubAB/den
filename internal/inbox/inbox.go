@@ -188,10 +188,16 @@ type Item struct {
 	// Den, "console" for the console's.
 	Answer     string
 	AnsweredBy string
-	Role       string // the agent's role when this happened
-	Task       string // what the agent was working on when this happened
-	Seen       bool   // shown on the Inbox view at least once
-	Unread     bool   // kept unread by the human: counts as new until opened or dismissed
+	// Started means an answer started its action (a close, a reopen, an
+	// install) and it settles when that ends: no one may answer it again.
+	Started bool
+	// StartedUntil is when Den stops waiting for a Started item's action:
+	// past it, LoseStarted settles it.
+	StartedUntil time.Time
+	Role         string // the agent's role when this happened
+	Task         string // what the agent was working on when this happened
+	Seen         bool   // shown on the Inbox view at least once
+	Unread       bool   // kept unread by the human: counts as new until opened or dismissed
 	// A question Den holds (hooks.answer_questions): all of the call's
 	// questions, the answers so far by question text, and the one asked now.
 	Questions []question.Question
@@ -211,6 +217,9 @@ type Item struct {
 
 // Answerable reports whether y/n/a act on this item.
 func (it *Item) Answerable() bool {
+	if it.Started {
+		return false
+	}
 	if it.DenAsks() {
 		return it.State == Waiting
 	}
@@ -253,7 +262,10 @@ type Store struct {
 	// heldQ is when a host's agent last had a question held for Den: the
 	// host's own "has a question" event for it, which can come late, says
 	// nothing more for a while (heldQuiet).
-	heldQ   map[string]time.Time
+	heldQ map[string]time.Time
+	// now is the store's clock for Start and LoseStarted, time.Now when
+	// nil: a test may freeze it.
+	now     func() time.Time
 	items   []*Item
 	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
@@ -1042,6 +1054,47 @@ func (s *Store) AddCleanup(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Cleanup, Tool: "worktree_cleanup", Title: title, Body: body})
 }
 
+// StartGrace is how long past its action's own timeout Den waits for a
+// Started item to settle.
+const StartGrace = 5 * time.Minute
+
+// Start records that an answer started the item's action, with what it
+// is doing ("closing…") and the action's own timeout: it waits for the
+// action to end, which settles it, and no one may answer it again
+// meanwhile. Den stops waiting StartGrace after the timeout (LoseStarted).
+func (s *Store) Start(it *Item, doing string, timeout time.Duration) {
+	it.Started, it.Resolved = true, sanitize.Line(doing)
+	it.StartedUntil = s.clock().Add(timeout + StartGrace)
+}
+
+// clock is the store's time now.
+func (s *Store) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// LoseStarted settles every Started item whose action never reported by
+// its deadline on the store's clock: Den lost track of it. It never
+// becomes answerable again, and nothing is retried. A send may still have
+// gone out, and its asker is told so. It returns the items it settled.
+func (s *Store) LoseStarted() []*Item {
+	now := s.clock()
+	var lost []*Item
+	for _, it := range s.items {
+		if it.Started && it.State != Resolved && now.After(it.StartedUntil) {
+			why := "Den lost track of this; check the agents"
+			if it.Kind == Message {
+				why = "Den lost track of this send; it may still have been sent, so check before sending again"
+			}
+			s.Settle(it, false, why)
+			lost = append(lost, it)
+		}
+	}
+	return lost
+}
+
 // Settle resolves a Close or Skills item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
@@ -1075,6 +1128,9 @@ func (s *Store) SessionClosedOn(host, sessionID string) {
 
 // Release hands a waiting permission back to the terminal dialog.
 func (s *Store) Release(it *Item, why string) {
+	if it.Started {
+		return // its action runs; only its end settles it
+	}
 	if it.req != nil {
 		it.req.Reply(bridge.Decision{})
 	}
@@ -1101,7 +1157,7 @@ func (s *Store) MarkRead(it *Item) {
 
 // Dismiss removes an item that needs no answer, or a resolved one.
 func (s *Store) Dismiss(it *Item) {
-	if it.Answerable() {
+	if it.Answerable() || it.Started && it.State != Resolved {
 		return
 	}
 	for i, o := range s.items {

@@ -613,7 +613,7 @@ func (m Model) decideClose(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m.say("Kept them.", false)
 	}
-	it.Resolved = "closing…"
+	m.store.Start(it, "closing…", 2*time.Minute)
 	self := m.closeSelf()
 	id := it.ID
 	feed := m.remote.feed
