@@ -955,7 +955,7 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	// back before it reconnects).
 	c.push(Event{Event: EventConsole, Data: ev}, true)
 	for _, card := range waiting {
-		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
+		c.push(Event{Event: EventCard, Data: cardEvent(card, "new", c.cardVersion())}, true)
 	}
 	// Each pushed under the lock its changers take, with the connection
 	// subscribed: a change after it reaches the connection after it, never
