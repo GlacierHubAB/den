@@ -71,6 +71,9 @@ jobs:
     needs: verify
     permissions:
       contents: read
+      # ci.yml's paths job asks for this; a called workflow cannot exceed
+      # its caller's permissions, or the run fails at startup.
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
 
   # The slow suite and the race detector three times on two CPUs: the part of
