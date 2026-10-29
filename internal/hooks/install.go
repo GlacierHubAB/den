@@ -119,6 +119,74 @@ func Installed(denPath string) bool {
 	return false
 }
 
+// Status is what settings.json holds of Den's hooks, for `den doctor`.
+type Status struct {
+	Missing []string // events Den subscribes to that have no Den entry, in specs order
+	Other   bool     // a Den entry runs a den other than the one asked about
+}
+
+// Events are the hook events Den installs, in order.
+func Events() []string {
+	out := make([]string, len(specs))
+	for i, sp := range specs {
+		out[i] = sp.event
+	}
+	return out
+}
+
+// CheckStatus reads SettingsPath and reports Den's hooks in it for denPath.
+// A missing file has every event missing. The error is the read's or the
+// parse's; it carries the path.
+func CheckStatus(denPath string) (Status, error) {
+	raw, err := os.ReadFile(SettingsPath())
+	if os.IsNotExist(err) {
+		return StatusOf(nil, denPath)
+	}
+	if err != nil {
+		return Status{}, err
+	}
+	return StatusOf(raw, denPath)
+}
+
+// StatusOf is CheckStatus on the file's bytes; nil or empty is no file.
+// An event counts as present when it has a Den entry with the matcher Den
+// writes, whichever den it runs; Other says one runs another den than
+// denPath, so a build moved since install-hooks shows.
+func StatusOf(raw []byte, denPath string) (Status, error) {
+	settings := map[string]any{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			return Status{}, err
+		}
+	}
+	hooksAny, _ := settings["hooks"].(map[string]any)
+	want := quote(denPath) + Marker
+	var st Status
+	for _, sp := range specs {
+		found := false
+		for _, e := range asList(hooksAny[sp.event]) {
+			if !isDen(e) {
+				continue
+			}
+			m, _ := e.(map[string]any)
+			if matcher, _ := m["matcher"].(string); matcher != sp.matcher {
+				continue
+			}
+			found = true
+			for _, h := range asList(m["hooks"]) {
+				hm, _ := h.(map[string]any)
+				if c, _ := hm["command"].(string); strings.HasSuffix(c, Marker) && c != want {
+					st.Other = true
+				}
+			}
+		}
+		if !found {
+			st.Missing = append(st.Missing, sp.event)
+		}
+	}
+	return st, nil
+}
+
 func load(path string) (map[string]any, []byte, error) {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
