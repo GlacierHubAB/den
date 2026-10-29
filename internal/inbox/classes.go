@@ -234,7 +234,9 @@ func globInScope(pattern, base, cwd, home string) bool {
 // the time it takes: past either, Den does not know what the pattern
 // reaches. The walk runs once per card (Classify keeps the class), on
 // Den's own loop, so a slow disk (NFS, sshfs) may hold Den's screen for
-// at most about the budget.
+// at most about the budget. Accepted residual: one read of a single huge
+// directory, and the resolving of the walk's root, cannot be cut short,
+// so the budget can be overrun by one directory read.
 const reachLimit = 5000
 
 var reachBudget = 250 * time.Millisecond
@@ -286,6 +288,11 @@ func globReachClear(pattern, base, cwd, home string) bool {
 		if err != nil {
 			return err
 		}
+		// Every entry the walk reads counts against the budget, skipped
+		// or not: a huge directory where nothing matches is still read.
+		if time.Now().After(until) {
+			return errReachTooFar
+		}
 		if path == root {
 			return nil
 		}
@@ -305,7 +312,7 @@ func globReachClear(pattern, base, cwd, home string) bool {
 			}
 			return nil
 		}
-		if seen++; seen > reachLimit || time.Now().After(until) {
+		if seen++; seen > reachLimit {
 			return errReachTooFar
 		}
 		if d.Type()&fs.ModeSymlink != 0 {

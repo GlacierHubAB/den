@@ -201,7 +201,9 @@ type Item struct {
 	fromHost  bool // made by a remote host's event stream: counts towards its caps
 	// A permission's class and step, worked out once by classifyTool: the
 	// call never changes, and the walk of a Glob's reach is not redone on
-	// every projection.
+	// every projection. A link planted after this is the accepted
+	// swap-after-approval residual: one swapped after the answer and
+	// before the tool runs was already accepted.
 	toolClassed bool
 	toolClass   Class
 	toolStep    int

@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -278,6 +279,29 @@ func globCwd(t *testing.T) (cwd string, glob func() *Item) {
 // what the pattern reaches: den_only.
 func TestGlobReachPastItsBudgetIsDenOnly(t *testing.T) {
 	_, glob := globCwd(t)
+	if c, step := Classify(glob(), Facts{}); c != Routine || step != 3 {
+		t.Fatalf("within the budget: %s %d", c, step)
+	}
+	old := reachBudget
+	reachBudget = -time.Second
+	t.Cleanup(func() { reachBudget = old })
+	if c, step := Classify(glob(), Facts{}); c != DenOnly || step != 0 {
+		t.Errorf("past the budget: %s %d", c, step)
+	}
+}
+
+// The budget counts the entries the walk skips too: a directory of files
+// that none match is read in full, so it is den_only past the budget.
+func TestGlobReachOfNothingMatchingStillHasABudget(t *testing.T) {
+	cwd, _ := globCwd(t)
+	for i := range 2000 {
+		if err := os.WriteFile(filepath.Join(cwd, "src", fmt.Sprintf("f%d.txt", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	glob := func() *Item {
+		return permItem(t, cwd, "Glob", map[string]any{"pattern": "*.zz", "path": filepath.Join(cwd, "src")})
+	}
 	if c, step := Classify(glob(), Facts{}); c != Routine || step != 3 {
 		t.Fatalf("within the budget: %s %d", c, step)
 	}
