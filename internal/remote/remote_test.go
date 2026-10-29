@@ -526,14 +526,17 @@ func TestHostileHost(t *testing.T) {
 
 // The cap is lowered for the test: with the real one (MaxRate) the host must
 // get more than 2000 messages a second through the pipe, which a slow
-// machine under -race does not, and the test would wait in vain.
+// machine under -race does not, and the test would wait in vain. The host
+// writes until Den hangs up, not a fixed count: a reader slowed below the
+// cap by load sees the count cross it in some later second instead of
+// never.
 func TestFloodingByRate(t *testing.T) {
 	const rate = 50
 	s := newScratch(t)
 	d := &pipeDialer{serve: func(ctx context.Context, in io.Reader, out io.Writer) error {
 		newLineReader(in, MaxLine).next()
 		writeMsg(out, Hello{Type: TypeHello, Proto: 1, Policy: Observe, RemoteNow: time.Now()})
-		for i := 0; i < 2*rate && ctx.Err() == nil; i++ {
+		for ctx.Err() == nil {
 			if writeMsg(out, Snapshot{Type: TypeSnapshot, RemoteNow: time.Now()}) != nil {
 				break
 			}
