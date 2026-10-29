@@ -33,6 +33,16 @@ must pass without a git identity and without network, as they do there: a test
 that runs `git commit` or `git merge` sets `user.name` and `user.email` in its
 own repository. Please run `make test` before you open a pull request.
 
+Before a maintainer merges a pull request that touches `.github/workflows`,
+they read the workflow change and have it security-reviewed, then dispatch a
+release dry run on its branch (only a branch in this repository), because a
+called workflow cannot ask for more permissions than its caller grants and only
+the release workflow shows that: `gh workflow run release.yml --ref <branch> -f
+version=v0.0.0-dryrun`. It has to get past startup; nothing is published. Never
+dispatch a workflow from a branch whose workflow changes have not been
+reviewed: a dispatch runs that branch's own workflow files with the permissions
+they ask for. You do not need to run it yourself.
+
 To use what is on `dev` as your own `den`, see
 [docs/DEV-CHANNEL.md](docs/DEV-CHANNEL.md).
 
