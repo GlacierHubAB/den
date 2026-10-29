@@ -828,6 +828,7 @@ Each connection proves once, at its start:
 | `conversation.history` | `{limit?}`, at most 200 | `{entries}`, newest first: the conversation entries since it was shown in this console (see Conversation mirror); `forbidden` while it is not |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
+| `grants.get` | `{}` | the permission levels (see Permission levels); this connection then gets `grants` events |
 | `cmd.list` | | `[{name, usage, help, dock}]` |
 | `cmd.complete` | `{prefix}` | the commands that start with it, at most 64 |
 | `cmd.run` | `{text}` | `{ok, note}` |
@@ -994,6 +995,40 @@ same way. A later kind that carries state joins the snapshot.
   orchestrator guidance, installing on a host, a message to an agent on a
   host, an app's grant, skills, an agent's question, and any card of or
   about a remote host.
+
+### Permission levels
+
+What your console may do on its own, per class of act, as levels 0 to 5:
+Den sets them, and a later version lets a console lower them, never raise
+them. **Nothing is enforced yet:** while `enforced` is false (or absent),
+the levels are shown, not applied, and Den answers your cards as before.
+
+- `grants.get {}` needs a proved console and changes nothing. It answers
+  `{seq, enforced, powers, locked, god, start_confirmed, classes, kept,
+  den_only}`, and from then on this connection gets a `grants` event with
+  the same object on each change. `console.events` does not carry it.
+- `seq` rises on each change; it is per Den process. On one connection, keep
+  the object with the highest `seq` (the reply's included) and drop an event
+  whose `seq` is not higher. After a redial, forget it and call `grants.get`
+  again. The rows of `internal/api/convcases/grants.go` (`GrantsCases`,
+  `GrantsSeqCases`) pin the object and this rule.
+- `powers`: your console has its powers. Without them, or while `locked`
+  (the human's `/api lock`), every class's `level` is 0. Read a missing
+  `powers` or `enforced` as false.
+- `start_confirmed`: the human confirmed in Den's window since Den started.
+  For now it is the same as `powers` (the powers card is that confirm).
+- `god`: God mode is on; `desktop` and `outward` show `level` 0 meanwhile.
+- `classes`, in this order: `routine` (Everyday answers), `destructive` (Stop
+  and close), `code` (Run commands), `desktop` (Desktop control), `outward`
+  (Send out). Each is `{class, label, about, den_level, session, level,
+  default, steps, set_in_den}`: `level` is the effective level now; `steps`
+  has five entries, levels 1 to 5, each `{level, name, label, available}`
+  (a level the class has no step for is `available: false`, label "No
+  further step"); level 0, the empty bar, is "Only in Den". `session` and
+  `set_in_den` are null for now.
+- `kept` is empty for now. `den_only` lists what only the human does, in
+  Den's window, as `{id, label}`.
+- Every string is Den's own fixed words.
 
 ### Commands
 
