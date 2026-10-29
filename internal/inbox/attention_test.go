@@ -6,7 +6,27 @@ import (
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/events"
 )
+
+// Every error type the inbox titles by name is one den feedback counts by
+// name too (events.FailureTypes), so the two never drift apart.
+func TestFailureTitlesAreKnownTypes(t *testing.T) {
+	known := map[string]bool{}
+	for _, k := range events.FailureTypes {
+		known[k] = true
+	}
+	generic := FailureTitle("no_such_type_x")
+	for _, k := range []string{"rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed",
+		"cloud_credential_error", "billing_error", "account_on_hold", "max_output_tokens", "unknown"} {
+		if !known[k] {
+			t.Errorf("%q has a title but is not in events.FailureTypes", k)
+		}
+		if FailureTitle(k) == generic {
+			t.Errorf("%q has no title of its own", k)
+		}
+	}
+}
 
 func hook(session, event string, in map[string]any) *bridge.Request {
 	in["session_id"] = session

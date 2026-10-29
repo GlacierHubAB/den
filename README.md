@@ -669,6 +669,7 @@ den ask "who is blocked on what?"       one orchestrator turn from a script
 den events -json        follow the event stream, one JSON object per line
 den events              headless: print hook events as they arrive
 den doctor [--json]     read-only checks of the setup, one fix per problem; safe to paste into an issue
+den feedback            a report for an issue: versions, checks, counts; read it before you paste it
 den install-hooks       wire Den into Claude Code's hooks
 den uninstall-hooks     undo
 den skills              the skills Den installed, for which project or agent, from where
@@ -2376,6 +2377,18 @@ so it is safe to paste into an issue
 (`den doctor --json` for scripts). Its `config` check names the keys in
 `config.toml` that Den ignores or cannot use, which it otherwise drops without
 a word.
+
+Opening an issue? Paste `den feedback`, and read it first. It prints, as a
+block ready to paste, the doctor's checks plus versions (Den, Go, the kernel,
+the distro), Den's own switches, and counts from Den's state files over the
+last 7 days (`--days N`, up to 30): turns, waits, hook runs that found no Den,
+failed `[on]` commands, failed turns by error type and failed tool calls. It
+prints numbers, fixed phrases and names from fixed lists only (Den's own files
+appear as `~/…`, and a `claude-…` model id as written): none of your paths,
+prompts, agent names, session ids, hosts, `[on]` commands or error text, and
+times only as "3 h ago". A line that still holds your user, host,
+home or an agent's name is withheld, and the report says how many were.
+Nothing is written, copied or sent.
 
 - **No agents listed** (checks `claude`, `sessions`). Den needs Claude Code
   2.1.289+; older versions do not write `~/.claude/sessions`. Press `/rescan`,

@@ -146,7 +146,7 @@ func TestChecks(t *testing.T) {
 		{"hooks.log missed", "hooks.log", setFile(home+"/.local/state/den/hooks.log",
 			"2026-10-28 18:30:00 Stop               0123abcd delivered\n"+
 				"2026-10-28 18:39:00 Stop               0123abcd no den listening\n"+
-				"2026-10-28 18:40:00 SessionStart       0123abcd no den listening\n"), Warn, "2 of the last 3 hook runs found no Den listening (last 2026-10-28 18:40)"},
+				"2026-10-28 18:40:00 SessionStart       0123abcd no den listening\n"), Warn, "2 of the last 3 hook runs found no Den listening (last 20 min ago)"},
 		{"hooks.log fine", "hooks.log", nil, OK, "the last hook run reached Den"},
 		{"hooks.log only the last 50", "hooks.log", setFile(home+"/.local/state/den/hooks.log",
 			strings.Repeat("2026-10-28 18:00:00 Stop               0123abcd no den listening\n", 10)+

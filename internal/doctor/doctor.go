@@ -22,6 +22,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/stats"
 )
 
 // Statuses.
@@ -78,6 +79,15 @@ type Env struct {
 	Config   config.Config                       // config.Load()
 	Issues   func() ([]config.Issue, error)      // config.Check()
 	Now      time.Time
+
+	// For den feedback only.
+	DenVersion string                                // den's version as the Makefile set it from git describe
+	GoVersion  string                                // runtime.Version()
+	Platform   string                                // GOOS/GOARCH
+	Kernel     func() (string, error)                // the kernel's release string
+	OSRelease  func() ([]byte, error)                // os-release, bounded
+	Stats      func(from, to time.Time) stats.Report // den stats over [from, to)
+	Names      func() []string                       // the machine's identifying values, for the backstop only; never printed
 
 	// For the setup card's plan only; den doctor does not use them.
 	Lstat        func(string) (fs.FileInfo, error) // os.Lstat
@@ -361,10 +371,35 @@ func hookLog(e Env) Result {
 	}
 	when := ""
 	if !last.IsZero() {
-		when = " (last " + last.Format("2006-01-02 15:04") + ")"
+		when = " (last " + ago(e.Now, last) + ")"
 	}
 	return result("hooks.log", Warn, fmt.Sprintf("%d of the last %d hook runs found no Den listening%s", missed, runs, when),
 		"Start den; sessions started before den install-hooks need a restart")
+}
+
+// ago is t as printed: relative to now, never a clock time or a zone, which
+// hint where someone lives (den-sec-review, on den feedback).
+func ago(now, t time.Time) string {
+	d := now.Sub(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return plural(int(d/time.Minute), "min") + " ago"
+	case d < 48*time.Hour:
+		return plural(int(d/time.Hour), "h") + " ago"
+	}
+	return plural(int(d/(24*time.Hour)), "day") + " ago"
+}
+
+// plural is n and its unit: "1 day", "2 days"; "min" and "h" stay as they
+// are.
+func plural(n int, unit string) string {
+	s := strconv.Itoa(n) + " " + unit
+	if n != 1 && unit != "min" && unit != "h" {
+		s += "s"
+	}
+	return s
 }
 
 func focus(e Env) Result {
