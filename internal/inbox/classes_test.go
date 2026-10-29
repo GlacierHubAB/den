@@ -146,6 +146,24 @@ func TestClassifyPermissionByTool(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(cwd, "src", "pkg"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// src/lib/alias.go links to a file beside it; src/out/x.go to one
+	// outside the cwd.
+	for _, d := range []string{filepath.Join(cwd, "src", "lib"), filepath.Join(cwd, "src", "out")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{filepath.Join(cwd, "src", "lib", "real.go"), filepath.Join(home, "elsewhere", "a")} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(cwd, "src", "lib", "real.go"), filepath.Join(cwd, "src", "lib", "alias.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "a"), filepath.Join(cwd, "src", "out", "x.go")); err != nil {
+		t.Fatal(err)
+	}
 	type cs struct {
 		c    Class
 		step int
@@ -186,7 +204,15 @@ func TestClassifyPermissionByTool(t *testing.T) {
 		{"a relative grep glob through a symlink to keys", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": "skeys/**"}, den},
 		{"a relative glob under a real dir", "Glob", map[string]any{"pattern": "pkg/*.go", "path": filepath.Join(cwd, "src")}, routine3},
 		{"a grep glob with no path", "Grep", map[string]any{"pattern": "x", "glob": "*.go"}, den},
-		{"a glob under a path inside", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a ** glob that can reach a symlink to keys", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src")}, den},
+		{"a ** glob with no symlink in reach", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src", "pkg")}, routine3},
+		{"a glob whose wildcard matches a symlink to keys", "Glob", map[string]any{"pattern": "sk?ys/*", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob whose wildcard matches a link to a file outside", "Glob", map[string]any{"pattern": "out/*.go", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob whose wildcard matches a link to a file inside", "Glob", map[string]any{"pattern": "lib/*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a glob that cannot match the symlink beside it", "Glob", map[string]any{"pattern": "*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a glob with an escaped name", "Glob", map[string]any{"pattern": `sk\eys/*`, "path": filepath.Join(cwd, "src")}, den},
+		{"a grep glob escaping a hidden dir", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": `\.git/**`}, den},
+		{"a glob escaping Claude's dir", "Glob", map[string]any{"pattern": `\.claude/*`, "path": filepath.Join(cwd, "src")}, den},
 		{"an absolute glob inside", "Glob", map[string]any{"pattern": filepath.Join(cwd, "src") + "/*.go"}, routine3},
 		{"an absolute glob outside", "Glob", map[string]any{"pattern": "/etc/*"}, den},
 		{"a ~ glob", "Glob", map[string]any{"pattern": "~/**/*.pem"}, den},
@@ -271,6 +297,20 @@ func TestClassifyReadsResolveIntoDenOrDreyState(t *testing.T) {
 			t.Errorf("%s: %s %d, want den_only 0", tc.name, c, step)
 		}
 	}
+	// Den's config dir, not made yet, under a config home XDG names through
+	// a symlink: a read where it will be is den_only all the same.
+	cfg := filepath.Join(cwd, "cfg")
+	if err := os.MkdirAll(cfg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(cfg, filepath.Join(home, "cfglink")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfglink"))
+	if c, _ := Classify(permItem(t, cwd, "Read", map[string]any{"file_path": filepath.Join(cfg, "den", "config.toml")}), Facts{}); c != DenOnly {
+		t.Errorf("Den's config dir not made yet, through a symlinked config home: %s, want den_only", c)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
 	// An ordinary file next to them stays routine.
 	t.Setenv("XDG_DATA_HOME", data)
 	it := permItem(t, cwd, "Read", map[string]any{"file_path": filepath.Join(cwd, "src", "main.go")})
