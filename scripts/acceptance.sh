@@ -31,7 +31,7 @@ rel=$work/release
 mkdir -p "$rel"
 gh release download "$tag" --repo "$repo" --dir "$rel" --pattern den_linux_amd64 --pattern SHA256SUMS
 (cd "$rel" && sha256sum -c --ignore-missing SHA256SUMS | tee /dev/stderr | grep -q 'den_linux_amd64: OK') || fail "SHA256SUMS does not match den_linux_amd64"
-gh attestation verify "$rel/den_linux_amd64" --repo "$repo" || fail "the build attestation of $tag does not verify"
+gh attestation verify "$rel/den_linux_amd64" --repo "$repo" --signer-workflow "$repo/.github/workflows/release.yml" || fail "the build attestation of $tag does not verify"
 
 step "a clean HOME with a fake Claude Code"
 h=$work/home
