@@ -11,6 +11,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/badge"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/doctor"
 	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/hypr"
@@ -235,20 +236,20 @@ func logHook(in bridge.HookInput, delivered bool) {
 }
 
 func installHooks() {
-	exe, err := os.Executable()
+	exe, err := hooks.Executable()
 	if err != nil {
 		fail("den: %v", err)
 	}
-	if real, err := os.Readlink(exe); err == nil && real != "" {
-		exe = real
-	}
-	if isTempBuild(exe) {
+	if hooks.TempBuild(exe) {
 		fail("den: this binary lives in a temporary build directory (%s).\nBuild it somewhere stable first, e.g.\n  go build -o ~/.local/bin/den ./cmd/den && ~/.local/bin/den install-hooks", exe)
 	}
 	backup, err := hooks.Install(exe)
 	if err != nil {
 		fail("den: %v", err)
 	}
+	// Den's setup card, hidden by its ^N, asks again from the next start
+	// if the hooks go missing later.
+	os.Remove(doctor.Dismissed(doctor.System()))
 	fmt.Printf("Installed den hooks into %s\n", hooks.SettingsPath())
 	if backup != "" {
 		fmt.Printf("Backup: %s\n", backup)
@@ -266,15 +267,6 @@ func uninstallHooks() {
 		return
 	}
 	fmt.Printf("Removed den hooks from %s (backup: %s)\n", hooks.SettingsPath(), backup)
-}
-
-func isTempBuild(p string) bool {
-	for _, d := range []string{os.TempDir(), "/tmp", os.Getenv("GOCACHE"), os.Getenv("GOTMPDIR")} {
-		if d != "" && len(p) > len(d) && p[:len(d)] == d {
-			return true
-		}
-	}
-	return false
 }
 
 // runEvents is `den events`: a headless Den that prints every hook event it

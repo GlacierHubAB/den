@@ -226,6 +226,8 @@ type Model struct {
 	api apiState     // den-api.sock (api.go); zero while the API is off
 	ctl controlState // a paired app's control (control.go)
 	con consoleUI    // the console (console.go)
+
+	setup setupState // the setup card (setup.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -279,6 +281,11 @@ func New(cfg config.Config) Model {
 	}
 	if keys := config.GodKeys(); len(keys) > 0 {
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config: " + strings.Join(keys, ", ") + " ignored: God mode has no setting; it is turned on only in Den's own window, with /god on and its phrase, and is off at every start.", at: time.Now()}))
+	}
+	if m.srv != nil {
+		// Only the Den that holds den.sock asks: a second one would raise
+		// the same card twice.
+		m.startSetup()
 	}
 	return m
 }
@@ -1664,6 +1671,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.PowersSet {
 		return m.decidePowersSet(it, verb)
+	}
+	if it.Kind == inbox.Setup {
+		return m.decideSetup(it, verb)
 	}
 	if it.Kind == inbox.ModeSet {
 		return m.decideModeSet(it, verb)

@@ -46,6 +46,7 @@ type Mod struct {
 	Bundled   string // its version in this den
 	Installed string // the version in ~/.claude/skills/<name>, "" when none
 	Loaded    bool   // Claude Code loads a copy through CLAUDE_CODE_PLUGIN_DIRS
+	Target    string // where den install-mods puts it: ~/.claude/skills/<name>, real path
 }
 
 // Remote is what Den saved about one host of remotes.toml, in file order.
@@ -77,6 +78,11 @@ type Env struct {
 	Config   config.Config                       // config.Load()
 	Issues   func() ([]config.Issue, error)      // config.Check()
 	Now      time.Time
+
+	// For the setup card's plan only; den doctor does not use them.
+	Lstat        func(string) (fs.FileInfo, error) // os.Lstat
+	EvalSymlinks func(string) (string, error)      // filepath.EvalSymlinks
+	UID          int                               // os.Getuid()
 }
 
 // Versions Den is checked against.
@@ -278,7 +284,7 @@ func sessions(e Env) Result {
 func hooksCheck(e Env) Result {
 	dir, shown := claudeDir(e)
 	file := shown + "/settings.json"
-	const fix = "den install-hooks"
+	const fix = "den install-hooks, or ^Y on Den's setup card"
 	raw, err := e.ReadFile(filepath.Join(dir, "settings.json"))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return result("hooks", Fail, file+" "+phrase(err), "Make "+file+" readable by you, then: "+fix)
@@ -419,7 +425,7 @@ func git(e Env) Result {
 }
 
 func modsCheck(e Env) Result {
-	const fix = "den install-mods"
+	const fix = "den install-mods, or ^Y on Den's setup card"
 	ms, err := e.Mods()
 	if err != nil {
 		return result("mods", Warn, "the list of mods built into this den "+phrase(err), "Rebuild den with its submodule (see README, Install)")

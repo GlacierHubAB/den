@@ -7,11 +7,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
 	"github.com/GlacierHubAB/den/internal/discover"
+	"github.com/GlacierHubAB/den/internal/hooks"
 	"github.com/GlacierHubAB/den/internal/mods"
 	"github.com/GlacierHubAB/den/internal/remote"
 )
@@ -25,26 +27,26 @@ const (
 // System is the Env of this machine. Nothing in it writes.
 func System() Env {
 	home, _ := os.UserHomeDir()
-	exe, _ := os.Executable()
 	// As install-hooks resolves it, so the hooks check compares like with like.
-	if real, err := os.Readlink(exe); err == nil && real != "" {
-		exe = real
-	}
+	exe, _ := hooks.Executable()
 	return Env{
-		Home:     home,
-		Getenv:   os.Getenv,
-		LookPath: exec.LookPath,
-		Version:  runVersion,
-		ReadFile: os.ReadFile,
-		Tail:     tail,
-		Exe:      exe,
-		Running:  func() bool { _, ok := bridge.Running(bridge.SocketPath()); return ok },
-		Sessions: liveSessions,
-		Mods:     bundledMods,
-		Remotes:  savedRemotes,
-		Config:   config.Load(),
-		Issues:   config.Check,
-		Now:      time.Now(),
+		Lstat:        os.Lstat,
+		EvalSymlinks: filepath.EvalSymlinks,
+		UID:          os.Getuid(),
+		Home:         home,
+		Getenv:       os.Getenv,
+		LookPath:     exec.LookPath,
+		Version:      runVersion,
+		ReadFile:     os.ReadFile,
+		Tail:         tail,
+		Exe:          exe,
+		Running:      func() bool { _, ok := bridge.Running(bridge.SocketPath()); return ok },
+		Sessions:     liveSessions,
+		Mods:         bundledMods,
+		Remotes:      savedRemotes,
+		Config:       config.Load(),
+		Issues:       config.Check,
+		Now:          time.Now(),
 	}
 }
 
@@ -124,7 +126,7 @@ func bundledMods() ([]Mod, error) {
 	}
 	out := make([]Mod, 0, len(list))
 	for _, m := range list {
-		out = append(out, Mod{Name: m.Name, Bundled: m.Version, Installed: mods.InstalledVersion(m), Loaded: m.Loaded != ""})
+		out = append(out, Mod{Name: m.Name, Bundled: m.Version, Installed: mods.InstalledVersion(m), Loaded: m.Loaded != "", Target: m.Installs})
 	}
 	return out, nil
 }

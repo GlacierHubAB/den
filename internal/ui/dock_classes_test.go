@@ -9,7 +9,7 @@ import (
 )
 
 // everyKind is every inbox Kind: from Permission up to the first one
-// String does not name. It must reach RenamePick, the last kind: a kind
+// String does not name. It must reach Setup, the last kind: a kind
 // added without a String case would end the walk early and hide the kinds
 // after it.
 func everyKind(t *testing.T) []inbox.Kind {
@@ -18,8 +18,8 @@ func everyKind(t *testing.T) []inbox.Kind {
 	for k := inbox.Permission; k.String() != "?"; k++ {
 		out = append(out, k)
 	}
-	if len(out) == 0 || out[len(out)-1] < inbox.RenamePick {
-		t.Fatalf("the kinds stop after %d, before RenamePick: give every kind its String", len(out))
+	if len(out) == 0 || out[len(out)-1] < inbox.Setup {
+		t.Fatalf("the kinds stop after %d, before Setup: give every kind its String", len(out))
 	}
 	return out
 }
@@ -33,6 +33,9 @@ var neverBefore = map[inbox.Kind]bool{
 	inbox.MissionCriteria: true, inbox.MissionDone: true, inbox.MirrorAsk: true, inbox.ProcessTuned: true,
 	inbox.PromptProposal: true, inbox.RulesPick: true, inbox.RulesEdited: true, inbox.PowersSet: true,
 	inbox.RenamePick: true,
+	// Not in the never-case before the permission manager, since it came
+	// after: a console never answers it either (den-sec-review, P10).
+	inbox.Setup: true,
 }
 
 // reachesAConsole reports whether a waiting card of kind k can be one a
