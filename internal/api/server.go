@@ -79,6 +79,8 @@ type Server struct {
 	cardAnswers answers
 	// god is God mode's state as Den last set it (god.go).
 	god godState
+	// perms is the permission manager's last read and its seq (grants.go).
+	perms permsState
 	// desk is the running desktop mission as Den last set it (desktop.go).
 	desk desktopState
 	// overlay is the console's overlay link (overlay.go).
@@ -517,6 +519,7 @@ func (s *Server) Publish(v *View) {
 		oldCards = old.Cards
 	}
 	s.pushCards(oldCards, v.Cards, v.Settled)
+	s.grantsChanged()
 	// Whether the fleet changed, as the console sees it and as any other
 	// app does (no doing): a change in doing alone tells an app nothing,
 	// not even by when its fleet event comes.
@@ -1137,6 +1140,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.overlayVerb(c, req, false)
 	case "card.get":
 		s.cardGet(c, req)
+	case "grants.get":
+		s.grantsGet(c, req)
 	case "card.answer":
 		s.cardAnswer(c, req)
 	case "cmd.list":
