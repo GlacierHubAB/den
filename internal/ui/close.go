@@ -665,9 +665,22 @@ func runClose(ctx context.Context, plan closer.Plan, self closer.Self, feed remo
 // roster on the next scan.
 func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 	summary := closer.Summary(msg.results)
+	var closed, left []string
+	for _, r := range msg.results {
+		if r.Ended {
+			closed = append(closed, r.Target.Name)
+		} else {
+			left = append(left, r.Target.Name)
+		}
+	}
+	failed := len(left) > 0
 	for _, it := range m.store.Items() {
-		if it.ID == msg.itemID {
+		if it.ID == msg.itemID && it.State != inbox.Resolved {
 			m.store.Settle(it, true, summary)
+			if failed && it.Outcome == inbox.OutcomeDone {
+				it.Outcome = inbox.OutcomeFailed // an agent it was to close is still there
+			}
+			m.cardEnd(it, "close", closed, left, false, summary)
 		}
 	}
 	delete(m.closing, msg.itemID)
@@ -702,7 +715,7 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 			}
 		}
 	}
-	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], false
+	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], failed
 	m.refresh()
 	return tea.Batch(snapshot, flashTick(4*time.Second, m.flash))
 }

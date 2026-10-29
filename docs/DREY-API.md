@@ -894,7 +894,7 @@ same way. A later kind that carries state joins the snapshot.
 - `view {view, shown, total}`: how a `view.show` or `view.hide` ended, as in
   "Switching views". In the snapshot it is the view now, with the last
   switch's `shown` and `total` while that switch made it, else 0.
-- `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
+- `card {id, kind, agent, change, text_sha256?, needs_den_screen?, started?, result?, by?, outcome?}`: `change` is
   `new`, `changed` or `settled`. A new or changed card the console may
   not answer (`dock_answers` false) carries `needs_den_screen: true`: only
   your answer on Den's own screen settles it. A settled card has no
@@ -903,6 +903,18 @@ same way. A later kind that carries state joins the snapshot.
   an answer), and `by` is `den`, `console` or `rule` (God mode answered
   it), absent for `gone`. Take any `by` you do not know as Den's own
   answer, never the console's or yours, and never drop the event for it.
+- A card whose answer started an action that runs for a while (a close, a
+  reopen) is not settled by the answer. It comes once more as `changed`
+  with `started: true` and `by` (who answered), its `text_sha256` the
+  same, and no `needs_den_screen`: it runs, and no one answers it. It is
+  settled once, when the action ends, with `result`, `by` and `outcome`:
+  `done`, `failed` (it did not all go: an agent was not closed or not
+  reopened) or `lost` (Den lost track of it: check the agents). `outcome`
+  is only ever on the settled event of a card that was started; read an
+  unknown value as `lost`. `started` never goes back, and settled is
+  final: there is one settled event per card. A card a console may not
+  answer, or one from a host, never comes as started: it settles when its
+  answer starts the action, with `result` and `by` and no `outcome`.
 - `god {on, since?}`: God mode went on or off (see God mode), on the
   console's `console.events` connections; in the snapshot, where it is.
 - `mode {global, mixed}`: the permission mode changed (see Permission
@@ -929,10 +941,14 @@ same way. A later kind that carries state joins the snapshot.
 ### Cards
 
 - `card.get {id}` answers `{id, kind, agent, agent_id?, tool, title, note, class,
-  step, body, text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`
-  (`agent_id` is not in the hash): the card
+  step, body, text_sha256, truncated, cut_at?, verbs, dock_answers, started?, by?, nonce}`
+  (`agent_id`, `started` and `by` are not in the hash): the card
   as Den shows it, and a nonce for one answer, on this connection, for ten
-  minutes. Show all of it, `note` (a warning Den shows) too.
+  minutes. Show all of it, `note` (a warning Den shows) too. A started
+  card (`started: true`, `by` who answered) is listed until its action
+  ends, with `verbs` empty and `dock_answers` false, its text as it was
+  when it started; show it as running. The snapshot's cards carry the
+  same.
 - `class` and `step` are what your `allow` on the card does, as Den classed
   it from its own record: `class` is `routine`, `destructive`, `code`,
   `desktop`, `outward` or `den_only`; `step` is the class's step, routine
@@ -958,7 +974,9 @@ same way. A later kind that carries state joins the snapshot.
 - `card.answer` takes `verb` `allow`, `deny` or `always`, one of the card's
   `verbs`, with the hash and nonce of a `card.get`. Den answers it as your
   `Ctrl+Y` would, and replies once it is settled. Refusals:
-  - `not_found`: no such card, or it was answered;
+  - `not_found`: no such card, or it was answered (a started card is
+    refused so before any check of hash or nonce, and the nonce is spent);
+    final, never retry;
   - `nonce_expired`: spent, too old, or from another connection;
   - `card_changed`: the card is not what you read: get it again;
   - `hash_version`: the `text_sha256` is the card's hash in the other
@@ -1143,12 +1161,22 @@ powers receives it, and every console is on this machine: den-api.sock is a
 local socket open to this user only.
 
 - Each `conversation` entry is `{id, at, turn?, origin, speaker, agent?,
-  agent_id?, ending?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
+  agent_id?, ending?, card?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
   `conversation.history`, so merge the backfill and the live entries by it.
   `at` is RFC3339 UTC, Den's clock.
 - `origin` (a closed set): `you` (the human typed it in Den), `console` (a
   console or app sent the turn), `report` (an agent reported), `mission` (Den
-  drives a mission run), `desktop` (a desktop mission's agent reported).
+  drives a mission run), `desktop` (a desktop mission's agent reported),
+  `card` (a close or reopen a console answered ended).
+- Origin `card` has speaker `den`, `card` (the card's id: its settled event
+  carries the same end, so show it once) and Den's fixed line, built from
+  the agents' names only, never from the action's errors: "Closed Mossy
+  Lemur.", "Close ended: closed Mossy Lemur; could not close Quiet Panda.",
+  "Reopen ended: could not reopen Comet Newt.", "Den lost track of the
+  close of Mossy Lemur; check the agents.". Its `ending` (a closed set on
+  origin `card` only) is `failed` (not all of it went) or `lost`, absent
+  when it all went. It has no `agent`, `agent_id` or `turn`. The rows of
+  `internal/api/convcases/settled.go` (`CardEndCases`) pin it.
 - `speaker` (a closed set): `you`, `den` (Den's own fixed lines only: "Report
   from Mossy Lemur.", "No report from Mossy Lemur: it finished without one.", a
   mission run's line, "More reports from … are in Den."),
@@ -1185,7 +1213,7 @@ local socket open to this user only.
   turn: thread it under your own request only when the turn is one of
   yours.
 - `ending` (a closed set, on origin `report` and `desktop` with speaker `den`
-  only): `no_report` is Den's line "No report from Mossy Lemur: it finished
+  only, and `failed` or `lost` on origin `card`): `no_report` is Den's line "No report from Mossy Lemur: it finished
   without one.", for work from a console turn whose agent finished without
   reporting. Den waits 30 seconds after the agent's card ended done, and any
   report from that agent in the meantime cancels it; it comes once per card,

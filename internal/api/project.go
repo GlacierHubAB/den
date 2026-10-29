@@ -262,7 +262,10 @@ func Project(s Snapshot) *View {
 		v.Cards[c.ID] = c
 	}
 	for _, st := range s.Settled {
-		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console" || st.By == "rule") {
+		if settledResult[st.Verb] != "" && settledBy[st.By] {
+			if !outcomes[st.Outcome] {
+				st.Outcome = ""
+			}
 			v.Settled[st.ID] = st
 		}
 	}
@@ -313,6 +316,13 @@ func projectCard(c Card) Card {
 			out.Verbs = append(out.Verbs, v)
 		}
 	}
+	if c.Started {
+		// Its action runs: no one answers it.
+		out.Started, out.DockAnswers, out.Verbs = true, false, []string{}
+		if settledBy[c.StartedBy] {
+			out.StartedBy = c.StartedBy
+		}
+	}
 	out.Class, out.Step = c.Class, c.Step
 	if !inbox.StepFits(inbox.Class(out.Class), out.Step) {
 		out.Class, out.Step = string(inbox.DenOnly), 0
@@ -324,6 +334,13 @@ func projectCard(c Card) Card {
 	out.HashV2, _ = CardHashV2(out.Kind, out.Agent, out.Tool, out.Title, out.Note, out.Class, out.Step, "", nil, out.Body)
 	return out
 }
+
+// settledBy and outcomes are the closed sets a card's by and outcome
+// take: nothing a console or an action wrote reaches the wire.
+var (
+	settledBy = map[string]bool{"den": true, "console": true, "rule": true}
+	outcomes  = map[string]bool{"": true, inbox.OutcomeDone: true, inbox.OutcomeFailed: true, inbox.OutcomeLost: true}
+)
 
 func kindName(k inbox.Kind) string {
 	switch k {
