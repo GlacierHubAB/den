@@ -277,6 +277,47 @@ func TestGrantsGoOnlyToTheConsolePairedNow(t *testing.T) {
 			t.Errorf("the old console heard: %s", l.Data)
 		}
 	}
+	// Nor does it read the new console's levels, if its connection is still
+	// open: refused, or closed.
+	old.nc.SetWriteDeadline(time.Now().Add(time.Second))
+	raw, _ := json.Marshal(map[string]any{"v": 1, "id": 99, "op": "grants.get"})
+	if _, err := old.nc.Write(append(raw, '\n')); err == nil {
+		old.nc.SetReadDeadline(time.Now().Add(time.Second))
+		for {
+			raw, err := old.r.ReadBytes('\n')
+			if err != nil {
+				break // closed: nothing read
+			}
+			var l line
+			if json.Unmarshal(raw, &l) != nil || l.ID == nil || *l.ID != 99 {
+				continue
+			}
+			if code(l) != CodeForbidden {
+				t.Errorf("the old console read the grants: %+v %s", l.Error, l.Result)
+			}
+			break
+		}
+	}
+}
+
+// A proved connection of a console that is no longer the one paired is
+// refused the read, whatever happened to its connection.
+func TestGrantsGetRefusesAConsoleNotPairedNow(t *testing.T) {
+	h, c := provedConsole(t)
+	getGrants(t, c)
+	cur, _ := h.s.CurrentConsole()
+	h.s.mu.Lock()
+	for sc := range h.s.conns {
+		sc.mu.Lock()
+		if sc.console == cur.ID {
+			sc.console = "another-console"
+		}
+		sc.mu.Unlock()
+	}
+	h.s.mu.Unlock()
+	if l := c.call("grants.get", nil); code(l) != CodeForbidden {
+		t.Errorf("a console not paired now: %+v %s", l.Error, l.Result)
+	}
 }
 
 // Lock, God mode, publishes and reads at once: no deadlock, and seq only

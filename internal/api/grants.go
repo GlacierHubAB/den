@@ -74,8 +74,15 @@ func (s *Server) grantsChanged() {
 // lock the pushes take, so a change after the reply reaches the connection
 // after it, and none before it.
 func (s *Server) grantsGet(c *conn, req Request) {
-	if s.consoleOf(c) == "" {
+	id := s.consoleOf(c)
+	if id == "" {
 		c.fail(req.ID, CodeForbidden, "prove first")
+		return
+	}
+	// The read is the console paired now's: another console's connection,
+	// still open after a re-pair, does not read levels that are not its own.
+	if cur, ok := s.CurrentConsole(); !ok || cur.ID != id {
+		c.fail(req.ID, CodeForbidden, "not the console paired now")
 		return
 	}
 	s.perms.mu.Lock()

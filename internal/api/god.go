@@ -56,6 +56,9 @@ func (s *Server) SetGod(on bool, since time.Time) {
 	}
 	cur, ok := s.CurrentConsole()
 	if !ok {
+		// No console to tell, so no grants push either; the next
+		// grants.get, and every publish, works the read out afresh, so
+		// nothing may lean on the cached read being current here.
 		return
 	}
 	g := s.god.get()
