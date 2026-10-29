@@ -12,7 +12,7 @@ import (
 )
 
 // allKinds is every Kind there is: from Permission up to the first one
-// String does not name. It must reach RenamePick, the last kind: a kind
+// String does not name. It must reach Setup, the last kind: a kind
 // added without a String case would end the walk early and hide the
 // kinds after it.
 func allKinds(t *testing.T) []Kind {
@@ -21,8 +21,8 @@ func allKinds(t *testing.T) []Kind {
 	for k := Permission; k.String() != "?"; k++ {
 		out = append(out, k)
 	}
-	if len(out) == 0 || out[len(out)-1] < RenamePick {
-		t.Fatalf("the kinds stop after %d, before RenamePick: give every kind its String", len(out))
+	if len(out) == 0 || out[len(out)-1] < Setup {
+		t.Fatalf("the kinds stop after %d, before Setup: give every kind its String", len(out))
 	}
 	return out
 }
@@ -69,6 +69,7 @@ func TestClassifyEveryKind(t *testing.T) {
 		GuardNote: {DenOnly, 0}, MissionCriteria: {DenOnly, 0}, MissionDone: {DenOnly, 0},
 		MirrorAsk: {DenOnly, 0}, ProcessTuned: {DenOnly, 0}, PromptProposal: {DenOnly, 0},
 		RulesPick: {DenOnly, 0}, RulesEdited: {DenOnly, 0}, PowersSet: {DenOnly, 0}, RenamePick: {DenOnly, 0},
+		Setup: {DenOnly, 0}, // writes Claude Code's settings: the human's, in Den only
 	}
 	kinds := allKinds(t)
 	if len(kinds) != len(want) {

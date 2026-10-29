@@ -226,6 +226,8 @@ type Model struct {
 	api apiState     // den-api.sock (api.go); zero while the API is off
 	ctl controlState // a paired app's control (control.go)
 	con consoleUI    // the console (console.go)
+
+	setup setupState // the setup card (setup.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -279,6 +281,11 @@ func New(cfg config.Config) Model {
 	}
 	if keys := config.GodKeys(); len(keys) > 0 {
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config: " + strings.Join(keys, ", ") + " ignored: God mode has no setting; it is turned on only in Den's own window, with /god on and its phrase, and is off at every start.", at: time.Now()}))
+	}
+	if m.srv != nil {
+		// Only the Den that holds den.sock asks: a second one would raise
+		// the same card twice.
+		m.startSetup()
 	}
 	return m
 }
@@ -946,10 +953,12 @@ func (m Model) permissionWait() time.Duration {
 	return time.Duration(m.cfg.Hooks.PermissionWait) * time.Second
 }
 
-// topAnswerable is the item y/n/a act on from the agents pane.
+// topAnswerable is the item y/n/a act on from the agents pane. Never Den's
+// setup card: that is answered only selected in the Inbox, so a key meant
+// for an agent's request never lands on it.
 func (m Model) topAnswerable() *inbox.Item {
 	for _, it := range m.store.Items() {
-		if it.Answerable() {
+		if it.Answerable() && it.Kind != inbox.Setup {
 			return it
 		}
 	}
@@ -1052,7 +1061,10 @@ func (m *Model) followSelection() {
 	if m.inboxCur >= len(items) {
 		m.inboxCur = max(0, len(items)-1)
 	}
-	if m.inboxCur >= 0 && m.inboxCur < len(items) {
+	// Never Den's setup card: highlighted with nothing chosen it stays
+	// unselected, so a request that comes after takes the row as it would
+	// with no card. Picked by hand (↑ ↓), it is selected like any item.
+	if m.inboxCur >= 0 && m.inboxCur < len(items) && items[m.inboxCur].Kind != inbox.Setup {
 		m.inboxSel = items[m.inboxCur].ID
 	}
 }
@@ -1664,6 +1676,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.PowersSet {
 		return m.decidePowersSet(it, verb)
+	}
+	if it.Kind == inbox.Setup {
+		return m.decideSetup(it, verb)
 	}
 	if it.Kind == inbox.ModeSet {
 		return m.decideModeSet(it, verb)

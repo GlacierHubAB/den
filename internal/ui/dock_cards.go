@@ -56,6 +56,11 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 	if it.Kind == inbox.RulesPick {
 		body = withoutNotes(body)
 	}
+	if it.Kind == inbox.Setup {
+		// Den's window shows the real paths (D6); a console gets the
+		// paste-safe copy, as den doctor prints them.
+		body = m.setupListed(it)
+	}
 	class, step := inbox.Classify(it, m.cardFacts(it))
 	return api.Card{
 		ID:          it.ID,

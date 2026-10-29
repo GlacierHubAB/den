@@ -730,6 +730,30 @@ view shows whole, as the Fleet view's Details pane can; otherwise it opens the
 Inbox on that request to be read there first, and `Ctrl+Y` again answers it.
 `Ctrl+N` never waits.
 
+**The setup card.** When Den starts and Claude Code lacks Den's hooks, or
+Den's mods are missing or older than the ones built in, Den asks once on a
+card. The card shows exactly what `Ctrl+Y` writes:
+- the settings file, with its full path, which is backed up first;
+- the hook command, with this den's full path;
+- each mod's folder.
+
+`Ctrl+Y` there does what `den install-hooks` and `den install-mods` do. Den
+reads everything again at that moment and writes nothing if anything
+changed. `Ctrl+N` hides the card until a newer Den; `den doctor` still
+reports what is missing.
+
+The card is answered only in Den's own window. A console lists it as needing
+Den's screen, without the paths, and may not answer it, and God mode never
+answers it either.
+
+The card offers no `Ctrl+Y` in these cases, and says why:
+- the den runs from a temporary build folder;
+- the den, or a folder above it, can be written by someone other than you, or
+  is not yours or root's;
+- the den sits inside a git checkout;
+- the settings file cannot be read;
+- the skills folder is a symbolic link.
+
 What `/always` allows from then on, for that agent's session only (an agent
 on a host is told apart by its host as well), kept in
 memory until Den exits (the line that confirms it says which):

@@ -277,3 +277,31 @@ func quote(p string) string {
 	}
 	return p
 }
+
+// Command is the hook command Install writes for denPath.
+func Command(denPath string) string { return quote(denPath) + Marker }
+
+// Executable is the den Install should point the hooks at: this
+// executable, with one symlink resolved, as install-hooks and Den's setup
+// card both take it.
+func Executable() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if real, err := os.Readlink(exe); err == nil && real != "" {
+		exe = real
+	}
+	return exe, nil
+}
+
+// TempBuild reports whether p lives in a temporary build directory (go
+// run, a test binary): hooks pointing there break when it is cleaned.
+func TempBuild(p string) bool {
+	for _, d := range []string{os.TempDir(), "/tmp", os.Getenv("GOCACHE"), os.Getenv("GOTMPDIR")} {
+		if d != "" && len(p) > len(d) && p[:len(d)] == d {
+			return true
+		}
+	}
+	return false
+}
