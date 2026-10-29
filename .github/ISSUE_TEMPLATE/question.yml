@@ -1,0 +1,24 @@
+name: Question
+description: How do I…, does Den…, or why does Den…
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The README's Troubleshooting section and `den doctor` answer the common setup
+        questions. Remove anything private from pasted output.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: What you want to do, and what you tried.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: den doctor
+      description: |
+        If it is about your setup: output of `den doctor` (read it before you paste), or `den version`
+        and `claude --version` on releases up to v0.6.1.
+      render: text

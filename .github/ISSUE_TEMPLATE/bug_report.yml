@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Remove anything private from pasted output: paths, prompts, transcripts, session ids.
-        Security problems go to the Security tab, not here.
+        Security problems go to the Security tab, not here (see SECURITY.md).
   - type: textarea
     id: what
     attributes:
@@ -21,6 +21,16 @@ body:
       placeholder: |
         1. Start den
         2. ...
+  - type: textarea
+    id: doctor
+    attributes:
+      label: den doctor
+      description: |
+        Output of `den doctor`. It reads your setup, runs `claude --version` and
+        `git --version`, and is written to name no user, host, project, session or agent;
+        read it before you paste, as with anything. Releases up to v0.6.1 do not have it
+        yet; leave this empty if your `den` says "unknown command".
+      render: text
   - type: input
     id: den-version
     attributes:
@@ -44,6 +54,7 @@ body:
     attributes:
       label: den list, den explain, hooks.log
       description: |
-        `den list` and `den explain <name>` for the agent in question, and the relevant
-        lines of `~/.local/state/den/hooks.log` if the inbox is involved.
+        If it is about one agent: `den list` and `den explain <name>` for it. If the inbox
+        is involved: the relevant lines of `~/.local/state/den/hooks.log`. These can name
+        your agents and projects, so read them before you paste.
       render: text
