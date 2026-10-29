@@ -136,6 +136,7 @@ func (s *Server) LockConsole(why string) {
 	s.saveConsoleLocked()
 	s.con.mu.Unlock()
 	s.LockConsolePowers(why)
+	s.grantsChanged()
 }
 
 // askPowers puts the console's powers on a card in Den.
@@ -174,6 +175,7 @@ func (s *Server) ConsolePowersAnswered(id string, ok bool) {
 		s.powersEvent(cur, true)
 		s.act(Act{ConsoleChanged: true})
 	}
+	s.grantsChanged()
 }
 
 // powersEvent tells the console's subscribed connections its powers.
@@ -183,6 +185,7 @@ func (s *Server) powersEvent(rec *consoleRec, on bool) {
 			cc.push(Event{Event: EventConsole, Data: ConsoleEvent{Kind: "powers", On: &on, PID: rec.PID, StartTicks: rec.start}}, false)
 		}
 	}
+	s.grantsChanged()
 }
 
 // consoleReconnect is console.reconnect: the console's service, restarted
