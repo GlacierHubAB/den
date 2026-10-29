@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // The permission manager's classes: what a console's "allow" on a card
@@ -89,7 +90,11 @@ func Classify(it *Item, f Facts) (Class, int) {
 	}
 	switch it.Kind {
 	case Permission:
-		return classifyTool(it)
+		if !it.toolClassed {
+			it.toolClass, it.toolStep = classifyTool(it)
+			it.toolClassed = true
+		}
+		return it.toolClass, it.toolStep
 	case Plan:
 		return Code, 1
 	case Close:
@@ -225,9 +230,16 @@ func globInScope(pattern, base, cwd, home string) bool {
 	return editRealInScope(fixed+"/x", cwd, home) && !readSensitive(fixed+"/x", cwd, home)
 }
 
-// reachLimit caps the entries globReachClear looks at: past it, Den does
-// not know what the pattern reaches.
+// reachLimit caps the entries globReachClear looks at, and reachBudget
+// the time it takes: past either, Den does not know what the pattern
+// reaches. The walk runs once per card (Classify keeps the class), on
+// Den's own loop, so a slow disk (NFS, sshfs) may hold Den's screen for
+// at most about the budget. Accepted residual: one read of a single huge
+// directory, and the resolving of the walk's root, cannot be cut short,
+// so the budget can be overrun by one directory read.
 const reachLimit = 5000
+
+var reachBudget = 250 * time.Millisecond
 
 // globReachClear reports whether no symlink a Glob pattern can reach is a
 // way out. From the existing directory at its fixed start (under base for
@@ -237,7 +249,10 @@ const reachLimit = 5000
 // too, since the walk does not follow it. Under "**" every entry counts.
 // Hidden entries are skipped, as the tool skips them. A pattern
 // with no wildcard is a path, already checked; more than reachLimit
-// entries, or a walk that fails, is out.
+// entries, a walk longer than reachBudget, or one that fails, is out.
+// Names match the pattern's parts with case ignored on both sides: on a
+// filesystem that ignores case, "*.GO" reaches "x.go", and matching more
+// only checks more.
 func globReachClear(pattern, base, cwd, home string) bool {
 	parts := strings.Split(filepath.ToSlash(pattern), "/")
 	fixed := 0
@@ -268,10 +283,15 @@ func globReachClear(pattern, base, cwd, home string) bool {
 	if err != nil {
 		return os.IsNotExist(err) // nothing there to reach
 	}
-	seen := 0
+	seen, until := 0, time.Now().Add(reachBudget)
 	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// Every entry the walk reads counts against the budget, skipped
+		// or not: a huge directory where nothing matches is still read.
+		if time.Now().After(until) {
+			return errReachTooFar
 		}
 		if path == root {
 			return nil
@@ -282,7 +302,7 @@ func globReachClear(pattern, base, cwd, home string) bool {
 			// Only what the pattern's part at that depth matches; a part
 			// Den cannot match exactly (a brace) matches everything.
 			if seg := parts[fixed+k-1]; !strings.Contains(seg, "{") {
-				ok, err := filepath.Match(seg, d.Name())
+				ok, err := filepath.Match(strings.ToLower(seg), strings.ToLower(d.Name()))
 				skip = err == nil && !ok
 			}
 		}
