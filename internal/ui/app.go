@@ -560,6 +560,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.anim++
 		return m, animTick()
 	case tickMsg:
+		m.loseStarted()
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
 		m.checkGuards()
@@ -1472,11 +1473,30 @@ func (m Model) answerTarget() *inbox.Item {
 	return it
 }
 
+// loseStarted settles the started items whose action never reported by
+// its deadline, and says so in the chat. A send may still have gone out,
+// so its note says to check before sending again.
+func (m *Model) loseStarted() {
+	for _, it := range m.store.LoseStarted() {
+		note := "Den lost track of " + sanitize.Label(it.Title, 80) + ": check the agents."
+		if it.Kind == inbox.Message {
+			note = "Den lost track of " + sanitize.Label(it.Title, 80) + ": it may still have been sent, so check before sending again."
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: note, at: time.Now()}))
+	}
+}
+
 // answer applies allow, deny or always to the item answerTarget names, only
 // while it is still open and has not just taken another's place.
 func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	m.store.LetGo(m.permissionWait()) // a hook gone since the last tick takes no answer
 	it := m.answerTarget()
+	if it != nil && it.Started && it.State != inbox.Resolved {
+		if m.desk.installing == it.ID {
+			return m.say("hypruse is still installing; Den starts the mission when it is done.", false)
+		}
+		return m.say(refusedNote("That request was answered and is "+it.Resolved+"; nothing more was sent.", m.unboundNote()), true)
+	}
 	if m.tab == tabInbox {
 		switch {
 		case it == nil && m.inboxLost:
@@ -1537,7 +1557,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 			it.AnsweredBy = "den"
 		}
 		defer func() {
-			if it.State != inbox.Resolved {
+			// An answer that started the item's action keeps who gave it:
+			// the action's end settles it with that answer.
+			if it.State != inbox.Resolved && !it.Started {
 				it.Answer, it.AnsweredBy = "", ""
 			}
 		}()

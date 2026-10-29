@@ -296,7 +296,7 @@ func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea
 	if offer.setup != nil {
 		return m.installThenStart(it, offer)
 	}
-	it.Resolved = "starting…"
+	m.store.Start(it, "starting…", 10*time.Minute)
 	id := it.ID
 	if offer.task != "" {
 		return m.startTask(id, offer)

@@ -153,7 +153,7 @@ func (m Model) decideSkills(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		return m.say("Declined the skills.", false)
 	}
 	a.ApprovedBy = approver()
-	it.Resolved = "installing…"
+	m.store.Start(it, "installing…", 2*time.Minute)
 	id := it.ID
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

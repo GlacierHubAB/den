@@ -1089,6 +1089,8 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
 	case (it.Kind == inbox.DesktopInstall || it.Kind == inbox.DesktopMission) && m.desk.installing == it.ID:
 		text = append(text, attn.Render(installingNote))
+	case it.Started && it.State != inbox.Resolved:
+		text = append(text, attn.Render(it.Resolved)+dim.Render(" · answered; Den settles it when this ends"))
 	case it.Answerable() && !selected:
 		why := "waiting"
 		if it.At.After(m.inboxAt) {

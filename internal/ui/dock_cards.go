@@ -188,6 +188,13 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 	it.AnsweredBy = "console"
 	mm, cmd := m.answerItem(it, a.Verb)
 	*m = mm.(Model)
+	if it.Started && it.State != inbox.Resolved {
+		// The answer started the card's action: accepted, and Den settles
+		// the card with it when the action ends.
+		note := "Allowed from " + sanitize.Label(a.Console, 40) + ": " + m.nameFor(itemKey(it)) + " · " + sanitize.Label(it.Title, 80) + " · started; Den settles it when it ends"
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: note, at: time.Now()}))
+		return tea.Batch(cmd, reply(api.CardResult{Result: "allowed", Note: note}))
+	}
 	if it.State != inbox.Resolved {
 		it.AnsweredBy = ""
 		// Refused, or a step of several (a plan, a question): Den shows the
