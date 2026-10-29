@@ -105,8 +105,8 @@ func withoutNotes(lines []string) []string {
 // mission's done criteria; the console's own automatic powers, which would
 // be the console granting itself more; Den's notices, which no one answers.
 //
-// A kind here may still be den_only in inbox.Classify (Restore, Budget,
-// UsageResume, UsageSet, ModeSet): levels gate nothing yet, so the console
+// A kind here may still be den_only in inbox.Classify (Budget, UsageResume,
+// UsageSet, ModeSet, ControlAsk): levels gate nothing yet, so the console
 // answers them as before. The table never puts a kind outside todayDock
 // in a class a console could reach (TestClassesNeverWidenTheDock).
 var todayDock = map[inbox.Kind]bool{

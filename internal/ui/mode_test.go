@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/config"
@@ -311,15 +312,59 @@ func TestModeMixed(t *testing.T) {
 	}
 }
 
-// Reopened agents start in the mode in force now; nothing in their record
-// picks it.
-func TestModeRestoreUsesTheGlobalMode(t *testing.T) {
+// A reopened agent starts in the lower of its mode at close and the global
+// mode now: never more than it had, nor more than Den allows. A mode Den
+// never saw, or God mode's, counts as default. The restore card says it.
+func TestModeRestoreIsTheLowerOfItsModeAndTheGlobal(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 	m := modeModel(t, inDefault)
-	m = runMode(m, "dontAsk")
 	m.ensureRestore()
-	reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{{SessionID: "s1", CWD: "/tmp", Peer: "ui"}}})
-	if len(reqs) != 1 || reqs[0].PermissionMode != "dontAsk" {
-		t.Errorf("requests %+v", reqs)
+	for _, c := range []struct{ global, atClose, want string }{
+		{"auto", "auto", "auto"},
+		{"auto", "plan", "plan"},
+		{"auto", "acceptEdits", "acceptEdits"},
+		{"auto", "", "default"},
+		{"auto", "bypassPermissions", "default"},
+		{"auto", "nonsense", "default"},
+		{"dontAsk", "auto", "dontAsk"},
+		{"default", "dontAsk", "dontAsk"},
+		{"acceptEdits", "plan", "default"},
+		{"plan", "acceptEdits", "default"},
+		{"plan", "auto", "plan"},
+	} {
+		m.mode.global = c.global
+		a := roster.Agent{SessionID: "s1", CWD: "/tmp", Peer: "ui", Mode: c.atClose}
+		reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{a}})
+		if len(reqs) != 1 || reqs[0].PermissionMode != c.want {
+			t.Errorf("global %s, %q at close: requests %+v, want %s", c.global, c.atClose, reqs, c.want)
+		}
+		if lines, _, _ := m.restoreLines(a); !strings.Contains(strings.Join(lines, "\n"), "reopens in "+c.want) {
+			t.Errorf("global %s, %q at close: card lines %q", c.global, c.atClose, lines)
+		}
+	}
+}
+
+// The roster keeps the mode an agent's hooks last reported, and a sighting
+// with none (after Den's restart, before its next hook) keeps the one Den
+// knew.
+func TestRosterRecordsTheModeAtClose(t *testing.T) {
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	m := modeModel(t, inDefault)
+	a := m.agents[0]
+	sid := a.Session.SessionID
+	if m.ctl.modes == nil {
+		m.ctl.modes = map[string]modeSeen{}
+	}
+	m.ctl.modes[sid] = modeSeen{mode: "plan", at: time.Now()}
+	if e := m.rosterEntry(a); e.Mode != "plan" {
+		t.Fatalf("roster entry mode %q, want plan", e.Mode)
+	}
+	var r roster.Roster
+	now := time.Now()
+	r.Observe([]roster.Agent{m.rosterEntry(a)}, now, now)
+	delete(m.ctl.modes, sid)
+	r.Observe([]roster.Agent{m.rosterEntry(a)}, now.Add(time.Second), now)
+	if got, _ := r.Get(sid); got.Mode != "plan" {
+		t.Errorf("after a sighting with no mode: %q, want plan", got.Mode)
 	}
 }
