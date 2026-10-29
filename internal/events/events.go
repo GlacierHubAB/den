@@ -49,6 +49,16 @@ const (
 // Kinds lists every kind, in the order the docs give them.
 var Kinds = []string{SessionStart, SessionEnd, TurnStart, Done, NeedsYou, Idle, TurnFailed, ToolFailed, Stalled, StillWaiting}
 
+// FailureTypes are the error types of a turn_failed that Den knows: Claude
+// Code's own names for why a turn ended. The inbox titles them and den
+// feedback counts them by name; any other type is counted as "other", since
+// the field is whatever Claude Code sent.
+var FailureTypes = []string{
+	"rate_limit", "overloaded", "server_error", "invalid_request",
+	"authentication_failed", "oauth_org_not_allowed", "cloud_credential_error",
+	"billing_error", "account_on_hold", "max_output_tokens", "unknown",
+}
+
 // Event is one line of the stream.
 type Event struct {
 	V       int       `json:"v"`

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -118,6 +119,26 @@ func TestOutputCarriesNoIdentifyingValues(t *testing.T) {
 					t.Errorf("variant %d: the output holds %q:\n%s", variant, s, out)
 				}
 			}
+			noClock(t, out)
+		}
+	}
+}
+
+// clockLike is a date, a clock time or a zone offset.
+var clockLike = regexp.MustCompile(`\d{4}-\d{2}-\d{2}|\d{2}:\d{2}|[+-]\d{2}:?\d{2}\b|\bUTC\b|\bGMT\b`)
+
+// noClock fails when out holds a date, a clock time or the local zone's
+// name: times are printed relative to now only, since a zone hints where
+// someone lives (den-sec-review, on den feedback).
+func noClock(t *testing.T, out string) {
+	t.Helper()
+	if m := clockLike.FindString(out); m != "" {
+		t.Errorf("the output holds a time, %q:\n%s", m, out)
+	}
+	for _, at := range []time.Time{time.Now(), time.Date(2026, 1, 15, 12, 0, 0, 0, time.Local), time.Date(2026, 7, 15, 12, 0, 0, 0, time.Local)} {
+		zone, _ := at.Zone()
+		if len(zone) >= 3 && regexp.MustCompile(`\b`+regexp.QuoteMeta(zone)+`\b`).MatchString(out) {
+			t.Errorf("the output holds the zone %q:\n%s", zone, out)
 		}
 	}
 }
