@@ -1,0 +1,70 @@
+name: acceptance
+
+# A clean machine: the latest release installed from its asset in a fresh HOME
+# (checksums and attestation checked first), its hooks installed, a fake Claude
+# Code session listed; then this commit's own den swapped in as an upgrade and
+# the same checks again. scripts/acceptance.sh does the work. Runs on pull
+# requests that touch what it exercises, and on request; it is not part of the
+# required ci-passed check.
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "cmd/den/**"
+      - "internal/hooks/**"
+      - "internal/discover/**"
+      - "internal/doctor/**"
+      - "internal/mods/**"
+      - "scripts/acceptance.sh"
+      - ".github/workflows/acceptance.yml"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build (default dev)
+        required: false
+        default: dev
+      tag:
+        description: Release to install first (default the latest)
+        required: false
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: acceptance-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GO_VERSION: "1.26.x"
+  GOTOOLCHAIN: local
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+      - name: Build den
+        run: go build -trimpath -o "$RUNNER_TEMP/den-under-test" ./cmd/den
+      - name: Clean-machine acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || '' }}
+        run: |
+          tag="$INPUT_TAG"
+          if [ -z "$tag" ]; then
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)
+          fi
+          scripts/acceptance.sh "$tag" "$RUNNER_TEMP/den-under-test"
