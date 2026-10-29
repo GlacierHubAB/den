@@ -142,15 +142,71 @@ type State struct {
 	Powers bool // the console paired now has its powers
 	Locked bool // the human's /api lock
 	God    bool // God mode is on
+	// Sessions are the classes a console lowered for this Den session,
+	// by class.
+	Sessions map[string]Session
+}
+
+// The refusals of a lowering.
+const (
+	BadRequest = "bad_request"
+	NotLower   = "not_lower"
+)
+
+// cap is the class's cap now: its Den level, lowered by a session.
+func (st State) cap(c class) int {
+	if s, ok := st.Sessions[c.id]; ok && s.Level < c.def {
+		return s.Level
+	}
+	return c.def
+}
+
+// Valid reports whether id is a class and level one of its levels, 0 to
+// Steps: the closed sets a request is checked against first.
+func Valid(id string, level int) bool {
+	return Label(id) != "" && level >= 0 && level <= Steps
+}
+
+// Label is class id's label, "" for no class.
+func Label(id string) string {
+	for _, c := range table {
+		if c.id == id {
+			return c.label
+		}
+	}
+	return ""
+}
+
+// Lower checks a console's lowering of class id to level against st, and
+// returns the class's new session, or the refusal: bad_request for a class
+// or a level outside the closed sets, not_lower for a level that is not
+// strictly below the class's cap (min of its Den level and its session),
+// a raise or the same level. The caller gives at and console, Den's own
+// clock and label.
+func Lower(st State, id string, level int, at, console string) (Session, string) {
+	for _, c := range table {
+		if c.id != id {
+			continue
+		}
+		if level < 0 || level > Steps {
+			return Session{}, BadRequest
+		}
+		if level >= st.cap(c) {
+			return Session{}, NotLower
+		}
+		return Session{Level: level, At: at, Console: console}, ""
+	}
+	return Session{}, BadRequest
 }
 
 // godZero are the classes God mode shows at 0: every desktop kind, and
 // Merge, Budget and Usage, answer only in Den's window while it is on.
 var godZero = map[string]bool{Desktop: true, Outward: true}
 
-// Read is the read for st, with seq 0: every class at its default (no
-// level is set or lowered yet), and the effective level 0 while locked,
-// without powers, or, for the desktop and outward classes, in God mode.
+// Read is the read for st, with seq 0: every class at its Den level (its
+// default: none is set in Den yet), lowered by its session, and the
+// effective level 0 while locked, without powers, or, for the desktop and
+// outward classes, in God mode.
 func Read(st State) Grants {
 	g := Grants{
 		Powers:         st.Powers,
@@ -162,7 +218,11 @@ func Read(st State) Grants {
 		DenOnly:        append([]DenOnlyItem(nil), denOnly...),
 	}
 	for _, c := range table {
-		out := Class{Class: c.id, Label: c.label, About: c.about, DenLevel: c.def, Default: c.def, Level: c.def, Steps: make([]Step, Steps)}
+		out := Class{Class: c.id, Label: c.label, About: c.about, DenLevel: c.def, Default: c.def, Level: st.cap(c), Steps: make([]Step, Steps)}
+		if s, ok := st.Sessions[c.id]; ok {
+			s := s
+			out.Session = &s
+		}
 		for i := range out.Steps {
 			s := Step{Level: i + 1, Label: NoStep}
 			if i < len(c.steps) {
