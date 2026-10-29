@@ -38,6 +38,10 @@ type advPlan struct {
 	Seconds  float64  `json:"seconds"`   // stop after this long; 0 no limit
 	Mark     string   `json:"mark"`      // a file that gets one line for each connection
 	Linger   bool     `json:"linger"`    // after the plan, stay connected, silent, until Den hangs up
+	// Go is a file the host waits for, quiet after its hello (and
+	// snapshot), before the plan: the test makes it once it has read the
+	// inbox. "" starts at once.
+	Go string `json:"go"`
 }
 
 func advID(i int) string { return fmt.Sprintf("%08x-2222-4333-8444-%012x", i, i) }
@@ -83,6 +87,16 @@ func advRunFlooder(p advPlan) {
 	if p.Snapshot > 0 {
 		snapshot()
 		out.Flush()
+	}
+	for p.Go != "" {
+		if _, err := os.Stat(p.Go); err == nil {
+			break
+		}
+		select {
+		case <-hangup:
+			return
+		case <-time.After(20 * time.Millisecond):
+		}
 	}
 	start := time.Now()
 	sent := 0
@@ -505,7 +519,8 @@ var inboxCount = regexp.MustCompile(`inbox (\d+) waiting`)
 type advTUIResult struct {
 	g      *rig
 	tm     *sshtest.Tmux
-	inbox  int
+	inbox  int // waiting in the header after the flood
+	base   int // waiting before it: Den's setup card
 	notes  []string
 	idle   float64
 	growth int64
@@ -514,16 +529,30 @@ type advTUIResult struct {
 
 func advTUIFlood(t *testing.T, p advPlan, d time.Duration) advTUIResult {
 	t.Helper()
+	// The host keeps quiet after its hello until the test has read the
+	// inbox before the flood: Den's own setup card (Claude Code in the lab
+	// has no hooks) and nothing else. Then the test releases it. The caps
+	// are checked on what the flood added, and a stray item cannot hide a
+	// breach.
+	p.Go = filepath.Join(t.TempDir(), "go")
 	g := advFloodRig(t, p)
 	l := g.l
 	l.Local.WriteConfig("[orchestrator]\nspawn = false\n")
 	base := dirBytes(l.Local.Home)
 	tm := l.Local.StartTUI(160, 50, []string{"DEN_ORCHESTRATOR_SPAWN=off", "DEN_RESTORE=off"})
+	res := advTUIResult{g: g, tm: tm}
+	f := sshtest.Squeeze(tm.WaitFor(30*time.Second, "orchestrator off"))
+	if m := inboxCount.FindStringSubmatch(f); m == nil || m[1] != "1" {
+		t.Fatalf("before the flood the inbox is not exactly Den's setup card:\n%s", f)
+	}
+	res.base = 1
+	if err := os.WriteFile(p.Go, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	time.Sleep(d)
 	if !tm.Alive() {
 		t.Fatal("the TUI died")
 	}
-	res := advTUIResult{g: g, tm: tm}
 	// Quiet for a while, then measure what the TUI does with no input.
 	time.Sleep(3 * time.Second)
 	c0, t0 := advProcCPU(tm.PanePID), time.Now()
@@ -558,8 +587,8 @@ func advTUIFlood(t *testing.T, p advPlan, d time.Duration) advTUIResult {
 func TestAdvFloodTUIUnknownNeedsYou(t *testing.T) {
 	slowOnly(t)
 	r := advTUIFlood(t, advPlan{Rate: 1500, Seconds: 10, Linger: true}, 14*time.Second)
-	if r.inbox > 32 {
-		t.Errorf("%d inbox items from sessions the host never listed (cap 32 a host)", r.inbox)
+	if r.inbox-r.base > 32 {
+		t.Errorf("%d inbox items from sessions the host never listed (cap 32 a host)", r.inbox-r.base)
 	}
 	if len(r.notes) > 8 {
 		t.Errorf("%d notify-send calls", len(r.notes))
@@ -570,8 +599,8 @@ func TestAdvFloodTUIUnknownNeedsYou(t *testing.T) {
 func TestAdvFloodTUIKnownNeedsYou(t *testing.T) {
 	slowOnly(t)
 	r := advTUIFlood(t, advPlan{Snapshot: 500, Known: true, Rate: 1500, Seconds: 10, Linger: true}, 14*time.Second)
-	if r.inbox > 32 {
-		t.Errorf("%d inbox items (cap 32 a host)", r.inbox)
+	if r.inbox-r.base > 32 {
+		t.Errorf("%d inbox items (cap 32 a host)", r.inbox-r.base)
 	}
 	if n := len(r.notes); n > 8 {
 		t.Errorf("%d notify-send calls in a flood of a few seconds (the first at once, the rest coalesced, 6 a minute)", n)
@@ -585,8 +614,8 @@ func TestAdvFloodTUIKnownNeedsYou(t *testing.T) {
 func TestAdvFloodTUIHeld(t *testing.T) {
 	slowOnly(t)
 	r := advTUIFlood(t, advPlan{Policy: "approve", Types: []string{"held"}, Snapshot: 500, Known: true, Rate: 1500, Seconds: 10, Linger: true}, 14*time.Second)
-	if r.inbox > 32 {
-		t.Errorf("%d inbox items from held requests (cap 32 a host)", r.inbox)
+	if r.inbox-r.base > 32 {
+		t.Errorf("%d inbox items from held requests (cap 32 a host)", r.inbox-r.base)
 	}
 	if len(r.notes) > 8 {
 		t.Errorf("%d notify-send calls", len(r.notes))
@@ -601,8 +630,8 @@ func TestAdvFloodTUIReconnects(t *testing.T) {
 	r := advTUIFlood(t, advPlan{Snapshot: 100, Known: true, Total: 800, Mark: mark}, 60*time.Second)
 	b, _ := os.ReadFile(mark)
 	t.Logf("%d connections (the default backoff paces them)", strings.Count(string(b), "\n"))
-	if r.inbox > 32 {
-		t.Errorf("%d inbox items (cap 32 a host)", r.inbox)
+	if r.inbox-r.base > 32 {
+		t.Errorf("%d inbox items (cap 32 a host)", r.inbox-r.base)
 	}
 	if n := len(r.notes); n > 14 {
 		t.Errorf("%d notify-send calls over a minute (6 a minute)", n)
@@ -616,8 +645,8 @@ func TestAdvFloodTUITrickleUnderTheCaps(t *testing.T) {
 	slowOnly(t)
 	const mins = 3
 	r := advTUIFlood(t, advPlan{Snapshot: 500, Known: true, Rate: floodEventRate - 1, Seconds: mins * 60, Linger: true}, mins*time.Minute+10*time.Second)
-	if r.inbox > 32 {
-		t.Errorf("%d inbox items (cap 32 a host)", r.inbox)
+	if r.inbox-r.base > 32 {
+		t.Errorf("%d inbox items (cap 32 a host)", r.inbox-r.base)
 	}
 	if n := len(r.notes); n > 6*(mins+1) {
 		t.Errorf("%d notify-send calls in %d minutes (6 a minute)", n, mins)

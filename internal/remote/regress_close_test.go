@@ -31,7 +31,11 @@ func TestRegressProtectHoldsForRemoteNames(t *testing.T) {
 	named, bare, open := badge.Name(idA), badge.Name(idB), badge.Name(idC)
 
 	tm := l.Local.StartTUI(200, 56, []string{"DEN_ORCHESTRATOR_SPAWN=off", "DEN_RESTORE=off"})
-	tm.WaitFor(30*time.Second, "3 agents")
+	// Den's own setup card waits from the start (Claude Code in the lab has
+	// no hooks), and nothing else: any close question makes it 2.
+	if f := sshtest.Squeeze(tm.WaitFor(30*time.Second, "3 agents")); !strings.Contains(f, "inbox 1 waiting") {
+		t.Fatalf("before any command the inbox is not exactly Den's setup card:\n%s", f)
+	}
 	say := func(cmd string) string {
 		tm.Type(cmd)
 		tm.Keys("Enter")
@@ -40,7 +44,7 @@ func TestRegressProtectHoldsForRemoteNames(t *testing.T) {
 	}
 	noQuestion := func(what, f string) {
 		t.Helper()
-		if strings.Contains(f, "Close "+named+" on b?") || strings.Contains(f, "Close "+bare+" on b?") || strings.Contains(f, "Close 2 agents") || !strings.Contains(f, "inbox clear") {
+		if strings.Contains(f, "Close "+named+" on b?") || strings.Contains(f, "Close "+bare+" on b?") || strings.Contains(f, "Close 2 agents") || !strings.Contains(f, "inbox 1 waiting") {
 			t.Errorf("%s: a close was proposed or is waiting:\n%s", what, f)
 		}
 	}

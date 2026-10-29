@@ -381,6 +381,103 @@ func TestSetupCardFromTheConsole(t *testing.T) {
 	}
 }
 
+// The card blocks nothing (#212's slow suite, and a new user's first
+// start): an agent's request that comes after it is first in the Inbox
+// and is what ^Y answers from the Fleet; ^Y from the Fleet never lands on
+// the card, which is answered only selected in the Inbox.
+func TestSetupCardBlocksNothing(t *testing.T) {
+	r := newSetupRun(t)
+	r.m.tab = tabFleet
+	r.m.base = append(r.m.base, r.m.agents...)
+	r.m.startSetup()
+	card := r.card()
+
+	// Alone, it takes no ^Y from the Fleet.
+	got := ctrl(ctrl(r.m, 'y'), 'y')
+	if len(r.hooks)+len(r.mods) != 0 || card.State != inbox.Waiting {
+		t.Fatalf("^Y from the Fleet reached the setup card: hooks %v, mods %v, flash %q", r.hooks, r.mods, got.flash)
+	}
+
+	// An agent's request after it: first in the Inbox, and what ^Y answers.
+	perm := permissionCard(t, &r.m)
+	if items := r.m.store.Items(); items[0] != perm {
+		t.Errorf("the Inbox lists %v first, want the agent's request", items[0].Kind)
+	}
+	if target := r.m.answerTarget(); target != perm {
+		t.Errorf("^Y from the Fleet targets %v, want the agent's request", target.Kind)
+	}
+	m := ctrl(r.m, 'y') // opens the Inbox on it, the view not showing it whole
+	m = ctrl(m, 'y')
+	if perm.State != inbox.Resolved {
+		t.Errorf("the agent's request was not answered: flash %q", m.flash)
+	}
+	if len(r.hooks)+len(r.mods) != 0 || card.State != inbox.Waiting {
+		t.Errorf("answering the request touched the setup card: hooks %v, state %v", r.hooks, card.State)
+	}
+	// Selected in the Inbox, its own ^Y installs.
+	m.tab, m.height = tabInbox, 80 // the whole card on screen, as ^Y needs
+	m.refresh()
+	m.selectItem(card)
+	if ctrl(m, 'y'); len(r.hooks) != 1 || card.State != inbox.Resolved {
+		t.Errorf("^Y on the selected card: hooks %v, state %v", r.hooks, card.State)
+	}
+}
+
+// In the Inbox, the card highlighted at start is not selected: a request
+// that arrives takes the row, and ^Y and ^N go to it (after the settle
+// guard), never to the card. Picked by hand, the card stays selected when
+// a request arrives, by the selection's id rule.
+func TestSetupCardSelection(t *testing.T) {
+	answerSettle = 700 * time.Millisecond
+	t.Cleanup(func() { answerSettle = 0 })
+	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
+	answerNow = func() time.Time { return now }
+	t.Cleanup(func() { answerNow = time.Now })
+
+	for _, key := range []rune{'y', 'n'} {
+		r := newSetupRun(t)
+		r.m.base = append(r.m.base, r.m.agents...)
+		r.m.startSetup()
+		r.m.refresh()
+		card := r.card()
+		if r.m.inboxSel != "" || r.m.inboxSelected() != card {
+			t.Fatalf("at start: selection %q, highlighted %v", r.m.inboxSel, r.m.inboxSelected())
+		}
+		now = now.Add(5 * time.Second)
+		perm := permissionCard(t, &r.m)
+		if r.m.inboxSelected() != perm {
+			t.Fatalf("%c: after the request the Inbox has %v selected", key, r.m.inboxSelected().Kind)
+		}
+		got := ctrl(r.m, key)
+		if perm.State == inbox.Resolved || !strings.Contains(got.flash, "A new request just came up") {
+			t.Errorf("%c right as the request came: state %v, flash %q", key, perm.State, got.flash)
+		}
+		now = now.Add(time.Second)
+		got = ctrl(got, key)
+		if perm.State != inbox.Resolved {
+			t.Errorf("%c: the request was not answered: flash %q", key, got.flash)
+		}
+		if card.State != inbox.Waiting || len(r.hooks)+len(r.mods) != 0 {
+			t.Errorf("%c reached the card: state %v, hooks %v", key, card.State, r.hooks)
+		}
+		if _, err := os.Stat(doctor.Dismissed(r.m.setupEnv())); err == nil {
+			t.Errorf("%c hid the card", key)
+		}
+	}
+
+	// Picked by hand, it keeps the selection.
+	r := newSetupRun(t)
+	r.m.base = append(r.m.base, r.m.agents...)
+	r.m.startSetup()
+	r.m.refresh()
+	card := r.card()
+	r.m.selectItem(card)
+	permissionCard(t, &r.m)
+	if r.m.inboxSel != card.ID || r.m.answerTarget() != card {
+		t.Errorf("a card picked by hand lost the selection to a new request: %q", r.m.inboxSel)
+	}
+}
+
 // The gate test's row: a setup card is never one the dock may answer.
 func TestSetupNeverInTheDock(t *testing.T) {
 	it := &inbox.Item{SessionID: inbox.SetupSession, Kind: inbox.Setup, State: inbox.Waiting}

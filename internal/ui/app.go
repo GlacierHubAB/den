@@ -953,10 +953,12 @@ func (m Model) permissionWait() time.Duration {
 	return time.Duration(m.cfg.Hooks.PermissionWait) * time.Second
 }
 
-// topAnswerable is the item y/n/a act on from the agents pane.
+// topAnswerable is the item y/n/a act on from the agents pane. Never Den's
+// setup card: that is answered only selected in the Inbox, so a key meant
+// for an agent's request never lands on it.
 func (m Model) topAnswerable() *inbox.Item {
 	for _, it := range m.store.Items() {
-		if it.Answerable() {
+		if it.Answerable() && it.Kind != inbox.Setup {
 			return it
 		}
 	}
@@ -1059,7 +1061,10 @@ func (m *Model) followSelection() {
 	if m.inboxCur >= len(items) {
 		m.inboxCur = max(0, len(items)-1)
 	}
-	if m.inboxCur >= 0 && m.inboxCur < len(items) {
+	// Never Den's setup card: highlighted with nothing chosen it stays
+	// unselected, so a request that comes after takes the row as it would
+	// with no card. Picked by hand (↑ ↓), it is selected like any item.
+	if m.inboxCur >= 0 && m.inboxCur < len(items) && items[m.inboxCur].Kind != inbox.Setup {
 		m.inboxSel = items[m.inboxCur].ID
 	}
 }

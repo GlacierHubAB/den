@@ -1,6 +1,9 @@
 package inbox
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // The setup card is Den's own question, one at a time, and den_only: no
 // console's "allow" is ever classed for it (D8, den-sec-review).
@@ -25,5 +28,23 @@ func TestSetupCard(t *testing.T) {
 	s.Settle(it, false, "hidden")
 	if s.AddSetup("Install?", nil) == nil {
 		t.Error("no new card after the first settled")
+	}
+}
+
+// The setup card waits behind every other waiting item, even ones that
+// came after it, and ahead of notices.
+func TestSetupCardSortsLast(t *testing.T) {
+	s := New()
+	setup := s.AddSetup("Install?", nil)
+	setup.At = setup.At.Add(-time.Hour)
+	later := s.AddUsageResume("Go on?", nil)
+	note := s.AddUsage("80%", nil)
+	got := s.Items()
+	if len(got) != 3 || got[0] != later || got[1] != setup || got[2] != note {
+		var kinds []string
+		for _, it := range got {
+			kinds = append(kinds, it.Kind.String())
+		}
+		t.Errorf("order %v, want usage resume, setup, usage", kinds)
 	}
 }

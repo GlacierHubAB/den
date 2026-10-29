@@ -304,6 +304,11 @@ func (s *Store) Items() []*Item {
 			return wi
 		}
 		if wi {
+			// Den's setup card waits behind everything else: it is never
+			// what a ^Y or the Inbox's first selection meant (P10).
+			if si, sj := out[i].Kind == Setup, out[j].Kind == Setup; si != sj {
+				return sj
+			}
 			return out[i].At.Before(out[j].At) // answer in the order they asked
 		}
 		return out[i].At.After(out[j].At) // newest notice on top
