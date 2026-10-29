@@ -19,6 +19,6 @@ body:
     attributes:
       label: den doctor
       description: |
-        If it is about your setup: output of `den doctor` (safe to paste), or `den version`
+        If it is about your setup: output of `den doctor` (read it before you paste), or `den version`
         and `claude --version` on releases up to v0.6.1.
       render: text

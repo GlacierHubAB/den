@@ -26,9 +26,10 @@ body:
     attributes:
       label: den doctor
       description: |
-        Output of `den doctor`. It only reads your setup and names no user, host, project,
-        session or agent, so it is safe to paste. Releases up to v0.6.1 do not have it yet;
-        leave this empty if your `den` says "unknown command".
+        Output of `den doctor`. It reads your setup, runs `claude --version` and
+        `git --version`, and is written to name no user, host, project, session or agent;
+        read it before you paste, as with anything. Releases up to v0.6.1 do not have it
+        yet; leave this empty if your `den` says "unknown command".
       render: text
   - type: input
     id: den-version

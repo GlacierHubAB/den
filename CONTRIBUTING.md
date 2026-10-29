@@ -83,8 +83,9 @@ the common cases. If that does not help, open an issue with what you did,
 what you expected and what happened; for a question, use the Question form.
 It helps to include:
 
-- the output of `den doctor`, which names no user, host, project, session
-  or agent and is safe to paste (releases up to v0.6.1 do not have it yet);
+- the output of `den doctor`, which is written to name no user, host,
+  project, session or agent; read it before you paste (releases up to v0.6.1
+  do not have it yet);
 - the output of `den version`, and `claude --version`;
 - your compositor and terminal (Den's focus and spawn features depend on
   Hyprland and the terminal launcher);
