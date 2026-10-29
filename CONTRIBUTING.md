@@ -77,9 +77,14 @@ has the package map and how to run Den against throwaway state.
 
 ## Reporting issues
 
-Open an issue with what you did, what you expected and what happened. It
-helps to include:
+Start with `den doctor`: it checks your setup and prints one fix per
+problem, and the README's [Troubleshooting](README.md#troubleshooting) covers
+the common cases. If that does not help, open an issue with what you did,
+what you expected and what happened; for a question, use the Question form.
+It helps to include:
 
+- the output of `den doctor`, which names no user, host, project, session
+  or agent and is safe to paste (releases up to v0.6.1 do not have it yet);
 - the output of `den version`, and `claude --version`;
 - your compositor and terminal (Den's focus and spawn features depend on
   Hyprland and the terminal launcher);
