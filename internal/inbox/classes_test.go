@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 )
@@ -211,6 +212,8 @@ func TestClassifyPermissionByTool(t *testing.T) {
 		{"a glob whose wildcard matches a link to a file outside", "Glob", map[string]any{"pattern": "out/*.go", "path": filepath.Join(cwd, "src")}, den},
 		{"a glob whose wildcard matches a link to a file inside", "Glob", map[string]any{"pattern": "lib/*.go", "path": filepath.Join(cwd, "src")}, routine3},
 		{"a glob that cannot match the symlink beside it", "Glob", map[string]any{"pattern": "*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a glob whose upper-case wildcard matches a link to a file outside", "Glob", map[string]any{"pattern": "o?t/*.GO", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob whose upper-case wildcard matches a symlink to keys", "Glob", map[string]any{"pattern": "S?EYS/*", "path": filepath.Join(cwd, "src")}, den},
 		{"a glob with an escaped name", "Glob", map[string]any{"pattern": `sk\eys/*`, "path": filepath.Join(cwd, "src")}, den},
 		{"a grep glob escaping a hidden dir", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": `\.git/**`}, den},
 		{"a glob escaping Claude's dir", "Glob", map[string]any{"pattern": `\.claude/*`, "path": filepath.Join(cwd, "src")}, den},
@@ -235,6 +238,78 @@ func TestClassifyPermissionByTool(t *testing.T) {
 	it.req.Input.ToolInput = json.RawMessage("{not json")
 	if c, step := Classify(it, Facts{}); c != DenOnly || step != 0 {
 		t.Errorf("unparsable input: %s %d", c, step)
+	}
+}
+
+// TestMain lifts the reach walk's time budget: a loaded runner under -race
+// may walk slowly, and a row that wants routine must not get den_only for
+// it. Only TestGlobReachPastItsBudgetIsDenOnly is about the budget, and it
+// sets its own.
+func TestMain(m *testing.M) {
+	reachBudget = time.Hour
+	os.Exit(m.Run())
+}
+
+// globCwd makes a cwd with src/a.go under a fresh HOME, and a Glob of
+// src/*.go in it.
+func globCwd(t *testing.T) (cwd string, glob func() *Item) {
+	t.Helper()
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	cwd = filepath.Join(home, "code", "proj")
+	if err := os.MkdirAll(filepath.Join(cwd, "src"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "src", "a.go"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cwd, func() *Item {
+		return permItem(t, cwd, "Glob", map[string]any{"pattern": "*.go", "path": filepath.Join(cwd, "src")})
+	}
+}
+
+// A walk of a Glob's reach that runs past its time budget does not know
+// what the pattern reaches: den_only.
+func TestGlobReachPastItsBudgetIsDenOnly(t *testing.T) {
+	_, glob := globCwd(t)
+	if c, step := Classify(glob(), Facts{}); c != Routine || step != 3 {
+		t.Fatalf("within the budget: %s %d", c, step)
+	}
+	old := reachBudget
+	reachBudget = -time.Second
+	t.Cleanup(func() { reachBudget = old })
+	if c, step := Classify(glob(), Facts{}); c != DenOnly || step != 0 {
+		t.Errorf("past the budget: %s %d", c, step)
+	}
+}
+
+// A permission is classed once: a later projection of the same card
+// neither walks again nor changes class (its card hash v2 holds the
+// class), though a new card sees what is there now.
+func TestPermissionIsClassedOnce(t *testing.T) {
+	cwd, glob := globCwd(t)
+	it := glob()
+	if c, step := Classify(it, Facts{}); c != Routine || step != 3 {
+		t.Fatalf("first: %s %d", c, step)
+	}
+	out := filepath.Join(filepath.Dir(filepath.Dir(cwd)), "out")
+	if err := os.WriteFile(out, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(out, filepath.Join(cwd, "src", "b.go")); err != nil {
+		t.Fatal(err)
+	}
+	if c, step := Classify(it, Facts{}); c != Routine || step != 3 {
+		t.Errorf("the same card again: %s %d", c, step)
+	}
+	if c, step := Classify(glob(), Facts{}); c != DenOnly || step != 0 {
+		t.Errorf("a new card: %s %d", c, step)
 	}
 }
 

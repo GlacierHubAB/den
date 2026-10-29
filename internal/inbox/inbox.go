@@ -199,6 +199,12 @@ type Item struct {
 	Step      int
 	req       *bridge.Request
 	fromHost  bool // made by a remote host's event stream: counts towards its caps
+	// A permission's class and step, worked out once by classifyTool: the
+	// call never changes, and the walk of a Glob's reach is not redone on
+	// every projection.
+	toolClassed bool
+	toolClass   Class
+	toolStep    int
 }
 
 // Answerable reports whether y/n/a act on this item.
