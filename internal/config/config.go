@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -550,6 +551,145 @@ func PowersSetting() (value, refused string, err error) {
 	}
 	return "", v, nil
 }
+
+// Issue is one key of the config file Den does not use as written, for
+// `den doctor`. Key and Section are filled only with names Den itself
+// defines: a key or table the human made up may hold a host, a project or
+// a person, so it is never repeated back.
+type Issue struct {
+	Kind    string // IssueUnknown, IssueUnread or IssueGod
+	Key     string // the full key (notify.remind) when every part is Den's, else ""
+	Section string // the table (notify) when Den defines it, else ""
+}
+
+// Issue kinds.
+const (
+	IssueUnknown = "unknown" // a key Den does not read
+	IssueUnread  = "unread"  // a key Den reads whose value it could not take, so it uses its default
+	IssueGod     = "god"     // a key that looks like a God mode setting, which only Den's window turns on
+)
+
+// Check reads Path as Load does and reports the keys Load drops without a
+// word. A missing file has none; the error is a file that is there but
+// does not read, and carries the path.
+func Check() ([]Issue, error) {
+	f, err := os.Open(Path())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	kv, err := parseFrom(f)
+	if err != nil {
+		return nil, err
+	}
+	return CheckKeys(kv), nil
+}
+
+// CheckKeys is Check on parsed keys, sorted by kind, section and key.
+func CheckKeys(kv map[string]string) []Issue {
+	var out []Issue
+	for k, v := range kv {
+		section, name := "", k
+		if i := strings.LastIndexByte(k, '.'); i >= 0 {
+			section, name = k[:i], k[i+1:]
+		}
+		shown := knownSection(section)
+		switch {
+		case strings.HasPrefix(k, "god.") || strings.Contains(strings.ToLower(k), "god"):
+			out = append(out, Issue{Kind: IssueGod, Section: shown})
+		case strings.HasPrefix(k, "prices."):
+			// a model id of the human's choosing; the cost table reads it
+		case strings.HasPrefix(k, "desktop.apps."):
+			// [desktop.apps.<name>]: the name is the human's own, and
+			// internal/desktop checks what it holds
+			if !desktopAppKeys[name] || strings.Count(k, ".") != 3 {
+				out = append(out, Issue{Kind: IssueUnknown, Section: shown})
+			}
+		default:
+			ok, known := keyChecks[k]
+			switch {
+			case !known:
+				out = append(out, Issue{Kind: IssueUnknown, Section: shown})
+			case !ok(v):
+				out = append(out, Issue{Kind: IssueUnread, Key: k, Section: shown})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Section != b.Section {
+			return a.Section < b.Section
+		}
+		return a.Key < b.Key
+	})
+	return out
+}
+
+// knownSection is section when Den defines that table, else "". Every
+// [desktop.apps.<name>] shows as desktop.apps.
+func knownSection(section string) string {
+	switch section {
+	case "orchestrator", "agents", "inbox", "detail", "hooks", "restore", "notify", "stuck",
+		"events", "team", "usage", "api", "on", "desktop", "prices":
+		return section
+	}
+	if strings.HasPrefix(section, "desktop.apps.") {
+		return "desktop.apps"
+	}
+	return ""
+}
+
+var desktopAppKeys = map[string]bool{"command": true, "class": true, "outward": true, "if_running": true, "profile": true}
+
+// keyChecks says, for every key apply and the readers above take, whether
+// a value is one they use. It mirrors apply: a value it refuses keeps the
+// default there, and fails here.
+var keyChecks = func() map[string]func(string) bool {
+	anyValue := func(string) bool { return true }
+	boolean := func(v string) bool { _, err := strconv.ParseBool(v); return err == nil }
+	intIn := func(lo, hi int) func(string) bool {
+		return func(v string) bool { n, err := strconv.Atoi(v); return err == nil && n >= lo && n <= hi }
+	}
+	floatIn := func(lo, hi float64) func(string) bool {
+		return func(v string) bool { f, err := strconv.ParseFloat(v, 64); return err == nil && f >= lo && f < hi }
+	}
+	oneOf := func(vs ...string) func(string) bool {
+		return func(v string) bool {
+			for _, w := range vs {
+				if v == w {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	const maxInt = int(^uint(0) >> 1)
+	m := map[string]func(string) bool{
+		"orchestrator.model": anyValue, "orchestrator.name": anyValue, "orchestrator.guidance": anyValue,
+		"orchestrator.spawn":     boolean,
+		"agents.permission_mode": func(v string) bool { _, ok := permmode.Parse(v); return ok },
+		"inbox.history":          intIn(1, maxInt), "detail.recent": intIn(1, maxInt), "hooks.permission_wait": intIn(1, maxInt),
+		"hooks.log": boolean, "hooks.answer_questions": boolean, "restore.ask": boolean,
+		"notify.needs_you": boolean, "notify.done": boolean, "notify.failed": boolean, "notify.stalled": boolean, "notify.without_den": boolean,
+		"notify.remind": intIn(0, maxInt), "stuck.stalled": intIn(0, maxInt), "stuck.tool_failures": intIn(0, maxInt),
+		"events.log":      boolean,
+		"team.max_agents": intIn(1, 20), "team.branch_hours": intIn(0, 24*30), "team.behind_max": intIn(0, 10000), "team.idle_minutes": intIn(0, 24*60),
+		"usage.stop_percent": intIn(0, 100), "usage.weekly_usd": floatIn(0, 1e9),
+		"api.enabled": boolean, "api.ask_budget_usd": floatIn(0, math.Inf(1)),
+		"api.console_powers": oneOf("always", "unchanged"), "api.mirror_conversation": oneOf("ask", "always", "off"),
+		"desktop.agent_view": boolean, "desktop.task_minutes": intIn(1, maxInt), "desktop.task_actions": intIn(1, maxInt),
+	}
+	for _, k := range []string{"session_start", "session_end", "turn_start", "done", "needs_you", "idle", "turn_failed", "tool_failed", "stalled", "still_waiting"} {
+		m["on."+k] = anyValue
+	}
+	return m
+}()
 
 // parse reads a flat TOML subset: [section] headers and key = value lines
 // with string, integer or boolean values. Keys come back as section.key.

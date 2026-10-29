@@ -4,8 +4,74 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+// allEvents is a settings.json with Den's entry for every event, running den.
+func allEvents(den string) string {
+	h := map[string]any{}
+	for _, sp := range specs {
+		e := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": den + " hook"}}}
+		if sp.matcher != "" {
+			e["matcher"] = sp.matcher
+		}
+		h[sp.event] = []any{e}
+	}
+	raw, _ := json.Marshal(map[string]any{"hooks": h})
+	return string(raw)
+}
+
+func TestStatusOfNamesMissingEventsAndAnotherDen(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		raw     string
+		missing int
+		other   bool
+		err     bool
+	}{
+		{"absent", "", len(specs), false, false},
+		{"no hooks", `{"model":"fable"}`, len(specs), false, false},
+		{"null", `null`, len(specs), false, false},
+		{"every event", allEvents("/opt/den"), 0, false, false},
+		{"another den", allEvents("/old/build/den"), 0, true, false},
+		{"one missing", strings.Replace(allEvents("/opt/den"), `"Stop":`, `"Other":`, 1), 1, false, false},
+		{"matcher changed", strings.Replace(allEvents("/opt/den"), `"matcher":"AskUserQuestion"`, `"matcher":"Bash"`, 1), 1, false, false},
+		{"only other hooks", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash other.sh"}]}]}}`, len(specs), false, false},
+		{"does not parse", `{"hooks":`, 0, false, true},
+	} {
+		st, err := StatusOf([]byte(tc.raw), "/opt/den")
+		if (err != nil) != tc.err {
+			t.Errorf("%s: err = %v", tc.name, err)
+			continue
+		}
+		if len(st.Missing) != tc.missing || st.Other != tc.other {
+			t.Errorf("%s: missing %v other %v, want %d missing, other %v", tc.name, st.Missing, st.Other, tc.missing, tc.other)
+		}
+	}
+}
+
+func TestInstallThenStatusHasNothingMissing(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", dir)
+	st, err := CheckStatus("/opt/my den/den")
+	if err != nil || len(st.Missing) != len(specs) {
+		t.Fatalf("before install: %+v, %v", st, err)
+	}
+	if _, err := Install("/opt/my den/den"); err != nil {
+		t.Fatal(err)
+	}
+	st, err = CheckStatus("/opt/my den/den")
+	if err != nil || len(st.Missing) != 0 || st.Other {
+		t.Errorf("after install: %+v, %v", st, err)
+	}
+	if st, _ := CheckStatus("/usr/bin/den"); !st.Other || len(st.Missing) != 0 {
+		t.Errorf("another den: %+v", st)
+	}
+	if got := Events(); len(got) != len(specs) || got[0] != "SessionStart" {
+		t.Errorf("Events = %v", got)
+	}
+}
 
 func TestInstallKeepsOtherHooksAndUninstallRestores(t *testing.T) {
 	dir := t.TempDir()
