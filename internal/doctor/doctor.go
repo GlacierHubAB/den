@@ -503,8 +503,24 @@ func orchestrator(e Env) Result {
 	if o.Spawn {
 		spawn = "spawning on"
 	}
-	return result("orchestrator", OK, "model "+sanitize.Label(o.Model, 32)+", "+spawn+
+	return result("orchestrator", OK, "model "+shownModel(o.Model)+", "+spawn+
 		" (a real Claude Code session: lower the cost with model = \"haiku\" or spawn = false)", "")
+}
+
+var modelID = regexp.MustCompile(`^claude-[a-z0-9.-]{1,40}(\[1m\])?$`)
+
+// shownModel is the orchestrator's model as printed: a Claude Code alias
+// or a claude-… id as written, anything else (a Bedrock ARN, a gateway's
+// own name) as "a custom model", since it can name an account or a company.
+func shownModel(m string) string {
+	switch strings.TrimSuffix(m, "[1m]") {
+	case "opus", "sonnet", "haiku", "default", "opusplan", "best", "off":
+		return m
+	}
+	if modelID.MatchString(m) {
+		return m
+	}
+	return "a custom model"
 }
 
 func configCheck(e Env) Result {

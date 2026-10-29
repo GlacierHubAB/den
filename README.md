@@ -2343,9 +2343,12 @@ under `~/.claude/projects/`; it does not write to those two.
 ## Troubleshooting
 
 Start with `den doctor`. It checks everything below, prints one line per check
-with a one-line fix, and exits 1 when something fails. It only reads: nothing
-is installed or changed, and no remote host is dialled. Its output names no
-user, host, project, session or agent, so it is safe to paste into an issue
+with a one-line fix, and exits 1 when something fails. It only reads files,
+runs `claude --version` and `git --version`, and asks Den's local socket
+whether Den is running: nothing is installed or changed, and no remote host is
+dialled. Its output names no user, host, project, session or agent (a model
+that is not a Claude Code alias or `claude-…` id shows as "a custom model"),
+so it is safe to paste into an issue
 (`den doctor --json` for scripts). Its `config` check names the keys in
 `config.toml` that Den ignores or cannot use, which it otherwise drops without
 a word.

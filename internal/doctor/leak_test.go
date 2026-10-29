@@ -24,7 +24,7 @@ var secrets = []string{
 	"\x1b[31m",       // a terminal escape
 	"/srv/cc-config", // a moved CLAUDE_CONFIG_DIR
 	"/var/xdg-state", // a moved XDG_STATE_HOME
-	"opus-of-alice",  // a model name the human typed; checked separately below
+	"opus-of-alice",  // a model name of the human's own
 }
 
 // leaky is an Env whose every string from outside Den carries identifying
@@ -76,6 +76,7 @@ func leaky(variant int) Env {
 		},
 		Now: time.Date(2026, 10, 28, 19, 0, 0, 0, time.Local),
 	}
+	e.Config.Orchestrator.Model = "opus-of-alice"
 	switch variant {
 	case 1: // every seam fails with an error that names things
 		e.LookPath = func(n string) (string, error) {
@@ -113,9 +114,6 @@ func TestOutputCarriesNoIdentifyingValues(t *testing.T) {
 		}
 		for _, out := range []string{Text(rs), string(raw)} {
 			for _, s := range secrets {
-				if s == "opus-of-alice" {
-					continue
-				}
 				if strings.Contains(out, s) {
 					t.Errorf("variant %d: the output holds %q:\n%s", variant, s, out)
 				}
@@ -124,14 +122,27 @@ func TestOutputCarriesNoIdentifyingValues(t *testing.T) {
 	}
 }
 
-// The orchestrator's model is the one string printed from the human's
-// config: it goes through sanitize.Label, so controls and bidi do not.
-func TestModelIsSanitized(t *testing.T) {
-	e := leaky(0)
-	e.Config.Orchestrator.Model = "opus\u202e\x1b[31m" + strings.Repeat("x", 100)
-	r := byID(Run(e), "orchestrator")
-	if strings.ContainsAny(r.Summary, "\u202e\x1b") || len([]rune(r.Summary)) > 140 {
-		t.Errorf("model printed raw: %q", r.Summary)
+// L1 (den-sec-review): the orchestrator's model is printed only when it is
+// a Claude Code alias or a claude-\u2026 id; anything else can name an account
+// or a company.
+func TestModelShownOnlyWhenKnown(t *testing.T) {
+	for model, want := range map[string]string{
+		"haiku":               "haiku",
+		"opus[1m]":            "opus[1m]",
+		"off":                 "off",
+		"claude-sonnet-5-5":   "claude-sonnet-5-5",
+		"claude-opus-5-5[1m]": "claude-opus-5-5[1m]",
+		"arn:aws:bedrock:eu-north-1:123456789012:inference-profile/eu.anthropic.claude-opus": "a custom model",
+		"acme-internal-opus":                "a custom model",
+		"opus\u202e\x1b[31m":                "a custom model",
+		"claude-" + strings.Repeat("x", 41): "a custom model",
+		"":                                  "a custom model",
+	} {
+		e := leaky(0)
+		e.Config.Orchestrator.Model = model
+		if r := byID(Run(e), "orchestrator"); !strings.HasPrefix(r.Summary, "model "+want+", ") {
+			t.Errorf("model %q: %q, want it shown as %q", model, r.Summary, want)
+		}
 	}
 }
 
