@@ -39,6 +39,10 @@ const (
 	SpeakerOrchestrator = "orchestrator"
 )
 
+// Endings of a report or desktop entry (ConvEntry.Ending), a closed set:
+// EndingNoReport is Den's line that the agent finished without a report.
+const EndingNoReport = "no_report"
+
 var (
 	convOrigins  = map[string]bool{OriginYou: true, OriginConsole: true, OriginReport: true, OriginMission: true, OriginDesktop: true}
 	convSpeakers = map[string]bool{SpeakerYou: true, SpeakerDen: true, SpeakerOrchestrator: true}
@@ -73,6 +77,8 @@ type ConvEntry struct {
 	Origin  string       `json:"origin"`
 	Speaker string       `json:"speaker"`
 	Agent   string       `json:"agent,omitempty"`
+	AgentID string       `json:"agent_id,omitempty"` // the reporting agent's id: Agent is only its name
+	Ending  string       `json:"ending,omitempty"`
 	Console *ConvConsole `json:"console,omitempty"`
 	Text    string       `json:"text"`
 }
@@ -82,6 +88,18 @@ type ConvEntry struct {
 type Converse struct {
 	Turn, Origin, Speaker, Agent, Text string
 	ConsoleID, ConsoleLabel            string
+	// AgentID is the reporting agent's session: the report limits count
+	// by it, never by the name.
+	AgentID string
+	// TurnLineage is the pairing lineage of the console turn the work of
+	// a report or desktop entry came from (Say.Lineage). Its Turn goes out
+	// only while that pairing is the current one, and only in a turn's
+	// own shape; else the entry carries none.
+	TurnLineage string
+	// Ending is EndingNoReport for Den's line that the agent finished
+	// without a report (origin report or desktop, speaker den); any other
+	// value, or on another entry, refuses it.
+	Ending string
 }
 
 // convState is the mirror's state, under its own lock.
@@ -93,9 +111,9 @@ type convState struct {
 	on    bool
 	forID string
 	since time.Time
-	// reports are when each agent's report entries went out, and all
-	// reports' together, for the rate limits; told when each agent last
-	// had the "more reports" line.
+	// reports are when each agent's report entries went out, by session
+	// id, and all reports' together, for the rate limits; told when each
+	// agent last had the "more reports" line.
 	reports map[string][]time.Time
 	all     []time.Time
 	told    map[string]time.Time
@@ -112,6 +130,21 @@ type convState struct {
 type convStored struct {
 	ConvEntry
 	consoleID string
+	// turnLineage is the pairing a report or desktop entry's Turn belongs
+	// to: a console of another pairing gets the entry without it.
+	turnLineage string
+}
+
+// turnShape is a console turn's id as orch.say mints it.
+var turnShape = regexp.MustCompile(`^t-[0-9a-f]{32}$`)
+
+// currentLineage is the current pairing's lineage, "" for none.
+func (s *Server) currentLineage() string {
+	cur, ok := s.CurrentConsole()
+	if !ok {
+		return ""
+	}
+	return cur.Lineage
 }
 
 // SetMirror turns the mirror on for console id (the human's choice, made
@@ -125,6 +158,24 @@ func (s *Server) SetMirror(id string, on bool) {
 		st.since = time.Now()
 		st.askingID = ""
 	}
+	st.mu.Unlock()
+	s.pushMirror()
+}
+
+// ResumeMirror turns the mirror on again for console id under the human's
+// kept answer, given at since: conversation.history then reaches back to
+// the later of since and Den's start, as it did before the console
+// restarted, and is never cut to the reconnect.
+func (s *Server) ResumeMirror(id string, since time.Time) {
+	if id == "" {
+		return
+	}
+	if since.IsZero() {
+		since = time.Now()
+	}
+	st := &s.conv
+	st.mu.Lock()
+	st.on, st.forID, st.since, st.askingID = true, id, since, ""
 	st.mu.Unlock()
 	s.pushMirror()
 }
@@ -236,7 +287,7 @@ func (s *Server) Converse(in Converse) bool {
 	}
 	e := ConvEntry{Turn: sanitize.Label(in.Turn, 80), Origin: in.Origin, Speaker: in.Speaker, Text: convText(in.Text)}
 	if in.Origin == OriginReport || in.Origin == OriginDesktop {
-		e.Agent = agentLabel(in.Agent)
+		e.Agent, e.AgentID = agentLabel(in.Agent), sanitize.Label(in.AgentID, 64)
 		if e.Speaker == SpeakerDen {
 			// Den's line is built here, from the checked name, whatever
 			// the caller sent: an agent's chosen name never writes Den's
@@ -247,6 +298,20 @@ func (s *Server) Converse(in Converse) bool {
 	if in.Origin == OriginConsole {
 		e.Console = &ConvConsole{Label: sanitize.Label(in.ConsoleLabel, 60)}
 	}
+	reportTurn := in.Origin == OriginReport || in.Origin == OriginDesktop
+	if reportTurn && (!turnShape.MatchString(in.Turn) || in.TurnLineage == "" || in.TurnLineage != s.currentLineage()) {
+		e.Turn = ""
+	}
+	if !reportTurn && in.Origin != OriginConsole {
+		e.Turn = ""
+	}
+	if in.Ending != "" {
+		if in.Ending != EndingNoReport || !reportTurn || in.Speaker != SpeakerDen {
+			return false
+		}
+		// Den's fixed line, from the checked name like "Report from".
+		e.Ending, e.Text = EndingNoReport, "No report from "+e.Agent+": it finished without one."
+	}
 	if strings.TrimSpace(e.Text) == "" {
 		return false
 	}
@@ -254,18 +319,21 @@ func (s *Server) Converse(in Converse) bool {
 	st.mu.Lock()
 	now := time.Now()
 	if (in.Origin == OriginReport || in.Origin == OriginDesktop) && in.Speaker != SpeakerOrchestrator {
-		ok, line := st.allowReport(e.Agent, now)
+		ok, line := st.allowReport(in.AgentID, e.Agent, now)
 		if !ok {
 			if line == "" {
 				st.mu.Unlock()
 				return false
 			}
-			e.Speaker, e.Text = SpeakerDen, line
+			e.Speaker, e.Text, e.Turn, e.Ending = SpeakerDen, line, "", "" // about the agent, not one turn
 		}
 	}
 	st.seq++
 	e.ID, e.At = st.seq, now.UTC()
 	stored := convStored{ConvEntry: e, consoleID: in.ConsoleID}
+	if e.Turn != "" && reportTurn {
+		stored.turnLineage = in.TurnLineage
+	}
 	st.entries = append(st.entries, stored)
 	if n := len(st.entries) - convKeep; n > 0 {
 		st.entries = append([]convStored(nil), st.entries[n:]...)
@@ -275,18 +343,21 @@ func (s *Server) Converse(in Converse) bool {
 	if !on {
 		return true
 	}
+	lineage := s.currentLineage()
 	for _, c := range s.consoleConns(forID) {
 		if c.subscribed(EventConsole) && s.mayMirror(c) {
-			c.push(Event{Event: EventConversation, Data: stored.forConn(c)}, true)
+			c.push(Event{Event: EventConversation, Data: stored.forConn(c, lineage)}, true)
 		}
 	}
 	return true
 }
 
 // allowReport applies the report limits: convPerAgent a minute per agent
-// and convReportsTotal across all. Past them, the first entry dropped in a
+// (by its session id; agent is only its name, for the line) and
+// convReportsTotal across all. Past them, the first entry dropped in a
 // minute becomes Den's line saying more are in Den; the rest are dropped.
-func (st *convState) allowReport(agent string, now time.Time) (bool, string) {
+// A report with no session id counts against one shared bucket.
+func (st *convState) allowReport(id, agent string, now time.Time) (bool, string) {
 	if st.reports == nil {
 		st.reports, st.told = map[string][]time.Time{}, map[string]time.Time{}
 	}
@@ -299,23 +370,26 @@ func (st *convState) allowReport(agent string, now time.Time) (bool, string) {
 		}
 		return out
 	}
-	st.reports[agent], st.all = recent(st.reports[agent]), recent(st.all)
-	if len(st.reports[agent]) < convPerAgent && len(st.all) < convReportsTotal {
-		st.reports[agent] = append(st.reports[agent], now)
+	st.reports[id], st.all = recent(st.reports[id]), recent(st.all)
+	if len(st.reports[id]) < convPerAgent && len(st.all) < convReportsTotal {
+		st.reports[id] = append(st.reports[id], now)
 		st.all = append(st.all, now)
 		return true, ""
 	}
-	if now.Sub(st.told[agent]) < time.Minute {
+	if now.Sub(st.told[id]) < time.Minute {
 		return false, ""
 	}
-	st.told[agent] = now
+	st.told[id] = now
 	return false, "More reports from " + agent + " are in Den."
 }
 
 // forConn is the entry as connection c receives it: Self set only on the
 // connection of the console that sent the turn.
-func (e convStored) forConn(c *conn) ConvEntry {
+func (e convStored) forConn(c *conn, lineage string) ConvEntry {
 	out := e.ConvEntry
+	if e.turnLineage != "" && e.turnLineage != lineage {
+		out.Turn = "" // a turn of another pairing than the current one
+	}
 	if out.Console != nil {
 		cc := *out.Console
 		c.mu.Lock()
@@ -363,6 +437,7 @@ func (s *Server) conversationHistory(c *conn, req Request) {
 	if p.Limit <= 0 || p.Limit > convHistoryMax {
 		p.Limit = convHistoryMax
 	}
+	lineage := s.currentLineage()
 	st := &s.conv
 	st.mu.Lock()
 	since := st.since
@@ -372,7 +447,7 @@ func (s *Server) conversationHistory(c *conn, req Request) {
 		if e.At.Before(since.UTC()) {
 			break
 		}
-		out = append(out, e.forConn(c))
+		out = append(out, e.forConn(c, lineage))
 	}
 	st.mu.Unlock()
 	if out == nil {
@@ -411,6 +486,15 @@ func convText(s string) string {
 // agentName is a name the mirror shows as it is: a short, plain name, no
 // sentence in it.
 var agentName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$`)
+
+// aliasLabel is an agent's alias as the API shows it: agentLabel's rule,
+// and "" rather than "an agent" when it has none or fails it.
+func aliasLabel(alias string) string {
+	if l := agentLabel(alias); l != "an agent" {
+		return l
+	}
+	return ""
+}
 
 // agentLabel is an agent's name in the mirror: a plain name, never one that
 // could pass for Den, Drey, the human, the orchestrator or the console, and

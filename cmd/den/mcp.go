@@ -64,7 +64,7 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 	return []mcp.Tool{
 		{
 			Name:        strings.TrimPrefix(orch.SpawnAgentTool, "mcp__"+orch.MCPServer+"__"),
-			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. The agent reports to you when done and has this same tool, so a lead can staff its own work. Returns the agent's critter name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
+			Description: "Start a new Claude Code agent in a new terminal window on the workspace the human is looking at, in the given directory, with the brief as its first prompt. The agent reports to you when done and has this same tool, so a lead can staff its own work. Returns the agent's name and peer name; the brief must be complete and self-contained, as if the human had typed it.",
 			Schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -73,6 +73,7 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 					"name":     map[string]any{"type": "string", "description": "Optional peer name for the session (lowercase, dashes). Generated from the directory when empty."},
 					"model":    map[string]any{"type": "string", "enum": spawn.ModelNames(), "description": "The model for the agent, by how hard its task is. " + strings.Join(when, ". ") + ". Omit for the user's default."},
 					"role":     map[string]any{"type": "string", "description": "The agent's role in a few words: coding agent, ui designer, frontend developer, qa automation, security auditor. Den offers the human the skills from its vetted catalogue that fit the role, for this agent only, and waits for their answer before starting it; the agent starts either way, with the skills they approved."},
+					"title":    map[string]any{"type": "string", "description": "A few words on this agent's job, specific to the work: \"release notes writer\", \"payments backend engineer\". Den names the agent by its role (\"@backend-engineer\"), or by the title when the role is generic (coding agent, developer, engineer, assistant…): such a role without a title is refused. A name is only a label; it grants nothing."},
 					"skills":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional: offer only these catalogue skills. Each must fit the role; it may be one the role's default offer (at most four) leaves out."},
 					"worktree": map[string]any{"oneOf": []any{map[string]any{"type": "boolean"}, map[string]any{"type": "string"}}, "description": "Optional: start the agent in a git worktree of its own (true, or a name for it), made by Claude Code under <repo>/.claude/worktrees on branch worktree-<name>, so agents editing one repository do not collide. dir must be in a git repository that has a commit. The human reviews and merges the branch in Den's Review; the agent is told to commit there and not to merge."},
 					"reason":   map[string]any{"type": "string", "description": "Only when the repository's team is at Den's cap (default 3 agents per repository, the orchestrator not counted): one line on why one more agent is needed. Den refuses a spawn over the cap without it, and shows the reason to the human in its chat."},
@@ -86,6 +87,9 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 				in, ok := orch.ParseSpawn(args)
 				if !ok {
 					return "", errDir
+				}
+				if why := needsTitle(in); why != "" {
+					return "", errorString(why)
 				}
 				if err := teamRoom(in, lead); err != nil {
 					return "", err
@@ -105,6 +109,7 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 				if err != nil {
 					return "", err
 				}
+				reportSpawn(res.Name)
 				return strings.TrimSpace(res.Describe() + " " + note), nil
 			},
 		},
@@ -187,19 +192,20 @@ func baseTools(orcName, lead, exe string) []mcp.Tool {
 	}
 }
 
-// mcpTools is what `den mcp` offers: note and notes to everyone;
-// update_mission, propose_mission, tune_process and propose_rule only to
-// the orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the agents it
-// starts), and with missionsOnly nothing else.
+// mcpTools is what `den mcp` offers: note, notes and overlap_ack to
+// everyone; update_mission, propose_mission, tune_process and propose_rule
+// only to the orchestrator (DEN_ORCHESTRATOR=1, which Den strips from the
+// agents it starts), and with missionsOnly nothing else.
 func mcpTools(all []mcp.Tool, orchestrator, missionsOnly, control bool) []mcp.Tool {
 	if !orchestrator {
-		return append(all, noteTools()...)
+		return append(append(all, noteTools()...), overlapAckTool())
 	}
 	if missionsOnly {
 		all = nil
 	}
 	all = append(all, missionTool(), proposeTool(), tuneTool(), ruleTool())
 	all = append(all, noteTools()...)
+	all = append(all, overlapAckTool())
 	if control {
 		all = append(all, sendMessageTool())
 	}
@@ -252,7 +258,7 @@ func missionTool() mcp.Tool {
 		"properties": map[string]any{
 			"id":    map[string]any{"type": "string", "description": "The sub-goal's id (g1, g2...). Leave it out to add a sub-goal."},
 			"text":  map[string]any{"type": "string", "description": "What the sub-goal is, in a few words."},
-			"owner": map[string]any{"type": "string", "description": "Who owns it: a running agent's critter name from the roster, or a team role to start."},
+			"owner": map[string]any{"type": "string", "description": "Who owns it: a running agent's name from the roster (its peer handle when two share a name), or a team role to start."},
 			"state": map[string]any{"type": "string", "enum": []string{"todo", "doing", "blocked", "done"}},
 			"note":  map[string]any{"type": "string", "description": "One line: what it is blocked on, or what it produced."},
 		},
@@ -311,13 +317,13 @@ func proposeTool() mcp.Tool {
 		"type": "object",
 		"properties": map[string]any{
 			"text":  map[string]any{"type": "string", "description": "The sub-goal in a few words."},
-			"owner": map[string]any{"type": "string", "description": "A running agent's critter name from the roster, or a role from team."},
+			"owner": map[string]any{"type": "string", "description": "A running agent's name from the roster (its peer handle when two share a name), or a role from team."},
 		},
 		"required": []string{"text", "owner"},
 	}
 	return mcp.Tool{
 		Name:        strings.TrimPrefix(orch.ProposeTool, "mcp__"+orch.MCPServer+"__"),
-		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (critter name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they select it in Den's chat (↑) and press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
+		Description: "Propose a mission for the human to start: a goal on one project, its done criteria (observable and checkable: the mission is done when they are all met), and its sub-goals, each owned by a running agent (its name) or a team role to start. Den shows it to the human; nothing starts and nothing may be dispatched until they select it in Den's chat (↑) and press ^Y. Call it again with the id to change the proposal. The answer gives the id or says what to fix.",
 		Schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -436,6 +442,31 @@ func noteTools() []mcp.Tool {
 				}
 				return askDen(bridge.NotesEvent, in, "no notes were read")
 			},
+		},
+	}
+}
+
+// overlapAckTool is overlap_ack: an agent's word that it and the agent its
+// branch overlaps with agreed who goes first (with), or the orchestrator's
+// decision for two agents (agents); Den then warns neither about the files
+// they overlap on now, only about a file new to them.
+func overlapAckTool() mcp.Tool {
+	return mcp.Tool{
+		Name:        strings.TrimPrefix(orch.OverlapAckTool, "mcp__"+orch.MCPServer+"__"),
+		Description: "Tell Den that two agents whose branches both change files have agreed who goes first or how to split the work, so Den stops warning them about those files. An agent gives with: the other agent's name; the orchestrator gives agents: both names. Den warns again only for a file new to the pair.",
+		Schema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"with":   map[string]any{"type": "string", "description": "An agent's call: the other agent's critter or peer name."},
+				"agents": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "The orchestrator's call: both agents' names."},
+			},
+		},
+		Call: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var in bridge.OverlapAckInput
+			if json.Unmarshal(args, &in) != nil || (strings.TrimSpace(in.With) == "" && len(in.Agents) != 2) {
+				return "", errorString("give with (the other agent), or agents (both, from the orchestrator)")
+			}
+			return askDen(bridge.OverlapAckEvent, in, "nothing was recorded")
 		},
 	}
 }

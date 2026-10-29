@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/badge"
@@ -19,6 +20,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/gitinfo"
 	"github.com/GlacierHubAB/den/internal/hypr"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/transcript"
@@ -70,7 +72,13 @@ func (s Status) Key() string {
 // Agent is one coding agent as Den sees it.
 type Agent struct {
 	Session discover.Session
+	// Name is the name Den shows: the one it gave at spawn from the
+	// agent's role (names.Assign), else its critter name. Alias is the
+	// critter name when Name is not it; it still resolves. Both are labels
+	// only: Den keys everything on the session id.
 	Name    string
+	Alias   string   `json:",omitempty"`
+	Former  []string `json:",omitempty"` // names Den gave it before the human renamed it; they still resolve
 	Labels  badge.Labels
 	Git     gitinfo.Info
 	HasGit  bool
@@ -210,9 +218,15 @@ func Snapshot() ([]Agent, error) {
 	}
 	host, _ := os.Hostname()
 
+	given := GivenNames()
 	agents := make([]Agent, 0, len(sessions))
 	for _, s := range sessions {
 		a := Agent{Session: s, Name: badge.Name(s.SessionID), Labels: labels[s.SessionID]}
+		a.Name, a.Alias = Named(a.Name, given[s.SessionID])
+		a.Former = given[s.SessionID].Former
+		if a.Labels.Role == "" {
+			a.Labels.Role = given[s.SessionID].Role
+		}
 		if u, ok := limits[s.SessionID]; ok {
 			a.Limits, a.HasLimit = u, true
 		}
@@ -418,73 +432,62 @@ func humanAge(d time.Duration) string {
 	return fmt.Sprintf("%dh", int(d.Hours()))
 }
 
-// Find returns the agent whose name, session id or pid matches query. Names
-// match case-insensitively on a prefix ("mossy", "Mossy Lemur"). A query
-// that is ambiguous across hosts matches nothing; Lookup says why.
+// Find returns the agent whose session id, pid, peer handle or name
+// matches query (names.Resolve, with ids and prefixes). A query that
+// matches more than one agent matches nothing; Lookup says why.
 func Find(agents []Agent, query string) (Agent, bool) {
 	a, err := Lookup(agents, query)
 	return a, err == nil
 }
 
 // Lookup is Find with a reason when nothing matches. A query may name the
-// host after an @ ("mossy@devbox", "mossy@local"); without one, a query
-// that matches agents on more than one host is an error listing them.
+// host after an @ ("mossy@devbox", "mossy@local"); an agent on another
+// host needs it.
 func Lookup(agents []Agent, query string) (Agent, error) {
-	q := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(query), "@")))
-	if q == "" {
-		return Agent{}, fmt.Errorf("no agent matches %q", query)
+	c, err := names.Resolve(query, Candidates(agents), names.Opts{IDs: true, Prefix: true})
+	if err != nil {
+		if errors.Is(err, names.ErrNoMatch) {
+			return Agent{}, fmt.Errorf("no agent matches %q", query)
+		}
+		return Agent{}, err
 	}
-	host, qualified := "", false
-	if i := strings.LastIndex(q, "@"); i >= 0 {
-		host, q, qualified = q[i+1:], strings.TrimSpace(q[:i]), true
-		if host == "local" {
-			host = ""
+	for _, a := range agents {
+		if a.Session.SessionID == c.ID && a.Host == c.Host {
+			return a, nil
 		}
 	}
-	// The first match on each host, in the order given; a host is only
-	// considered once so one host's prefix matches stay unambiguous.
-	var hits []Agent
-	seen := map[string]bool{}
-	take := func(match func(Agent) bool) {
-		for _, a := range agents {
-			if (qualified && a.Host != host) || seen[a.Host] || !match(a) {
-				continue
-			}
-			seen[a.Host] = true
-			hits = append(hits, a)
-		}
+	return Agent{}, fmt.Errorf("no agent matches %q", query)
+}
+
+// GivenNames is the names Den gave, by session id. A Den process that
+// holds the registry (the TUI) sets it to its own copy; anything else reads
+// the file once, checked (names.Load), and never again.
+var GivenNames = func() map[string]names.Entry {
+	givenOnce.Do(func() { given = names.Load(names.RegistryPath()) })
+	return given
+}
+
+var (
+	givenOnce sync.Once
+	given     map[string]names.Entry
+)
+
+// Named is the name and alias an agent shows: the name Den gave it, with
+// its critter name as the alias, or the critter name alone.
+func Named(critter string, e names.Entry) (name, alias string) {
+	if n := e.Name(); n != "" {
+		return n, critter
 	}
-	take(func(a Agent) bool {
-		return q != "" && (strings.HasPrefix(a.Session.SessionID, q) || (a.Session.PID > 0 && fmt.Sprint(a.Session.PID) == q))
-	})
-	if len(hits) == 0 {
-		// Two agents on one host can share a critter name (or a prefix of
-		// one): then the name is neither, and the error lists them with
-		// their peer handles.
-		perHost := map[string][]string{}
-		for _, a := range agents {
-			if (!qualified || a.Host == host) && strings.HasPrefix(strings.ToLower(a.Name), q) {
-				perHost[a.Host] = append(perHost[a.Host], sanitize.Label(a.Name, 60)+" ("+sanitize.Label(a.Session.Name, 60)+")@"+sanitize.Label(HostName(a.Host), 60))
-			}
-		}
-		for _, same := range perHost {
-			if len(same) > 1 {
-				return Agent{}, fmt.Errorf("%q is more than one agent: %s; give its session id", query, strings.Join(same, ", "))
-			}
-		}
-		take(func(a Agent) bool { return q != "" && strings.HasPrefix(strings.ToLower(a.Name), q) })
+	return critter, ""
+}
+
+// Candidates are agents as names.Resolve takes them.
+func Candidates(agents []Agent) []names.Candidate {
+	out := make([]names.Candidate, 0, len(agents))
+	for _, a := range agents {
+		out = append(out, names.Candidate{ID: a.Session.SessionID, Peer: a.Session.Name, Name: a.Name, Alias: a.Alias, Also: a.Former, Host: a.Host, PID: a.Session.PID})
 	}
-	switch len(hits) {
-	case 0:
-		return Agent{}, fmt.Errorf("no agent matches %q", query)
-	case 1:
-		return hits[0], nil
-	}
-	var names []string
-	for _, a := range hits {
-		names = append(names, a.Name+"@"+HostName(a.Host))
-	}
-	return Agent{}, fmt.Errorf("%q matches agents on more than one host: %s; add @host", query, strings.Join(names, ", "))
+	return out
 }
 
 // HostName is the label shown for a host: "local" for this machine.

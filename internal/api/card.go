@@ -2,9 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
 // Cards from the dock: a console reads a card whole (card.get), with a hash
@@ -30,6 +34,10 @@ const (
 	CodeNonceExpired    = "nonce_expired"
 	CodeReadItFirst     = "read_it_first"
 	CodeRefusedFromDock = "refused_from_dock"
+	// CodeHashVersion refuses an answer whose text_sha256 is the card's
+	// hash in the other version than the connection's: final, the console
+	// must not fetch again and retry.
+	CodeHashVersion = "hash_version"
 )
 
 // Card is one card as Den shows it, for a console. Den fills Snapshot.Cards
@@ -38,13 +46,25 @@ type Card struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
 	Agent string `json:"agent"`
-	Tool  string `json:"tool"` // the tool asked for, "" for none
-	Title string `json:"title"`
+	// AgentID is the agent's id, "" for a card from a host or from Den:
+	// Agent is only its name. Not in the card's hash.
+	AgentID string `json:"agent_id,omitempty"`
+	Tool    string `json:"tool"` // the tool asked for, "" for none
+	Title   string `json:"title"`
 	// Note is a warning Den shows with the card (two agents share the
 	// name), "" for none.
-	Note        string   `json:"note"`
-	Body        string   `json:"body"`
+	Note string `json:"note"`
+	// Class and Step are what a console's "allow" on it does, as Den
+	// classed it from its own record (inbox.Classify): in card hash v2,
+	// never taken from a console.
+	Class string `json:"class"`
+	Step  int    `json:"step"`
+	Body  string `json:"body"`
+	// Hash is the card's text_sha256 as the connection reads it: v1 as Den
+	// keeps it, v2 for a connection that chose it in hello. HashV2 is the
+	// v2 hash, "" when the hasher refused the card's fields.
 	Hash        string   `json:"text_sha256"`
+	HashV2      string   `json:"-"`
 	Truncated   bool     `json:"truncated"`
 	CutAt       int      `json:"cut_at,omitempty"`
 	Verbs       []string `json:"verbs"`
@@ -59,6 +79,75 @@ type Card struct {
 // newline).
 func CardHash(kind, agent, tool, title, note, body string) string {
 	return sha256Hex([]byte(kind + "\n" + agent + "\n" + tool + "\n" + title + "\n" + note + "\n" + body))
+}
+
+// Criterion is one done criterion of a "mission done" card, as card hash
+// v2 binds it: its id, state, text and evidence ("" when left out).
+type Criterion struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Text     string `json:"text"`
+	Evidence string `json:"evidence"`
+}
+
+// errCardHashV2 is CardHashV2's refusal.
+var errCardHashV2 = errors.New("card hash v2: a field breaks the rules")
+
+// CardHashV2 is a card's text_sha256 in version 2: over kind, agent, tool,
+// title, note, class, step, mission, criteria and body, in that order, one
+// per line, the body last for every kind. step is a bare decimal; mission
+// and criteria are "" on a card without them. Each criterion is its id,
+// state, text and evidence joined by U+001F, the criteria joined by
+// U+001E in card order. It refuses a class outside the set, a step that
+// is not one of its class's, a newline in any field before the body
+// (mission included), and either separator, or a newline, inside a
+// criterion's part: no two different cards share a text.
+func CardHashV2(kind, agent, tool, title, note, class string, step int, mission string, criteria []Criterion, body string) (string, error) {
+	if !inbox.StepFits(inbox.Class(class), step) {
+		return "", errCardHashV2
+	}
+	for _, f := range []string{kind, agent, tool, title, note, mission} {
+		if strings.Contains(f, "\n") {
+			return "", errCardHashV2
+		}
+	}
+	rows := make([]string, len(criteria))
+	for i, c := range criteria {
+		for _, f := range []string{c.ID, c.State, c.Text, c.Evidence} {
+			if strings.ContainsAny(f, "\n\x1e\x1f") {
+				return "", errCardHashV2
+			}
+		}
+		rows[i] = c.ID + "\x1f" + c.State + "\x1f" + c.Text + "\x1f" + c.Evidence
+	}
+	text := strings.Join([]string{kind, agent, tool, title, note, class, strconv.Itoa(step), mission, strings.Join(rows, "\x1e"), body}, "\n")
+	return sha256Hex([]byte(text)), nil
+}
+
+// forVersion is the card as a connection on card hash version v reads it:
+// its text_sha256 in that version. A card with no v2 hash is not one a v2
+// connection may answer.
+func (c Card) forVersion(v int) Card {
+	if v == 2 {
+		c.Hash = c.HashV2
+		if c.Hash == "" {
+			c.DockAnswers = false
+		}
+	}
+	return c
+}
+
+// HashIn is the card's text_sha256 in card hash version v, for Den to
+// check an answer against the card as it would hand it over now.
+func (c Card) HashIn(v int) string { return c.forVersion(v).Hash }
+
+// otherHash is the card's text_sha256 in the version a connection on v
+// does not read, "" for none.
+func (c Card) otherHash(v int) string {
+	if v == 2 {
+		return c.Hash
+	}
+	return c.HashV2
 }
 
 // CardEvent is a card event's data: a card came, changed or was settled.
@@ -92,6 +181,7 @@ var settledResult = map[string]string{"allow": "allowed", "deny": "denied", "alw
 type CardAnswer struct {
 	ID      string
 	Hash    string
+	Version int    // the card hash version Hash is in: 1 or 2
 	Verb    string // allow, deny or always
 	Console string // the console as Den names it
 	Reply   chan CardResult
@@ -198,6 +288,7 @@ func (s *Server) cardGet(c *conn, req Request) {
 		c.fail(req.ID, CodeNotFound, "no such card")
 		return
 	}
+	card = card.forVersion(c.cardVersion())
 	now := time.Now()
 	nonce := randHex64()
 	c.reads.mu.Lock()
@@ -262,6 +353,11 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 	delete(c.reads.nonces, p.Nonce) // spent, whatever follows
 	first := c.reads.first[p.ID+"\x00"+p.Hash]
 	c.reads.mu.Unlock()
+	ver := c.cardVersion()
+	if card, live := s.cardOf(p.ID); live && card.otherHash(ver) == p.Hash {
+		c.fail(req.ID, CodeHashVersion, "this connection uses card hash v"+strconv.Itoa(ver))
+		return
+	}
 	switch {
 	case !ok || now.Sub(cn.issued) >= cardNonceLife:
 		c.fail(req.ID, CodeNonceExpired, "fetch the card again")
@@ -271,6 +367,7 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		return
 	}
 	card, ok := s.cardOf(p.ID)
+	card = card.forVersion(ver)
 	switch {
 	case !ok:
 		c.fail(req.ID, CodeNotFound, "no such card, or it was answered")
@@ -301,7 +398,7 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "answers faster than anyone could read: the console is unpaired")
 		return
 	}
-	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Verb: p.Verb, Console: ConsoleLabel, Reply: make(chan CardResult, 1)}
+	a := &CardAnswer{ID: p.ID, Hash: p.Hash, Version: ver, Verb: p.Verb, Console: ConsoleLabel, Reply: make(chan CardResult, 1)}
 	// The card's settled event, if Den pushes one while it answers, waits
 	// for the reply: the reply first, then the event, on this connection.
 	c.mu.Lock()
@@ -369,32 +466,39 @@ func hasVerb(verbs []string, v string) bool {
 	return false
 }
 
-// cardEvent is a new or changed card's event.
-func cardEvent(c Card, change string) CardEvent {
+// cardEvent is a new or changed card's event, for a connection on card
+// hash version v.
+func cardEvent(c Card, change string, v int) CardEvent {
+	c = c.forVersion(v)
 	return CardEvent{ID: c.ID, Kind: c.Kind, Agent: c.Agent, Change: change, Hash: c.Hash, NeedsDenScreen: !c.DockAnswers}
 }
 
 // pushCards tells the console's subscribed connections what changed
-// between two views' cards.
+// between two views' cards, each in the card hash version it reads: a
+// card is changed for it when its hash in that version changed.
 func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled) {
-	var evs []CardEvent
-	for id, c := range now {
-		if o, ok := old[id]; !ok {
-			evs = append(evs, cardEvent(c, "new"))
-		} else if o.Hash != c.Hash {
-			evs = append(evs, cardEvent(c, "changed"))
-		}
-	}
-	for id, o := range old {
-		if _, ok := now[id]; !ok {
-			e := CardEvent{ID: id, Kind: o.Kind, Agent: o.Agent, Change: "settled", Result: "gone"}
-			if st, ok := settled[id]; ok {
-				e.Result, e.By = settledResult[st.Verb], st.By
+	events := func(v int) []CardEvent {
+		var evs []CardEvent
+		for id, c := range now {
+			if o, ok := old[id]; !ok {
+				evs = append(evs, cardEvent(c, "new", v))
+			} else if o.HashIn(v) != c.HashIn(v) {
+				evs = append(evs, cardEvent(c, "changed", v))
 			}
-			evs = append(evs, e)
 		}
+		for id, o := range old {
+			if _, ok := now[id]; !ok {
+				e := CardEvent{ID: id, Kind: o.Kind, Agent: o.Agent, Change: "settled", Result: "gone"}
+				if st, ok := settled[id]; ok {
+					e.Result, e.By = settledResult[st.Verb], st.By
+				}
+				evs = append(evs, e)
+			}
+		}
+		return evs
 	}
-	if len(evs) == 0 {
+	byVersion := map[int][]CardEvent{1: events(1), 2: events(2)}
+	if len(byVersion[1]) == 0 && len(byVersion[2]) == 0 {
 		return
 	}
 	cur, ok := s.CurrentConsole()
@@ -405,7 +509,7 @@ func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled)
 		if !c.subscribed(EventCard) {
 			continue
 		}
-		for _, e := range evs {
+		for _, e := range byVersion[c.cardVersion()] {
 			if !c.holdSettled(e) {
 				c.push(Event{Event: EventCard, Data: e}, true)
 			}

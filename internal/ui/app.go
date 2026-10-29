@@ -28,6 +28,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/review"
@@ -119,6 +120,8 @@ type Model struct {
 	use usageGuard
 	// mode is the global permission mode agents start in (mode.go).
 	mode modeState
+	// powers is config.toml's api.console_powers as Den watches it.
+	powers powersState
 	// god is God mode (god.go): in memory only, off at every start.
 	god godUI
 	// med is the mediation of messages to guarded agents (mediate.go).
@@ -169,6 +172,11 @@ type Model struct {
 	sel             selState                   // Den's own text selection on the Orchestrator and Overview views
 	guard           *closer.Guard              // agents a close must leave alone or only propose when named
 	guardPath       string
+	names           *names.Live // the names Den gave (names.go)
+	spawnReports    []spawnReport
+	renames         map[string]*renamePick // open rename cards by item id
+	namesChecked    bool                   // the names were checked against the roster
+	renameBackedUp  bool                   // the chat said where the backups are
 	srvErr          error
 	store           *inbox.Store
 	inboxCur        int
@@ -235,6 +243,7 @@ func New(cfg config.Config) Model {
 	m.tree.edges = tree.Load(m.tree.path)
 	m.missions = mission.Load(mission.Path())
 	m.guard, m.guardPath = closer.LoadGuard(closer.GuardPath()), closer.GuardPath()
+	m.useNames(names.OpenLive(names.RegistryPath()))
 	m.loadProjectPick()
 	fleet.Recent = cfg.Detail.Recent
 	fleet.Prices = cost.NewTable(config.Prices())
@@ -263,6 +272,7 @@ func New(cfg config.Config) Model {
 		// Only the Den that holds den.sock serves the API too.
 		if m.srv != nil {
 			m.startAPI()
+			m.startPowers("written to config.toml while Den was stopped")
 		} else {
 			m.api.err = "another Den is running"
 		}
@@ -479,6 +489,7 @@ func (m *Model) refresh() {
 		m.reconcileCards()
 	}
 	m.settleCards()
+	m.missedReports(time.Now())
 	m.releaseAssignments(time.Now())
 	sort.SliceStable(m.agents, func(i, j int) bool {
 		if oi, oj := m.remoteOrder(m.agents[i]), m.remoteOrder(m.agents[j]); oi != oj {
@@ -559,7 +570,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshTranscript()
 		m.restartForGuidance()
 		m.mirrorTick()
-		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
+		cmds := []tea.Cmd{snapshot, tick(), m.godSweep(), m.watchOrchestrator(), m.checkUsage(time.Now()), m.settleMissions(), m.checkStuck(time.Now()), m.hostNotesDue(time.Now()), m.pollGuidance(), m.pollMode(), m.pollPowers(), m.controlTick(time.Now()), m.checkViewStranded(), m.teamTick(time.Now())}
 		m.deskAskSync()
 		if cmd := m.reconcileView(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -625,6 +636,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case modeReadMsg:
 		m.applyModeRead(msg)
+		m.refresh()
+		return m, nil
+	case powersReadMsg:
+		m.applyPowersRead(msg)
 		m.refresh()
 		return m, nil
 	case apiActMsg:
@@ -822,6 +837,14 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	if r.Event == bridge.TeamEvent {
 		return m.handleTeamQuery(r)
 	}
+	if r.Event == bridge.OverlapAckEvent {
+		m.handleOverlapAck(r)
+		return nil
+	}
+	if r.Event == bridge.SpawnedEvent {
+		m.handleSpawned(r)
+		return nil
+	}
 	if r.Event == bridge.NoteEvent || r.Event == bridge.NotesEvent || r.Event == bridge.RuleEvent {
 		return m.handleMemory(r)
 	}
@@ -851,7 +874,7 @@ func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
 	}
 	if r.Event == "PostToolUse" && r.Input.ToolName == orch.SpawnAgentTool {
 		in, _ := orch.ParseSpawn(r.Input.ToolInput)
-		m.learnSpawn(orch.ResultText(r.Input.ToolResponse), r.SessionID, "", in.Brief)
+		m.learnSpawn(orch.ResultText(r.Input.ToolResponse), r.SessionID, "", in.Brief, in.Role, in.Title)
 	}
 	it := m.store.Apply(r)
 	m.trackHook(r, it)
@@ -1235,6 +1258,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RenamePick {
+			if m.toggleRename(it, int(msg.String()[0]-'0')) {
+				return m, nil
+			}
+		}
 	case "ctrl+y":
 		if m.tab == tabOrch && m.selectedProposal() != nil {
 			return m.answerProposal(true)
@@ -1594,6 +1622,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.RulesEdited {
 		return m.decideRulesEdited(it, verb)
 	}
+	if it.Kind == inbox.RenamePick {
+		return m.decideRename(it, verb)
+	}
 	if it.Kind == inbox.MissionCriteria {
 		return m.decideMissionCriteria(it, verb)
 	}
@@ -1608,6 +1639,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	}
 	if it.Kind == inbox.UsageSet {
 		return m.decideUsageSet(it, verb)
+	}
+	if it.Kind == inbox.PowersSet {
+		return m.decidePowersSet(it, verb)
 	}
 	if it.Kind == inbox.ModeSet {
 		return m.decideModeSet(it, verb)
@@ -1678,6 +1712,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.closeCommand(fields[1:])
 	case "/reopen":
 		return m.reopenCommand(fields[1:])
+	case "/rename":
+		return m.renameCommand(fields[1:])
 	case "/protect", "/unprotect", "/flag", "/unflag":
 		return m.guardCommand(strings.ToLower(fields[0]), fields[1:])
 	case "/dismiss", "/x":
@@ -1861,8 +1897,10 @@ func (m Model) nameFor(sessionID string) string {
 		}
 		return "project memory"
 	}
+	// "@" marks a name Den gave from a role, everywhere in Den; a critter
+	// name shows as it is.
 	if a, ok := m.agentFor(sessionID); ok {
-		return a.Name
+		return shownName(a)
 	}
 	if name := m.rosterName(sessionID); name != "" {
 		return name

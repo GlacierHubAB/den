@@ -119,7 +119,24 @@ type Console struct {
 	// fills them in.
 	Powers   bool
 	Verified bool
+	// Lineage is the pairing this console continues: a console.request
+	// or a claim starts one, as Den's own random value, and a
+	// console.reconnect Den accepts (the same boot, the verified unit's
+	// main process, pairAutomatically) carries it on. Mirror is the
+	// human's answer for the lineage to Den's card about showing the
+	// conversation ("" not asked yet, MirrorYes, MirrorNo), and
+	// MirrorSince when they said yes; kept with the pairing in its
+	// record, so the same dock service, restarted on this boot, keeps it.
+	Lineage     string
+	Mirror      string
+	MirrorSince time.Time
 }
+
+// The human's answers to the mirror card, as Console.Mirror keeps them.
+const (
+	MirrorYes = "yes"
+	MirrorNo  = "no"
+)
 
 // ConsoleEvent is the data of a console event.
 type ConsoleEvent struct {
@@ -235,10 +252,15 @@ type consoleState struct {
 	// last is what Den last read of the console's service, for the changes
 	// an automatic pairing names. given is the read this Den process last
 	// gave the powers to, itself (never one read back from disk): unless
-	// ConsolePowersAlways, only the same program, unit and pins pair with
-	// them.
+	// always, only the same program, unit and pins pair with them.
 	last  *sysd.Verifier
 	given *sysd.Verifier
+	// always is config.toml's api.console_powers = "always" as the human
+	// allowed it on Den's card in this run (AllowConsolePowersAlways): false
+	// at every start, and set false again by every lock of the powers.
+	// lockGen counts those locks, so a card raised before one is refused.
+	always  bool
+	lockGen uint64
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches
@@ -620,7 +642,7 @@ func (s *Server) consoleClaim(c *conn, req Request) {
 	pub, _ := hex.DecodeString(p.PublicKey)
 	id := randHex()
 	rec := &consoleRec{
-		Console:  Console{ID: id, Exe: c.peer.Exe, PID: self.PID, Since: now, PagesSHA: p.Pages},
+		Console:  Console{ID: id, Exe: c.peer.Exe, PID: self.PID, Since: now, PagesSHA: p.Pages, Lineage: randHex()},
 		identity: identity, start: self.Start, pub: ed25519.PublicKey(pub), pubHex: p.PublicKey,
 		confirm: make(chan bool, 1), words: words,
 	}
@@ -933,7 +955,7 @@ func (s *Server) consoleEvents(c *conn, req Request) {
 	// back before it reconnects).
 	c.push(Event{Event: EventConsole, Data: ev}, true)
 	for _, card := range waiting {
-		c.push(Event{Event: EventCard, Data: cardEvent(card, "new")}, true)
+		c.push(Event{Event: EventCard, Data: cardEvent(card, "new", c.cardVersion())}, true)
 	}
 	// Each pushed under the lock its changers take, with the connection
 	// subscribed: a change after it reaches the connection after it, never

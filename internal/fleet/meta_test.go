@@ -21,7 +21,7 @@ import (
 // fails this test until it is added here, which is the moment to check it
 // is metadata under the observe policy (docs/REMOTE.md).
 var metaAllowed = []string{
-	"index", "session", "status", "name", "peer", "role", "task", "model", "claude", "repo", "branch", "dirty",
+	"index", "session", "status", "name", "given", "peer", "role", "task", "model", "claude", "repo", "branch", "dirty",
 	"status_age_ms", "started_age_ms", "last_active_ms",
 	"context_tokens", "context_window", "has_usage", "usage_from_badge",
 	"limits", "tokens", "subagent_tokens", "reported_usd", "reported_unpriced",
@@ -212,6 +212,18 @@ func TestLocalJSONHasNoHostFields(t *testing.T) {
 			t.Errorf("a local agent's JSON has %s: %s", f, raw)
 		}
 	}
+	// No alias either: an agent Den never named prints what it did
+	// before role names (remote acceptance test 8 pins den list -json).
+	if strings.Contains(string(raw), `"Alias"`) {
+		t.Errorf("an agent without an alias has Alias: %s", raw)
+	}
+	// Nor former names: an agent never renamed prints no Former key.
+	if strings.Contains(string(raw), `"Former"`) {
+		t.Errorf("an agent never renamed has Former: %s", raw)
+	}
+	if raw, _ := json.Marshal(Agent{Name: "backend-engineer", Alias: "Fizzy Moth"}); !strings.Contains(string(raw), `"Alias":"Fizzy Moth"`) {
+		t.Errorf("named agent json = %s", raw)
+	}
 	raw, _ = json.Marshal(Agent{Name: "X", Host: "b", Stale: true})
 	if !strings.Contains(string(raw), `"Host":"b"`) || !strings.Contains(string(raw), `"Stale":true`) {
 		t.Errorf("remote agent json = %s", raw)
@@ -223,8 +235,10 @@ func TestLookupByHost(t *testing.T) {
 		return Agent{Session: discover.Session{SessionID: id}, Name: name, Host: host}
 	}
 	agents := []Agent{mk("aaaa", "Mossy Lemur", ""), mk("bbbb", "Mossy Lemur", "devbox"), mk("cccc", "Tiny Owl", "devbox")}
-	if _, err := Lookup(agents, "mossy"); err == nil || !strings.Contains(err.Error(), "Mossy Lemur@local") || !strings.Contains(err.Error(), "Mossy Lemur@devbox") {
-		t.Errorf("ambiguous bare name: %v", err)
+	// Without a host a name means this machine; an agent elsewhere needs
+	// its host (names.Resolve).
+	if a, err := Lookup(agents, "mossy"); err != nil || a.Session.SessionID != "aaaa" {
+		t.Errorf("bare name = %v %v", a.Session.SessionID, err)
 	}
 	if a, err := Lookup(agents, "mossy@devbox"); err != nil || a.Session.SessionID != "bbbb" {
 		t.Errorf("mossy@devbox = %v %v", a.Session.SessionID, err)
@@ -232,11 +246,11 @@ func TestLookupByHost(t *testing.T) {
 	if a, err := Lookup(agents, "@Mossy Lemur@local"); err != nil || a.Session.SessionID != "aaaa" {
 		t.Errorf("mossy@local = %v %v", a.Session.SessionID, err)
 	}
-	if a, ok := Find(agents, "tiny"); !ok || a.Host != "devbox" {
-		t.Errorf("tiny = %+v", a)
+	if _, err := Lookup(agents, "tiny"); err == nil || !strings.Contains(err.Error(), "Tiny Owl@devbox") {
+		t.Errorf("a remote agent without its host: %v", err)
 	}
-	if _, ok := Find(agents, "mossy"); ok {
-		t.Error("Find should not pick one of two hosts")
+	if a, ok := Find(agents, "tiny@devbox"); !ok || a.Host != "devbox" {
+		t.Errorf("tiny@devbox = %+v", a)
 	}
 	if _, err := Lookup(agents, "tiny@gpu"); err == nil {
 		t.Error("an unknown host matched")
@@ -254,6 +268,32 @@ func TestFromMetaIgnoresTheHostsName(t *testing.T) {
 	a := FromMeta(Meta{Session: id, Name: "Mossy Lemur fix the login", Peer: "worker", Status: "idle"}, "devbox", time.Now(), cost.NewTable(nil))
 	if want := badge.Name(id); a.Name != want || a.Session.Name != "worker" {
 		t.Errorf("name %q (want %q), peer %q", a.Name, want, a.Session.Name)
+	}
+}
+
+// A host's given name is shown, with the critter name as its alias, only
+// when it is one this Den could have given; anything else leaves the
+// critter name. A local agent sends its given name and its critter name.
+func TestFromMetaTakesOnlyAValidGivenName(t *testing.T) {
+	id := "11111111-2222-4333-8444-555555555555"
+	for given, want := range map[string]string{
+		"backend-engineer2":    "backend-engineer2",
+		"orchestrator":         badge.Name(id),
+		"Backend Engineer":     badge.Name(id),
+		"backend-engineer1":    badge.Name(id),
+		"backend-engineer02":   badge.Name(id),
+		"backend-engineer1000": badge.Name(id),
+		"deadbeef":             badge.Name(id),
+		"x\u202eevil":          badge.Name(id),
+	} {
+		a := FromMeta(Meta{Session: id, Name: "Mossy Lemur", Given: given, Status: "idle"}, "devbox", time.Now(), cost.NewTable(nil))
+		if a.Name != want || (want != badge.Name(id)) != (a.Alias == badge.Name(id)) {
+			t.Errorf("given %q: name %q alias %q", given, a.Name, a.Alias)
+		}
+	}
+	local := Agent{Session: discover.Session{SessionID: id}, Name: "backend-engineer", Alias: "Mossy Lemur"}
+	if m := local.Meta(0, time.Now(), true); m.Name != "Mossy Lemur" || m.Given != "backend-engineer" {
+		t.Errorf("meta name %q given %q", m.Name, m.Given)
 	}
 }
 

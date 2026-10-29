@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/cost"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/roster"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
@@ -102,6 +104,11 @@ func (m *Model) ensureRestore() {
 // updates the roster.
 func (m *Model) afterScan() {
 	m.ensureRestore()
+	if !m.namesChecked {
+		// Before this scan's roster write: the roster as Den last saved it.
+		m.namesChecked = true
+		m.checkNames()
+	}
 	if !m.restore.asked {
 		m.restore.asked = true
 		if m.cfg.Restore.Ask {
@@ -112,6 +119,7 @@ func (m *Model) afterScan() {
 	}
 	m.relinkReopened()
 	m.observeRoster()
+	m.migrateGuard()
 }
 
 // alive reports whether a session is running now.
@@ -143,7 +151,8 @@ func (m Model) rosterEntry(a fleet.Agent) roster.Agent {
 	return roster.Agent{
 		SessionID: id,
 		Peer:      a.Session.Name,
-		Critter:   a.Name,
+		Critter:   critterOfAgent(a),
+		Given:     givenOf(a),
 		Role:      a.Labels.Role,
 		Model:     a.Model,
 		CWD:       a.Session.CWD,
@@ -152,6 +161,23 @@ func (m Model) rosterEntry(a fleet.Agent) roster.Agent {
 		Mission:   m.missionOf(id),
 		Spawned:   e.Source == "spawn",
 	}
+}
+
+// critterOfAgent is the critter name an agent was born with: its alias
+// when Den gave it a name, else its name.
+func critterOfAgent(a fleet.Agent) string {
+	if a.Alias != "" {
+		return a.Alias
+	}
+	return a.Name
+}
+
+// givenOf is the name Den gave an agent, "" when it shows its critter name.
+func givenOf(a fleet.Agent) string {
+	if a.Alias != "" {
+		return a.Name
+	}
+	return ""
 }
 
 // observeRoster records the live agents and writes the roster when it
@@ -511,10 +537,16 @@ func (m *Model) relinkReopened() {
 	for _, p := range m.restore.pending {
 		sid := p.sessionID
 		if sid == "" {
+			// By peer handle only when exactly one session started since
+			// with it: a handle is reused, so two is none.
+			var hits []string
 			for _, a := range m.base {
 				if a.Session.Name == p.peer && a.Session.Alive && !a.Session.Started().Before(p.at.Add(-time.Minute)) {
-					sid = a.Session.SessionID
+					hits = append(hits, a.Session.SessionID)
 				}
+			}
+			if len(hits) == 1 {
+				sid = hits[0]
 			}
 			if sid != "" && sid != p.agent.SessionID {
 				m.restore.r.Fork(p.agent.SessionID, sid)
@@ -569,9 +601,12 @@ func (m Model) reopenCommand(args []string) (tea.Model, tea.Cmd) {
 	if name == "" {
 		return m.say("Which agent? /reopen <name>, or /reopen --fork <name> for a copy of its conversation.", true)
 	}
-	a, ok := m.restore.r.Find(name)
-	if !ok {
+	a, err := m.restore.r.Find(name)
+	if errors.Is(err, names.ErrNoMatch) {
 		return m.say("Den has not seen an agent called "+name+" in the last two weeks.", true)
+	}
+	if err != nil {
+		return m.say(err.Error()+".", true)
 	}
 	if m.isDesktopSession(a.SessionID) {
 		return m.say(a.Name()+" was a desktop agent: it is never reopened. Start a new desktop mission instead.", true)
@@ -612,5 +647,8 @@ func (m Model) rosterName(id string) string {
 		return ""
 	}
 	a, _ := m.restore.r.Get(id)
+	if a.Given != "" {
+		return "@" + a.Given
+	}
 	return a.Name()
 }

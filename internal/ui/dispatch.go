@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -60,6 +61,17 @@ type dispatch struct {
 	Expanded bool
 	// App is set for a dispatch made in a paired app's turn.
 	App bool
+	// consoleTurn is the console turn the dispatch was made in, and
+	// turnLineage that pairing's lineage: the agent's report carries the
+	// turn to the console (reportTurn). In memory only: a restored card
+	// has none.
+	consoleTurn, turnLineage string
+	// reported is set once any report from the agent came after the card
+	// was made; noReportDue is when, the card having ended done from a
+	// console turn without one, Den says so (missedReports). In memory
+	// only.
+	reported    bool
+	noReportDue time.Time
 
 	// rawBrief is the brief as the orchestrator sent it, for the log;
 	// Brief is that text sanitised, for everything Den draws.
@@ -245,7 +257,34 @@ func (m *Model) finishCard(card *dispatch, now time.Time) {
 	card.EndedAt = now
 	card.Stopped = time.Time{}
 	card.Ticker = ""
+	if card.consoleTurn != "" && !card.reported && card.noReportDue.IsZero() {
+		card.noReportDue = now.Add(noReportGrace)
+	}
 	m.loadTurn(card)
+}
+
+// noReportGrace is how long after a console turn's card ended done Den
+// waits for its agent's report before it says there was none.
+const noReportGrace = 30 * time.Second
+
+// missedReports adds Den's "no report" line for each card from a console
+// turn of the current pairing whose agent finished without reporting,
+// once noReportGrace has passed: once per card, never for one that failed
+// since, and never once any report from the agent came (mirrorReportTurn
+// clears noReportDue). The check runs when the grace ends, so a late
+// report wins.
+func (m *Model) missedReports(now time.Time) {
+	for _, e := range m.orch.chat {
+		d := e.card
+		if d == nil || d.noReportDue.IsZero() || now.Before(d.noReportDue) {
+			continue
+		}
+		d.noReportDue = time.Time{}
+		if d.reported || d.State != cardDone || d.consoleTurn == "" || d.turnLineage != currentLineage(*m) {
+			continue
+		}
+		m.converse(api.Converse{Origin: api.OriginReport, Speaker: api.SpeakerDen, Agent: d.Agent, AgentID: d.SessionID, Turn: d.consoleTurn, TurnLineage: d.turnLineage, Ending: api.EndingNoReport})
+	}
 }
 
 func waitingOn(n int) string {

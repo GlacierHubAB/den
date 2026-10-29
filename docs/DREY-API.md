@@ -71,7 +71,7 @@ Error codes: `unsupported` (an unknown op or version: hide the feature),
 
 ## Versioning
 
-`v` is 1. `hello {v, client, version, group?}` returns `{version,
+`v` is 1. `hello {v, client, version, group?, card_hash?}` returns `{version,
 versions:[1], host, control?, features?, mode?}`; `mode` is `{global,
 mixed}` (see Permission mode); `features` lists `"console"`
 when Den serves a console (see Console); a `v` Den does not serve gets
@@ -87,14 +87,17 @@ of them count as one app's (see Asking); any other shape gets
 `bad_request`. Without it, each connection is on its own. A group is not a
 secret like an ask id, but whoever holds it can replace the group's
 questions: keep it in the process that drew it, and never pass it to a
-child process or another program. Added fields never change
-`v`; a removed or changed verb does.
+child process or another program. `card_hash` is optional: `2` makes
+every card's `text_sha256` on this connection card hash v2 (see Cards),
+`1` or none keeps v1; any other value gets `bad_request`. It is chosen in
+the connection's first `hello`, and a later `hello` with another value gets
+`bad_request`. Added fields never change `v`; a removed or changed verb does.
 
 ## Verbs
 
 | Op | Params | Result |
 |---|---|---|
-| `hello` | `{v, client, version, group?}` | `{version, versions, host, control?, features?, mode?, view?, view_workspaces?}` |
+| `hello` | `{v, client, version, group?, card_hash?}` | `{version, versions, host, control?, features?, mode?, view?, view_workspaces?}` |
 | `fleet.snapshot` | | `Fleet` |
 | `fleet.events` | | `{subscribed:true}`, then a `fleet` event at once and on every change |
 | `inbox.list` | | `[Item]`, each with a digest of its body, never the body |
@@ -144,8 +147,20 @@ exits.
 Metadata only: names, states, ids, times, counts and digests. No prompt text,
 no transcript, and no request body outside `inbox.body`.
 
+- **Names are labels, not identities.** An agent is its `id`; its `name`
+  is how Den shows it, and grants nothing. Den names an agent it started by
+  its role, lower-case with hyphens and a number for a second one of the
+  role (`backend-engineer2`); its critter name (`Mossy Lemur`) is then its
+  `alias`, which still works in Den. An agent with no role keeps its critter
+  name, with no `alias`. A name that could pass for Den, Drey, the human,
+  the orchestrator or the console shows as `an agent`. Wherever a name
+  stands for an agent, its `agent_id` stands beside it: key on that, never
+  on the name. Den writes its own role names with an `@`; draw yours as you
+  draw names, the `@` is not part of the name. An agent on another machine
+  shows the name its host gave only when Den could have given it, and always
+  with its host.
 - **Fleet** `{taken, agents, windows, missions, cost, asks?, mode?, view?}`. An agent is
-  `{id, name, role?, state, waiting?, worktree?, model?, since, window?, host?,
+  `{id, name, alias?, role?, state, waiting?, worktree?, model?, since, window?, host?,
   remote?, costUsd, turns, lastSeen, color?, permission_mode?, doing}`; `state` is `idle`, `working`, `waiting`
   or `stalled`, and `waiting` names what waits: `permission`, `question` or
   `plan`. `hooks` says whether Den can see the agent's prompts (see
@@ -199,13 +214,16 @@ no transcript, and no request body outside `inbox.body`.
   with an unknown lead plainly. `at` (RFC3339, Den's clock) is when `text` last changed.
   It changes at most once every 10 seconds per agent and arrives with the usual
   fleet changes.
-- **Item** `{id, kind, agent, since, title, digest, host?}`. A **digest** is
+- **Item** `{id, kind, agent, agent_id?, since, title, digest, host?}`;
+  `agent_id` is the agent's id, absent for an item from a host or from Den. A **digest** is
   `{firstLine, bytes, hash}`, with `hash` `"sha256:"` + the hex SHA-256 of the
   body; `inbox.body` returns the same hash. For a request from another machine
   the digest describes it in Den's words ("a permission request") and hashes
   that, never the host's text.
-- **Mission** `{id, title, state, agents?, lines, done?, spendUsd?,
-  budgetUsd?, proposed}`; `state` is `proposed`, `running`, `done` or
+- **Mission** `{id, title, state, agents?, agent_ids?, lines, done?, spendUsd?,
+  budgetUsd?, proposed}`; `agent_ids` are the ids of the agents its
+  sub-goals name, and a fleet mission and a window carry `agent_id` beside
+  their `agent` too; `state` is `proposed`, `running`, `done` or
   `dropped`.
 - **Chunk**, the `ask` stream: `{"type":"text","delta":"…"}`,
   `{"type":"status","seq":n,"text":"…"}`, `{"type":"done","session":"…"}`
@@ -531,7 +549,9 @@ screen:
   takes its place and asks like any other tool. Den delivers it the way
   SendMessage does, from the orchestrator's own address and name, to live
   sessions on this machine only, so agents see what they always saw and
-  report back the same way.
+  report back the same way. Den ends each message with one fixed line of
+  its own asking the agent to report back to the sender when it is done or
+  blocked; the line names no one and carries no authority.
 - If Den's guard finds a tool that ran in an app's turn without Den
   allowing it, Den stops the orchestrator, notes why, revokes every
   pairing and unpairs the console.
@@ -640,7 +660,10 @@ match. It comes with its powers when the program, its unit and its pins
 are what you last gave them to in this Den's run; the first pairing after
 Den starts, and one after any such change (a new Drey build, say), waits
 for one `Ctrl+Y` on Den's powers card. `api.console_powers = "always"` in
-Den's config gives them whatever changed.
+Den's config gives them whatever changed, but only after the human allows
+it on its own card in Den's window, and only until Den restarts or the
+powers are locked; Den never takes it from the file alone, and the dock can
+never answer that card.
 
 - `hello`'s reply carries `console_public_key`, Den's console key (64 hex
   digits): the key a request's reply names, and the one `den_sig` is
@@ -685,7 +708,7 @@ Den's config gives them whatever changed.
   powers}`, where `den_public_key` is `hello`'s `console_public_key`, and
   `powers` is false, with a card in Den for them, when Den has not given
   them to this program, unit and pins in its run (unless
-  `api.console_powers = "always"`), while you have locked them (`/api
+  `api.console_powers = "always"`, allowed in Den), while you have locked them (`/api
   lock`), or while God mode is on. Then prove as above. Den notes in
   its chat the unit, pid, start, the program and its SHA-256, and what
   changed since it last read the service; the first connection that
@@ -752,9 +775,11 @@ answer cards and run commands`) from `card.answer`, `cmd.run` and
   run, as Den read them itself; else, as after every Den start, it waits
   for your `Ctrl+Y` on Den's card, and that `Ctrl+Y` counts for the same
   build's later re-pairs. A console restored after Den restarted waits for
-  it too. With `api.console_powers = "always"`, every request and
-  reconnect has them, and a restored console once its process reads clean
-  as `drey-host.service`.
+  it too, `"always"` or not. With `api.console_powers = "always"`, once
+  the human has allowed it on its card in Den in this run, every request
+  and reconnect has them. Any lock of the powers (God mode, `/api lock`,
+  another program, a wrong proof) ends that, and forgets the build the
+  human last gave them to: the next re-pair waits for a `Ctrl+Y` again.
 - `/api lock` (from Den or the dock) takes them, and every console paired
   after, by any way and across Den's restarts, comes without them, until
   your `Ctrl+Y` on Den's powers card. While God mode is on, a console
@@ -808,6 +833,8 @@ Each connection proves once, at its start:
 | `cmd.run` | `{text}` | `{ok, note}` |
 | `mode.set` | `{mode}` | `{ok, applied, note}` for a lowering, or `{ok, card, note}` for a raise that waits on that card |
 | `god.off` | | `{ok, was_on}`: Den turns God mode off |
+| `overlay.linked` | `{mission}` | `{linked: true}`: your glow for that mission is drawn (see Desktop overlay) |
+| `overlay.unlinked` | `{mission}` | `{linked: false}`: you hid them |
 
 All but `console.challenge`, `console.claim`, `console.auth` and
 `console.unpair {all: true}` need a proved connection, else `forbidden`
@@ -882,7 +909,7 @@ same way. A later kind that carries state joins the snapshot.
   mode); in the snapshot, the mode in force, once Den has one.
 - `desktop {state, mission}`: a desktop agent's mission started or ended
   (see Desktop overlay); in the snapshot, whether one runs now.
-- `conversation {id, at, turn?, origin, speaker, agent?, console?, text}`: one
+- `conversation {id, at, turn?, origin, speaker, agent?, agent_id?, ending?, console?, text}`: one
   entry of the human's orchestrator conversation, as Den shows it. Den sends
   these only while the conversation is shown in this console (see Conversation
   mirror). They are not part of the snapshot: backfill with
@@ -901,18 +928,42 @@ same way. A later kind that carries state joins the snapshot.
 
 ### Cards
 
-- `card.get {id}` answers `{id, kind, agent, tool, title, note, body,
-  text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`: the card
+- `card.get {id}` answers `{id, kind, agent, agent_id?, tool, title, note, class,
+  step, body, text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`
+  (`agent_id` is not in the hash): the card
   as Den shows it, and a nonce for one answer, on this connection, for ten
-  minutes. `text_sha256` is the SHA-256 of `kind`, `agent`, `tool`,
-  `title`, `note` and `body` joined by `\n`. Show all of it, `note` (a
-  warning Den shows) too.
+  minutes. Show all of it, `note` (a warning Den shows) too.
+- `class` and `step` are what your `allow` on the card does, as Den classed
+  it from its own record: `class` is `routine`, `destructive`, `code`,
+  `desktop`, `outward` or `den_only`; `step` is the class's step, routine
+  1–4, destructive 1–2, code 1, desktop 1–2, outward 1–3, and 0 only for
+  `den_only` (answered only in Den's own window once levels are enforced).
+  They gate nothing yet; Den never takes them from you.
+- `text_sha256`, v1 (the default): the SHA-256 of `kind`, `agent`, `tool`,
+  `title`, `note` and `body` joined by `\n`.
+- `text_sha256`, v2 (`card_hash: 2` in `hello`): the SHA-256 of `kind`,
+  `agent`, `tool`, `title`, `note`, `class`, `step`, `mission`, `criteria`
+  and `body` joined by `\n`, the body last for every kind. `step` is a bare
+  decimal; `mission` and `criteria` are `""` on a card without them; each
+  criterion is its id, state, text and evidence joined by U+001F, the
+  criteria joined by U+001E in card order. Every field before the body,
+  `mission` and each criterion's text and evidence included, is one line:
+  Den refuses to hash a card that breaks it (a newline before the body, a
+  separator or newline in a criterion, a class outside the set, a step its
+  class lacks), and so must you. The rows of
+  `internal/api/convcases/cardhash.go` (`CardHashCases`, `CardHashV2Cases`)
+  pin both versions, refused rows included. Card events carry the hash in
+  your connection's version, and a card is `changed` for you when that hash
+  changes (a class or step moving changes only the v2 hash).
 - `card.answer` takes `verb` `allow`, `deny` or `always`, one of the card's
   `verbs`, with the hash and nonce of a `card.get`. Den answers it as your
   `Ctrl+Y` would, and replies once it is settled. Refusals:
   - `not_found`: no such card, or it was answered;
   - `nonce_expired`: spent, too old, or from another connection;
   - `card_changed`: the card is not what you read: get it again;
+  - `hash_version`: the `text_sha256` is the card's hash in the other
+    version than your connection's: final, do not get the card again and
+    retry; the nonce is spent;
   - `refused_from_dock`: `dock_answers` is false or the verb is not the
     card's;
   - `read_it_first`: a card of more than ten lines, answered within 300 ms
@@ -1042,8 +1093,44 @@ where the pointer is.
   surface's input region from Hyprland, so it relies on you for this:
   never give an input-taking surface that namespace. No other surface of
   the console's is ever let through: a click under the dock or any other
-  window of yours is refused. Draw the glow on the bottom layer, which
-  never blocks a click.
+  window of yours is refused. Drey draws the glow (the aurora) and the
+  pointer outline in the `drey-agent-pointer` surface, overlay level 3,
+  one per output, with an empty input region, so it shows above windows
+  and never blocks a click.
+- The link: send `overlay.linked {mission}`, with the `mission` of the
+  `active` desktop event, once your glow for that mission is on every
+  monitor, and `overlay.unlinked {mission}` when you hide it. Send
+  both from a proved connection subscribed to `console.events`
+  (`forbidden` otherwise); `overlay.linked` needs your powers
+  (`powers_locked` without them). A `mission` that is not the one running
+  is `not_found`. At most 30 overlay calls a minute (`unavailable` past
+  that).
+
+  From the first `overlay.linked` the task is overlay-backed. Its input
+  (pointer, keys, binds, window actions, launches; looking at the screen
+  goes on) runs only while both of these hold, with no grace period:
+  - the link stands: no `overlay.unlinked` since, and the connection that
+    sent it is still open, proved and subscribed. A reconnect, a re-pair
+    or an unpair takes it down: send `overlay.linked` again from the new
+    connection;
+  - Den sees your overlay itself: on every monitor `hyprctl monitors`
+    lists (enabled ones; a mirror of another output is skipped), a
+    surface on the overlay level (3) with layer namespace
+    `drey-agent-pointer`, of the process of one of your proved
+    connections (the surface the pointer rule above lets clicks
+    through). Another namespace, such as a test instance's, never counts.
+
+  While either is down, Den refuses the agent's input with "paused: the
+  dock's overlay is down; Den resumes when it is back", says so in its
+  chat, and says so again when it resumes. Down for 5 minutes, the task
+  ends, as when Den's own window goes. The human's stop is never paused.
+  A task that starts while you have a proved connection subscribed to
+  `console.events` waits for its first `overlay.linked`: its input is
+  paused, with the same words, for up to 15 seconds. With no link by
+  then it runs unbacked, and Den's chat says that the dock did not show
+  its overlay. A task that starts with no console watching is never
+  paused: Den's own window and its stop are the human's view of the task
+  then. Missions with apps are not paused.
 
 ### Conversation mirror
 
@@ -1056,15 +1143,23 @@ powers receives it, and every console is on this machine: den-api.sock is a
 local socket open to this user only.
 
 - Each `conversation` entry is `{id, at, turn?, origin, speaker, agent?,
-  console?, text}`. `id` rises with each entry and is the same in
+  agent_id?, ending?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
   `conversation.history`, so merge the backfill and the live entries by it.
   `at` is RFC3339 UTC, Den's clock.
 - `origin` (a closed set): `you` (the human typed it in Den), `console` (a
   console or app sent the turn), `report` (an agent reported), `mission` (Den
   drives a mission run), `desktop` (a desktop mission's agent reported).
 - `speaker` (a closed set): `you`, `den` (Den's own fixed lines only: "Report
-  from Mossy Lemur.", a mission run's line, "More reports from … are in Den."),
-  or `orchestrator` (its completed reply).
+  from Mossy Lemur.", "No report from Mossy Lemur: it finished without one.", a
+  mission run's line, "More reports from … are in Den."),
+  or `orchestrator` (its completed reply). An entry with speaker
+  `orchestrator` always carries the orchestrator's own reply, under every
+  origin (`report` and `desktop` too): Den never passes an agent's report, or
+  any other text an agent or a host wrote, through as the orchestrator's. The
+  reply may still quote such text, as the model chose to (see `text`). If Den
+  ever sends an agent's own words in the mirror, they come under a speaker of
+  their own, new to this set: a client skips it until it supports it, and
+  then renders it plain.
 - `agent` is set for `report` and `desktop`, from Den's fleet, never from the
   report. It is never `Den`, `Drey`, `You` or `orchestrator` (those show as `an
   agent`).
@@ -1073,6 +1168,33 @@ local socket open to this user only.
   origin `you` and for `self`, else "you, from" and the label. `turn` is then
   the turn id of that console's `orch.say`, so a reply you already streamed can
   be matched and not drawn twice.
+- `turn` on origin `report` and `desktop` (Den's "Report from …" line and the
+  orchestrator's reply to the report) is the console turn the reported work
+  came from: the `orch.say` turn in which the orchestrator dispatched or
+  started that agent, or asked for that desktop mission (taken when the
+  request came, not when the human started it). It is always "t-" and 32
+  lowercase hex digits, the same id as that turn's own `console` entries,
+  and Den sets it from its own record, never from anything an agent sent.
+  It is absent for work from Den's own chat, a mission run or an app
+  pairing's turn, once the pairing that sent the turn is no longer the
+  current one (also in `conversation.history`), and after Den restarts. A
+  report goes with its agent's newest card from a console turn of the
+  current pairing that is still running or ended within 10 minutes: an
+  agent given work in two turns has its later report under the newer one.
+  A report about another console's turn reaches this console with that
+  turn: thread it under your own request only when the turn is one of
+  yours.
+- `ending` (a closed set, on origin `report` and `desktop` with speaker `den`
+  only): `no_report` is Den's line "No report from Mossy Lemur: it finished
+  without one.", for work from a console turn whose agent finished without
+  reporting. Den waits 30 seconds after the agent's card ended done, and any
+  report from that agent in the meantime cancels it; it comes once per card,
+  with the card's `turn`, never for a card that failed or one outside a
+  console turn. For a desktop mission it replaces the report line when the
+  mission ended because its agent finished and said nothing; one that ended
+  on a limit or a stop has its own line in Den. Past the report limits it
+  becomes the plain "More reports from … are in Den." line, with no `ending`
+  and no `turn`. Treat an unknown value as a plain Den line.
 - `text` is the human's words, Den's line, or the orchestrator's reply, never
   an agent's or a host's own text. The orchestrator's reply may still quote
   what an agent reported: show it as the orchestrator's text, as data, and
@@ -1121,10 +1243,11 @@ local socket open to this user only.
   unit or pins pairs without the powers until your `Ctrl+Y`, so a program
   that swaps the dock's program gets the dock's reading and chat, not its
   powers, unless you press it; read the card before you do. With
-  `api.console_powers = "always"`, anything running as you that can
-  change `drey-host.service`'s unit or program (both in your home
-  directory) gets the dock's full powers with no question in Den, and so
-  can anything that can write Den's config. Den names a changed program,
+  `api.console_powers = "always"` allowed in Den, anything running as you
+  that can change `drey-host.service`'s unit or program (both in your home
+  directory) gets the dock's full powers with no question in Den until Den
+  restarts. Writing Den's config alone gets nothing: `"always"` waits on a
+  card in Den's window at every start and change. Den names a changed program,
   unit, pin or manager in its chat either way. Your levers are `/api
   lock`, `/api unpair`, and God mode staying off. Where your manager's program
   cannot be read, Den knows it by `CAP_WAKE_ALARM`, which no program of

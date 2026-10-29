@@ -54,6 +54,10 @@ type chatEntry struct {
 	// app is set for an entry added in a paired app's turn: the app's
 	// words, and what the orchestrator wrote and dispatched for it.
 	app bool
+	// consoleTurn and turnLineage are the console turn the entry was made
+	// in and its pairing's lineage (consoleTurnNow), "" outside one; a
+	// spawn's card takes them from its note. Never written down.
+	consoleTurn, turnLineage string
 	// memo keeps the entry's rendered text between frames; the chat draws
 	// every entry on every frame, so a long chat must not lean on the
 	// shared cache, which it would cycle through.
@@ -243,7 +247,7 @@ func (m Model) rosterFor(lane bool) []orch.RosterAgent {
 			continue
 		}
 		r := orch.RosterAgent{
-			Critter: a.Name, Peer: a.Session.Name, Role: a.Labels.Role,
+			Name: a.Name, Alias: a.Alias, Peer: a.Session.Name, Role: a.Labels.Role,
 			Status: a.Status.String(), Task: a.Task(), Where: a.Where(),
 			Title: a.Title, Files: fleet.TouchedFolders(a), Recent: fleet.RecentActivity(a),
 			Earlier: a.Labels.History,
@@ -364,6 +368,10 @@ func (m Model) resumable() string {
 // it, for logging.
 func (m *Model) addChat(e chatEntry) chatEntry {
 	e.mission = m.orch.thread
+	e.consoleTurn, e.turnLineage = m.consoleTurnNow()
+	if e.card != nil {
+		e.card.consoleTurn, e.card.turnLineage = e.consoleTurn, e.turnLineage
+	}
 	if m.ctl.turn != nil && m.ctl.sent {
 		e.app = true
 		if e.card != nil {
@@ -542,7 +550,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 		} else {
 			note := chatEntry{role: "note", text: orch.Describe(ev.Tool, ev.Input), toolUseID: ev.ToolUseID, at: now}
 			if in, ok := orch.ParseSpawn(ev.Input); ok && ev.Tool == orch.SpawnAgentTool {
-				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, now)
+				m.noteSpawn(ev.ToolUseID, in.Brief, m.turn.id, in.Role, in.Title, now)
 				note.full = in.Brief
 			} else if mm, ok := parseMessageCall(ev.Tool, ev.Input); ok {
 				// Another tool that messages someone: one line, like a
@@ -574,7 +582,7 @@ func (m *Model) orchEvent(ev orch.Event) tea.Cmd {
 					e.status = "failed: " + firstLineOf(ev.Text)
 				case strings.HasPrefix(e.text, "▶"):
 					e.status = firstLineOf(ev.Text)
-					m.learnSpawn(ev.Text, tree.Orchestrator, ev.ToolUseID, "")
+					m.learnSpawn(ev.Text, tree.Orchestrator, ev.ToolUseID, "", "", "")
 				}
 			case failed:
 				e.status = "failed: " + firstLineOf(ev.Text)
@@ -662,16 +670,31 @@ func (m Model) critterForPeer(peer string) string {
 	return name
 }
 
-// agentForPeer resolves a peer name to the agent's critter name and session
-// id; an unknown peer keeps its name and has no id.
+// agentForPeer resolves a peer name to the agent's name and session id:
+// the one live session with that handle, else the one session at all. A
+// handle is reused, so two that fit are neither: an unknown or shared peer
+// keeps its name and has no id.
 func (m Model) agentForPeer(peer string) (name, sid string) {
 	p := strings.TrimPrefix(peer, "@")
 	if i := strings.Index(p, " ["); i > 0 {
 		p = p[:i]
 	}
+	var live, all []fleet.Agent
 	for _, a := range m.agents {
-		if a.Session.Name == p {
-			return a.Name, a.Session.SessionID
+		if p == "" || a.Session.Name != p {
+			continue
+		}
+		all = append(all, a)
+		if a.Session.Alive && a.Status != fleet.Gone {
+			live = append(live, a)
+		}
+	}
+	for _, hits := range [][]fleet.Agent{live, all} {
+		if len(hits) == 1 {
+			return shownName(hits[0]), hits[0].Session.SessionID
+		}
+		if len(hits) > 1 {
+			break
 		}
 	}
 	return peer, ""

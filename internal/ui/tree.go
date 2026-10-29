@@ -44,6 +44,7 @@ type treeState struct {
 // spawnReq is what a spawn_agent call asked for.
 type spawnReq struct {
 	brief, mission string
+	role, title    string // what the spawn asked to be named by
 	at             time.Time
 }
 
@@ -54,6 +55,8 @@ type pendingSpawn struct {
 	toolUseID string // the orchestrator's call, "" for a lead's own spawn
 	brief     string
 	mission   string
+	role      string
+	title     string
 	at        time.Time
 }
 
@@ -135,27 +138,27 @@ var spawnedPeer = regexp.MustCompile(`\(peer "([^"]+)"\)`)
 
 // noteSpawn remembers what one of the orchestrator's spawn calls asked for,
 // so the agent's card can carry the brief once the session shows up.
-func (m *Model) noteSpawn(toolUseID, brief, mission string, at time.Time) {
+func (m *Model) noteSpawn(toolUseID, brief, mission, role, title string, at time.Time) {
 	m.ensureTree()
 	if m.tree.spawns == nil {
 		m.tree.spawns = map[string]spawnReq{}
 	}
-	m.tree.spawns[toolUseID] = spawnReq{brief: brief, mission: mission, at: at}
+	m.tree.spawns[toolUseID] = spawnReq{brief: brief, mission: mission, role: role, title: title, at: at}
 }
 
 // learnSpawn reads the peer name out of a spawn tool's answer: parent
 // started it. The orchestrator's own calls are known by tool use id; a
 // lead's calls come through its PostToolUse hook with the brief. The
 // session may not be in the fleet yet, so the spawn waits in pending.
-func (m *Model) learnSpawn(result, parent, toolUseID, brief string) {
+func (m *Model) learnSpawn(result, parent, toolUseID, brief, role, title string) {
 	m.ensureTree()
 	sm := spawnedPeer.FindStringSubmatch(result)
 	if sm == nil || parent == "" {
 		return
 	}
-	p := pendingSpawn{peer: sm[1], parent: parent, toolUseID: toolUseID, brief: brief, at: time.Now()}
+	p := pendingSpawn{peer: sm[1], parent: parent, toolUseID: toolUseID, brief: brief, role: role, title: title, at: time.Now()}
 	if req, ok := m.tree.spawns[toolUseID]; ok && toolUseID != "" {
-		p.brief, p.mission, p.at = req.brief, req.mission, req.at
+		p.brief, p.mission, p.role, p.title, p.at = req.brief, req.mission, req.role, req.title, req.at
 		delete(m.tree.spawns, toolUseID)
 	}
 	m.tree.pending = append(m.tree.pending, p)
@@ -177,6 +180,9 @@ func (m *Model) resolvePending() {
 			brief = "spawned"
 		}
 		m.learnEdge(tree.Edge{Parent: p.parent, Child: sid, Brief: brief, Source: "spawn"})
+		if n := m.nameSpawn(sid, p); n != "" {
+			name = "@" + n
+		}
 		if p.parent == tree.Orchestrator && p.toolUseID != "" {
 			m.cardForSpawn(p, name, sid)
 		}
@@ -199,6 +205,7 @@ func (m *Model) cardForSpawn(p pendingSpawn, name, sid string) {
 		if d.SentAt.IsZero() {
 			d.SentAt = now
 		}
+		d.consoleTurn, d.turnLineage = e.consoleTurn, e.turnLineage
 		e.role, e.card, e.text, e.status = "card", d, "", ""
 		m.attachCardTo(d, p.mission)
 		m.logCard(d)

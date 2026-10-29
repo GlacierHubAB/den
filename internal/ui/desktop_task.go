@@ -111,7 +111,9 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	m.desk.offers[it.ID] = deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup}
+	o := deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup}
+	o.consoleTurn, o.turnLineage = m.deskTurn(r)
+	m.desk.offers[it.ID] = o
 	m.flash, m.flashErr = "Desktop control asked: ^Y starts it, ^N declines.", false
 	m.refresh()
 	return nil
@@ -253,6 +255,7 @@ type deskTaskCheckMsg struct {
 	mission string
 	gone    string
 	pinErr  error
+	glow    bool // the console's glow is on the desktop
 }
 
 // deskTaskCheck reads the desktop for a task: Den's window and the agent
@@ -263,6 +266,7 @@ func (m *Model) deskTaskCheck(dm *deskMission) tea.Cmd {
 	}
 	dm.checking, dm.checkedAt = true, time.Now()
 	id, view, headless := dm.ID, dm.view, dm.headless
+	console := m.consoleProcs()
 	protected := make([]string, 0, len(dm.Protected))
 	for a := range dm.Protected {
 		protected = append(protected, a)
@@ -280,6 +284,7 @@ func (m *Model) deskTaskCheck(dm *deskMission) tea.Cmd {
 			msg.gone = why
 			return msg
 		}
+		msg.glow = snap.ConsoleGlow(console)
 		// A headless agent has no window of its own to keep on top; a
 		// windowed one whose view went missing keeps its error.
 		if !headless {
@@ -316,6 +321,9 @@ func (m *Model) finishTaskCheck(msg deskTaskCheckMsg) tea.Cmd {
 	}
 	if msg.gone != "" {
 		return m.finishDeskMission(dm, msg.gone)
+	}
+	if _, end := m.deskOverlayCheck(dm, msg.glow); end != nil {
+		return end
 	}
 	if msg.pinErr != nil && !dm.pinWarned {
 		dm.pinWarned = true

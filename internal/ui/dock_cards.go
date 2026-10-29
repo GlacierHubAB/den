@@ -56,13 +56,17 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 	if it.Kind == inbox.RulesPick {
 		body = withoutNotes(body)
 	}
+	class, step := inbox.Classify(it, m.cardFacts(it))
 	return api.Card{
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
-		Agent:       m.nameFor(itemKey(it)),
+		Agent:       m.dockName(itemKey(it)),
+		AgentID:     m.dockAgentID(itemKey(it)),
 		Tool:        it.Tool,
 		Title:       it.Title,
 		Note:        m.twinNote(itemKey(it)),
+		Class:       string(class),
+		Step:        step,
 		Body:        strings.Join(body, "\n"),
 		Verbs:       verbs,
 		DockAnswers: dockMayAnswer(it) && !m.godTTYOnly(it),
@@ -91,29 +95,64 @@ func withoutNotes(lines []string) []string {
 	return out
 }
 
-// dockMayAnswer reports whether a console may answer it. Never: what makes
-// a console or an app pairing, what turns the API on, what loads guidance;
-// an app's grant (the console is an app itself) and skills (every later
-// agent loads them), until the dock confirms in its own native window; a
-// question (it needs the human's words); a remote host's request, and Den's
-// own cards about a host (installing there, a message to an agent there).
+// todayDock are the kinds a console may answer: exactly the set it could
+// answer before the permission manager, and no other. A kind added to
+// inbox is not in it, so a console never answers it until a design says
+// so. Every other kind is the human's in Den: what makes a console or an
+// app pairing, what turns the API on, what loads guidance; an app's grant
+// (the console is an app itself) and skills (every later agent loads
+// them); a question (it needs the human's words); desktop control; a
+// mission's done criteria; the console's own automatic powers, which would
+// be the console granting itself more; Den's notices, which no one answers.
+//
+// A kind here may still be den_only in inbox.Classify (Restore, Budget,
+// UsageResume, UsageSet, ModeSet): levels gate nothing yet, so the console
+// answers them as before. The table never puts a kind outside todayDock
+// in a class a console could reach (TestClassesNeverWidenTheDock).
+var todayDock = map[inbox.Kind]bool{
+	inbox.Permission: true, inbox.Plan: true, inbox.Close: true, inbox.Budget: true, inbox.Restore: true,
+	inbox.Merge: true, inbox.Cleanup: true, inbox.MissionUpdate: true, inbox.UsageResume: true,
+	inbox.MissionMove: true, inbox.ControlAsk: true, inbox.UsageSet: true, inbox.ModeSet: true,
+}
+
+// dockMayAnswer reports whether a console may answer it: a kind in
+// todayDock, and never a remote host's request or Den's own card about a
+// host (installing there, a message to an agent there).
 func dockMayAnswer(it *inbox.Item) bool {
 	if hostOf(itemKey(it)) != "" || strings.HasPrefix(it.SessionID, inbox.HostPrefix) {
 		return false
 	}
-	switch it.Kind {
-	// Every kind the dock may never answer, in one case with one return,
-	// so no merge can leave a kind in a case of its own with no return:
-	// a Go case does not fall through. Desktop control is the human's own
-	// window only; a mission's done criteria decide when it is done, so
-	// they are the human's in Den.
-	case inbox.Console, inbox.Pair, inbox.APIOn, inbox.Guidance, inbox.Install, inbox.Question, inbox.Grant, inbox.Skills, inbox.Message,
-		inbox.DesktopInstall, inbox.DesktopMission, inbox.DesktopAct, inbox.YourTurn,
-		inbox.MissionCriteria, inbox.MissionDone, inbox.MirrorAsk, inbox.ProcessTuned, inbox.PromptProposal,
-		inbox.RulesPick, inbox.RulesEdited:
-		return false
+	return todayDock[it.Kind]
+}
+
+// cardFacts is what Den's own records add to an item for inbox.Classify,
+// read now: the Cleanup's plan, as ^Y would carry it out.
+func (m Model) cardFacts(it *inbox.Item) inbox.Facts {
+	var f inbox.Facts
+	if o, ok := m.wt[it.ID]; ok && o.cleanup != nil {
+		f.CleanupKnown, f.CleanupIgnored = true, len(o.cleanup.Ignored)
 	}
-	return true
+	return f
+}
+
+// dockName is how a card names its agent for the console: Den's name for
+// it without the "@" Den's window puts before a name it gave (the console
+// styles names itself); an item from a host keeps its "@host".
+func (m Model) dockName(key string) string {
+	n := m.nameFor(key)
+	if hostOf(key) == "" && !strings.HasPrefix(key, inbox.HostPrefix) {
+		n = strings.TrimPrefix(n, "@")
+	}
+	return n
+}
+
+// dockAgentID is the id of the agent a card is for, "" for a card from a
+// host or from Den.
+func (m Model) dockAgentID(key string) string {
+	if a, ok := m.agentFor(key); ok && a.Host == "" {
+		return a.Session.SessionID
+	}
+	return ""
 }
 
 // answerFromDock carries out a console's answer, or says why not.
@@ -133,7 +172,7 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 	}
 	card := api.ProjectCard(m.dockCard(it))
 	switch {
-	case card.Hash != a.Hash:
+	case card.HashIn(a.Version) != a.Hash:
 		return reply(api.CardResult{Code: api.CodeCardChanged, Note: "the card changed: fetch it again"})
 	case m.godTTYOnly(it) || m.god.on && a.Verb == "always":
 		// A standing allowance outlives the turn: in God mode, Den's

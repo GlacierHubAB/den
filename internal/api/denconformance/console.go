@@ -76,6 +76,10 @@ type ConsoleOptions struct {
 	// its own window (the server's card; "asking") or not show it ("off"), as the human's answer
 	// in the server does. Left nil, the subtests that change the mirror are skipped.
 	Mirror func(ctx context.Context, state string) error
+	// Desktop makes the server's desktop state "active" with this mission (a desktop task is running) or
+	// "idle" (mission ""), as an agent's task starting and ending does. Left nil, "overlay link" runs only
+	// the checks that need no running task.
+	Desktop func(ctx context.Context, state, mission string) error
 	// Conversation adds one entry of the human's conversation (the human types a line in the server's
 	// own input, say) while the mirror is on. Left nil, "conversation entry" is skipped.
 	Conversation func(ctx context.Context) error
@@ -558,9 +562,22 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		sum := sha256.Sum256([]byte(rec.Kind + "\n" + rec.Agent + "\n" + rec.Tool + "\n" + rec.Title + "\n" + rec.Note + "\n" + rec.Body))
-		if rec.TextSHA256 != hex.EncodeToString(sum[:]) {
-			t.Error("card.get's text_sha256 is not SHA-256(kind\\nagent\\ntool\\ntitle\\nnote\\nbody)")
+		var crit []Criterion
+		if rec.Criteria != nil {
+			crit = *rec.Criteria
+		}
+		if rec.Kind == "mission done" {
+			if rec.Criteria == nil {
+				t.Error("card.get of a mission done card carries no criteria")
+			}
+			if err := checkCriteria(crit); err != nil {
+				t.Errorf("card.get's criteria: %v", err)
+			}
+		} else if rec.Criteria != nil {
+			t.Errorf("card.get of a %q card carries criteria", rec.Kind)
+		}
+		if rec.TextSHA256 != CardTextSHA256(rec.Kind, rec.Agent, rec.Tool, rec.Title, rec.Note, rec.Body, rec.Mission, crit) {
+			t.Error("card.get's text_sha256 is not SHA-256(kind\\nagent\\ntool\\ntitle\\nnote\\nbody), with \\nmission last for a mission stop or restart card and \\nmission\\ncriteria for a mission done card")
 		}
 		for _, f := range []string{rec.Kind, rec.Agent, rec.Tool, rec.Title, rec.Note} {
 			if strings.ContainsAny(f, "\n\r") {
@@ -1094,6 +1111,77 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		}
 		if !found {
 			t.Errorf("the entry %d of the event is not in conversation.history", live.ID)
+		}
+	})
+
+	// overlay.linked and overlay.unlinked (DREY-API.md, "Desktop overlay"): only from the console's proved connection that
+	// is subscribed to console.events (forbidden otherwise), {mission} required (bad_request), a mission that is not the
+	// one running is not_found, both reply {linked}, and past 30 calls a minute the answer is unavailable.
+	run("overlay link", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil)
+		bare, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer bare.close()
+		wantCode(t, "overlay.linked before any proof", bare.call(ctx, "overlay.linked", map[string]string{"mission": "m"}, nil), codeForbidden)
+		wantCode(t, "overlay.unlinked before any proof", bare.call(ctx, "overlay.unlinked", map[string]string{"mission": "m"}, nil), codeForbidden)
+		c, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Fatal(err)
+		}
+		wantCode(t, "overlay.linked from a proved connection that is not subscribed", c.call(ctx, "overlay.linked", map[string]string{"mission": "m"}, nil), codeForbidden)
+		if err := c.call(ctx, "console.events", struct{}{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if dl, ok := ctx.Deadline(); ok {
+			_ = c.nc.SetDeadline(dl)
+		}
+		wantCode(t, "overlay.linked without a mission", c.call(ctx, "overlay.linked", map[string]string{}, nil), "bad_request")
+		wantCode(t, "overlay.unlinked without a mission", c.call(ctx, "overlay.unlinked", map[string]string{}, nil), "bad_request")
+		if co.Desktop == nil {
+			wantCode(t, "overlay.linked with no task running", c.call(ctx, "overlay.linked", map[string]string{"mission": "no-such-mission"}, nil), "not_found")
+			return
+		}
+		defer func() { _ = co.Desktop(ctx, "idle", "") }()
+		if err := co.Desktop(ctx, "active", "overlay-conformance"); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			l, err := c.read()
+			if err != nil {
+				t.Fatalf("waiting for the desktop event: %v", err)
+			}
+			if l.Event == "desktop" {
+				break
+			}
+		}
+		var res struct {
+			Linked *bool `json:"linked"`
+		}
+		if err := c.call(ctx, "overlay.linked", map[string]string{"mission": "overlay-conformance"}, &res); err != nil || res.Linked == nil || !*res.Linked {
+			t.Fatalf("overlay.linked for the running mission: %v, %+v", err, res)
+		}
+		wantCode(t, "overlay.linked for another mission", c.call(ctx, "overlay.linked", map[string]string{"mission": "another"}, nil), "not_found")
+		res.Linked = nil
+		if err := c.call(ctx, "overlay.unlinked", map[string]string{"mission": "overlay-conformance"}, &res); err != nil || res.Linked == nil || *res.Linked {
+			t.Fatalf("overlay.unlinked for the running mission: %v, %+v", err, res)
+		}
+		// at most 30 overlay calls a minute: past that, unavailable (this subtest has made 6 by now)
+		seen := false
+		for i := 0; i < 40 && !seen; i++ {
+			err := c.call(ctx, "overlay.unlinked", map[string]string{"mission": "overlay-conformance"}, nil)
+			if err != nil {
+				wantCode(t, "an overlay call past the limit", err, "unavailable")
+				seen = true
+			}
+		}
+		if !seen {
+			t.Error("40 overlay calls in a row were all answered: the limit is 30 a minute")
 		}
 	})
 
@@ -2129,6 +2217,19 @@ type cardRecord struct {
 	Nonce       string   `json:"nonce"`
 	Verbs       []string `json:"verbs"`
 	DockAnswers bool     `json:"dock_answers"`
+	Mission     string   `json:"mission"`
+	// Criteria is a "mission done" card's structured criteria (Den's draft: the rows the human confirms), in card order. Present on that
+	// kind only. Text and Evidence are left out unless the conversation is shown in this console (W1).
+	Criteria *[]Criterion `json:"criteria"`
+}
+
+// Criterion is one criterion of a "mission done" card: its id, its state (open, claimed or met) and, only while the conversation is shown,
+// its text and, for a claimed or met one, its evidence (a claim, never a fact).
+type Criterion struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Text     string `json:"text,omitempty"`
+	Evidence string `json:"evidence,omitempty"`
 }
 
 func cardGet(ctx context.Context, c *conn, id string) (cardRecord, error) {
@@ -2269,6 +2370,8 @@ var (
 		"desktop": {"den": true, "orchestrator": true},
 	}
 	reservedAgents = []string{"den", "drey", "you", "orchestrator"}
+	// agentIDRe is the shape of an agent's session id, the ids Drey's bridge accepts
+	agentIDRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
 	// doingLeadWords is Den's closed set of lead phrases for `doing`, case-sensitive, longest first so "Working on" is tried
 	// before "Working". "Stuck, needs a look" holds a comma.
 	doingLeadWords = []string{
@@ -2282,6 +2385,70 @@ var (
 
 // cutMark is how Den ends a text it cut.
 const cutMark = "(cut: the rest is in Den)"
+
+// missionCardKinds are the kinds of card that carry a `mission` and bind it into their hash.
+var missionCardKinds = map[string]bool{"mission stop": true, "mission restart": true, "mission done": true}
+
+// CardTextSHA256 is a card's text_sha256: SHA-256 of kind, agent, tool, title, note and body joined by "\n" with no trailing newline.
+// "mission stop" and "mission restart" add the mission as a seventh field, last. "mission done" adds the mission and then the criteria as an
+// eighth, last: each criterion is its id, state, text and evidence joined by U+001F, the criteria joined by U+001E in card order, and a text
+// or evidence left out is "". Every other kind keeps the six fields. agent_id is never part of it.
+func CardTextSHA256(kind, agent, tool, title, note, body, mission string, criteria []Criterion) string {
+	text := kind + "\n" + agent + "\n" + tool + "\n" + title + "\n" + note + "\n" + body
+	if missionCardKinds[kind] {
+		text += "\n" + mission
+	}
+	if kind == "mission done" {
+		rows := make([]string, len(criteria))
+		for i, c := range criteria {
+			rows[i] = c.ID + "\x1f" + c.State + "\x1f" + c.Text + "\x1f" + c.Evidence
+		}
+		text += "\n" + strings.Join(rows, "\x1e")
+	}
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// maxCriteria and maxCriterionText bound a mission done card's criteria (the same caps as mission.get: eight criteria, 300 runes a text).
+const (
+	maxCriteria      = 8
+	maxCriterionText = 300
+)
+
+// checkCriteria reports why criteria are not a valid mission done card's: more than eight, an id that is not a plain id, a state outside
+// open, claimed and met, evidence on an open criterion, a text or evidence that is too long or holds a control character (the two hash
+// separators included), or a duplicate id.
+func checkCriteria(criteria []Criterion) error {
+	if len(criteria) > maxCriteria {
+		return fmt.Errorf("%d criteria, at most %d", len(criteria), maxCriteria)
+	}
+	seen := map[string]bool{}
+	for _, c := range criteria {
+		if !criterionIDRe.MatchString(c.ID) || seen[c.ID] {
+			return fmt.Errorf("criterion id %q is not a plain, unique id", c.ID)
+		}
+		seen[c.ID] = true
+		if c.State != "open" && c.State != "claimed" && c.State != "met" {
+			return fmt.Errorf("criterion %s: state %q is not open, claimed or met", c.ID, c.State)
+		}
+		if c.State == "open" && c.Evidence != "" {
+			return fmt.Errorf("criterion %s: evidence on an open criterion", c.ID)
+		}
+		for _, f := range []string{c.Text, c.Evidence} {
+			if utf8.RuneCountInString(f) > maxCriterionText {
+				return fmt.Errorf("criterion %s: a text over %d runes", c.ID, maxCriterionText)
+			}
+			for _, r := range f {
+				if badRune(r, false) {
+					return fmt.Errorf("criterion %s: a control or format character in its text", c.ID)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+var criterionIDRe = regexp.MustCompile(`^c[0-9]{1,3}$`)
 
 // strictDecode decodes JSON into v and refuses any field v does not have, and trailing data.
 func strictDecode(raw json.RawMessage, v any) error {
@@ -2382,19 +2549,21 @@ type conversationEntry struct {
 	Text string
 }
 
-// checkConversationEntry: `{id, at, turn?, origin, speaker, agent?, console?, text}` and no other field. id above 0,
+// checkConversationEntry: `{id, at, turn?, origin, speaker, agent?, agent_id?, console?, text}` and no other field. id above 0,
 // at RFC3339 UTC, origin and speaker a pair Den's text allows (speaker den never speaks for origin you or console),
 // console {label, self} exactly with origin console (and nothing else in it), agent exactly with report or desktop
-// (one plain line of at most 64 runes, never Den, Drey, You or Orchestrator), text of at most 20 lines and 2000
-// runes (Den's cut mark aside) with none of badRune's characters.
+// (one plain line of at most 64 runes, never Den, Drey, You or Orchestrator), text of at most 65536 bytes of UTF-8 and
+// any number of lines (Den's cut mark aside, which ends a cut text; the same words in the middle are the text's own, since
+// an agent can write them) with none of badRune's characters.
 func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	var e struct {
-		ID      int64  `json:"id"`
-		At      string `json:"at"`
-		Turn    string `json:"turn"`
-		Origin  string `json:"origin"`
-		Speaker string `json:"speaker"`
-		Agent   string `json:"agent"`
+		ID      int64   `json:"id"`
+		At      string  `json:"at"`
+		Turn    string  `json:"turn"`
+		Origin  string  `json:"origin"`
+		Speaker string  `json:"speaker"`
+		Agent   string  `json:"agent"`
+		AgentID *string `json:"agent_id"`
 		Console *struct {
 			Label string `json:"label"`
 			Self  *bool  `json:"self"`
@@ -2423,6 +2592,18 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	case e.Origin != "report" && e.Origin != "desktop" && e.Agent != "":
 		return conversationEntry{}, fmt.Errorf("agent with origin %s", e.Origin)
 	}
+	// agent_id (Den's session id for the agent) comes only in the line that carries agent, so only with origin report or desktop,
+	// and fits the ids Drey's bridge accepts; it may be absent
+	if e.AgentID != nil {
+		switch {
+		case e.Agent == "":
+			return conversationEntry{}, errors.New("agent_id without agent")
+		case e.Origin != "report" && e.Origin != "desktop":
+			return conversationEntry{}, fmt.Errorf("agent_id with origin %s", e.Origin)
+		case !agentIDRe.MatchString(*e.AgentID):
+			return conversationEntry{}, fmt.Errorf("agent_id %q is not 1 to 64 of letters, digits and _ . : -", *e.AgentID)
+		}
+	}
 	if e.Agent != "" {
 		if strings.TrimSpace(e.Agent) == "" {
 			return conversationEntry{}, fmt.Errorf("agent %q is only spaces", e.Agent)
@@ -2450,7 +2631,9 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	if tm, err := time.Parse(time.RFC3339, e.At); err != nil || tm.Location() != time.UTC {
 		return conversationEntry{}, fmt.Errorf("at %q is not RFC3339 UTC", e.At)
 	}
-	// Den's cut mark ends a text it cut, on a line of its own or not; the limits are for the words before it
+	// Den's cut mark ends a text it cut, on a line of its own or not; the limit is for the words before it. A text is
+	// the whole message, as many lines as it has: no line limit, only 64 KiB (65536 bytes of UTF-8), and a cut text
+	// ends with the mark. The same words mid-text are not checked: an agent can write them.
 	text := strings.TrimSuffix(e.Text, cutMark)
 	if len(text) != len(e.Text) {
 		text = strings.TrimSuffix(text, "\n")
@@ -2458,10 +2641,8 @@ func checkConversationEntry(raw json.RawMessage) (conversationEntry, error) {
 	switch {
 	case strings.TrimSpace(text) == "":
 		return conversationEntry{}, errors.New("empty text")
-	case utf8.RuneCountInString(text) > 2000:
-		return conversationEntry{}, fmt.Errorf("text of %d runes, the most is 2000", utf8.RuneCountInString(text))
-	case strings.Count(text, "\n") >= 20:
-		return conversationEntry{}, fmt.Errorf("text of %d lines, the most is 20", strings.Count(text, "\n")+1)
+	case len(text) > 65536:
+		return conversationEntry{}, fmt.Errorf("text of %d bytes, the most is 65536", len(text))
 	case !utf8.ValidString(e.Text):
 		return conversationEntry{}, errors.New("text is not valid UTF-8")
 	}

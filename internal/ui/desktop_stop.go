@@ -240,6 +240,9 @@ func (m *Model) deskOnTick() tea.Cmd {
 // deskAgentStopped takes a desktop agent's Stop hook: its turn ended with
 // its report, so the mission is done. Den passes the report on, fenced,
 // and ends the mission; the apps' windows stay for the human.
+// deskAgentFinished is why a mission ends when its agent's turn is over.
+const deskAgentFinished = "the agent finished"
+
 func (m *Model) deskAgentStopped(r *bridge.Request) tea.Cmd {
 	for _, dm := range m.desk.missions {
 		if dm.Ended != "" || dm.SessionID == "" || dm.SessionID != r.SessionID {
@@ -249,7 +252,7 @@ func (m *Model) deskAgentStopped(r *bridge.Request) tea.Cmd {
 			return nil // waiting on the human's step
 		}
 		dm.report = r.Input.LastAssistant
-		return m.finishDeskMission(dm, "the agent finished")
+		return m.finishDeskMission(dm, deskAgentFinished)
 	}
 	return nil
 }
@@ -283,7 +286,11 @@ func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 	if name == "" {
 		name = "desktop agent"
 	}
-	return m.sendReport(fleet.Agent{Name: name}, body)
+	// Its session, so the mirror shows it as a desktop report (origin
+	// desktop) with the console turn the mission was asked in.
+	a := fleet.Agent{Name: name}
+	a.Session.SessionID = dm.SessionID
+	return m.sendReport(a, body)
 }
 
 // startDeskWatch begins the tick and says desktop control is on.

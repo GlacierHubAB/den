@@ -7,6 +7,7 @@
 //	den explain <who>    say how Den arrived at what it shows for an agent
 //	den send <who> <msg> deliver a message to one agent's session; --wait for its turn to end
 //	den wait <who>       block until an agent is idle, needs you, or done
+//	den stats [--days N] what Den's state files prove about a window of time; --json for scripts
 //	den ask <text>       one orchestrator turn: ask about the fleet or have it relay
 //	den skills [...]     the skills catalogue, what Den installed, and removing it
 //	den mcp              used by the orchestrator to open terminals and start agents; not for humans
@@ -78,6 +79,8 @@ func main() {
 		send(os.Args[2:])
 	case "wait":
 		waitCmd(os.Args[2:])
+	case "stats":
+		statsCmd(os.Args[2:])
 	case "ask":
 		ask(os.Args[2:])
 	case "mcp":

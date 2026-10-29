@@ -411,7 +411,7 @@ func TestRemoteProjectsAreHostScoped(t *testing.T) {
 func TestRosterTagsRemoteAgents(t *testing.T) {
 	m, _, _ := remoteModel(t)
 	text := orch.Compose(m.roster(), "hi")
-	if !strings.Contains(text, "Mossy Lemur @devbox → on host devbox, your messages cannot reach it") {
+	if !strings.Contains(text, `"Mossy Lemur" @devbox → on host devbox, your messages cannot reach it`) {
 		t.Errorf("roster:\n%s", text)
 	}
 	if !strings.Contains(text, "host offline, last known working") {

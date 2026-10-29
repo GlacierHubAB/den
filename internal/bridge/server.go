@@ -112,6 +112,7 @@ var held = map[string]bool{
 	UsageEvent:          true,
 	ModeEvent:           true,
 	TeamEvent:           true,
+	SpawnedEvent:        true,
 	OrchSendEvent:       true,
 	ConsolePairEvent:    true,
 	ConsoleUnpairEvent:  true,
@@ -126,6 +127,7 @@ var held = map[string]bool{
 	NoteEvent:           true,
 	NotesEvent:          true,
 	RuleEvent:           true,
+	OverlapAckEvent:     true,
 }
 
 // Held reports whether a request of this event waits for Den's decision.

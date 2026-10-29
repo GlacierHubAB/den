@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/mission"
+	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
 )
@@ -109,7 +111,7 @@ func (m Model) proposal(in bridge.ProposeInput) (*mission.Mission, error) {
 	ms.Goals, ms.Agents = nil, nil
 	for i, g := range in.Goals {
 		if strings.TrimSpace(g.Owner) == "" {
-			return nil, fmt.Errorf("sub-goal %d needs its owner: a running agent's critter name or a team role", i+1)
+			return nil, fmt.Errorf("sub-goal %d needs its owner: a running agent's name or a team role", i+1)
 		}
 		sid, name, role, err := m.resolveOwner(g.Owner, ms.Team)
 		if err != nil {
@@ -155,51 +157,37 @@ func (m Model) proposalProject(name string) (string, error) {
 }
 
 // resolveOwner finds who a sub-goal's owner names: a running agent on this
-// machine by its critter name (never the orchestrator), or a role in the
-// team. An owner grants nothing; it says who does what.
+// machine (never the orchestrator), through names.Resolve, so a peer
+// handle, a name or an alias, and a name two agents share is refused; or,
+// when no agent has it, a role in the team. An owner grants nothing; it
+// says who does what, and the mission keeps the session id.
 func (m Model) resolveOwner(owner string, team []mission.Member) (sid, name, role string, err error) {
 	o := strings.TrimSpace(owner)
-	// Its exact peer handle, else its critter name; two agents can share a
-	// critter name, and then the owner is refused, never the first picked.
-	var byPeer, byName []fleet.Agent
-	for _, a := range m.base {
-		if a.Status == fleet.Gone || m.isOrchestrator(a) {
-			continue
-		}
-		if a.Session.Name != "" && a.Session.Name == o {
-			byPeer = append(byPeer, a)
-		} else if strings.EqualFold(a.Name, o) {
-			byName = append(byName, a)
+	var live []fleet.Agent
+	for _, a := range append(append([]fleet.Agent(nil), m.base...), m.remote.agents...) {
+		if a.Status != fleet.Gone && !m.isOrchestrator(a) {
+			live = append(live, a)
 		}
 	}
-	hits := byPeer
-	if len(hits) == 0 {
-		hits = byName
-	}
-	if len(hits) > 1 {
-		return "", "", "", fmt.Errorf("owner %q is more than one agent: %s; give its peer handle instead", sanitize.Label(o, 80), withPeers(hits))
-	}
-	for _, a := range hits {
-		if a.Host != "" {
-			return "", "", "", fmt.Errorf("%s is on %s: missions stay on this machine", sanitize.Label(a.Name, 80), sanitize.Label(a.Host, 80))
-		}
+	a, rerr := m.resolveAgent(o, live, names.Opts{})
+	switch {
+	case rerr == nil && a.Host != "":
+		return "", "", "", fmt.Errorf("%s is on %s: missions stay on this machine", sanitize.Label(a.Name, 80), sanitize.Label(a.Host, 80))
+	case rerr == nil:
 		return a.Session.SessionID, a.Name, "", nil
+	case !errors.Is(rerr, names.ErrNoMatch):
+		var elsewhere *names.NeedsHost
+		if errors.As(rerr, &elsewhere) {
+			return "", "", "", fmt.Errorf("owner %q is on another host: missions stay on this machine", sanitize.Label(o, 80))
+		}
+		return "", "", "", fmt.Errorf("owner %s", sanitize.Line(rerr.Error()))
 	}
 	for _, t := range team {
 		if strings.EqualFold(t.Role, o) {
 			return "", "", t.Role, nil
 		}
 	}
-	return "", "", "", fmt.Errorf("owner %q is not a running agent's critter name or a role in team", sanitize.Label(o, 80))
-}
-
-// withPeers lists agents that share a name, each with its peer handle.
-func withPeers(as []fleet.Agent) string {
-	var out []string
-	for _, a := range as {
-		out = append(out, sanitize.Label(a.Name, 60)+" ("+sanitize.Label(a.Session.Name, 60)+")")
-	}
-	return strings.Join(out, ", ")
+	return "", "", "", fmt.Errorf("owner %q is not a running agent's name or a role in team", sanitize.Label(o, 80))
 }
 
 // cloneMission is a deep copy, so a call is checked whole on the copy

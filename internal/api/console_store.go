@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/sanitize"
@@ -53,6 +55,13 @@ type storedConsole struct {
 	// Verifier is what Den last read of the console's service; read back
 	// after a Den start, it only names what changed since.
 	Verifier *sysd.Verifier `json:"verifier,omitempty"`
+	// Lineage, Mirror and MirrorSince are the pairing's lineage and the
+	// human's answer about the mirror (Console). They are inside the
+	// record, so its hash and the clean mark cover them: a record Den
+	// cannot trust drops the console, and with it the answer.
+	Lineage     string    `json:"lineage,omitempty"`
+	Mirror      string    `json:"mirror,omitempty"`
+	MirrorSince time.Time `json:"mirror_since,omitzero"`
 }
 
 type storedConsoles struct {
@@ -117,7 +126,8 @@ func (s *Server) saveConsoleLocked() {
 		rec.AutoHold = s.con.autoHold.Unix()
 	}
 	if c := s.con.cur; c != nil {
-		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier}}
+		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier,
+			Lineage: c.Lineage, Mirror: c.Mirror, MirrorSince: c.MirrorSince}}
 	}
 	b, _ := json.Marshal(rec)
 	if err := writeAtomic(s.consolePath(), b); err != nil {
@@ -219,9 +229,20 @@ func (s *Server) loadConsole() string {
 	if start, _, err := procStatFn(c.PID); err != nil || start != c.Start {
 		return drop("the console's process is gone or was started again, so it was not restored", false)
 	}
+	// The human's answer about the mirror comes back only with a lineage
+	// of Den's own shape and an answer Den knows; anything else is a
+	// lineage of its own, not asked yet.
+	lineage, mirror, mirrorSince := c.Lineage, c.Mirror, c.MirrorSince
+	if !isHex(lineage, 32) || (mirror != "" && mirror != MirrorYes && mirror != MirrorNo) {
+		lineage, mirror, mirrorSince = randHex(), "", time.Time{}
+	}
+	if mirror != MirrorYes {
+		mirrorSince = time.Time{}
+	}
 	s.con.mu.Lock()
 	restored := &consoleRec{
-		Console:  Console{ID: c.ID, Exe: c.Exe, PID: c.PID, Started: c.Started, Since: c.Since, PagesSHA: c.Pages},
+		Console: Console{ID: c.ID, Exe: c.Exe, PID: c.PID, Started: c.Started, Since: c.Since, PagesSHA: c.Pages,
+			Lineage: lineage, Mirror: mirror, MirrorSince: mirrorSince},
 		identity: c.Identity, start: c.Start, pub: ed25519.PublicKey(pub), pubHex: c.Key, restored: true,
 		verifier: c.Verifier,
 	}
@@ -237,10 +258,11 @@ func (s *Server) loadConsole() string {
 	return ""
 }
 
-// restorePowers gives a console restored after Den's restart its powers
-// back when the human chose "always", its process reads clean as the
-// console's service now, and neither the human's lock nor God mode holds;
-// else it asks on Den's powers card.
+// restorePowers asks on Den's powers card for a console restored after
+// Den's restart: its powers never come back by themselves, "always" or
+// not, since the record and config.toml are on disk, which anything of
+// the user's may rewrite while Den is down (and "always" is off at every
+// start until the human's ^Y on its own card).
 func (s *Server) restorePowers(rec *consoleRec) {
 	s.con.mu.Lock()
 	locked := s.con.locked
@@ -251,30 +273,6 @@ func (s *Server) restorePowers(rec *consoleRec) {
 		why = "Den restarted, and you locked the console's powers"
 	case s.godMode():
 		why = "Den restarted, and God mode is on"
-	case rec.verifier == nil:
-		// Paired by code from a process that did not read clean.
-	case !s.opts.ConsolePowersAlways:
-		// What the record says Den read is from disk, which anything of
-		// the user's may rewrite while Den is down: one ^Y.
-	default:
-		v, err := readUnit(sysd.ProcID{PID: rec.PID, Start: rec.start})
-		if err != nil {
-			why = "Den restarted, and " + ConsoleUnit + " did not read clean"
-			break
-		}
-		s.con.mu.Lock()
-		mine := s.con.cur == rec && !s.con.locked
-		if mine {
-			rec.powers, rec.verifier, rec.readHere, s.con.last = true, &v, true, &v
-		}
-		s.con.mu.Unlock()
-		if !mine {
-			return
-		}
-		s.powersEvent(rec, true)
-		s.note("the restored console is " + consoleUnitWho(rec.PID) + ", read clean now: it may answer cards and run commands again.")
-		s.act(Act{ConsoleChanged: true})
-		return
 	}
 	s.askPowers(rec, why)
 }
@@ -306,8 +304,12 @@ func (s *Server) checkConsoleRecord() {
 	if path == "" {
 		return
 	}
-	raw, err := os.ReadFile(path)
+	// The file is read under the lock every save holds while it writes the
+	// file and its hash: read outside it, a save between the read and the
+	// hash looked like another program's change, and Den unpaired its own
+	// console (#179).
 	s.con.mu.Lock()
+	raw, err := readRecord(path)
 	want := s.con.recordHash
 	s.con.mu.Unlock()
 	if want == "" {
@@ -364,4 +366,77 @@ func (s *Server) writeCleanMark() {
 	}
 	b, _ := json.Marshal(cleanMark{Record: want, Key: sha256Hex([]byte(s.ckey.pubHex)), Consoles: n})
 	writeAtomic(s.markPath(), b)
+}
+
+// SetMirrorConsent records the human's answer about the mirror for the
+// console's lineage, in its record, and reports whether that lineage is
+// the console's now. yes keeps the time of an earlier yes.
+func (s *Server) SetMirrorConsent(lineage string, yes bool) bool {
+	st := &s.con
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.cur
+	if c == nil || lineage == "" || c.Lineage != lineage {
+		return false
+	}
+	switch {
+	case !yes:
+		c.Mirror, c.MirrorSince = MirrorNo, time.Time{}
+	case c.Mirror != MirrorYes:
+		c.Mirror, c.MirrorSince = MirrorYes, time.Now().UTC()
+	}
+	s.saveConsoleLocked()
+	return true
+}
+
+// ForgetMirrorConsent forgets the human's answer about the mirror for the
+// console's lineage, so that Den asks again, and reports whether that
+// lineage is the console's now. TEST ONLY: the conformance test's "asking"
+// state uses it. Never wire it to a verb, a command or the dock: only the
+// human's own answer in Den sets or clears it.
+func (s *Server) ForgetMirrorConsent(lineage string) bool {
+	st := &s.con
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.cur
+	if c == nil || lineage == "" || c.Lineage != lineage {
+		return false
+	}
+	c.Mirror, c.MirrorSince = "", time.Time{}
+	s.saveConsoleLocked()
+	return true
+}
+
+// recordMax is the most of consoles.json a check reads: Den's own record
+// is a few KiB.
+const recordMax = 1 << 20
+
+// readRecord reads the console record for a check, which holds con.mu: a
+// FIFO, a symlink, a device or an outsized file planted at the path never
+// blocks or stalls it. Each is an error, which the check takes for a
+// change by another program, as it does a missing file.
+func readRecord(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	if fi.Size() > recordMax {
+		return nil, errors.New("too large")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, recordMax+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > recordMax {
+		return nil, errors.New("too large")
+	}
+	return raw, nil
 }

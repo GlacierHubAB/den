@@ -26,7 +26,7 @@ type MissionInfo struct {
 }
 
 // MissionIdle is one idle agent as the block carries it: Owner is the
-// critter name, Peer the handle for tools.
+// name, Peer the handle for tools.
 type MissionIdle struct {
 	Owner, Peer string
 	Minutes     int
@@ -38,7 +38,7 @@ type MissionCriterion struct {
 }
 
 // MissionGoal is one sub-goal as the block carries it: Owner is the
-// critter name, Peer the handle for tools, Role a team role to start.
+// name, Peer the handle for tools, Role a team role to start.
 type MissionGoal struct {
 	ID, Text, Owner, Peer, Role, State, Note string
 }

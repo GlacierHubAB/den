@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/names"
 )
 
 // A console's line maps onto one verb of the closed list, or is refused, in
@@ -38,6 +40,9 @@ func TestDockLine(t *testing.T) {
 		{"/y", ""},
 		{"/unprotect Otter", ""},
 		{"/send", ""},
+		{"/rename", ""},
+		{"/rename Otter backend engineer", ""},
+		{"/RENAME Otter reviewer", ""},
 		{"/open", ""},
 		{"/fleet project", "/fleet project"},
 		{"/fleet", ""},
@@ -230,5 +235,47 @@ func TestRunFromDock(t *testing.T) {
 	}
 	if !found {
 		t.Error("no chat note for the console's command")
+	}
+}
+
+// Every word Den's commands take where an agent's name could stand (each
+// verb, its aliases, and the literal words of its usage) is a word no agent
+// may be named, so "/close rename" or "/close idle" never means an agent
+// (sec's N12). The dock's table lists every command Den has, the ones only
+// Den's window runs included.
+func TestCommandWordsCoverDensCommands(t *testing.T) {
+	word := regexp.MustCompile(`[a-z]+`)
+	placeholder := regexp.MustCompile(`<[^>]*>`)
+	for _, v := range dockVerbs {
+		words := []string{strings.TrimPrefix(v.name, "/")}
+		for _, a := range v.aliases {
+			words = append(words, strings.TrimPrefix(a, "/"))
+		}
+		words = append(words, word.FindAllString(strings.ToLower(placeholder.ReplaceAllString(v.usage, "")), -1)...)
+		for _, w := range words {
+			if len(w) >= names.MinLen && !names.CommandWords[w] {
+				t.Errorf("%s: %q is not a reserved command word", v.name, w)
+			}
+		}
+	}
+	if !names.CommandWords["rename"] {
+		t.Error("rename is not reserved")
+	}
+}
+
+// /rename never runs from the dock, whatever follows it; a console's turn
+// is text for the orchestrator and never runs a slash command at all.
+func TestRenameIsDensWindowOnly(t *testing.T) {
+	for _, line := range []string{"/rename", "/rename Otter backend engineer"} {
+		if _, v, why := dockLine(line); why == "" {
+			if flag, _ := v.verdict(strings.Fields(line)[1:]); flag != api.DockDenScreen {
+				t.Errorf("%q from the dock: %s", line, flag)
+			}
+		}
+	}
+	for _, c := range dockCommands() {
+		if c.Name == "/rename" && c.Dock != api.DockDenScreen {
+			t.Errorf("cmd.list offers /rename to the dock: %s", c.Dock)
+		}
 	}
 }

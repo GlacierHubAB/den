@@ -206,6 +206,17 @@ type TeamQueryInput struct {
 	Lead   string `json:"lead,omitempty"`
 }
 
+// SpawnedEvent is not a hook event: `den mcp` sends it after spawn_agent
+// started an agent, with SpawnedInput, so that Den can tell a lead's real
+// spawn from a hook that only says so: Den names a lead's spawn only when
+// both came.
+const SpawnedEvent = "Spawned"
+
+// SpawnedInput is a SpawnedEvent's payload: the peer handle it launched.
+type SpawnedInput struct {
+	Peer string `json:"peer"`
+}
+
 // TuneEvent is not a hook event: `den mcp` sends it for the
 // orchestrator's tune_process call, with TuneInput. Den applies each change
 // within its bounds and puts a notice card to the human, who can undo it;
@@ -246,6 +257,19 @@ type MemoryInput struct {
 	Text  string   `json:"text,omitempty"`
 	Query string   `json:"query,omitempty"`
 	From  []string `json:"from,omitempty"`
+}
+
+// OverlapAckEvent is not a hook event: `den mcp` sends it for overlap_ack,
+// an agent's (or the orchestrator's) word that a pair whose branches both
+// change files has agreed who goes first; Den then stays quiet about those
+// files for that pair.
+const OverlapAckEvent = "OverlapAck"
+
+// OverlapAckInput is overlap_ack's call: With, the other agent (an agent's
+// call), or Agents, both of them (the orchestrator's).
+type OverlapAckInput struct {
+	With   string   `json:"with,omitempty"`
+	Agents []string `json:"agents,omitempty"`
 }
 
 // OrchSendEvent is not a hook event: `den mcp --control` sends it for the

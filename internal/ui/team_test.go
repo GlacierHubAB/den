@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,9 +26,11 @@ func teamAgent(name, sid, peer, cwd string) fleet.Agent {
 
 // Two agents whose branches change the same files hear it from Den, once
 // each, with the files quoted; the orchestrator's roster shows it; churn
-// does not repeat it, and a pair that stops and starts again is told again
-// once the per-agent wait is over.
+// does not repeat it, nor does a pair that stops and starts again on the
+// same files; a file new to them is told, alone, once the per-agent wait
+// is over.
 func TestOverlapWarnings(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	peer := useFakePeer(t)
 	m := testModel(120, 40)
 	m.agents = []fleet.Agent{
@@ -69,7 +72,7 @@ func TestOverlapWarnings(t *testing.T) {
 			t.Errorf("overlap framed as %q", f)
 		}
 	}
-	for _, want := range []string{"Den, an automatic check (not the human)", "Snug Capybara's", `"den-b"`, `"a.go", "b.go"`, "the orchestrator, which decides"} {
+	for _, want := range []string{"Den, an automatic check (not the human)", "Snug Capybara's", `"den-b"`, `"a.go", "b.go"`, "the orchestrator, which decides", "overlap_ack"} {
 		if !strings.Contains(toA[0], want) {
 			t.Errorf("to Mossy Lemur lacks %q: %s", want, toA[0])
 		}
@@ -82,7 +85,7 @@ func TestOverlapWarnings(t *testing.T) {
 	}
 	var r1 []string
 	for _, r := range m.roster() {
-		if r.Critter == "Mossy Lemur" {
+		if r.Name == "Mossy Lemur" {
 			r1 = r.Overlaps
 		}
 	}
@@ -106,8 +109,156 @@ func TestOverlapWarnings(t *testing.T) {
 		t.Errorf("told again within the wait: %v", peer.got["/sock/s1"])
 	}
 	scan(now.Add(teamWarnEvery + time.Second))
-	if len(peer.got["/sock/s1"]) != 2 || len(peer.got["/sock/s2"]) != 2 {
-		t.Errorf("not told again after the wait: %v", peer.got)
+	if len(peer.got["/sock/s1"]) != 1 {
+		t.Errorf("told again about the same file: %v", peer.got["/sock/s1"])
+	}
+	// A file new to them: told, and only that file.
+	works[0].Files = append(works[0].Files, "new.go")
+	works[1].Files = []string{"a.go", "new.go"}
+	scan(now.Add(teamWarnEvery + 2*time.Second))
+	if got := peer.got["/sock/s1"]; len(got) != 2 || !strings.Contains(got[1], `"new.go"`) || strings.Contains(got[1], `"a.go"`) {
+		t.Errorf("the new file's warning: %v", got)
+	}
+}
+
+// What Den told a pair is kept in its state dir: a restarted Den, and a
+// branch that flaps (its checkout on the trunk a while, then back), do not
+// warn them again; a pair is forgotten when an agent is gone or a branch
+// lands, and then told again.
+func TestOverlapWarnedOnceAcrossRestart(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	peer := useFakePeer(t)
+	agents := []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), teamAgent("Snug Capybara", "s2", "den-b", "/w/two")}
+	works := []process.Work{
+		{Key: "s1", Repo: "r", Tree: "/w/one", Files: []string{"a.go"}},
+		{Key: "s2", Repo: "r", Tree: "/w/two", Files: []string{"a.go"}},
+	}
+	now := time.Now()
+	scan := func(m *Model, at time.Time) {
+		t.Helper()
+		runCmds(m.applyTeamScan(teamScanMsg{works: works}, at))
+	}
+	fresh := func() *Model {
+		m := testModel(120, 40)
+		m.agents = append([]fleet.Agent(nil), agents...)
+		return &m
+	}
+	m := fresh()
+	scan(m, now)
+	if len(peer.got["/sock/s1"]) != 1 {
+		t.Fatalf("first warning %v", peer.got)
+	}
+	info, err := os.Stat(teamWarnedPath())
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("record %v %v", info, err)
+	}
+	// A restart, well past the wait.
+	m = fresh()
+	scan(m, now.Add(teamWarnEvery+time.Second))
+	// Flapping: s2's checkout on the trunk with nothing changed, then back.
+	works[1] = process.Work{Key: "s2", Repo: "r", Tree: "/w/two", Trunk: true}
+	scan(m, now.Add(teamWarnEvery+2*time.Second))
+	works[1] = process.Work{Key: "s2", Repo: "r", Tree: "/w/two", Files: []string{"a.go"}}
+	scan(m, now.Add(2*teamWarnEvery))
+	if len(peer.got["/sock/s1"]) != 1 {
+		t.Fatalf("warned again: %v", peer.got["/sock/s1"])
+	}
+	// A Den that does not know s2 yet keeps the pair.
+	m.agents = agents[:1]
+	scan(m, now.Add(2*teamWarnEvery+time.Second))
+	if len(m.warnedPairs()) != 1 {
+		t.Fatalf("an unknown agent's pair went at once: %v", m.warnedPairs())
+	}
+	m.agents = append([]fleet.Agent(nil), agents...)
+	// s1's branch lands: the pair is forgotten, and a later overlap told.
+	// As process.Read has it, a landed branch's files are only what it
+	// has not committed: none here.
+	works[0].Landed, works[0].Files = true, nil
+	scan(m, now.Add(3*teamWarnEvery))
+	if len(m.warnedPairs()) != 0 {
+		t.Fatalf("pairs after a landing: %v", m.warnedPairs())
+	}
+	works[0].Landed, works[0].Files = false, []string{"a.go"}
+	scan(m, now.Add(4*teamWarnEvery))
+	if len(peer.got["/sock/s1"]) != 2 {
+		t.Errorf("not told after the landing: %v", peer.got["/sock/s1"])
+	}
+	// Gone: forgotten.
+	m.agents[1].Status = fleet.Gone
+	scan(m, now.Add(5*teamWarnEvery))
+	if len(m.warnedPairs()) != 0 {
+		t.Errorf("pairs after an agent went: %v", m.warnedPairs())
+	}
+	// An unknown agent's pair goes once stale.
+	m.agents[1].Status = fleet.Working
+	m.noteWarned("s1", "s9", []string{"x.go"}, "", now)
+	scan(m, now.Add(warnedStale+time.Hour))
+	if _, ok := m.warnedPairs()[pairKey("s1", "s9")]; ok {
+		t.Errorf("a stale unknown pair stayed")
+	}
+}
+
+// overlap_ack: an agent names the other, or the orchestrator both; Den
+// records the files they overlap on now, says so in its chat, and warns
+// them again only for a new file. Only an agent Den started, or the
+// orchestrator, may say so, and only of a pair that overlaps now.
+func TestOverlapAck(t *testing.T) {
+	m, _ := memModel(t)
+	peer := useFakePeer(t)
+	works := []process.Work{
+		{Key: "s1", Repo: "r", Tree: "/w/one", Files: []string{"a.go"}},
+		{Key: "s2", Repo: "r", Tree: "/w/two", Files: []string{"a.go"}},
+	}
+	ack := func(pid int, in bridge.OverlapAckInput) bridge.Decision {
+		t.Helper()
+		raw, _ := json.Marshal(in)
+		r := bridge.TestRequest(bridge.Envelope{Event: bridge.OverlapAckEvent, Payload: raw})
+		r.PeerPID = pid
+		m.handleRequest(r)
+		d, ok := r.Decided()
+		if !ok {
+			t.Fatal("no answer")
+		}
+		return d
+	}
+	if d := ack(100, bridge.OverlapAckInput{With: "Snug Capybara"}); d.Behavior != "deny" || !strings.Contains(d.Message, "no files") {
+		t.Errorf("no overlap yet: %+v", d)
+	}
+	// Agreed before Den warned: Den never warns them about a.go.
+	m.team.overlaps = map[string][]process.Overlap{"s1": process.Overlaps(works)}
+	for _, c := range []struct {
+		pid int
+		in  bridge.OverlapAckInput
+	}{
+		{4242, bridge.OverlapAckInput{With: "Snug Capybara"}},             // not an agent Den started
+		{100, bridge.OverlapAckInput{With: "Nobody Here"}},                // no such agent
+		{100, bridge.OverlapAckInput{With: "Mossy Lemur"}},                // itself
+		{100, bridge.OverlapAckInput{Agents: []string{"den-a", "den-b"}}}, // an agent naming two
+		{999, bridge.OverlapAckInput{With: "Snug Capybara"}},              // the orchestrator naming one
+	} {
+		if d := ack(c.pid, c.in); d.Behavior != "deny" {
+			t.Errorf("%d %+v allowed: %+v", c.pid, c.in, d)
+		}
+	}
+	if len(m.warnedPairs()) != 0 {
+		t.Fatalf("a refused ack recorded %v", m.warnedPairs())
+	}
+	if d := ack(999, bridge.OverlapAckInput{Agents: []string{"den-a", "Snug Capybara"}}); d.Behavior != "allow" {
+		t.Fatalf("orchestrator's ack: %+v", d)
+	}
+	p := m.warnedPairs()[pairKey("s1", "s2")]
+	if p == nil || p.Acked != "The orchestrator" || len(p.Files) != 1 || p.Files[0] != "a.go" {
+		t.Fatalf("record %+v", p)
+	}
+	if last := m.orch.chat[len(m.orch.chat)-1].text; !strings.Contains(last, "Mossy Lemur and Snug Capybara agreed on 1 file") {
+		t.Errorf("note %q", last)
+	}
+	runCmds(m.applyTeamScan(teamScanMsg{works: works}, time.Now()))
+	if len(peer.got["/sock/s1"]) != 0 {
+		t.Errorf("warned after the ack: %v", peer.got)
+	}
+	if d := ack(200, bridge.OverlapAckInput{With: "mossy lemur"}); d.Behavior != "allow" || !strings.Contains(d.Message, "Snug Capybara and Mossy Lemur") {
+		t.Errorf("agent's ack: %+v", d)
 	}
 }
 
@@ -115,6 +266,7 @@ func TestOverlapWarnings(t *testing.T) {
 // not sent the overlap message, the other agent is, and Den's note says the
 // orchestrator tells the guarded one.
 func TestOverlapSkipsGuardedAgents(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	peer := useFakePeer(t)
 	m := testModel(120, 40)
 	m.agents = []fleet.Agent{teamAgent("Mossy Lemur", "s1", "den-a", "/w/one"), teamAgent("Snug Capybara", "s2", "den-b", "/w/two")}
@@ -315,7 +467,7 @@ func TestBranchNudges(t *testing.T) {
 		}
 	}
 	for _, r := range m.roster() {
-		if r.Critter == "Snug Capybara" && r.Branch != `"fresh" is 41 commits behind main` {
+		if r.Name == "Snug Capybara" && r.Branch != `"fresh" is 41 commits behind main` {
 			t.Errorf("roster %q", r.Branch)
 		}
 	}
@@ -353,5 +505,41 @@ func TestNudgeOnlyFeatureBranches(t *testing.T) {
 	}
 	if why := branchOver(process.Work{Branch: "feature", Since: old, Behind: 3}, now, 24, 30); why == "" {
 		t.Error("an old feature branch was not nudged")
+	}
+}
+
+// The warned record is Den's alone: a FIFO or a symlink planted at it is
+// never read (the FIFO cannot block Den), and a symlink planted at its
+// .tmp is removed, never written through.
+func TestWarnedRecordRefusesPlantedFiles(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	path := teamWarnedPath()
+	os.MkdirAll(filepath.Dir(path), 0o700)
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := testModel(120, 40)
+	if len(m.warnedPairs()) != 0 {
+		t.Fatal("read a FIFO")
+	}
+	os.Remove(path)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere.json")
+	os.WriteFile(elsewhere, []byte(`{"v":1,"pairs":{"x":{"a":"s1","b":"s2","files":["a.go"]}}}`), 0o600)
+	os.Symlink(elsewhere, path)
+	m = testModel(120, 40)
+	if len(m.warnedPairs()) != 0 {
+		t.Fatal("followed a symlink")
+	}
+	os.Remove(path)
+	target := filepath.Join(t.TempDir(), "target")
+	os.WriteFile(target, []byte("keep"), 0o600)
+	os.Symlink(target, path+".tmp")
+	m.noteWarned("s1", "s2", []string{"a.go"}, "", time.Now())
+	m.saveWarned()
+	if raw, _ := os.ReadFile(target); string(raw) != "keep" {
+		t.Errorf("wrote through the .tmp symlink: %q", raw)
+	}
+	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 {
+		t.Errorf("record %v %v", fi, err)
 	}
 }

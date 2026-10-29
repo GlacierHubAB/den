@@ -11,20 +11,39 @@ import (
 // when named. It lives in Den's state (protected.json) so /protect,
 // /unprotect, /flag and /unflag survive a restart, and the human can edit
 // the file by hand.
+//
+// An agent is guarded by its session, never by a name: a name is only how
+// the human found it. The session survives a restore and /reopen; a new
+// agent that happens to get the same name is not guarded. Names and the
+// name-only Flagged entries are a file from before, read once and turned
+// into sessions (TakeLegacy).
 type Guard struct {
-	// Names are critter names or peer names that are never proposed.
-	Names []string `json:"names"`
+	// Sessions are agents that are never proposed.
+	Sessions []Entry `json:"sessions,omitempty"`
 	// Paths are folders: an agent whose working directory, edited
 	// repositories or task mention one is never proposed.
 	Paths []string `json:"paths"`
-	// Flagged agents hold context the human may still need: a bulk close
-	// lists them as not selected; naming them includes them.
-	Flagged []Flag `json:"flagged"`
+	// Flags are agents holding context the human may still need: a bulk
+	// close lists them as not selected; naming them includes them.
+	Flags []Entry `json:"flags,omitempty"`
+
+	// Names and Flagged are the guard as an older Den wrote it, by name.
+	Names   []string `json:"names,omitempty"`
+	Flagged []Flag   `json:"flagged,omitempty"`
 }
 
-// Flag is one flagged agent with the reason it is worth keeping.
+// Entry is one guarded agent: its session id as Den keys it (an agent on
+// another machine's carries "@host"), the name it had when the human
+// guarded it (shown, never matched), and a flag's note.
+type Entry struct {
+	Session string `json:"session"`
+	Name    string `json:"name,omitempty"`
+	Note    string `json:"note,omitempty"`
+}
+
+// Flag is a flagged agent in an older file, by name.
 type Flag struct {
-	Name string `json:"name"` // critter name or peer name
+	Name string `json:"name"`
 	Note string `json:"note,omitempty"`
 }
 
@@ -66,79 +85,94 @@ func (g *Guard) Save(path string) error {
 	return os.WriteFile(path, append(raw, '\n'), 0o644)
 }
 
-func (g *Guard) has(list []string, name string) int {
-	for i, n := range list {
-		if strings.EqualFold(strings.TrimSpace(n), strings.TrimSpace(name)) {
+func find(list []Entry, key string) int {
+	for i, e := range list {
+		if key != "" && e.Session == key {
 			return i
 		}
 	}
 	return -1
 }
 
-// Protect adds a name; it reports whether it was new.
-func (g *Guard) Protect(name string) bool {
-	if name = strings.TrimSpace(name); name == "" || g.has(g.Names, name) >= 0 {
+// Protect guards a session; it reports whether it was new.
+func (g *Guard) Protect(key, name string) bool {
+	if key == "" || find(g.Sessions, key) >= 0 {
 		return false
 	}
-	g.Names = append(g.Names, name)
+	g.Sessions = append(g.Sessions, Entry{Session: key, Name: name})
 	return true
 }
 
-// Unprotect removes a name; it reports whether it was there.
-func (g *Guard) Unprotect(name string) bool {
-	i := g.has(g.Names, name)
+// Unprotect removes a session; it reports whether it was there.
+func (g *Guard) Unprotect(key string) bool {
+	i := find(g.Sessions, key)
 	if i < 0 {
 		return false
 	}
-	g.Names = append(g.Names[:i], g.Names[i+1:]...)
+	g.Sessions = append(g.Sessions[:i], g.Sessions[i+1:]...)
 	return true
 }
 
-// SetFlag flags a name with a note, replacing an earlier note.
-func (g *Guard) SetFlag(name, note string) {
-	name = strings.TrimSpace(name)
-	for i := range g.Flagged {
-		if strings.EqualFold(g.Flagged[i].Name, name) {
-			g.Flagged[i].Note = note
-			return
-		}
+// SetFlag flags a session with a note, replacing an earlier note.
+func (g *Guard) SetFlag(key, name, note string) {
+	if key == "" {
+		return
 	}
-	g.Flagged = append(g.Flagged, Flag{Name: name, Note: note})
+	if i := find(g.Flags, key); i >= 0 {
+		g.Flags[i].Note, g.Flags[i].Name = note, name
+		return
+	}
+	g.Flags = append(g.Flags, Entry{Session: key, Name: name, Note: note})
 }
 
 // Unflag removes a flag; it reports whether it was there.
-func (g *Guard) Unflag(name string) bool {
-	for i := range g.Flagged {
-		if strings.EqualFold(g.Flagged[i].Name, strings.TrimSpace(name)) {
-			g.Flagged = append(g.Flagged[:i], g.Flagged[i+1:]...)
-			return true
-		}
+func (g *Guard) Unflag(key string) bool {
+	i := find(g.Flags, key)
+	if i < 0 {
+		return false
 	}
-	return false
+	g.Flags = append(g.Flags[:i], g.Flags[i+1:]...)
+	return true
 }
 
-// ProtectedName is the protected name among names, as it was written to
-// the guard (so /unprotect takes it back), "" when none is protected.
-func (g *Guard) ProtectedName(names ...string) string {
-	for _, n := range names {
-		if n == "" {
-			continue
-		}
-		if i := g.has(g.Names, n); i >= 0 {
-			return g.Names[i]
-		}
+// IsProtected reports whether the session is guarded by the human's
+// /protect, with the entry.
+func (g *Guard) IsProtected(key string) (Entry, bool) {
+	if i := find(g.Sessions, key); i >= 0 {
+		return g.Sessions[i], true
 	}
-	return ""
+	return Entry{}, false
+}
+
+// Held says why a session is worth keeping, "" when it is not flagged.
+func (g *Guard) Held(key string) (note string, ok bool) {
+	if i := find(g.Flags, key); i >= 0 {
+		return g.Flags[i].Note, true
+	}
+	return "", false
+}
+
+// Legacy is the guard's name entries from an older file.
+func (g *Guard) Legacy() (protect []string, flags []Flag) {
+	return g.Names, g.Flagged
+}
+
+// TakeLegacy drops the name entries from an older file once they are
+// turned into sessions; keep are the ones to read again later (an agent on
+// a host not yet seen).
+func (g *Guard) TakeLegacy(keepProtect []string, keepFlags []Flag) {
+	g.Names, g.Flagged = keepProtect, keepFlags
 }
 
 // Protected says why an agent must be left alone, "" when it is not
-// protected. name and peer are its names; dirs are its working directory
-// and the repositories it edited; task is what it is working on.
-func (g *Guard) Protected(name, peer string, dirs []string, task string) string {
-	for _, n := range []string{name, peer} {
-		if n != "" && g.has(g.Names, n) >= 0 {
-			return "protected (" + n + ")"
+// protected. key is its session id; dirs are its working directory and
+// the repositories it edited; task is what it is working on.
+func (g *Guard) Protected(key string, dirs []string, task string) string {
+	if e, ok := g.IsProtected(key); ok {
+		if e.Name != "" {
+			return "protected (" + e.Name + ")"
 		}
+		return "protected"
 	}
 	for _, p := range g.Paths {
 		p = expandHome(strings.TrimSpace(p))
@@ -157,16 +191,6 @@ func (g *Guard) Protected(name, peer string, dirs []string, task string) string 
 		}
 	}
 	return ""
-}
-
-// Held says why an agent is worth keeping, "" when it is not flagged.
-func (g *Guard) Held(name, peer string) (note string, ok bool) {
-	for _, f := range g.Flagged {
-		if strings.EqualFold(f.Name, name) || (peer != "" && strings.EqualFold(f.Name, peer)) {
-			return f.Note, true
-		}
-	}
-	return "", false
 }
 
 func expandHome(p string) string {

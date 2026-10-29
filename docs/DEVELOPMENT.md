@@ -37,6 +37,7 @@ Claude Code's hooks run, `mcp.go` serves the orchestrator's tools, `ask.go`,
 | `internal/bridge` | Unix-socket protocol between `den hook` and the running TUI; carries permission decisions back |
 | `internal/inbox` | turns hook events into inbox items (permission, plan, question, done, stalled, failed) and keeps history |
 | `internal/events` | the versioned event stream (`events.jsonl`) for `den events -json`, `den wait` and `[on]` commands |
+| `internal/stats` | `den stats`: reads the state files, bounded and read-only, and counts what they prove about a window |
 | `internal/notify` | desktop notifications through `notify-send`, and whether one was clicked |
 | `internal/peer` | delivers a message into a session through its inbox socket |
 | `internal/orch` | runs the orchestrator, a headless `claude -p` stream-json session, and its roster |

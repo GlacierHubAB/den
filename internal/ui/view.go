@@ -631,23 +631,24 @@ func (m Model) agentsPane(w, h int) string {
 		default:
 			glyph = muted.Render("?")
 		}
-		name := fg.Render(a.Name)
+		shown := cutName(shownName(a), max(12, w/2))
+		name := fg.Render(shown)
 		if selected {
-			name = bright.Render(a.Name)
+			name = bright.Render(shown)
 		}
 		if a.Host != "" {
 			name += muted.Render(hostChip(a))
 		}
 		twin := m.twinNote(a.Session.SessionID)
 		role := ""
-		if a.Labels.Role != "" && !m.noRoles {
+		if roleShown(a) && !m.noRoles {
 			role = fg.Foreground(lipgloss.Color(m.agentColor(a))).Render("  " + strings.ToUpper(a.Labels.Role))
 		}
 		last, stale := m.lastKnown(a)
 		if stale {
 			// Dimmed through and through: the host is not live.
-			glyph, name = muted.Render("·"), dim.Render(a.Name+hostChip(a))
-			if a.Labels.Role != "" && !m.noRoles {
+			glyph, name = muted.Render("·"), dim.Render(shown+hostChip(a))
+			if roleShown(a) && !m.noRoles {
 				role = muted.Render("  " + strings.ToUpper(a.Labels.Role))
 			}
 		}
@@ -823,6 +824,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("1-9", "pick")+"  "+key("^Y", "make the picked rules")+"  "+key("^N", "drop them"))
 	case it.Answerable() && it.Kind == inbox.RulesEdited:
 		out = append(out, key("^Y", "they are my rules")+"  "+key("^N", "leave it a note"))
+	case it.Answerable() && it.Kind == inbox.RenamePick:
+		out = append(out, key("1-9", "pick")+"  "+key("^Y", "rename the picked")+"  "+key("^N", "rename none"))
 	case it.Answerable() && it.Kind == inbox.MissionMove:
 		out = append(out, key("^Y", "move it")+"  "+key("^N", "keep it where it is"))
 	case it.Answerable() && it.Kind == inbox.Restore:
@@ -852,6 +855,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "take the figure")+"  "+key("^N", "keep yours"))
 	case it.Answerable() && it.Kind == inbox.ModeSet:
 		out = append(out, key("^Y", "start agents in it")+"  "+key("^N", "keep the mode"))
+	case it.Answerable() && it.Kind == inbox.PowersSet:
+		out = append(out, key("^Y", "allow it until Den restarts")+"  "+key("^N", "keep asking"))
 	case it.Answerable() && it.Kind == inbox.APIOn:
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.Grant:
@@ -1128,6 +1133,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		if it.Kind == inbox.RulesEdited {
 			acts = key("^Y", "they are my rules") + sp + sp + key("^N", "leave it a note")
 		}
+		if it.Kind == inbox.RenamePick {
+			acts = key("1-9", "pick") + sp + sp + key("^Y", "rename the picked") + sp + sp + key("^N", "rename none")
+		}
 		if it.Kind == inbox.MissionMove {
 			acts = key("^Y", "move it") + sp + sp + key("^N", "keep it where it is")
 		}
@@ -1166,6 +1174,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.ModeSet {
 			acts = key("^Y", "start agents in it") + sp + sp + key("^N", "keep the mode")
+		}
+		if it.Kind == inbox.PowersSet {
+			acts = key("^Y", "allow it until Den restarts") + sp + sp + key("^N", "keep asking")
 		}
 		if it.Kind == inbox.APIOn {
 			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")
@@ -1224,6 +1235,15 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 	return rows
 }
 
+// headerLine is the details header: the name, and the role chip only when
+// it fits whole beside it; a cut chip says nothing.
+func headerLine(name, chip string, w int) string {
+	if ansi.StringWidth(name)+ansi.StringWidth(chip) > w {
+		return name
+	}
+	return name + chip
+}
+
 func (m Model) detailPane(w, h int) string {
 	lines, _, _ := m.detailLines(w)
 	if lines == nil {
@@ -1254,7 +1274,14 @@ func (m Model) detailLines(w int) (lines []string, reqFrom, reqTo int) {
 	}
 	// Identity on top, then the critter with its task beside it.
 	b.WriteString("\n")
-	line(s.bright.Bold(true).Render(a.Name) + role)
+	line(headerLine(s.bright.Bold(true).Render(shownName(a)), role, w-4))
+	// The critter name it had still works; an agent with no role says so.
+	switch {
+	case a.Alias != "":
+		line(s.dim.Render("also " + a.Alias))
+	case a.Labels.Role == "" && a.Host == "":
+		line(s.dim.Render("no role"))
+	}
 	if ch := m.chainLine(a.Session.SessionID, true); ch != "" {
 		line(ch)
 	}
@@ -1440,7 +1467,11 @@ func (m Model) completionRows(w int) []string {
 	rows := make([]string, 0, len(compl))
 	for i, a := range compl {
 		fg, dim, muted, bright, _, _, _, marker := m.rowStyles(i == m.complIdx%len(compl))
-		line := marker + fg.Render("  ") + bright.Render(a.Name) + dim.Render(hostChip(a)) + fg.Render("  ") + muted.Render(strings.ToLower(a.Labels.Role)) + fg.Render("  ") + dim.Render(a.Status.String())
+		line := marker + fg.Render("  ") + bright.Render(shownName(a)) + dim.Render(hostChip(a)) + fg.Render("  ") + muted.Render(strings.ToLower(a.Labels.Role)) + fg.Render("  ") + dim.Render(a.Status.String())
+		if a.Alias != "" {
+			// The critter name it had, dim: typing either finds it.
+			line += fg.Render("  ") + dim.Render(a.Alias)
+		}
 		if i == m.complIdx%len(compl) {
 			line = fill(line, min(w, 60), fg)
 		}

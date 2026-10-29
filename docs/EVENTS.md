@@ -60,7 +60,7 @@ and, by kind:
 | --- | --- | --- |
 | `session_start` | a session started or resumed (`SessionStart`) | `reason`: `startup`, `resume`, `clear` or `compact` |
 | `session_end` | a session ended (`SessionEnd`) | `reason`, when Claude Code gives one |
-| `turn_start` | a prompt was submitted (`UserPromptSubmit`) | |
+| `turn_start` | a prompt was submitted (`UserPromptSubmit`) | `source`: `peer` or `terminal`, see below; left out when Claude Code sent no prompt, and in events written before the field |
 | `done` | a turn finished (`Stop`) | |
 | `needs_you` | a request started waiting on you (`PermissionRequest`, `AskUserQuestion`, an input notice); one wait is one event, so a question is not reported again as a permission | `request`: `permission`, `plan` or `question`; `tool`: the tool name, for a permission |
 | `idle` | Claude Code's idle notice | |
@@ -72,6 +72,18 @@ and, by kind:
 ```json
 {"v":1,"time":"2026-10-11T21:22:46.685Z","kind":"needs_you","session":"11111111-2222-4333-8444-555555555555","agent":"Mossy Lemur","request":"permission","tool":"Bash"}
 ```
+
+`source` says where a prompt came from, so that the prompts typed in an agent's
+terminal can be counted. `den hook` works it out from the prompt and keeps only
+the name, never the prompt. `peer` is a prompt that holds anything like a
+peer-message envelope: what other Claude Code sessions send an agent, Den's own
+messages to it included. `terminal` is any other prompt: typed in the agent's
+terminal, or the brief Den puts on a spawned agent's command line. It is a
+label for counting, not a check, since a prompt can be written to look like
+either. A stream written before the field has none, and `den stats` counts
+those prompts as source unknown. An `[on]` command gets the field in the JSON
+on its stdin; there is no `DEN_SOURCE`. Events from a [remote host](REMOTE.md)
+keep a `source` only if it is one of the two names.
 
 A `needs_you` from `den hook` is written before Den has seen the request, so
 one that Den then allows by an earlier "always" still appears here. Fields may

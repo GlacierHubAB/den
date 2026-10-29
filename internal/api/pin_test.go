@@ -19,12 +19,13 @@ import (
 // README included.
 func TestConformanceCopyIsPinned(t *testing.T) {
 	want := map[string]string{
-		"checks_test.go":    "9227d14c24618a82ee5b21b72057cf8af9c53e3ee46dd98deeeef2653ed96348",
-		"client.go":         "803916dc11644943879be59917f21133f5fa7ef0163430361a770181d792aa40",
-		"console.go":        "c3eabd4f6ad771fbefaf6bc38283bfa0774fb51a9258ad31ff88bd5a9271cf9c",
+		"checks_test.go":    "e5f201fa83e74cc4a9deb951dd975427ed0380a32cfce82a7f8a995d1cccf6e8",
+		"client.go":         "912bea7e150aace693040f9c37df49f3ceb3180b7f692fe417f5066ad41ab8c0",
+		"console.go":        "105767d862c5df59cdb01a7879fce47bd3405ed38a5bf0b38aa5e7fdce5e0a36",
 		"d1.go":             "e56461e6d42ca713e91f193fae816d600d48e16263e36d6a9ecb0c6a2e5e2416",
 		"denconformance.go": "d2b71446ae741b6bd340add1eb4a4c43bbb51506d42c1e374a3ae3b697641b0d",
-		"README.md":         "fa5ab2c12862fd749802cea8f468d4c0407a40c1df568f870149c401958c6dbc",
+		"mention.go":        "0657dcef747ef52fd99a231f03bf1c79946381bea0b294b82df7bb77fb2cb041",
+		"README.md":         "f4d9a9a455bc588584ed556bafde37c4c5b3408f19649c055a0eb6f88b6b5100",
 	}
 	var sums strings.Builder
 	var goFiles []string
@@ -51,7 +52,7 @@ func TestConformanceCopyIsPinned(t *testing.T) {
 		fmt.Fprintf(&sums, "%s  %s\n", want[name], name)
 	}
 	h := sha256.Sum256([]byte(sums.String()))
-	if got := hex.EncodeToString(h[:]); got != "de22142798bb7df52a7f897eed98e2300821f29e810a3fa91f0a875efbf8bcd7" {
+	if got := hex.EncodeToString(h[:]); got != "bc6e488fc71534f16b48dd8455e031eef1a910a9abc983cbc42390236ceadb78" {
 		t.Errorf("package hash %s", got)
 	}
 }

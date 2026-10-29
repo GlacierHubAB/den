@@ -174,7 +174,7 @@ func (m *Model) noteRefusal(sender, why string) {
 // the chat as one line, the body a press away.
 func (m *Model) sendReport(a fleet.Agent, body string) tea.Cmd {
 	content := peermsg.Report(a.Name, body)
-	m.addChat(chatEntry{role: "fan", to: a.Name, sid: a.Session.SessionID, tool: "report to the orchestrator", text: actionSummary("", body), full: sanitize.Text(body), fromAgent: true, status: "passed on", at: time.Now()})
+	m.addChat(chatEntry{role: "fan", to: shownName(a), sid: a.Session.SessionID, tool: "report to the orchestrator", text: actionSummary("", body), full: sanitize.Text(body), fromAgent: true, status: "passed on", at: time.Now()})
 	m.mirrorReportTurn(a.Name, a.Session.SessionID)
 	if m.holdReport(content) {
 		return nil // after the app's turn, as it is
