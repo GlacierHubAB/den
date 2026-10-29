@@ -340,7 +340,9 @@ On an `approve` host:
   in its checkout on devbox". Every close needs `Ctrl+Y`. `/protect` and
   `/flag` apply to remote agents too: `/protect Name@devbox` keeps that
   host's agent out of every close, by name or not, and a bare
-  `/protect <Name>` covers every agent of that name, here and on every host.
+  `/protect <Name>` or `/flag <Name>` covers every agent of that name, here
+  and on every host, naming each one. `/unprotect`, `/unflag` and `/close`
+  name one agent: `Name@devbox` for a remote agent.
   A close of a protected agent is refused with the `/unprotect` that allows
   it. A protected folder in `protected.json` only protects agents on this
   machine.

@@ -195,24 +195,64 @@ jobs:
           tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --no-banner --exit-code 1 .
 
+  # Which files a pull request changes, to decide whether it also runs the slow
+  # suite. If the file list cannot be read, the slow suite runs.
+  paths:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      slow: ${{ steps.files.outputs.slow }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          CHANGED: ${{ github.event.pull_request.changed_files }}
+        run: |
+          # The files API lists at most 3000 files.
+          if [ "$CHANGED" -ge 3000 ]; then
+            echo "slow=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)'); then
+            if printf '%s\n' "$files" | grep -Eq '^(internal/(remote|names|ui|fleet|sshtest)/|cmd/den/|go\.(mod|sum)$|\.github/workflows/(ci|heavy)\.yml$)'; then
+              slow=true
+            else
+              slow=false
+            fi
+          else
+            slow=true
+          fi
+          echo "slow=$slow" >> "$GITHUB_OUTPUT"
+
   # The race detector three times on two CPUs for every pull request, and the
-  # slow suite as well for a pull request into main (a release). Orderings
-  # that only go wrong on a small machine show here, not in a release. Other
-  # events (a push, the weekly run, the release workflow) skip it.
+  # slow suite as well for a pull request into main (a release) and for one that
+  # changes internal/remote, internal/names, internal/ui, internal/fleet,
+  # internal/sshtest, cmd/den, go.mod, go.sum or these two workflows. Orderings that only go
+  # wrong on a small machine show here, not in a release, and the slow suite
+  # drives the TUI over remote hosts, where the close, protect and resolver
+  # logic is spread across those packages. Other events (a push, the weekly
+  # run, the release workflow) skip it.
   heavy:
     if: github.event_name == 'pull_request'
+    needs: [paths]
     permissions:
       contents: read
     uses: ./.github/workflows/heavy.yml
     with:
-      which: ${{ github.base_ref == 'main' && 'both' || 'race3' }}
+      which: ${{ (github.base_ref == 'main' || needs.paths.outputs.slow == 'true') && 'both' || 'race3' }}
 
   # The one check branch protection requires. Its name stays the same when
   # jobs or the matrix change; it fails unless every job above succeeded
-  # (heavy may also be skipped, on events it does not run for).
+  # (heavy and paths may also be skipped, on events they do not run for).
   ci-passed:
     if: always()
-    needs: [lint, test, vuln, secrets, heavy]
+    needs: [lint, test, vuln, secrets, paths, heavy]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -222,4 +262,4 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'to_entries | all(.[]; .value.result == "success" or (.key == "heavy" and .value.result == "skipped"))' > /dev/null
+          echo "$NEEDS" | jq -e 'to_entries | all(.[]; .value.result == "success" or ((.key == "heavy" or .key == "paths") and .value.result == "skipped"))' > /dev/null

@@ -671,6 +671,8 @@ type conn struct {
 	// when it was given; console the console it proved, "" for none.
 	// reads are the cards it read, for card.answer (card.go).
 	reads cardReads
+	// cardHash is the card hash version it chose in hello: 1, or 2.
+	cardHash int
 	// answering holds, per card it is answering, the settled events
 	// pushed meanwhile: they go out after the answer's reply (card.go).
 	answering map[string][]Event
@@ -694,6 +696,17 @@ func (c *conn) subscribed(ev string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.subs[ev]
+}
+
+// cardVersion is the card hash version the connection reads: 2 when it
+// chose it in hello, otherwise 1.
+func (c *conn) cardVersion() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.cardHash == 2 {
+		return 2
+	}
+	return 1
 }
 
 // push queues a line. A full queue closes the connection when the line
@@ -941,8 +954,30 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		var p struct {
 			V     int    `json:"v"`
 			Group string `json:"group"`
+			// CardHash chooses the card hash version for the whole
+			// connection: 2, or 1 (or none) for v1. Anything else, a
+			// string or 0 included, is refused, never read as v1.
+			CardHash json.RawMessage `json:"card_hash"`
 		}
 		json.Unmarshal(req.Params, &p)
+		cardHash := 1
+		if p.CardHash != nil {
+			switch string(p.CardHash) {
+			case "1":
+			case "2":
+				cardHash = 2
+			default:
+				c.fail(req.ID, CodeBadRequest, "card_hash: 1 or 2")
+				return
+			}
+		}
+		c.mu.Lock()
+		again, had := c.hello, c.cardHash
+		c.mu.Unlock()
+		if again && had != cardHash {
+			c.fail(req.ID, CodeBadRequest, "card_hash is chosen once, in the connection's first hello")
+			return
+		}
 		v := p.V
 		if v == 0 {
 			v = req.V
@@ -962,6 +997,7 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		}
 		c.mu.Lock()
 		c.hello, c.agent = true, isAgent
+		c.cardHash = cardHash
 		if p.Group != "" {
 			// The program is part of the scope: another program naming
 			// the same group shares nothing with it. The group itself is
