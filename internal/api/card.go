@@ -72,6 +72,12 @@ type Card struct {
 	// TTYOnly: while God mode is on, only the human answers it, in Den's
 	// own window; card.answer says tty_only rather than refused_from_dock.
 	TTYOnly bool `json:"-"`
+	// Started: an answer started the card's action and it runs. No one
+	// answers it (no verbs, dock_answers false) and its text is as it was
+	// when it started; it settles once, when the action ends. StartedBy
+	// is who answered: den or console. Neither is in the card's hash.
+	Started   bool   `json:"started,omitempty"`
+	StartedBy string `json:"by,omitempty"`
 }
 
 // CardHash is a card's text_sha256: over kind, agent, tool, title, note
@@ -165,13 +171,20 @@ type CardEvent struct {
 	// and by den, console or rule (God mode answered it), "" for gone.
 	Result string `json:"result,omitempty"`
 	By     string `json:"by,omitempty"`
+	// Started is set on the changed event of a card whose action an
+	// answer started, with By; it never goes back. Outcome is on the
+	// settled event of such a card only: done, failed or lost.
+	Started bool   `json:"started,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
 }
 
-// Settled is how Den settled a card: the verb answered and who answered.
+// Settled is how Den settled a card: the verb answered and who answered,
+// and for a card whose action an answer started, how it ended.
 type Settled struct {
-	ID   string
-	Verb string // allow, deny or always
-	By   string // den or console
+	ID      string
+	Verb    string // allow, deny or always
+	By      string // den or console
+	Outcome string // done, failed or lost; "" for a card never started
 }
 
 var settledResult = map[string]string{"allow": "allowed", "deny": "denied", "always": "always"}
@@ -353,6 +366,12 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 	delete(c.reads.nonces, p.Nonce) // spent, whatever follows
 	first := c.reads.first[p.ID+"\x00"+p.Hash]
 	c.reads.mu.Unlock()
+	if card, live := s.cardOf(p.ID); live && card.Started {
+		// Answered already, and its action runs: refused before any
+		// check of hash or nonce, since started is in neither.
+		c.fail(req.ID, CodeNotFound, "it was answered, and its action runs")
+		return
+	}
 	ver := c.cardVersion()
 	if card, live := s.cardOf(p.ID); live && card.otherHash(ver) == p.Hash {
 		c.fail(req.ID, CodeHashVersion, "this connection uses card hash v"+strconv.Itoa(ver))
@@ -466,10 +485,23 @@ func hasVerb(verbs []string, v string) bool {
 	return false
 }
 
+// settledEvent is the settled event of card o, which left the cards: by
+// st when Den settled it by an answer (ok), else gone.
+func settledEvent(o Card, st Settled, ok bool) CardEvent {
+	e := CardEvent{ID: o.ID, Kind: o.Kind, Agent: o.Agent, Change: "settled", Result: "gone"}
+	if ok {
+		e.Result, e.By, e.Outcome = settledResult[st.Verb], st.By, st.Outcome
+	}
+	return e
+}
+
 // cardEvent is a new or changed card's event, for a connection on card
 // hash version v.
 func cardEvent(c Card, change string, v int) CardEvent {
 	c = c.forVersion(v)
+	if c.Started {
+		return CardEvent{ID: c.ID, Kind: c.Kind, Agent: c.Agent, Change: change, Hash: c.Hash, Started: true, By: c.StartedBy}
+	}
 	return CardEvent{ID: c.ID, Kind: c.Kind, Agent: c.Agent, Change: change, Hash: c.Hash, NeedsDenScreen: !c.DockAnswers}
 }
 
@@ -482,17 +514,14 @@ func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled)
 		for id, c := range now {
 			if o, ok := old[id]; !ok {
 				evs = append(evs, cardEvent(c, "new", v))
-			} else if o.HashIn(v) != c.HashIn(v) {
+			} else if o.HashIn(v) != c.HashIn(v) || c.Started && !o.Started {
 				evs = append(evs, cardEvent(c, "changed", v))
 			}
 		}
 		for id, o := range old {
 			if _, ok := now[id]; !ok {
-				e := CardEvent{ID: id, Kind: o.Kind, Agent: o.Agent, Change: "settled", Result: "gone"}
-				if st, ok := settled[id]; ok {
-					e.Result, e.By = settledResult[st.Verb], st.By
-				}
-				evs = append(evs, e)
+				st, ok := settled[id]
+				evs = append(evs, settledEvent(o, st, ok))
 			}
 		}
 		return evs

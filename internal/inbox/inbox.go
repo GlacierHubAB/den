@@ -197,10 +197,13 @@ type Item struct {
 	// StartedUntil is when Den stops waiting for a Started item's action:
 	// past it, LoseStarted settles it.
 	StartedUntil time.Time
-	Role         string // the agent's role when this happened
-	Task         string // what the agent was working on when this happened
-	Seen         bool   // shown on the Inbox view at least once
-	Unread       bool   // kept unread by the human: counts as new until opened or dismissed
+	// Outcome is how a Started item's action ended: done, failed or lost
+	// (it never reported); "" for an item that was never Started.
+	Outcome string
+	Role    string // the agent's role when this happened
+	Task    string // what the agent was working on when this happened
+	Seen    bool   // shown on the Inbox view at least once
+	Unread  bool   // kept unread by the human: counts as new until opened or dismissed
 	// A question Den holds (hooks.answer_questions): all of the call's
 	// questions, the answers so far by question text, and the one asked now.
 	Questions []question.Question
@@ -1110,15 +1113,43 @@ func (s *Store) LoseStarted() []*Item {
 				why = "Den lost track of this send; it may still have been sent, so check before sending again"
 			}
 			s.Settle(it, false, why)
+			it.Outcome = OutcomeLost
 			lost = append(lost, it)
 		}
 	}
 	return lost
 }
 
+// The outcomes of a Started item's action.
+const (
+	OutcomeDone   = "done"
+	OutcomeFailed = "failed"
+	OutcomeLost   = "lost"
+)
+
+// endStarted records how a Started item's action ended, and reports
+// whether the item may settle: a Started item settles once, so a late
+// report after LoseStarted settled it lost changes nothing.
+func endStarted(it *Item, allowed bool) bool {
+	if !it.Started {
+		return true
+	}
+	if it.State == Resolved {
+		return false
+	}
+	it.Outcome = OutcomeFailed
+	if allowed {
+		it.Outcome = OutcomeDone
+	}
+	return true
+}
+
 // Settle resolves a Close or Skills item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
+	if !endStarted(it, allowed) {
+		return
+	}
 	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
 	if it.req == nil {
 		return
@@ -1133,6 +1164,9 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 // SettleWith resolves an item with the outcome and answers whoever asked
 // with d as it is (its Data included).
 func (s *Store) SettleWith(it *Item, d bridge.Decision, outcome string) {
+	if !endStarted(it, d.Behavior == "allow") {
+		return
+	}
 	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
 	if it.req != nil {
 		it.req.Reply(d)
@@ -1317,7 +1351,7 @@ func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 // nothing about them, and only their own outcome may answer whoever asked.
 func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && !it.DenAsks() && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && !it.Started && !it.DenAsks() && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
@@ -1348,7 +1382,9 @@ func (s *Store) cancelMessages(host, sessionID string) {
 		where = "on " + host
 	}
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && it.Kind == Message {
+		// A Started send may have gone out: only its end, or LoseStarted,
+		// settles it.
+		if it.is(host, sessionID) && it.State != Resolved && !it.Started && it.Kind == Message {
 			it.State, it.Resolved = Resolved, "cancelled: the session "+where+" ended; nothing was sent"
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{Behavior: bridge.SendCancelled, Message: "the request was " + it.Resolved})

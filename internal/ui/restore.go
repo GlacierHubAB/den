@@ -503,13 +503,15 @@ func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 func (m *Model) finishRestore(msg restoreDoneMsg) tea.Cmd {
 	m.ensureRestore()
 	delete(m.restore.plans, msg.itemID)
-	var done, failed []string
+	var done, failed, doneNames, failedNames []string
 	now := restoreNow()
 	for _, r := range msg.results {
 		if r.err != nil {
 			failed = append(failed, r.agent.Name()+" ("+r.err.Error()+")")
+			failedNames = append(failedNames, r.agent.Name())
 			continue
 		}
+		doneNames = append(doneNames, r.agent.Name())
 		name := r.agent.Name()
 		if r.res.Untrusted {
 			name += " (trust the folder in its terminal first)"
@@ -540,8 +542,12 @@ func (m *Model) finishRestore(msg restoreDoneMsg) tea.Cmd {
 		summary = "nothing to reopen"
 	}
 	for _, it := range m.store.Items() {
-		if it.ID == msg.itemID {
+		if it.ID == msg.itemID && it.State != inbox.Resolved {
 			m.store.Settle(it, len(done) > 0, summary)
+			if len(failed) > 0 && it.Outcome == inbox.OutcomeDone {
+				it.Outcome = inbox.OutcomeFailed // an agent it was to reopen did not come back
+			}
+			m.cardEnd(it, "reopen", doneNames, failedNames, false, summary)
 		}
 	}
 	_ = m.restore.r.Save(m.restore.path, now)

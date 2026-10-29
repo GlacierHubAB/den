@@ -3,6 +3,8 @@ package inbox
 import (
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/bridge"
 )
 
 // A Started item takes no answer, and only its action's end settles it:
@@ -42,6 +44,15 @@ func TestStartedItemSettlesOnlyByItsEnd(t *testing.T) {
 		t.Errorf("lost twice: %v", again)
 	}
 
+	if it.Outcome != OutcomeLost {
+		t.Errorf("a lost item's outcome: %q", it.Outcome)
+	}
+	// Its action reporting late changes nothing: it settled once, lost.
+	store.Settle(it, true, "reopened Comet Newt")
+	if it.Outcome != OutcomeLost || it.Resolved != "Den lost track of this; check the agents" {
+		t.Errorf("a late report re-settled it: %q %q", it.Outcome, it.Resolved)
+	}
+
 	// A send that never reports may still have gone out: its asker is
 	// told to check before sending again.
 	send := store.add(&Item{SessionID: "s2", Kind: Message, Title: "Send to Mossy Lemur on devbox?"})
@@ -49,5 +60,41 @@ func TestStartedItemSettlesOnlyByItsEnd(t *testing.T) {
 	now = now.Add(time.Minute + StartGrace + time.Second)
 	if lost := store.LoseStarted(); len(lost) != 1 || send.Resolved != "Den lost track of this send; it may still have been sent, so check before sending again" {
 		t.Errorf("a lost send: %v %q", lost, send.Resolved)
+	}
+}
+
+// A Started item's end says how it went: done or failed, by its action's
+// own report, through Settle or SettleWith; an item never Started has no
+// outcome.
+func TestStartedOutcome(t *testing.T) {
+	store := New()
+	done := store.AddRestore("s1", "Reopen Comet Newt?", nil)
+	store.Start(done, "reopening…", time.Minute)
+	store.Settle(done, true, "reopened Comet Newt")
+	failed := store.AddClose("s2", "Close Mossy Lemur?", nil, nil)
+	store.Start(failed, "closing…", time.Minute)
+	store.SettleWith(failed, bridge.Decision{Behavior: "deny"}, "could not close Mossy Lemur")
+	plain := store.AddClose("s3", "Close Quiet Panda?", nil, nil)
+	store.Settle(plain, false, "declined in den; nothing closed")
+	if done.Outcome != OutcomeDone || failed.Outcome != OutcomeFailed || plain.Outcome != "" {
+		t.Errorf("outcomes %q %q %q", done.Outcome, failed.Outcome, plain.Outcome)
+	}
+}
+
+// A Started send whose agent's session ends may still have gone out: the
+// session's end does not cancel it as "nothing was sent", and no other
+// clearing of the session settles it. Only its end, or LoseStarted, does.
+func TestSessionEndLeavesAStartedSend(t *testing.T) {
+	store := New()
+	send := store.add(&Item{Host: "devbox", SessionID: "s2", Kind: Message, Title: "Send to Mossy Lemur on devbox?"})
+	waiting := store.add(&Item{Host: "devbox", SessionID: "s2", Kind: Message, Title: "Send again?"})
+	store.Start(send, "sending…", time.Minute)
+	store.cancelMessages("devbox", "s2")
+	store.resolveSession("devbox", "s2", "session ended", func(*Item) bool { return true })
+	if send.State != Waiting || send.Resolved != "sending…" {
+		t.Errorf("a started send after its session ended: %v %q", send.State, send.Resolved)
+	}
+	if waiting.State != Resolved {
+		t.Errorf("a send not started stayed open: %v", waiting.State)
 	}
 }

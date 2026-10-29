@@ -37,6 +37,7 @@ type apiState struct {
 	warned  bool                   // the second socket replacement was noted
 	view    string                 // the view Den is in (viewswitch.go), "" when it cannot switch
 	raised  bool                   // Den's own window was brought back for a card, with no dock to ask (viewswitch.go)
+	started map[string]api.Card    // started cards as they were when they started, by item id (dock_cards.go)
 }
 
 // focusQuiet is how long after the human's last key in Den an app may not
@@ -312,6 +313,7 @@ func (m Model) lanePID() int {
 var publishedHook func(api.Snapshot)
 
 func (m *Model) publishAPI() {
+	m.freezeStarted()
 	if m.api.srv == nil && publishedHook == nil {
 		return
 	}
