@@ -1495,6 +1495,7 @@ func (m *Model) loseStarted() {
 			note = "Den lost track of " + sanitize.Label(it.Title, 80) + ": it may still have been sent, so check before sending again."
 		}
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: note, at: time.Now()}))
+		m.loseStartedEnd(it)
 	}
 }
 

@@ -30,6 +30,7 @@ const (
 	OriginReport  = "report"  // an agent reported
 	OriginMission = "mission" // Den drives a mission
 	OriginDesktop = "desktop" // a desktop mission's result
+	OriginCard    = "card"    // a card a console answered ended its action
 )
 
 // Speakers of a conversation entry.
@@ -43,8 +44,15 @@ const (
 // EndingNoReport is Den's line that the agent finished without a report.
 const EndingNoReport = "no_report"
 
+// Endings of a card entry: its action failed for some of its agents, or
+// Den lost track of it; none when it was done.
+const (
+	EndingFailed = "failed"
+	EndingLost   = "lost"
+)
+
 var (
-	convOrigins  = map[string]bool{OriginYou: true, OriginConsole: true, OriginReport: true, OriginMission: true, OriginDesktop: true}
+	convOrigins  = map[string]bool{OriginYou: true, OriginConsole: true, OriginReport: true, OriginMission: true, OriginDesktop: true, OriginCard: true}
 	convSpeakers = map[string]bool{SpeakerYou: true, SpeakerDen: true, SpeakerOrchestrator: true}
 	// reservedNames never name an agent in the mirror.
 	reservedNames = map[string]bool{"den": true, "drey": true, "you": true, "orchestrator": true, "the orchestrator": true, "human": true, "the human": true, "system": true, "console": true, "dock": true, "den-api": true}
@@ -79,8 +87,50 @@ type ConvEntry struct {
 	Agent   string       `json:"agent,omitempty"`
 	AgentID string       `json:"agent_id,omitempty"` // the reporting agent's id: Agent is only its name
 	Ending  string       `json:"ending,omitempty"`
+	Card    string       `json:"card,omitempty"` // on origin card: the card whose action ended
 	Console *ConvConsole `json:"console,omitempty"`
 	Text    string       `json:"text"`
+}
+
+// CardEnd is how a card's action ended, for Den's line in the mirror
+// (origin card): what it did, by the agents' names only. Den-api writes
+// the words; no error or reason from the action goes.
+type CardEnd struct {
+	Action       string   // "close" or "reopen"
+	Done, Failed []string // the agents it did and did not close or reopen
+	Lost         bool     // Den lost track of it: Done and Failed are its agents
+}
+
+// cardEndVerbs are an action's words: done, done in a line, not done.
+var cardEndVerbs = map[string][3]string{
+	"close":  {"Closed", "closed", "could not close"},
+	"reopen": {"Reopened", "reopened", "could not reopen"},
+}
+
+// cardEndLine is Den's line for a card's end, and its ending, from the
+// checked names; ok is false for an action Den has no words for.
+func cardEndLine(end CardEnd) (line, ending string, ok bool) {
+	w, ok := cardEndVerbs[end.Action]
+	if !ok {
+		return "", "", false
+	}
+	names := func(ns []string) string {
+		out := make([]string, len(ns))
+		for i, n := range ns {
+			out[i] = agentLabel(n)
+		}
+		return strings.Join(out, ", ")
+	}
+	all := append(append([]string(nil), end.Done...), end.Failed...)
+	switch {
+	case end.Lost:
+		return "Den lost track of the " + end.Action + " of " + names(all) + "; check the agents.", EndingLost, len(all) > 0
+	case len(end.Failed) == 0:
+		return w[0] + " " + names(end.Done) + ".", "", len(end.Done) > 0
+	case len(end.Done) == 0:
+		return strings.ToUpper(end.Action[:1]) + end.Action[1:] + " ended: " + w[2] + " " + names(end.Failed) + ".", EndingFailed, true
+	}
+	return strings.ToUpper(end.Action[:1]) + end.Action[1:] + " ended: " + w[1] + " " + names(end.Done) + "; " + w[2] + " " + names(end.Failed) + ".", EndingFailed, true
 }
 
 // Converse is what Den hands the mirror: ConsoleID names the console that
@@ -100,6 +150,11 @@ type Converse struct {
 	// without a report (origin report or desktop, speaker den); any other
 	// value, or on another entry, refuses it.
 	Ending string
+	// Card and End are an origin card entry's: the card's id and how its
+	// action ended. Den-api writes that entry's text and ending from End;
+	// Text and Ending are not taken for it.
+	Card string
+	End  *CardEnd
 }
 
 // convState is the mirror's state, under its own lock.
@@ -286,6 +341,18 @@ func (s *Server) Converse(in Converse) bool {
 		return false
 	}
 	e := ConvEntry{Turn: sanitize.Label(in.Turn, 80), Origin: in.Origin, Speaker: in.Speaker, Text: convText(in.Text)}
+	if in.Origin == OriginCard {
+		card := sanitize.Label(in.Card, 64)
+		if in.Speaker != SpeakerDen || in.End == nil || in.Ending != "" || card == "" {
+			return false
+		}
+		line, ending, ok := cardEndLine(*in.End)
+		if !ok {
+			return false
+		}
+		e.Turn, e.Card, e.Text, e.Ending = "", card, convText(line), ending
+		in.Ending = ""
+	}
 	if in.Origin == OriginReport || in.Origin == OriginDesktop {
 		e.Agent, e.AgentID = agentLabel(in.Agent), sanitize.Label(in.AgentID, 64)
 		if e.Speaker == SpeakerDen {

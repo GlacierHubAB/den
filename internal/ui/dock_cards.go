@@ -16,10 +16,16 @@ import (
 // path as the human's ^Y (answerItem), once den-api.sock has checked that
 // the console read the card whole and that it is unchanged.
 
-// dockCards are the cards waiting for an answer, as a console may read them.
+// dockCards are the cards waiting for an answer, as a console may read
+// them, and the started ones whose action runs, as they were when they
+// started.
 func (m Model) dockCards() []api.Card {
 	var out []api.Card
 	for _, it := range m.store.Items() {
+		if c, ok := m.api.started[it.ID]; ok && it.Started && it.State != inbox.Resolved {
+			out = append(out, c)
+			continue
+		}
 		if it.State == inbox.Resolved || !it.Answerable() {
 			continue
 		}
@@ -28,11 +34,47 @@ func (m Model) dockCards() []api.Card {
 	return out
 }
 
-// dockSettled is how the answered cards Den still keeps were settled.
+// freezeStarted keeps the card of each item an answer started, as it was
+// when it started, until its action ends: it stays listed, started, with
+// no verbs, and nothing changes its text meanwhile. Only a card a console
+// may answer is kept so (dockMayAnswer): a host's card, or one only Den
+// answers, leaves the list when it starts, as before. It runs on Den's own
+// loop (publishAPI), and only there is the map read or written.
+func (m *Model) freezeStarted() {
+	live := map[string]bool{}
+	for _, it := range m.store.Items() {
+		if !it.Started || it.State == inbox.Resolved || !dockMayAnswer(it) {
+			continue
+		}
+		live[it.ID] = true
+		if _, ok := m.api.started[it.ID]; ok {
+			continue
+		}
+		if m.api.started == nil {
+			m.api.started = map[string]api.Card{}
+		}
+		c := m.dockCard(it)
+		c.Started, c.StartedBy, c.DockAnswers, c.TTYOnly, c.Verbs = true, it.AnsweredBy, false, false, nil
+		m.api.started[it.ID] = c
+	}
+	for id := range m.api.started {
+		if !live[id] {
+			delete(m.api.started, id)
+		}
+	}
+}
+
+// dockSettled is how the answered cards Den still keeps were settled,
+// with how a started one's action ended. A started card a console never
+// sees started (freezeStarted) is settled by its answer when it starts.
 func (m Model) dockSettled() []api.Settled {
 	var out []api.Settled
 	for _, it := range m.store.Items() {
-		if it.State == inbox.Resolved && it.Answer != "" {
+		switch {
+		case it.Answer == "":
+		case it.State == inbox.Resolved:
+			out = append(out, api.Settled{ID: it.ID, Verb: it.Answer, By: it.AnsweredBy, Outcome: it.Outcome})
+		case it.Started && !dockMayAnswer(it):
 			out = append(out, api.Settled{ID: it.ID, Verb: it.Answer, By: it.AnsweredBy})
 		}
 	}

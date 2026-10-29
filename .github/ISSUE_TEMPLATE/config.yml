@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Questions
+    url: https://github.com/GlacierHubAB/den/issues/new?template=question.yml
+    about: Ask how to do something with Den. Answers are best effort.
   - name: Report a security vulnerability
     url: https://github.com/GlacierHubAB/den/security/advisories/new
     about: Please report vulnerabilities privately, not in a public issue.
