@@ -104,14 +104,15 @@ func (s *Server) grantsGet(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
+	s.perms.mu.Lock()
+	defer s.perms.mu.Unlock()
 	// The read is the console paired now's: another console's connection,
-	// still open after a re-pair, does not read levels that are not its own.
+	// still open after a re-pair, does not read levels that are not its
+	// own. Checked under the lock the read is taken under.
 	if cur, ok := s.CurrentConsole(); !ok || cur.ID != id {
 		c.fail(req.ID, CodeForbidden, "not the console paired now")
 		return
 	}
-	s.perms.mu.Lock()
-	defer s.perms.mu.Unlock()
 	g := s.grantsLocked(c)
 	c.mu.Lock()
 	c.subs[EventGrants] = true

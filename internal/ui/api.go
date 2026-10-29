@@ -826,6 +826,7 @@ func (m *Model) noteLowered(l *api.GrantsLowered, now time.Time) {
 	text := sanitize.Label(l.Console, 40) + " lowered " + l.Label + " to " + strconv.Itoa(l.Level) + " of 5 for this Den session."
 	if last, ok := n.last[l.Class]; ok && now.Sub(last.at) < loweredFold && last.idx < len(m.orch.chat) && m.orch.chat[last.idx].role == "note" {
 		m.orch.chat[last.idx].text, m.orch.chat[last.idx].memo = text, nil
+		m.logEntry(chatEntry{role: "note", text: text, at: now}) // the log keeps what the screen shows last
 		n.last[l.Class] = loweredAt{at: now, idx: last.idx}
 		return
 	}
