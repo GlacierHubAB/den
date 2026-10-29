@@ -560,9 +560,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.anim++
 		return m, animTick()
 	case tickMsg:
-		for _, it := range m.store.LoseStarted() {
-			m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den lost track of " + sanitize.Label(it.Title, 80) + ": check the agents.", at: time.Now()}))
-		}
+		m.loseStarted()
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
 		m.checkGuards()
@@ -1473,6 +1471,19 @@ func (m Model) answerTarget() *inbox.Item {
 		}
 	}
 	return it
+}
+
+// loseStarted settles the started items whose action never reported by
+// its deadline, and says so in the chat. A send may still have gone out,
+// so its note says to check before sending again.
+func (m *Model) loseStarted() {
+	for _, it := range m.store.LoseStarted() {
+		note := "Den lost track of " + sanitize.Label(it.Title, 80) + ": check the agents."
+		if it.Kind == inbox.Message {
+			note = "Den lost track of " + sanitize.Label(it.Title, 80) + ": it may still have been sent, so check before sending again."
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: note, at: time.Now()}))
+	}
 }
 
 // answer applies allow, deny or always to the item answerTarget names, only

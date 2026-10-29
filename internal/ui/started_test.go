@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -124,6 +126,37 @@ func TestDockRestoreStartsOnceAndCreditsTheConsole(t *testing.T) {
 	m = mm.(Model)
 	if it.State != inbox.Resolved || settledBy(m, it) != "allow by console" {
 		t.Errorf("after the reopen: %v, settled %q", it.State, settledBy(m, it))
+	}
+}
+
+// A started action that never reports is settled lost with a chat note;
+// a lost send's note says it may still have gone out.
+func TestLostStartedItemsSayWhatToCheck(t *testing.T) {
+	m := closeModel(t)
+	send := m.store.AddMessageOn("devbox", "s-r", "Send to Comet Newt?", []string{"hello"}, nil)
+	m.store.Start(send, "sending…", -time.Hour)
+	mm, _ := m.closeCommand([]string{"maple"})
+	m = mm.(Model)
+	cl := closeItems(m)[0]
+	m.store.Start(cl, "closing…", -time.Hour)
+	m.loseStarted()
+	var notes []string
+	for _, e := range m.orch.chat {
+		if e.role == "note" && strings.HasPrefix(e.text, "Den lost track of ") {
+			notes = append(notes, e.text)
+		}
+	}
+	want := []string{
+		"Den lost track of Send to Comet Newt?: it may still have been sent, so check before sending again.",
+		"Den lost track of " + cl.Title + ": check the agents.",
+	}
+	slices.Sort(notes)
+	slices.Sort(want)
+	if !slices.Equal(notes, want) {
+		t.Errorf("notes %q, want %q", notes, want)
+	}
+	if send.State != inbox.Resolved || cl.State != inbox.Resolved {
+		t.Errorf("states %v %v", send.State, cl.State)
 	}
 }
 
