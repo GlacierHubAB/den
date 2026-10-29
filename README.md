@@ -668,6 +668,7 @@ den stats [--days N]    what the state files prove about a window: turns, workin
 den ask "who is blocked on what?"       one orchestrator turn from a script
 den events -json        follow the event stream, one JSON object per line
 den events              headless: print hook events as they arrive
+den doctor [--json]     read-only checks of the setup, one fix per problem; safe to paste into an issue
 den install-hooks       wire Den into Claude Code's hooks
 den uninstall-hooks     undo
 den skills              the skills Den installed, for which project or agent, from where
@@ -2341,22 +2342,43 @@ under `~/.claude/projects/`; it does not write to those two.
 
 ## Troubleshooting
 
-- **No agents listed.** Den needs Claude Code 2.1.289+; older versions do not
-  write `~/.claude/sessions`. Press `/rescan`, or run `den list` to see what
-  Den sees and `den explain <name>` for how it arrived at a name or status.
-- **Nothing reaches the inbox.** Hooks apply to sessions started after
-  `den install-hooks`. Check `~/.local/state/den/hooks.log`; a line ending in
-  `no den listening` means the hook ran but Den was not running.
-- **Enter does not focus a terminal.** Focus needs Hyprland (`hyprctl`) and
-  finds the window by title or working directory; `den explain <name>` says how
-  it matched, or why not.
-- **Spawn fails.** Install `xdg-terminal-exec` or set `$TERMINAL`; `claude`
-  must be on `PATH`.
-- **A remote host shows "needs you" or "version mismatch".** See the table in
-  [Remote agents](#remote-agents); `den remote status <label>` repeats the checks
-  and says what to fix.
-- **Orchestrator costs.** It is a real Claude Code session; lower the cost with
-  `model = "haiku"` or turn spawning off.
+Start with `den doctor`. It checks everything below, prints one line per check
+with a one-line fix, and exits 1 when something fails. It only reads files,
+runs `claude --version` and `git --version`, and asks Den's local socket
+whether Den is running: nothing is installed or changed, and no remote host is
+dialled. Its output names no user, host, project, session or agent (a model
+that is not a Claude Code alias or `claude-…` id shows as "a custom model"),
+so it is safe to paste into an issue
+(`den doctor --json` for scripts). Its `config` check names the keys in
+`config.toml` that Den ignores or cannot use, which it otherwise drops without
+a word.
+
+- **No agents listed** (checks `claude`, `sessions`). Den needs Claude Code
+  2.1.289+; older versions do not write `~/.claude/sessions`. Press `/rescan`,
+  or run `den list` to see what Den sees and `den explain <name>` for how it
+  arrived at a name or status.
+- **Nothing reaches the inbox** (checks `hooks`, `den`, `hooks.log`). Hooks
+  apply to sessions started after `den install-hooks`. Check
+  `~/.local/state/den/hooks.log`; a line ending in `no den listening` means the
+  hook ran but Den was not running.
+- **Enter does not focus a terminal** (check `focus`). Focus needs Hyprland
+  (`hyprctl`) and finds the window by title or working directory;
+  `den explain <name>` says how it matched, or why not.
+- **Spawn fails** (checks `terminal`, `claude`). Install `xdg-terminal-exec`
+  or set `$TERMINAL`; `claude` must be on `PATH`.
+- **A remote host shows "needs you" or "version mismatch"** (check `remotes`,
+  from what Den saved; hosts show as `host 1`, `host 2` in the order of
+  `den remote list`). See the table in [Remote agents](#remote-agents);
+  `den remote status <label>` repeats the checks and says what to fix.
+- **Orchestrator costs** (check `orchestrator`). It is a real Claude Code
+  session; lower the cost with `model = "haiku"` or turn spawning off.
+- **Notifications do not show** (check `notify`). Den notifies through
+  `notify-send`; install libnotify.
+- **Worktrees or Review's merge check fail** (check `git`). Den reads agents'
+  checkouts with git 2.31 or newer and checks merges with git 2.38 or newer.
+- **Den's mods are missing or old** (check `mods`). Run `den install-mods`
+  after installing or updating Den; a mod loaded through
+  `CLAUDE_CODE_PLUGIN_DIRS` counts as present.
 
 ## Den, Herdr and OpenRig
 
