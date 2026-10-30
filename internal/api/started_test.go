@@ -20,7 +20,7 @@ func closeCard(startedBy string) Card {
 // card's own hash and a fresh nonce from card.get, card.answer is
 // not_found, the nonce is spent, and no answer reaches Den.
 func TestAnswerOnAStartedCardIsNotFound(t *testing.T) {
-	h, c := provedConsole(t)
+	h, c := provedConsoleV1(t) // StartedHash pins card hash v1; started is refused first
 	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{closeCard("console")}}))
 	c.next() // its new event
 	g := getCard(t, c, "c1")
@@ -51,7 +51,7 @@ func TestAnswerOnAStartedCardIsNotFound(t *testing.T) {
 // outcome; lost too.
 func TestStartedCardEvents(t *testing.T) {
 	for _, outcome := range []string{"done", "failed", "lost"} {
-		h, c := provedConsole(t)
+		h, c := provedConsoleV1(t) // StartedHash pins card hash v1; started is refused first
 		h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{closeCard("")}}))
 		var evs []CardEvent
 		read := func() {

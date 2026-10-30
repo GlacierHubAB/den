@@ -1001,8 +1001,35 @@ same way. A later kind that carries state joins the snapshot.
 
 What your console may do on its own, per class of act, as levels 0 to 5:
 Den sets them, and a console may lower them for the Den session, never
-raise them. **Nothing is enforced yet:** while `enforced` is false (or absent),
-the levels are shown, not applied, and Den answers your cards as before.
+raise them. **They are enforced** (`enforced: true`): a console's "allow"
+on a card is taken only inside its class's level, or by an active kept
+entry; "deny" is always taken while the console has its powers (saying
+no, pausing and stopping are always allowed from the console).
+
+- **What card.get offers:** a card lists only what your console may give
+  now. With its class at the card's step (or an active kept entry), its
+  verbs as before. Otherwise, with a deny verb: `dock_answers: true` and
+  verbs `["deny"]` only (allowing is done in Den); with none:
+  `dock_answers: false`. ModeSet, UsageSet, UsageResume, ControlAsk and
+  MissionMove are deny-only for every console at every level: a console
+  can raise them itself, and allowing them would make Den less careful
+  (#63 for MissionMove). The lock, the powers and the class limit are
+  refused at answer time only, so they never change a listing.
+- **The listing is outside the card hash:** when it changes (a lowering,
+  the start confirm, kept turning active, a removal, God mode), the card's
+  event says `changed` with the same hash, and you read it again. An
+  answer on a listing you read before the change is refused, never taken:
+  Den decides at answer time, on its own loop, from its own record of the
+  card.
+- **card.answer's refusals** besides the old ones: `below_level` (the
+  class is set below the card's step, or the card is Den's alone), with
+  `data: {"class": "<class>"}` (`den_only` included); `rate_limited` (an
+  allow above routine, or by kept, within 3 s of the last such allow
+  taken, or past 10 taken in a minute; refusals never count);
+  `powers_locked` (the lock, or Den's levels held after another program
+  changed them); and `hash_version` for every answer on a connection that
+  kept card hash v1: say `card_hash: 2` in hello. The rows of
+  `internal/api/convcases/answer.go` (`AnswerCases`) pin all of this.
 
 - `grants.get {}` needs a proved console and changes nothing. It answers
   `{seq, enforced, powers, locked, god, start_confirmed, classes, kept,
@@ -1050,12 +1077,20 @@ the levels are shown, not applied, and Den answers your cards as before.
 - A new pairing (any pairing but your service's reconnect after its own
   restart, or the console Den restores after its restart) puts each class's
   `den_level` at the lowest of its default, its `den_level` and its
-  `session.level`, and clears the sessions: a lowering is then part of
-  `den_level`, and a re-send of it is `not_lower`, held by the cap. The `{kept, seq}` form answers `unsupported` for now. The rows of
-  `internal/api/convcases/lower.go` (`LowerCases`) pin all of this. Den's
-  window notes each lowering in its chat.
-- `kept` is empty for now. `den_only` lists what only the human does, in
-  Den's window, as `{id, label}`.
+  `session.level`, and clears the sessions and kept: a lowering is then
+  part of `den_level`, and a re-send of it is `not_lower`, held by the cap.
+- `grants.lower {kept, seq}` removes a kept entry for good (`"*"` every
+  one): `bad_request` for an id outside the list, `stale`, `not_lower` for
+  an entry not held. It cannot be undone, even in Den. The rows of
+  `internal/api/convcases/lower.go` (`LowerCases`) pin the lowering and
+  this. Den's window notes each class lowering in its chat.
+- `kept`: what a pairing that existed when the levels came kept answering,
+  as `{id, label, active}`: granted once, at that upgrade, and only ever
+  fewer. `active` is false until `start_confirmed`, while locked or
+  without powers, and in God mode for `budget`, `merge` and `always`. An
+  active entry covers its kind's allow while the card's class is not
+  lowered below the card's step. `den_only` lists what only the human
+  does, in Den's window, as `{id, label}`.
 - Every string is Den's own fixed words.
 
 ### Commands

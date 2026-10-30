@@ -24,7 +24,9 @@ func pairedEvents(t *testing.T) (*harness, *dock, consolePaired, *client) {
 	d := newDock(t, h)
 	p := d.pair(h.s.StartConsoleCode())
 	c := h.dial()
-	c.hello()
+	if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "card_hash": 2}); !l.OK {
+		t.Fatalf("hello: %+v", l.Error)
+	}
 	if l, _, _, _ := d.auth(c, p); !l.OK {
 		t.Fatalf("auth: %+v", l.Error)
 	}

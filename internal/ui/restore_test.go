@@ -87,6 +87,7 @@ func restoreModel(t *testing.T) (Model, *fakeRestoreRun) {
 	r.Saved = before.Add(time.Hour)
 
 	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), width: 120, height: 40, tree: newTreeState(), tab: tabFleet}
+	atDefaults(&m)
 	m.cfg.Restore.Ask = true
 	m.cfg.Orchestrator.Spawn = true
 	m.cfg.Orchestrator.Name = "den-orchestrator"
@@ -366,6 +367,7 @@ func TestRestoreUsesTheModelOutsidePlanMode(t *testing.T) {
 	os.WriteFile(filepath.Join(proj, "brave-ferret.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 	a := roster.Agent{SessionID: "brave-ferret", Critter: "Brave Ferret", Model: "claude-sonnet-5-5", CWD: "/home/u/code/demo-app"}
 	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), width: 120, height: 40, tree: newTreeState()}
+	atDefaults(&m)
 	m.ensureRestore()
 	reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{a}})
 	if len(reqs) != 1 || reqs[0].Model != "claude-haiku-4-5-20251001" {

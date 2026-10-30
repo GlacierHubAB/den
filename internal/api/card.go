@@ -206,6 +206,8 @@ type CardResult struct {
 	Code   string
 	Result string
 	Note   string
+	// Class is below_level's: the class set below the card's step.
+	Class string
 }
 
 // cardNonce is a card.get's nonce, on one connection.
@@ -384,6 +386,10 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 	case cn.id != p.ID || cn.hash != p.Hash:
 		c.fail(req.ID, CodeCardChanged, "the nonce is for another card or text")
 		return
+	case ver != 2:
+		// The levels judge the class and step inside card hash v2 only.
+		c.fail(req.ID, CodeHashVersion, "answers need card hash v2: say card_hash 2 in hello")
+		return
 	}
 	card, ok := s.cardOf(p.ID)
 	card = card.forVersion(ver)
@@ -439,6 +445,10 @@ func (s *Server) cardAnswer(c *conn, req Request) {
 		}()
 		select {
 		case r := <-a.Reply:
+			if r.Code != "" && r.Class != "" {
+				c.failData(req.ID, r.Code, r.Note, map[string]string{"class": r.Class})
+				return
+			}
 			if r.Code != "" {
 				c.fail(req.ID, r.Code, r.Note)
 				return
@@ -507,14 +517,16 @@ func cardEvent(c Card, change string, v int) CardEvent {
 
 // pushCards tells the console's subscribed connections what changed
 // between two views' cards, each in the card hash version it reads: a
-// card is changed for it when its hash in that version changed.
+// card is changed for it when its hash in that version changed, or what
+// it lists (dock_answers and the verbs, which follow the levels: not in
+// the hash) changed, so the console reads it again.
 func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled) {
 	events := func(v int) []CardEvent {
 		var evs []CardEvent
 		for id, c := range now {
 			if o, ok := old[id]; !ok {
 				evs = append(evs, cardEvent(c, "new", v))
-			} else if o.HashIn(v) != c.HashIn(v) || c.Started && !o.Started {
+			} else if o.HashIn(v) != c.HashIn(v) || c.Started && !o.Started || !sameListing(o, c) {
 				evs = append(evs, cardEvent(c, "changed", v))
 			}
 		}
@@ -544,4 +556,18 @@ func (s *Server) pushCards(old, now map[string]Card, settled map[string]Settled)
 			}
 		}
 	}
+}
+
+// sameListing reports whether two views of a card list the same answers:
+// whether the dock answers it, and with which verbs.
+func sameListing(a, b Card) bool {
+	if a.DockAnswers != b.DockAnswers || len(a.Verbs) != len(b.Verbs) {
+		return false
+	}
+	for i := range a.Verbs {
+		if a.Verbs[i] != b.Verbs[i] {
+			return false
+		}
+	}
+	return true
 }
