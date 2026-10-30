@@ -62,6 +62,9 @@ const (
 	permsDamaged = "Den's stored permission levels were damaged, so they are at the defaults."
 	permsCrash   = "Den stopped unexpectedly last time and could not check its stored permission levels."
 	permsChanged = "Den's stored permission levels were changed while Den was stopped."
+	// permsKeptGone follows permsCrash or permsChanged when kept entries
+	// were dropped with them.
+	permsKeptGone = "So your console's kept items from before Den's permission levels are gone for good: Den's window answers what they covered."
 	// permsTamper is a change while Den runs.
 	permsTamper = "Den's stored permission levels were changed by another program: every level is at 0 until you press Ctrl+Y on the powers card"
 )
@@ -100,6 +103,13 @@ func (s *Server) loadPerms() []perm.Lowered {
 			why = permsChanged
 		}
 	}
+	keptGone := false
+	if (why == permsCrash || why == permsChanged) && len(rec.Kept) > 0 {
+		// Kept only ever lowers from a file Den cannot vouch for: one
+		// changed while Den was stopped, or left with no clean mark, may
+		// list entries a console removed. They are gone for good.
+		rec.Kept, keptGone = nil, true
+	}
 	s.perms.mu.Lock()
 	s.perms.denLevels, s.perms.lineage, s.perms.startWhy, s.perms.kept = rec.DenLevels, rec.Lineage, why, rec.Kept
 	// The file is written again at once: this session has no lowerings
@@ -112,6 +122,9 @@ func (s *Server) loadPerms() []perm.Lowered {
 	go s.permsWriter(s.stopWatch)
 	if why != "" {
 		s.note(why)
+	}
+	if keptGone {
+		s.note(permsKeptGone)
 	}
 	return rec.Lowered
 }
