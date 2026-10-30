@@ -66,7 +66,7 @@ func TestGrantsGetAndChanges(t *testing.T) {
 		t.Errorf("grants.get without a proof: %+v", l)
 	}
 	g := getGrants(t, c)
-	if !g.Powers || g.Locked || g.God || g.StartConfirmed || g.Enforced || g.Seq == 0 {
+	if !g.Powers || g.Locked || g.God || g.StartConfirmed || !g.Enforced || g.Seq == 0 {
 		t.Fatalf("the read %+v", g) // a pairing's ^Y is not the start confirm
 	}
 	if lv := levelsOf(g); lv[perm.Routine] != 4 || lv[perm.Destructive] != 1 || lv[perm.Code] != 1 {
@@ -151,6 +151,7 @@ func TestGrantsTable(t *testing.T) {
 		"God mode":                  {Powers: true, God: true, Confirmed: true},
 		"a class above its default, before the start confirm": {Powers: true, DenLevels: map[string]int{perm.Destructive: 2}},
 		"a class above its default, after the start confirm":  {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Destructive: 2}},
+		"God mode, desktop set above 0":                       {Powers: true, God: true, Confirmed: true, DenLevels: map[string]int{perm.Desktop: 2}},
 		"after a new pairing folded a lowering in":            {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Routine: 2}},
 	}
 	for _, c := range convcases.GrantsCases {

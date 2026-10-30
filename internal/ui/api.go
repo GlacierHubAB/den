@@ -29,7 +29,10 @@ import (
 // lets apps in again.
 
 type apiState struct {
-	srv     *api.Server
+	srv *api.Server
+	// levels stands in for srv's answer check in a test with no den-api
+	// (cardLevels); never set otherwise.
+	levels  cardLevels
 	err     string                 // why the API is not running, "" when it is or is off
 	askItem *inbox.Item            // the open /api on question
 	grants  map[*inbox.Item]string // open grant cards → grant id
@@ -109,6 +112,11 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	}
 	if act.GrantsLowered != nil {
 		m.noteLowered(act.GrantsLowered, time.Now())
+		return nil
+	}
+	if act.GrantsChanged {
+		// Each card's listing follows the levels (dockCard).
+		m.publishAPI()
 		return nil
 	}
 	if act.View != nil {

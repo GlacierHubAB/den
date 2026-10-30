@@ -49,7 +49,30 @@ type permsState struct {
 	// gen counts the changes the file keeps; queued is the last one a
 	// write was asked for (permsDo).
 	gen, queued uint64
+	// kept are the kept ids the pairing holds: granted once, at the
+	// upgrade, by the console record (kept_era), and only ever fewer.
+	kept []string
+	// allows are the times of the taken allows above routine, or by kept,
+	// in the last minute: the class limit.
+	allows []time.Time
+	// listing is what each card's listing hangs on, as last told to Den:
+	// every class's cap, God mode, the start confirm and kept.
+	listing string
 }
+
+// The class limit: allows above routine, or by kept, at least this far
+// apart and at most this many a minute. Only taken allows count.
+const (
+	classAllowGap = 3 * time.Second
+	classAllowMax = 10
+)
+
+// CodeRateLimited and CodeBelowLevel are the answer check's refusals besides
+// the shared ones.
+const (
+	CodeRateLimited = "rate_limited"
+	CodeBelowLevel  = perm.BelowLevel
+)
 
 // Refusals of grants.lower besides the shared ones.
 const (
@@ -86,6 +109,7 @@ func (s *Server) grantsInput() (perm.State, string) {
 		st.DenLevels[k] = v
 	}
 	st.Confirmed, st.Held = s.perms.confirmed, s.perms.held
+	st.Kept = append([]string(nil), s.perms.kept...)
 	return st, lineage
 }
 
@@ -109,6 +133,16 @@ func (s *Server) grantsLocked(skip *conn) perm.Grants {
 	s.perms.seq++
 	s.perms.last = raw
 	g.Seq = s.perms.seq
+	// Each card's listing follows the levels: when what it hangs on
+	// changed, Den publishes again. The lock and the powers are refused at
+	// answer time only, so they never change a listing. Never blocks; the
+	// publish's own grantsChanged finds nothing changed.
+	if key := listingKey(st); key != s.perms.listing {
+		if s.perms.listing != "" {
+			s.act(Act{GrantsChanged: true})
+		}
+		s.perms.listing = key // the first read sets it: Den publishes at its start anyway
+	}
 	if cur, ok := s.CurrentConsole(); ok {
 		for _, c := range s.consoleConns(cur.ID) {
 			if c != skip && c.subscribed(EventGrants) {
@@ -134,7 +168,7 @@ func (s *Server) foldLocked(st perm.State, lineage string) {
 			down = append(down, id)
 		}
 	}
-	s.perms.denLevels, s.perms.caps, s.perms.lineage = after.DenLevels, nil, lineage
+	s.perms.denLevels, s.perms.caps, s.perms.lineage, s.perms.kept = after.DenLevels, nil, lineage, nil
 	s.perms.gen++
 	if len(down) == 1 {
 		s.note("A new console was paired, so " + perm.Label(down[0]) + " went back to Den's default, " + strconv.Itoa(perm.Default(down[0])) + " of 5.")
@@ -232,8 +266,8 @@ func (s *Server) grantsLowerLocked(c *conn, params json.RawMessage) (perm.Grants
 	if json.Unmarshal(params, &p) != nil {
 		return perm.Grants{}, CodeBadRequest, "class, level and seq", nil
 	}
-	if _, kept := p["kept"]; kept {
-		return perm.Grants{}, CodeUnsupported, "kept comes in a later Den", nil
+	if raw, kept := p["kept"]; kept {
+		return s.keptRemoveLocked(c, raw, p["seq"])
 	}
 	var class string
 	level, okLevel := perm.PlainInt(p["level"])
@@ -266,4 +300,91 @@ func lowerLabel(cur Console) string {
 		return ConsoleLabel
 	}
 	return sanitize.Label(ExeLabel(cur.Exe), 40)
+}
+
+// keptRemoveLocked is grants.lower {kept, seq}: the console paired now
+// removes a kept entry for good ("*" every one). Checked as a lowering: a
+// kept id outside the list is bad_request, a seq not the read's now stale,
+// an entry not held not_lower. s.perms.mu is held.
+func (s *Server) keptRemoveLocked(c *conn, rawID, rawSeq json.RawMessage) (perm.Grants, string, string, *GrantsLowered) {
+	var id string
+	seq, okSeq := perm.PlainInt(rawSeq)
+	if json.Unmarshal(rawID, &id) != nil || !okSeq || seq < 0 || id != "*" && perm.KeptLabel(id) == "" {
+		return perm.Grants{}, CodeBadRequest, "kept and seq", nil
+	}
+	now := s.grantsLocked(nil)
+	if uint64(seq) != now.Seq {
+		return perm.Grants{}, CodeStale, "the levels changed: read them again", nil
+	}
+	var left []string
+	for _, k := range s.perms.kept {
+		if id != "*" && k != id {
+			left = append(left, k)
+		}
+	}
+	if len(left) == len(s.perms.kept) {
+		return perm.Grants{}, CodeNotLower, "that is not kept", nil
+	}
+	s.perms.kept = left
+	s.perms.gen++
+	return s.grantsLocked(c), "", "", nil
+}
+
+// AnswerAllowed is the answer check for a console's verb on a card, as
+// Den's record has it (perm.Allow), and the class limit, under perms.mu:
+// "" when it is taken, else the refusal and, for below_level, the card's
+// class. Den calls it on its loop right before it carries the answer out,
+// in the same step; a taken allow above routine, or by kept, counts toward
+// the limit, a refusal never does.
+func (s *Server) AnswerAllowed(a perm.Answer) (code, class string) {
+	s.permsDo(func() {
+		s.grantsLocked(nil) // a new pairing is folded in first (F3)
+		st, _ := s.grantsInput()
+		if code = perm.Allow(st, a); code != "" {
+			if code == CodeBelowLevel {
+				class = a.Class
+			}
+			return
+		}
+		if a.Verb == "deny" || (a.Class == perm.Routine && st.Cap(perm.Routine) >= a.Step && a.Verb == "allow") {
+			return
+		}
+		now := time.Now()
+		var recent []time.Time
+		for _, t := range s.perms.allows {
+			if now.Sub(t) < time.Minute {
+				recent = append(recent, t)
+			}
+		}
+		if n := len(recent); n >= classAllowMax || n > 0 && now.Sub(recent[n-1]) < classAllowGap {
+			s.perms.allows, code = recent, CodeRateLimited
+			return
+		}
+		s.perms.allows = append(recent, now)
+	})
+	return code, class
+}
+
+// AnswerListed reports whether a card lists the verb for a console now
+// (perm.Listed): the lock, a hold, the powers and the class limit are
+// answer-time refusals only, so they never change a card's listing.
+func (s *Server) AnswerListed(a perm.Answer) bool {
+	ok := false
+	s.permsDo(func() {
+		s.grantsLocked(nil)
+		st, _ := s.grantsInput()
+		ok = perm.Listed(st, a)
+	})
+	return ok
+}
+
+// listingKey is what a card's listing hangs on in st (perm.Listed): every
+// class's cap, God mode, the start confirm and the kept ids.
+func listingKey(st perm.State) string {
+	var b strings.Builder
+	for _, id := range perm.Classes() {
+		b.WriteString(strconv.Itoa(st.Cap(id)))
+	}
+	b.WriteString(strconv.FormatBool(st.God) + strconv.FormatBool(st.Confirmed) + strings.Join(st.Kept, ","))
+	return b.String()
 }

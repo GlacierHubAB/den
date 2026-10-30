@@ -192,6 +192,7 @@ func pubHex(priv ed25519.PrivateKey) string {
 func cleanExit(s *Server) {
 	s.closeOnce.Do(func() {
 		close(s.stopWatch)
+		s.closePerms()
 		s.writeCleanMark()
 	})
 }

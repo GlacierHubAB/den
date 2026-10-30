@@ -76,19 +76,51 @@ func TestCardHashV2Connection(t *testing.T) {
 	}
 }
 
-// A v1 connection answering with the card's v2 hash is refused
-// hash_version too, and reads v1 as before.
-func TestCardHashV1RefusesAV2Answer(t *testing.T) {
-	h, c := provedConsole(t)
+// provedConsoleV1 is provedConsole on a connection that kept card hash v1
+// (no card_hash in hello).
+func provedConsoleV1(t *testing.T) (*harness, *client) {
+	t.Helper()
+	h, _ := consoleHarness(t)
+	h.s.Publish(Project(Snapshot{Taken: time.Now(), View: ViewAgent}))
+	d := newDock(t, h)
+	p := d.pair(h.s.StartConsoleCode())
+	c := h.dial()
+	c.hello()
+	if l, _, _, _ := d.auth(c, p); !l.OK {
+		t.Fatalf("%+v %s", l.Error, l.Result)
+	}
+	c.call("console.events", nil)
+	skipSnapshot(t, h.s, c)
+	return h, c
+}
+
+// A v1 connection reads v1 as before, but every answer on it, with the
+// card's v1 hash or its v2 one, is refused hash_version and spends the
+// nonce: the levels judge the class and step inside the v2 hash only.
+func TestCardHashV1AnswersAreRefused(t *testing.T) {
+	h, c := provedConsoleV1(t)
 	h.s.Publish(Project(Snapshot{Taken: time.Now(), Cards: []Card{classed("i-1")}}))
 	c.next() // the card event
-	g := getCard(t, c, "i-1")
-	if g.Hash != CardHash("permission", "Otter", "", "Bash", "", "line 0\nline 1") {
-		t.Fatalf("a v1 connection read %s", g.Hash)
-	}
+	v1 := CardHash("permission", "Otter", "", "Bash", "", "line 0\nline 1")
 	v2, _ := CardHashV2("permission", "Otter", "", "Bash", "", "code", 1, "", nil, "line 0\nline 1")
-	if l := c.call("card.answer", map[string]string{"id": "i-1", "text_sha256": v2, "nonce": g.Nonce, "verb": "allow"}); code(l) != CodeHashVersion || !strings.Contains(l.Error.Message, "v1") {
-		t.Errorf("a v2 hash on a v1 connection: %+v", l)
+	for _, hash := range []string{v1, v2} {
+		g := getCard(t, c, "i-1")
+		if g.Hash != v1 {
+			t.Fatalf("a v1 connection read %s", g.Hash)
+		}
+		if l := c.call("card.answer", map[string]string{"id": "i-1", "text_sha256": hash, "nonce": g.Nonce, "verb": "allow"}); code(l) != CodeHashVersion {
+			t.Errorf("an answer on a v1 connection: %+v", l)
+		}
+		if l := c.call("card.answer", map[string]string{"id": "i-1", "text_sha256": hash, "nonce": g.Nonce, "verb": "allow"}); code(l) != CodeNonceExpired && code(l) != CodeHashVersion {
+			t.Errorf("the nonce again: %+v", l)
+		}
+	}
+	select {
+	case a := <-h.s.Acts():
+		if a.CardAnswer != nil {
+			t.Errorf("an answer on a v1 connection reached Den: %+v", a.CardAnswer)
+		}
+	default:
 	}
 }
 
