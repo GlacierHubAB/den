@@ -74,7 +74,7 @@ func (s *Server) loadPerms() []perm.Lowered {
 		return nil
 	}
 	raw, err := readRecord(path)
-	markRaw, markErr := os.ReadFile(s.permsMarkPath())
+	markRaw, markErr := readRecord(s.permsMarkPath())
 	os.Remove(s.permsMarkPath()) // a crash from here on leaves no mark
 	var rec perm.Record
 	why := ""

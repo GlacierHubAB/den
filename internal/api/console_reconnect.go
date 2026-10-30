@@ -185,7 +185,9 @@ func (s *Server) ConsolePowersAnswered(id string, ok bool) {
 			// den-api, and not "always" (AllowConsolePowersAlways), which
 			// leaves the levels capped at the defaults: that fails closed,
 			// and the panel's own confirm is the only other way.
-			s.perms.confirmed, s.perms.held = true, false
+			// What Den found at start is answered with it: a later card
+			// (a tamper's) does not say it again.
+			s.perms.confirmed, s.perms.held, s.perms.startWhy = true, false, ""
 		}
 		s.grantsLocked(nil)
 	})

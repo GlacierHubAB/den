@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -16,6 +17,20 @@ import (
 func storeHarness(t *testing.T, store string, priv ed25519.PrivateKey) *harness {
 	t.Helper()
 	return newHarnessWith(t, 2, func(o *Options) { o.ConsoleKey, o.ConsoleStore = priv, store })
+}
+
+// A FIFO planted at consoles.json's clean mark never stalls Den's start: it
+// reads as no mark.
+func TestConsoleMarkFIFODoesNotStall(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "consoles.json")
+	if err := syscall.Mkfifo(store+".clean", 0o600); err != nil {
+		t.Skip(err)
+	}
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	h := storeHarness(t, store, priv)
+	if _, ok := h.s.CurrentConsole(); ok {
+		t.Error("a console was restored")
+	}
 }
 
 // noteWith waits for a note of Den's that contains want, and returns it.

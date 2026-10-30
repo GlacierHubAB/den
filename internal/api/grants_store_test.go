@@ -148,6 +148,12 @@ func TestPermsLoad(t *testing.T) {
 				t.Skip(err)
 			}
 		}, why: permsUnread},
+		{name: "a FIFO at the mark", setup: func(t *testing.T, path string) {
+			os.WriteFile(path, []byte(validRecord), 0o600)
+			if err := syscall.Mkfifo(path+".clean", 0o600); err != nil {
+				t.Skip(err)
+			}
+		}, why: permsCrash, kept: true},
 		{name: "a 2 MiB file", setup: func(t *testing.T, path string) {
 			os.WriteFile(path, []byte(strings.Repeat(" ", 2<<20)+validRecord), 0o600)
 		}, why: permsUnread},
@@ -298,6 +304,29 @@ func TestPermsTamper(t *testing.T) {
 	h.s.checkPerms()
 	if h.s.permsHeld() {
 		t.Error("the levels were held again after the ^Y")
+	}
+}
+
+// What Den found at start is answered by the start confirm: a later
+// tamper's card does not say it again.
+func TestPermsTamperCardSaysNoStartSentence(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "permissions.json"), []byte(validRecord), 0o600) // no mark: a crash
+	h, c := provedConsoleOn(t, permsHarness(t, dir))
+	getGrants(t, c)
+	if lines := h.s.permsCardLines(); len(lines) == 0 || lines[0] != permsCrash {
+		t.Fatalf("before the confirm, the card says %q", lines)
+	}
+	cur, _ := h.s.CurrentConsole()
+	h.s.ConsolePowersAnswered(cur.ID, true)
+	waitWritten(t, h)
+	drainActs(h)
+	os.WriteFile(h.s.permsPath(), []byte(validRecord+" "), 0o600)
+	h.s.checkPerms()
+	for _, l := range powersAsked(t, h).Levels {
+		if l == permsCrash {
+			t.Errorf("the tamper's card says the start's %q", l)
+		}
 	}
 }
 
