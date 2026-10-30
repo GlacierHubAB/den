@@ -146,7 +146,7 @@ type ConsoleOptions struct {
 var ConsoleSubtests = []string{
 	"console features", "console.challenge", "console.events unproved",
 	"console.claim wrong proof", "console.claim", "console.auth",
-	"console.events", "card.get", "card.answer", "card read timer", "card replay", "console.events snapshot", "console mirror", "conversation entry", "fleet doing", "view.hide keeps a waiting card", "console orch.say", "console connections",
+	"console.events", "card.get", "card.answer", "card read timer", "card hash v1", "card replay", "console.events snapshot", "console mirror", "conversation entry", "fleet doing", "view.hide keeps a waiting card", "console orch.say", "console connections",
 	"console.auth refusals", "console thief", "console.request", "console.reconnect", "console.request after an unpairing", "console.unpair unproved", "console.unpair all",
 	"unpaired cause self", "unpaired cause replaced", "unpaired cause proofs", "unpaired cause intruders",
 	"unpaired cause burst", "unpaired cause den", "unpaired: not at end of file", "unpaired cause other", "console cooldown",
@@ -382,6 +382,31 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 	var p *consolePairing // the confirmed console, for later subtests
 	var events *conn      // the subscribed connection, kept open
 	var cardID string
+	// settle denies the given cards on a proved card hash v2 connection, so
+	// later subtests find no waiting cards of an earlier one's. A card that is
+	// gone already is fine; any other failure is reported, never ignored.
+	settle := func(t *testing.T, ctx context.Context, ids ...string) {
+		t.Helper()
+		c, _, err := openV2(ctx, o.Dial)
+		if err != nil {
+			t.Errorf("settling cards: %v", err)
+			return
+		}
+		defer c.close()
+		if err := co.prove(ctx, c, p); err != nil {
+			t.Errorf("settling cards: %v", err)
+			return
+		}
+		for _, id := range ids {
+			rec, err := cardGet(ctx, c, id)
+			if err == nil {
+				err = c.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+			}
+			if err != nil && codeOf(err) != "not_found" {
+				t.Errorf("settling card %s: %v", id, err)
+			}
+		}
+	}
 	t.Cleanup(func() {
 		if events != nil {
 			events.close()
@@ -600,7 +625,17 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 
 	run("card.answer", func(t *testing.T, ctx context.Context, cl *client) {
 		need(t, events != nil, cardID != "")
-		rec, err := cardGet(ctx, events, cardID)
+		// Answers go on a connection that said card_hash 2; events stays
+		// on v1 and hears the settled event.
+		ans, _, err := openV2(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ans.close()
+		if err := co.prove(ctx, ans, p); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := cardGet(ctx, ans, cardID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -612,9 +647,9 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		answer := func(c *conn, hash, nonce string) error {
 			return c.call(ctx, "card.answer", map[string]string{"id": cardID, "text_sha256": hash, "nonce": nonce, "verb": "deny"}, nil)
 		}
-		wantCode(t, "card.answer with another hash", answer(events, randHex(32), rec.Nonce), "card_changed")
+		wantCode(t, "card.answer with another hash", answer(ans, randHex(32), rec.Nonce), "card_changed")
 		// A nonce is bound to the connection it was fetched on.
-		other, _, err := open(ctx, o.Dial)
+		other, _, err := openV2(ctx, o.Dial)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -623,7 +658,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Fatal(err)
 		}
 		wantCode(t, "card.answer on another connection", answer(other, rec.TextSHA256, rec.Nonce), "nonce_expired")
-		rec, err = cardGet(ctx, events, cardID)
+		rec, err = cardGet(ctx, ans, cardID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -631,7 +666,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			Result string `json:"result"`
 			Note   string `json:"note"`
 		}
-		if err := events.call(ctx, "card.answer", map[string]string{"id": cardID, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, &res); err != nil {
+		if err := ans.call(ctx, "card.answer", map[string]string{"id": cardID, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, &res); err != nil {
 			t.Fatal(err)
 		}
 		if res.Result != "denied" || res.Note == "" {
@@ -643,7 +678,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		} else {
 			checkSettled(t, d, "denied", "console")
 		}
-		if err := answer(events, rec.TextSHA256, rec.Nonce); err == nil {
+		if err := answer(ans, rec.TextSHA256, rec.Nonce); err == nil {
 			t.Error("a nonce answered twice")
 		}
 	})
@@ -654,30 +689,82 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		rec, err := cardGet(ctx, events, id)
+		ans, _, err := openV2(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ans.close()
+		if err := co.prove(ctx, ans, p); err != nil {
+			t.Fatal(err)
+		}
+		rec, err := cardGet(ctx, ans, id)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if strings.Count(rec.Body, "\n")+1 <= 10 {
 			t.Fatalf("LongCard's body has %d lines; the read timer needs more than ten", strings.Count(rec.Body, "\n")+1)
 		}
-		ans := func(r cardRecord) error {
-			return events.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": r.TextSHA256, "nonce": r.Nonce, "verb": "deny"}, nil)
+		answer := func(r cardRecord) error {
+			return ans.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": r.TextSHA256, "nonce": r.Nonce, "verb": "deny"}, nil)
 		}
-		wantCode(t, "an answer at once", ans(rec), "read_it_first")
+		wantCode(t, "an answer at once", answer(rec), "read_it_first")
 		time.Sleep(350 * time.Millisecond)
 		// The timer counts from the first card.get, so a fresh fetch now
 		// may be answered at once.
-		if rec, err = cardGet(ctx, events, id); err != nil {
+		if rec, err = cardGet(ctx, ans, id); err != nil {
 			t.Fatal(err)
 		}
-		if err := ans(rec); err != nil {
+		if err := answer(rec); err != nil {
 			t.Fatalf("an answer 350 ms after the first card.get: %v", err)
 		}
 		if d, err := nextCardEvent(ctx, events, id, "settled"); err != nil {
 			t.Fatal(err)
 		} else {
 			checkSettled(t, d, "denied", "console")
+		}
+	})
+
+	// A connection that kept card hash v1 reads cards as before, but every
+	// answer on it is refused hash_version, its nonce spent: the levels
+	// judge the class and step inside the v2 hash only.
+	run("card hash v1", func(t *testing.T, ctx context.Context, cl *client) {
+		need(t, p != nil, co != nil && co.Card != nil)
+		v1, _, err := open(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer v1.close()
+		if err := co.prove(ctx, v1, p); err != nil {
+			t.Fatal(err)
+		}
+		id, err := co.Card(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec, err := cardGet(ctx, v1, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answer := func() error {
+			return v1.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
+		}
+		wantCode(t, "card.answer on card hash v1", answer(), "hash_version")
+		wantCode(t, "the same nonce again", answer(), "nonce_expired")
+		// The card is still pending: settle it from a v2 connection, so
+		// the subtests after find none of this one's.
+		v2, _, err := openV2(ctx, o.Dial)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer v2.close()
+		if err := co.prove(ctx, v2, p); err != nil {
+			t.Fatal(err)
+		}
+		if rec, err = cardGet(ctx, v2, id); err != nil {
+			t.Fatal(err)
+		}
+		if err := v2.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil); err != nil {
+			t.Errorf("a deny on card hash v2: %v", err)
 		}
 	})
 
@@ -757,11 +844,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			delete(want, d.ID)
 		}
 		// Settle them, so later subtests see no waiting cards of ours.
-		for _, id := range []string{a, b} {
-			if rec, err := cardGet(ctx, c, id); err == nil {
-				_ = c.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
-			}
-		}
+		settle(t, ctx, a, b)
 	})
 
 	// view.hide never takes a waiting card out of sight: Den's own window
@@ -879,13 +962,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer func() {
-			for _, cid := range []string{before, id} {
-				if rec, err := cardGet(ctx, c, cid); err == nil {
-					_ = c.call(ctx, "card.answer", map[string]string{"id": cid, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
-				}
-			}
-		}()
+		defer settle(t, ctx, before, id)
 		sawView, sawDesktop, sawMirror := false, false, false
 	changes:
 		for {
@@ -1251,11 +1328,7 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer func() {
-			if rec, err := cardGet(ctx, events, id); err == nil {
-				_ = events.call(ctx, "card.answer", map[string]string{"id": id, "text_sha256": rec.TextSHA256, "nonce": rec.Nonce, "verb": "deny"}, nil)
-			}
-		}()
+		defer settle(t, ctx, id)
 		type viewResult struct {
 			View   string `json:"view"`
 			Shown  int    `json:"shown"`
@@ -1865,8 +1938,9 @@ func runConsole(t *testing.T, o Options, run func(string, func(*testing.T, conte
 			t.Fatal(err)
 		}
 		defer restore()
-		// The answers go on their own connection, so w reads only events.
-		a, _, err := open(ctx, o.Dial)
+		// The answers go on their own connection (card hash v2), so w
+		// reads only events.
+		a, _, err := openV2(ctx, o.Dial)
 		if err != nil {
 			t.Fatal(err)
 		}
