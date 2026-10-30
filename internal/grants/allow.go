@@ -102,7 +102,12 @@ func Allow(st State, a Answer) string {
 			return ""
 		}
 	case a.Verb == "always":
-		if st.keptActive(KeptAlways, a.Class, a.Step) {
+		// The stronger verb never answers what the weaker one cannot:
+		// "always" needs "allow" taken (by the level or the kind's own kept
+		// entry) and a kept "always" besides.
+		allow := a
+		allow.Verb = "allow"
+		if Allow(st, allow) == "" && st.keptActive(KeptAlways, a.Class, a.Step) {
 			return ""
 		}
 	}

@@ -273,3 +273,37 @@ func TestAnswerAllowedRacesALowering(t *testing.T) {
 		}
 	}
 }
+
+// E2: kept only ever lowers from a file Den cannot vouch for. A version 2
+// file that lists every kept id, changed while Den was stopped or left
+// with no clean mark, loads with kept empty, and Den says so; with a
+// valid mark it keeps them.
+func TestKeptDroppedFromAFileDenCannotVouchFor(t *testing.T) {
+	all := `{"version":2,"lineage":"","den_levels":{"routine":4,"destructive":1,"code":1,"desktop":0,"outward":0},"kept":["permission","plan","close","budget","restore","merge","cleanup","mission_update","always"],"lowered":[]}`
+	for _, row := range []struct {
+		name string
+		mark func(path string)
+		kept int
+	}{
+		{"changed while stopped", func(path string) { writeMark(t, path, []byte(all+" ")) }, 0},
+		{"no clean mark", func(string) {}, 0},
+		{"a clean exit", func(path string) { writeMark(t, path, []byte(all)) }, len(perm.KeptAll())},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "permissions.json")
+			os.WriteFile(path, []byte(all), 0o600)
+			row.mark(path)
+			h := permsHarness(t, dir)
+			if got := keptNow(h); len(got) != row.kept {
+				t.Errorf("kept %v", got)
+			}
+			if row.kept == 0 {
+				noteSaid(t, h, "kept items from before Den's permission levels are gone for good")
+				if r := storedRecord(t, h); len(r.Kept) != 0 {
+					t.Errorf("the rewritten file keeps %v", r.Kept)
+				}
+			}
+		})
+	}
+}
