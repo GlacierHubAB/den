@@ -829,6 +829,7 @@ Each connection proves once, at its start:
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
 | `grants.get` | `{}` | the permission levels (see Permission levels); this connection then gets `grants` events |
+| `grants.lower` | `{class, level, seq}` | the levels after it |
 | `cmd.list` | | `[{name, usage, help, dock}]` |
 | `cmd.complete` | `{prefix}` | the commands that start with it, at most 64 |
 | `cmd.run` | `{text}` | `{ok, note}` |
@@ -999,8 +1000,8 @@ same way. A later kind that carries state joins the snapshot.
 ### Permission levels
 
 What your console may do on its own, per class of act, as levels 0 to 5:
-Den sets them, and a later version lets a console lower them, never raise
-them. **Nothing is enforced yet:** while `enforced` is false (or absent),
+Den sets them, and a console may lower them for the Den session, never
+raise them. **Nothing is enforced yet:** while `enforced` is false (or absent),
 the levels are shown, not applied, and Den answers your cards as before.
 
 - `grants.get {}` needs a proved console and changes nothing. It answers
@@ -1021,11 +1022,30 @@ the levels are shown, not applied, and Den answers your cards as before.
 - `classes`, in this order: `routine` (Everyday answers), `destructive` (Stop
   and close), `code` (Run commands), `desktop` (Desktop control), `outward`
   (Send out). Each is `{class, label, about, den_level, session, level,
-  default, steps, set_in_den}`: `level` is the effective level now; `steps`
+  default, steps, set_in_den}`: `level` is the effective level now,
+  min(`den_level`, `session.level`), then 0 as above; `steps`
   has five entries, levels 1 to 5, each `{level, name, label, available}`
   (a level the class has no step for is `available: false`, label "No
-  further step"); level 0, the empty bar, is "Only in Den". `session` and
-  `set_in_den` are null for now.
+  further step"); level 0, the empty bar, is "Only in Den". `session` is
+  `{level, at, console}` while a console's lowering holds for this Den
+  session (`console` is Den's label for it, `at` Den's clock), else null.
+  `set_in_den` is null for now.
+- `grants.lower {class, level, seq}` lowers one class for this Den session:
+  for a proved connection of the console paired now, with or without its
+  powers, locked or in God mode (a lowering is always allowed). `level` and
+  `seq` are JSON integers; `seq` is the read's you hold. Den checks, in
+  this order: `forbidden` (not the console paired now); `bad_request` (a
+  class or level outside the sets, or not a plain integer: never coerced);
+  `stale` (the levels changed since your read: read them again);
+  `not_lower` (the level is not below the class's cap, min(`den_level`,
+  `session.level`): a raise, the same level, or a class at 0; nothing
+  changes). Taken, the reply is the new read and the other connections get
+  a `grants` event. A lowering lasts until Den restarts; a re-pair keeps it.
+  Re-send yours after a reconnect, and count it held only by the cap the
+  read shows, never by the reply code or by `level` (a lock puts `level` at
+  0). The `{kept, seq}` form answers `unsupported` for now. The rows of
+  `internal/api/convcases/lower.go` (`LowerCases`) pin all of this. Den's
+  window notes each lowering in its chat.
 - `kept` is empty for now. `den_only` lists what only the human does, in
   Den's window, as `{id, label}`.
 - Every string is Den's own fixed words.

@@ -38,7 +38,28 @@ type apiState struct {
 	view    string                 // the view Den is in (viewswitch.go), "" when it cannot switch
 	raised  bool                   // Den's own window was brought back for a card, with no dock to ask (viewswitch.go)
 	started map[string]api.Card    // started cards as they were when they started, by item id (dock_cards.go)
+	lowered loweredNotes           // the chat's notes of a console's lowerings (noteLowered)
 }
+
+// loweredNotes folds the chat's notes of a console's lowerings: one note
+// per class within loweredFold, and past loweredMax a minute one note that
+// more came.
+type loweredNotes struct {
+	last  map[string]loweredAt // by class: the note it last wrote
+	since time.Time            // the minute counted from
+	n     int                  // notes written in it
+	more  bool                 // the "more came" note is written for it
+}
+
+type loweredAt struct {
+	at  time.Time
+	idx int // the note's place in the chat
+}
+
+const (
+	loweredFold = 10 * time.Second
+	loweredMax  = 20
+)
 
 // focusQuiet is how long after the human's last key in Den an app may not
 // move the focus.
@@ -85,6 +106,10 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	}
 	if isConsoleAct(act) {
 		return m.applyConsoleAct(act)
+	}
+	if act.GrantsLowered != nil {
+		m.noteLowered(act.GrantsLowered, time.Now())
+		return nil
 	}
 	if act.View != nil {
 		return m.applyView(act.View)
@@ -790,3 +815,35 @@ func (m Model) agentProcs() []api.AgentProc {
 
 // sessionProc is api.SessionProc; tests replace it.
 var sessionProc = api.SessionProc
+
+// noteLowered says in Den's chat that a console lowered a class for this
+// Den session: Den's own words, the console's label as Den shows it. A
+// lowering of the same class within loweredFold rewrites that note; past
+// loweredMax notes a minute, one note says more came, and the levels say
+// the rest.
+func (m *Model) noteLowered(l *api.GrantsLowered, now time.Time) {
+	n := &m.api.lowered
+	text := sanitize.Label(l.Console, 40) + " lowered " + l.Label + " to " + strconv.Itoa(l.Level) + " of 5 for this Den session."
+	if last, ok := n.last[l.Class]; ok && now.Sub(last.at) < loweredFold && last.idx < len(m.orch.chat) && m.orch.chat[last.idx].role == "note" {
+		m.orch.chat[last.idx].text, m.orch.chat[last.idx].memo = text, nil
+		m.logEntry(chatEntry{role: "note", text: text, at: now}) // the log keeps what the screen shows last
+		n.last[l.Class] = loweredAt{at: now, idx: last.idx}
+		return
+	}
+	if now.Sub(n.since) >= time.Minute {
+		n.since, n.n, n.more = now, 0, false
+	}
+	if n.n >= loweredMax {
+		if !n.more {
+			n.more = true
+			m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "More lowerings came from " + sanitize.Label(l.Console, 40) + " this minute; Den applied each.", at: now}))
+		}
+		return
+	}
+	n.n++
+	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: text, at: now}))
+	if n.last == nil {
+		n.last = map[string]loweredAt{}
+	}
+	n.last[l.Class] = loweredAt{at: now, idx: len(m.orch.chat) - 1}
+}

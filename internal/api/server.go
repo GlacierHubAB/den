@@ -1142,6 +1142,8 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.cardGet(c, req)
 	case "grants.get":
 		s.grantsGet(c, req)
+	case "grants.lower":
+		s.grantsLower(c, req)
 	case "card.answer":
 		s.cardAnswer(c, req)
 	case "cmd.list":

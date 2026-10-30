@@ -53,6 +53,41 @@ func TestTable(t *testing.T) {
 	}
 }
 
+// Lower takes only a level strictly below the class's cap, the lower of
+// its Den level and its session, and reads it back as the session and the
+// effective level.
+func TestLower(t *testing.T) {
+	st := State{Powers: true}
+	for _, c := range []struct {
+		class string
+		level int
+		want  string
+	}{
+		{Routine, 2, ""}, {Routine, 4, NotLower}, {Routine, 5, NotLower}, {Code, 0, ""}, {Code, 1, NotLower},
+		{Desktop, 0, NotLower}, {"admin", 0, BadRequest}, {Routine, 6, BadRequest}, {Routine, -1, BadRequest},
+	} {
+		if _, got := Lower(st, c.class, c.level, "t", "Drey"); got != c.want {
+			t.Errorf("%s to %d: %q, want %q", c.class, c.level, got, c.want)
+		}
+	}
+	s, _ := Lower(st, Routine, 2, "2026-10-29T12:00:00Z", "Drey")
+	st.Sessions = map[string]Session{Routine: s}
+	if _, got := Lower(st, Routine, 3, "t", "Drey"); got != NotLower {
+		t.Errorf("above the session: %q", got)
+	}
+	for _, c := range Read(st).Classes {
+		if c.Class == Routine && (c.Level != 2 || c.DenLevel != 4 || c.Session == nil || *c.Session != s) {
+			t.Errorf("routine read %+v", c)
+		}
+	}
+	st.Locked = true
+	for _, c := range Read(st).Classes {
+		if c.Class == Routine && (c.Level != 0 || c.Session == nil || c.Session.Level != 2) {
+			t.Errorf("routine read while locked %+v", c)
+		}
+	}
+}
+
 // levels is each class's effective level, by class.
 func levels(g Grants) map[string]int {
 	out := map[string]int{}
