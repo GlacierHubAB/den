@@ -43,7 +43,12 @@ func TestParseRecordRefuses(t *testing.T) {
 		"data after the object":          goodRecord + `{}`,
 		"a field Den does not write":     strings.Replace(goodRecord, `"kept":[]`, `"kept":[],"extra":1`, 1),
 		"a missing field":                strings.Replace(goodRecord, `,"kept":[]`, ``, 1),
-		"version 2":                      strings.Replace(goodRecord, `"version":1`, `"version":2`, 1),
+		"version 3":                      strings.Replace(goodRecord, `"version":1`, `"version":3`, 1),
+		"version 1 with kept":            strings.Replace(goodRecord, `"kept":[]`, `"kept":["close"]`, 1),
+		"a kept id Den does not have":    strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["admin"]`, 1),
+		"a kept id twice":                strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["close","close"]`, 1),
+		"a kept id in another case":      strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["Close"]`, 1),
+		"a self-raised kind kept":        strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["mode_set"]`, 1),
 		"version as a string":            strings.Replace(goodRecord, `"version":1`, `"version":"1"`, 1),
 		"a class Den does not have":      strings.Replace(goodRecord, `"outward":0`, `"admin":0`, 1),
 		"a class missing":                strings.Replace(goodRecord, `,"outward":0`, ``, 1),
@@ -109,5 +114,22 @@ func TestStartRuleAndFold(t *testing.T) {
 	}
 	if g := Read(st); g.Classes[1].DenLevel != 2 {
 		t.Errorf("den_level reads %d, the level Den keeps is 2", g.Classes[1].DenLevel)
+	}
+}
+
+// Version 2 keeps the kept ids, from the closed list, in the list's order
+// whatever the file's; a version 1 record reads with kept empty.
+func TestParseRecordKept(t *testing.T) {
+	v2 := strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["merge","close"]`, 1)
+	r, err := ParseRecord([]byte(v2))
+	if err != nil || len(r.Kept) != 2 {
+		t.Fatalf("%v %+v", err, r)
+	}
+	again, err := ParseRecord(r.Encode())
+	if err != nil || len(again.Kept) != 2 || again.Kept[0] != KeptClose || again.Kept[1] != KeptMerge {
+		t.Errorf("Encode: %v %+v\n%s", err, again, r.Encode())
+	}
+	if r, err := ParseRecord([]byte(goodRecord)); err != nil || len(r.Kept) != 0 {
+		t.Errorf("version 1: %v %+v", err, r.Kept)
 	}
 }

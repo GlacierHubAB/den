@@ -101,7 +101,7 @@ func (s *Server) loadPerms() []perm.Lowered {
 		}
 	}
 	s.perms.mu.Lock()
-	s.perms.denLevels, s.perms.lineage, s.perms.startWhy = rec.DenLevels, rec.Lineage, why
+	s.perms.denLevels, s.perms.lineage, s.perms.startWhy, s.perms.kept = rec.DenLevels, rec.Lineage, why, rec.Kept
 	// The file is written again at once: this session has no lowerings
 	// yet, and a file Den could not read becomes Den's own.
 	s.perms.gen++
@@ -182,7 +182,7 @@ func (s *Server) permsWriter(stop <-chan struct{}) {
 
 // permRecordLocked is the record of the state now. s.perms.mu is held.
 func (s *Server) permRecordLocked() perm.Record {
-	r := perm.Record{Lineage: s.perms.lineage, DenLevels: map[string]int{}}
+	r := perm.Record{Lineage: s.perms.lineage, DenLevels: map[string]int{}, Kept: append([]string(nil), s.perms.kept...)}
 	for k, v := range s.perms.denLevels {
 		r.DenLevels[k] = v
 	}
@@ -302,6 +302,13 @@ func (s *Server) permsCardLines() []string {
 		if len(raised) > 0 {
 			out = append(out, "Ctrl+Y also confirms the levels you set above Den's defaults: "+strings.Join(raised, ", ")+". Until then they are at the defaults.")
 		}
+		if len(st.Kept) > 0 {
+			var kept []string
+			for _, id := range st.Kept {
+				kept = append(kept, perm.KeptLabel(id))
+			}
+			out = append(out, "Ctrl+Y also lets your console answer, as before: "+strings.Join(kept, ", ")+". Until then it does not.")
+		}
 	})
 	return out
 }
@@ -322,4 +329,31 @@ func (s *Server) closePerms() {
 	}
 	b, _ := json.Marshal(permsMark{Record: f.hash})
 	writeAtomic(s.permsMarkPath(), b)
+}
+
+// grantKept is the upgrade: a console restored from a record without
+// kept_era, which loadConsole restored only on a valid clean mark, keeps
+// what it answered before the levels, as kept entries, once. The record
+// is written with kept_era in this same start, so no later start grants
+// again; permissions.json plays no part, so deleting it never brings back
+// an entry a console removed. Kept is inactive until the start confirm.
+func (s *Server) grantKept() {
+	s.con.mu.Lock()
+	grant := s.con.keptGrant
+	s.con.keptGrant = false
+	cur := s.con.cur
+	if grant && cur != nil {
+		s.saveConsoleLocked() // with kept_era
+	}
+	s.con.mu.Unlock()
+	if !grant || cur == nil {
+		return
+	}
+	s.permsDo(func() {
+		s.grantsLocked(nil) // levels of another pairing are folded in first (F3)
+		s.perms.kept = perm.KeptAll()
+		s.perms.gen++
+		s.grantsLocked(nil)
+	})
+	s.note("Your console keeps what it could answer before Den's permission levels, as kept items, until it or a new pairing removes them. They take effect after you press Ctrl+Y on its powers card.")
 }

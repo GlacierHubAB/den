@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/api"
+	perm "github.com/GlacierHubAB/den/internal/grants"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
@@ -104,6 +105,19 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		body = m.setupListed(it)
 	}
 	class, step := inbox.Classify(it, m.cardFacts(it))
+	if lv := m.cardLevels(); dockMayAnswer(it) && lv != nil {
+		// A console is offered only what it may give now: allow and
+		// "always" by the levels and kept, deny always (the human's rule:
+		// saying no is always allowed from the console). The lock, the
+		// powers and the class limit are refused at answer time only.
+		var listed []string
+		for _, v := range verbs {
+			if v == "deny" || lv.AnswerListed(permAnswer(it, class, step, v)) {
+				listed = append(listed, v)
+			}
+		}
+		verbs = listed
+	}
 	return api.Card{
 		ID:          it.ID,
 		Kind:        it.Kind.String(),
@@ -116,7 +130,7 @@ func (m Model) dockCard(it *inbox.Item) api.Card {
 		Step:        step,
 		Body:        strings.Join(body, "\n"),
 		Verbs:       verbs,
-		DockAnswers: dockMayAnswer(it) && !m.godTTYOnly(it),
+		DockAnswers: dockMayAnswer(it) && !m.godTTYOnly(it) && len(verbs) > 0,
 		TTYOnly:     m.godTTYOnly(it),
 	}
 }
@@ -160,6 +174,46 @@ var todayDock = map[inbox.Kind]bool{
 	inbox.Permission: true, inbox.Plan: true, inbox.Close: true, inbox.Budget: true, inbox.Restore: true,
 	inbox.Merge: true, inbox.Cleanup: true, inbox.MissionUpdate: true, inbox.UsageResume: true,
 	inbox.MissionMove: true, inbox.ControlAsk: true, inbox.UsageSet: true, inbox.ModeSet: true,
+}
+
+// keptIDs are the kept entries a kind's allow may be covered by: what a
+// pairing that existed when the levels came kept answering (upgrade only).
+var keptIDs = map[inbox.Kind]string{
+	inbox.Permission: perm.KeptPermission, inbox.Plan: perm.KeptPlan, inbox.Close: perm.KeptClose,
+	inbox.Budget: perm.KeptBudget, inbox.Restore: perm.KeptRestore, inbox.Merge: perm.KeptMerge,
+	inbox.Cleanup: perm.KeptCleanup, inbox.MissionUpdate: perm.KeptMissionUpdate,
+}
+
+// selfRaised are the kinds a console can raise itself (a request, or its
+// own turn) whose allow would make Den less careful: a looser mode, the
+// usage figure, going past the usage stop, a tool for the console's own
+// turn, and a mission's project (#63: only the human moves a mission).
+// A console never allows them, by level or by kept; it may deny them.
+var selfRaised = map[inbox.Kind]bool{
+	inbox.ModeSet: true, inbox.UsageSet: true, inbox.UsageResume: true, inbox.ControlAsk: true, inbox.MissionMove: true,
+}
+
+// cardLevels is the answer check and the listing den-api decides
+// (api.Server's AnswerAllowed and AnswerListed).
+type cardLevels interface {
+	AnswerAllowed(perm.Answer) (code, class string)
+	AnswerListed(perm.Answer) bool
+}
+
+// cardLevels is den-api's answer check, nil when den-api is off.
+func (m Model) cardLevels() cardLevels {
+	if m.api.srv != nil {
+		return m.api.srv
+	}
+	return m.api.levels
+}
+
+// permAnswer is a console's verb on it, as Den's record has the card: the
+// class and step the card's hash holds, never anything the console sent
+// but the verb.
+func permAnswer(it *inbox.Item, class inbox.Class, step int, verb string) perm.Answer {
+	return perm.Answer{Kept: keptIDs[it.Kind], Class: string(class), Step: step, Verb: verb,
+		GodTTY: godTTYKinds[it.Kind], SelfRaised: selfRaised[it.Kind]}
 }
 
 // dockMayAnswer reports whether a console may answer it: a kind in
@@ -232,6 +286,23 @@ func (m *Model) answerFromDock(a *api.CardAnswer) tea.Cmd {
 		// the two never race.
 		return reply(api.CardResult{Code: api.CodeUnavailable, Note: "Den has this card open: it waits for an answer there"})
 	}
+	// The levels, after every check above and never instead of them (the
+	// outer gate, todayDock, stays), with the class and step of the card
+	// whose hash the console matched. A listing the console read before a
+	// lowering (the verbs are outside the hash) can only show a button
+	// that is refused: by the listing now (refused_from_dock) or here
+	// (below_level), never taken; both decide on Den's loop at answer time
+	// from Den's own record. answerItem runs right after, in this same
+	// step of Den's loop, with nothing between that yields: a lowering, the
+	// lock or a tamper that lands after this call is after the answer.
+	lv := m.cardLevels()
+	if lv == nil {
+		// An answer comes only from den-api; without it, none is taken.
+		return reply(api.CardResult{Code: api.CodeUnavailable, Note: "den-api is off"})
+	}
+	if code, class := lv.AnswerAllowed(permAnswer(it, inbox.Class(card.Class), card.Step, a.Verb)); code != "" {
+		return reply(api.CardResult{Code: code, Class: class, Note: answerRefusal(code, class)})
+	}
 	it.AnsweredBy = "console"
 	mm, cmd := m.answerItem(it, a.Verb)
 	*m = mm.(Model)
@@ -266,4 +337,21 @@ func containsVerb(verbs []string, v string) bool {
 		}
 	}
 	return false
+}
+
+// answerRefusal is the answer check's refusal in Den's words, for the
+// console.
+func answerRefusal(code, class string) string {
+	switch code {
+	case api.CodePowersLocked:
+		return api.PowersLocked
+	case api.CodeTTYOnly:
+		return "while God mode is on, only Den's own window answers this"
+	case api.CodeRateLimited:
+		return "too many answers above everyday ones: wait a few seconds"
+	}
+	if l := perm.Label(class); l != "" {
+		return l + " is set below this in Den: Den's window answers it"
+	}
+	return "only Den's window allows this"
 }

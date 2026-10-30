@@ -23,7 +23,10 @@ func provedConsoleOn(t *testing.T, h *harness) (*harness, *client) {
 	d := newDock(t, h)
 	p := d.pair(h.s.StartConsoleCode())
 	c := h.dial()
-	c.hello()
+	// Card hash v2: the levels judge answers on it only.
+	if l := c.call("hello", map[string]any{"v": 1, "client": "test", "version": "0", "card_hash": 2}); !l.OK {
+		t.Fatalf("hello: %+v", l.Error)
+	}
 	if l, _, _, _ := d.auth(c, p); !l.OK || !strings.Contains(string(l.Result), `"view":"agent"`) {
 		t.Fatalf("%+v %s", l.Error, l.Result)
 	}
@@ -77,7 +80,7 @@ func card(id string, lines int, dock bool) Card {
 	for i := range body {
 		body[i] = "line " + strconv.Itoa(i)
 	}
-	return Card{ID: id, Kind: "permission", Agent: "Otter", Title: "Bash", Body: strings.Join(body, "\n"), Verbs: []string{"allow", "deny", "rm"}, DockAnswers: dock}
+	return Card{ID: id, Kind: "permission", Agent: "Otter", Title: "Bash", Class: "code", Step: 1, Body: strings.Join(body, "\n"), Verbs: []string{"allow", "deny", "rm"}, DockAnswers: dock}
 }
 
 type got struct {
@@ -109,7 +112,8 @@ func TestCardGetAndAnswer(t *testing.T) {
 		t.Fatalf("card event %+v", e)
 	}
 	g := getCard(t, c, "i-1")
-	if g.Hash != CardHash("permission", "Otter", "", "Bash", "", "line 0\nline 1") || ev.Hash != g.Hash || !isHex(g.Nonce, 64) {
+	want, _ := CardHashV2("permission", "Otter", "", "Bash", "", "code", 1, "", nil, "line 0\nline 1")
+	if g.Hash != want || ev.Hash != g.Hash || !isHex(g.Nonce, 64) {
 		t.Errorf("hash %s, event %s, nonce %q", g.Hash, ev.Hash, g.Nonce)
 	}
 	if len(g.Verbs) != 2 {

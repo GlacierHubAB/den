@@ -48,7 +48,7 @@ func TestTable(t *testing.T) {
 	if strings.Join(order, ",") != "routine,destructive,code,desktop,outward" {
 		t.Errorf("classes %v", order)
 	}
-	if len(g.DenOnly) != 9 || len(g.Kept) != 0 || g.Enforced {
+	if len(g.DenOnly) != 9 || len(g.Kept) != 0 || !g.Enforced {
 		t.Errorf("den_only %d, kept %v, enforced %v", len(g.DenOnly), g.Kept, g.Enforced)
 	}
 }

@@ -11,16 +11,19 @@ import (
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
-// RecordVersion is the only version of the stored record Den reads.
-const RecordVersion = 1
+// RecordVersion is the version of the stored record Den writes. Version 1,
+// from before kept existed, is still read, with kept empty.
+const RecordVersion = 2
 
 // Record is what Den keeps of the levels across its restarts, in
 // permissions.json: the Den level of every class, the pairing lineage they
-// belong to, and this session's lowerings, a notice only (Den never reads a
-// level back from it). Kept is empty until kept exists.
+// belong to, the kept ids (never more than the upgrade granted: a file only
+// ever lowers them), and this session's lowerings, a notice only (Den never
+// reads a level back from it).
 type Record struct {
 	Lineage   string
 	DenLevels map[string]int
+	Kept      []string
 	Lowered   []Lowered
 }
 
@@ -37,15 +40,20 @@ type stored struct {
 	Version   int            `json:"version"`
 	Lineage   string         `json:"lineage"`
 	DenLevels map[string]int `json:"den_levels"`
-	Kept      []struct{}     `json:"kept"`
+	Kept      []string       `json:"kept"`
 	Lowered   []Lowered      `json:"lowered"`
 }
 
 // Encode is r as Den writes it: every class's Den level (its default when
 // r has none), the lowerings in the table's order.
 func (r Record) Encode() []byte {
-	out := stored{Version: RecordVersion, Lineage: r.Lineage, DenLevels: map[string]int{}, Kept: []struct{}{}, Lowered: []Lowered{}}
-	st := State{DenLevels: r.DenLevels}
+	out := stored{Version: RecordVersion, Lineage: r.Lineage, DenLevels: map[string]int{}, Kept: []string{}, Lowered: []Lowered{}}
+	st := State{DenLevels: r.DenLevels, Kept: r.Kept}
+	for _, k := range keptTable {
+		if st.holds(k.id) {
+			out.Kept = append(out.Kept, k.id)
+		}
+	}
 	for _, c := range table {
 		out.DenLevels[c.id] = st.denLevel(c)
 		for _, l := range r.Lowered {
@@ -64,12 +72,12 @@ var ErrDamaged = errors.New("damaged")
 
 // ParseRecord reads a stored record strictly: exactly the keys Den writes,
 // all of them, in their exact case, none twice at any level, and nothing
-// after the object; the version Den writes; every class, its level written
-// as a plain integer from 0 to the class's last step; a lineage of 32
-// lowercase hex digits or none;
-// kept empty; at most one lowering per class, with a time Den can read and
-// a console label that is not empty once sanitized. Anything else is
-// ErrDamaged, never a partial read.
+// after the object; version 2, or 1 from before kept; every class, its
+// level written as a plain integer from 0 to the class's last step; a
+// lineage of 32 lowercase hex digits or none; kept ids from the closed
+// list, none twice (empty in version 1); at most one lowering per class,
+// with a time Den can read and a console label that is not empty once
+// sanitized. Anything else is ErrDamaged, never a partial read.
 func ParseRecord(raw []byte) (Record, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -83,7 +91,8 @@ func ParseRecord(raw []byte) (Record, error) {
 	if len(top) != 5 {
 		return Record{}, ErrDamaged // Den writes every key
 	}
-	if v, ok := PlainInt(top["version"]); !ok || v != RecordVersion {
+	version, ok := PlainInt(top["version"])
+	if !ok || version != 1 && version != RecordVersion {
 		return Record{}, ErrDamaged
 	}
 	var r Record
@@ -108,8 +117,17 @@ func ParseRecord(raw []byte) (Record, error) {
 	}
 	if raw, ok := top["kept"]; ok {
 		kept, err := array(decoder(raw))
-		if err != nil || len(kept) != 0 {
+		if err != nil || version == 1 && len(kept) != 0 {
 			return Record{}, ErrDamaged
+		}
+		seen := map[string]bool{}
+		for _, raw := range kept {
+			var id string
+			if json.Unmarshal(raw, &id) != nil || KeptLabel(id) == "" || seen[id] {
+				return Record{}, ErrDamaged
+			}
+			seen[id] = true
+			r.Kept = append(r.Kept, id)
 		}
 	}
 	if raw, ok := top["lowered"]; ok {
