@@ -169,11 +169,15 @@ func (m *Model) applyConsoleAct(act api.Act) tea.Cmd {
 			}
 			delete(m.con.powers, it)
 		}
-		it := m.store.AddConsole("Let your console answer cards and run commands again?", []string{
+		body := []string{
 			"Your console (pid " + strconv.Itoa(pw.PID) + ", " + procWhen(pw.Started) + ") is paired, but has no powers: " + sanitize.Label(pw.Why, 120) + ".",
 			"Until you press Ctrl+Y here, it can read, chat and show status, but not answer Den's cards or run Den's commands.",
-			"Only Den's own window answers this card. /api unpair or den unpair all ends the console instead.",
-		})
+		}
+		for _, l := range pw.Levels {
+			body = append(body, sanitize.Label(l, 600))
+		}
+		body = append(body, "Only Den's own window answers this card. /api unpair or den unpair all ends the console instead.")
+		it := m.store.AddConsole("Let your console answer cards and run commands again?", body)
 		m.con.powers[it] = pw.ID
 		m.refresh()
 	}

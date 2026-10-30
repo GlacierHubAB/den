@@ -2,7 +2,7 @@
 // on its own, per class of act, as levels 0 to 5, and the read of it a
 // console gets (grants.get and the grants event). Level 0, the empty bar,
 // is "Only in Den"; the five segments are levels 1 to 5. Den sets the
-// levels; a console only lowers them (from a later PR on).
+// levels; a console only lowers them.
 //
 // Nothing here is enforced yet: Enforced is false until the answer check
 // reads the levels. The words are Den's own, fixed here; no string an agent
@@ -128,9 +128,8 @@ type Grants struct {
 	Powers bool `json:"powers"`
 	Locked bool `json:"locked"`
 	God    bool `json:"god"`
-	// StartConfirmed: the human confirmed in Den's window since Den
-	// started. Until a later PR builds the start rule, it stands in as
-	// Powers: the powers card is the start confirm.
+	// StartConfirmed: the human pressed Ctrl+Y on Den's powers card since
+	// Den started. Until then, each class is capped at its default.
 	StartConfirmed bool          `json:"start_confirmed"`
 	Classes        []Class       `json:"classes"`
 	Kept           []Kept        `json:"kept"`
@@ -145,6 +144,15 @@ type State struct {
 	// Sessions are the classes a console lowered for this Den session,
 	// by class.
 	Sessions map[string]Session
+	// DenLevels are the levels Den keeps, by class; a class missing, or
+	// outside 0 to Steps, is at its default.
+	DenLevels map[string]int
+	// Confirmed: the human's Ctrl+Y on Den's powers card since Den
+	// started. Until then a class above its default is capped at it.
+	Confirmed bool
+	// Held: Den's stored levels were changed by another program while Den
+	// ran; every level is 0 until the human's Ctrl+Y on the powers card.
+	Held bool
 }
 
 // The refusals of a lowering.
@@ -153,12 +161,69 @@ const (
 	NotLower   = "not_lower"
 )
 
-// cap is the class's cap now: its Den level, lowered by a session.
-func (st State) cap(c class) int {
-	if s, ok := st.Sessions[c.id]; ok && s.Level < c.def {
-		return s.Level
+// denLevel is the class's Den level: as kept, or its default.
+func (st State) denLevel(c class) int {
+	if l, ok := st.DenLevels[c.id]; ok && l >= 0 && l <= Steps {
+		return l
 	}
 	return c.def
+}
+
+// cap is the class's cap now: its Den level, at most its default until the
+// start confirm, lowered by a session.
+func (st State) cap(c class) int {
+	l := st.denLevel(c)
+	if !st.Confirmed && l > c.def {
+		l = c.def
+	}
+	if s, ok := st.Sessions[c.id]; ok && s.Level < l {
+		l = s.Level
+	}
+	return l
+}
+
+// Cap is class id's cap in st (cap), -1 for no class.
+func (st State) Cap(id string) int {
+	for _, c := range table {
+		if c.id == id {
+			return st.cap(c)
+		}
+	}
+	return -1
+}
+
+// Default is class id's default level, -1 for no class.
+func Default(id string) int {
+	for _, c := range table {
+		if c.id == id {
+			return c.def
+		}
+	}
+	return -1
+}
+
+// Classes are the class ids, in the read's order.
+func Classes() []string {
+	out := make([]string, len(table))
+	for i, c := range table {
+		out[i] = c.id
+	}
+	return out
+}
+
+// Fold is F3, a new pairing: each class's Den level becomes the lowest of
+// its default, its Den level and its session, as it stands in st. The
+// sessions are folded in, so the caller clears them.
+func Fold(st State) map[string]int {
+	out := make(map[string]int, len(table))
+	for _, c := range table {
+		l := min(c.def, st.denLevel(c))
+		if s, ok := st.Sessions[c.id]; ok && s.Level < l {
+			l = s.Level
+		}
+		out[c.id] = l
+	}
+	return out
 }
 
 // Valid reports whether id is a class and level one of its levels, 0 to
@@ -203,22 +268,22 @@ func Lower(st State, id string, level int, at, console string) (Session, string)
 // Merge, Budget and Usage, answer only in Den's window while it is on.
 var godZero = map[string]bool{Desktop: true, Outward: true}
 
-// Read is the read for st, with seq 0: every class at its Den level (its
-// default: none is set in Den yet), lowered by its session, and the
-// effective level 0 while locked, without powers, or, for the desktop and
-// outward classes, in God mode.
+// Read is the read for st, with seq 0: every class at its Den level, at
+// most its default until the start confirm, lowered by its session, and
+// the effective level 0 while locked, held, without powers, or, for the
+// desktop and outward classes, in God mode.
 func Read(st State) Grants {
 	g := Grants{
 		Powers:         st.Powers,
 		Locked:         st.Locked,
 		God:            st.God,
-		StartConfirmed: st.Powers, // stand-in until (4): the powers card is the start confirm
+		StartConfirmed: st.Confirmed,
 		Classes:        make([]Class, 0, len(table)),
 		Kept:           []Kept{},
 		DenOnly:        append([]DenOnlyItem(nil), denOnly...),
 	}
 	for _, c := range table {
-		out := Class{Class: c.id, Label: c.label, About: c.about, DenLevel: c.def, Default: c.def, Level: st.cap(c), Steps: make([]Step, Steps)}
+		out := Class{Class: c.id, Label: c.label, About: c.about, DenLevel: st.denLevel(c), Default: c.def, Level: st.cap(c), Steps: make([]Step, Steps)}
 		if s, ok := st.Sessions[c.id]; ok {
 			s := s
 			out.Session = &s
@@ -230,7 +295,7 @@ func Read(st State) Grants {
 			}
 			out.Steps[i] = s
 		}
-		if st.Locked || !st.Powers || st.God && godZero[c.id] {
+		if st.Locked || st.Held || !st.Powers || st.God && godZero[c.id] {
 			out.Level = 0
 		}
 		g.Classes = append(g.Classes, out)

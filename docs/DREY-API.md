@@ -1016,14 +1016,18 @@ the levels are shown, not applied, and Den answers your cards as before.
 - `powers`: your console has its powers. Without them, or while `locked`
   (the human's `/api lock`), every class's `level` is 0. Read a missing
   `powers` or `enforced` as false.
-- `start_confirmed`: the human confirmed in Den's window since Den started.
-  For now it is the same as `powers` (the powers card is that confirm).
+- `start_confirmed` is false from each Den start until the human presses
+  Ctrl+Y on Den's powers card in Den's window. Until then, each class's cap
+  is at most its default (a class above its default reads at the default).
+  Nothing your console does confirms it.
 - `god`: God mode is on; `desktop` and `outward` show `level` 0 meanwhile.
 - `classes`, in this order: `routine` (Everyday answers), `destructive` (Stop
   and close), `code` (Run commands), `desktop` (Desktop control), `outward`
   (Send out). Each is `{class, label, about, den_level, session, level,
-  default, steps, set_in_den}`: `level` is the effective level now,
-  min(`den_level`, `session.level`), then 0 as above; `steps`
+  default, steps, set_in_den}`: `den_level` is the level Den keeps across
+  its restarts; `level` is the effective level now, min(`den_level`,
+  `session.level`), at most `default` until `start_confirmed`, then 0 as
+  above; `steps`
   has five entries, levels 1 to 5, each `{level, name, label, available}`
   (a level the class has no step for is `available: false`, label "No
   further step"); level 0, the empty bar, is "Only in Den". `session` is
@@ -1040,10 +1044,14 @@ the levels are shown, not applied, and Den answers your cards as before.
   `not_lower` (the level is not below the class's cap, min(`den_level`,
   `session.level`): a raise, the same level, or a class at 0; nothing
   changes). Taken, the reply is the new read and the other connections get
-  a `grants` event. A lowering lasts until Den restarts; a re-pair keeps it.
-  Re-send yours after a reconnect, and count it held only by the cap the
-  read shows, never by the reply code or by `level` (a lock puts `level` at
-  0). The `{kept, seq}` form answers `unsupported` for now. The rows of
+  a `grants` event. A lowering lasts until Den restarts. Re-send yours
+  after a reconnect, and count it held only by the cap the read shows,
+  never by the reply code or by `level` (a lock puts `level` at 0).
+- A new pairing (any pairing but your service's reconnect after its own
+  restart, or the console Den restores after its restart) puts each class's
+  `den_level` at the lowest of its default, its `den_level` and its
+  `session.level`, and clears the sessions: a lowering is then part of
+  `den_level`, and a re-send of it is `not_lower`, held by the cap. The `{kept, seq}` form answers `unsupported` for now. The rows of
   `internal/api/convcases/lower.go` (`LowerCases`) pin all of this. Den's
   window notes each lowering in its chat.
 - `kept` is empty for now. `den_only` lists what only the human does, in

@@ -13,6 +13,12 @@ import (
 func provedConsole(t *testing.T) (*harness, *client) {
 	t.Helper()
 	h, _ := consoleHarness(t)
+	return provedConsoleOn(t, h)
+}
+
+// provedConsoleOn is provedConsole on h, a harness with a console key.
+func provedConsoleOn(t *testing.T, h *harness) (*harness, *client) {
+	t.Helper()
 	h.s.Publish(Project(Snapshot{Taken: time.Now(), View: ViewAgent}))
 	d := newDock(t, h)
 	p := d.pair(h.s.StartConsoleCode())

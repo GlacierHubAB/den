@@ -46,6 +46,9 @@ type Options struct {
 	// ConsoleStore is where Den keeps its side of the console across
 	// restarts (console_store.go); "" keeps it in memory only.
 	ConsoleStore string
+	// PermStore is where Den keeps the permission levels across restarts
+	// (grants_store.go); "" keeps them in memory only.
+	PermStore string
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -81,6 +84,8 @@ type Server struct {
 	god godState
 	// perms is the permission manager's last read and its seq (grants.go).
 	perms permsState
+	// permFile writes and watches the levels' file (grants_store.go).
+	permFile permsFile
 	// desk is the running desktop mission as Den last set it (desktop.go).
 	desk desktopState
 	// overlay is the console's overlay link (overlay.go).
@@ -153,6 +158,9 @@ func Listen(o Options) (*Server, error) {
 	}
 	s.grants, s.acts, s.lastConn, s.ctl = newGrants(), make(chan Act, 64), map[string]time.Time{}, newControl()
 	s.stopWatch = make(chan struct{})
+	// The levels are read before the console, whose powers card names
+	// them; the start note names the console restored.
+	lastLowered := s.loadPerms()
 	if s.ckey != nil {
 		if why := s.loadConsole(); why != "" {
 			s.note(why)
@@ -166,6 +174,7 @@ func Listen(o Options) (*Server, error) {
 		s.con.mu.Unlock()
 		go s.watchConsoleRecord(s.stopWatch)
 	}
+	s.startNote(lastLowered)
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	s.lane.changed = s.asksChanged
@@ -420,6 +429,7 @@ func (s *Server) Healthy() bool { return s.bp.Load().ours() }
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		close(s.stopWatch)
+		s.closePerms()
 		s.writeCleanMark()
 	})
 	s.lane.close()

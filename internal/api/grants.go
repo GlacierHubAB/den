@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,14 +23,32 @@ const EventGrants = "grants"
 //
 // Lock order: mu first, then s.con.mu, s.god.mu and s.mu (consoleConns),
 // each taken and let go inside. No caller holds any of those when it takes
-// mu. Under mu a push only queues (conn.push never blocks).
+// mu. Under mu a push only queues (conn.push never blocks). The file's lock
+// (permsFile.mu) is never held together with mu: under mu Den only changes
+// the state and raises gen, and the file is written after
+// (grants_store.go).
 type permsState struct {
 	mu   sync.Mutex
 	seq  uint64
 	last []byte
 	// caps are the classes a console lowered for this Den process, by
-	// class; a re-pair keeps them (they only lower).
+	// class. A new pairing folds them into the Den levels (F3).
 	caps map[string]perm.Session
+	// denLevels are the Den levels as Den keeps them, by class (nil reads
+	// as the defaults); lineage is the pairing lineage they belong to. A
+	// console paired now under another lineage is a new pairing (F3).
+	denLevels map[string]int
+	lineage   string
+	// confirmed is the start confirm: the human's Ctrl+Y on Den's powers
+	// card since Den started. held is another program's change to the
+	// stored levels while Den ran: every level reads 0 until that Ctrl+Y.
+	confirmed, held bool
+	// startWhy is what Den found of its stored levels at start, for the
+	// powers card until the start confirm.
+	startWhy string
+	// gen counts the changes the file keeps; queued is the last one a
+	// write was asked for (permsDo).
+	gen, queued uint64
 }
 
 // Refusals of grants.lower besides the shared ones.
@@ -47,25 +66,41 @@ type GrantsLowered struct {
 }
 
 // grantsInput is the server's own record the read is worked out from: the
-// console paired now and its powers, the human's /api lock, God mode.
-// s.perms.mu is held.
-func (s *Server) grantsInput() perm.State {
+// console paired now, its powers and its lineage, the human's /api lock,
+// God mode, and the levels Den keeps. s.perms.mu is held.
+func (s *Server) grantsInput() (perm.State, string) {
 	s.con.mu.Lock()
 	st := perm.State{Powers: s.con.cur != nil && s.con.cur.powers, Locked: s.con.locked}
+	lineage := ""
+	if s.con.cur != nil {
+		lineage = s.con.cur.Lineage
+	}
 	s.con.mu.Unlock()
 	st.God = s.god.get().On
 	st.Sessions = map[string]perm.Session{}
 	for k, v := range s.perms.caps {
 		st.Sessions[k] = v
 	}
-	return st
+	st.DenLevels = map[string]int{}
+	for k, v := range s.perms.denLevels {
+		st.DenLevels[k] = v
+	}
+	st.Confirmed, st.Held = s.perms.confirmed, s.perms.held
+	return st, lineage
 }
 
 // grantsLocked is the read now, with seq risen if it changed since the
 // last; when it did, every subscribed connection of the console but skip
-// hears it. s.perms.mu is held.
+// hears it. A console paired now under a lineage the levels do not belong
+// to is folded in first (F3), so no read shows a new pairing the levels of
+// the one before. s.perms.mu is held.
 func (s *Server) grantsLocked(skip *conn) perm.Grants {
-	g := perm.Read(s.grantsInput())
+	st, lineage := s.grantsInput()
+	if lineage != "" && lineage != s.perms.lineage {
+		s.foldLocked(st, lineage)
+		st, _ = s.grantsInput()
+	}
+	g := perm.Read(st)
 	raw, _ := json.Marshal(g)
 	if bytes.Equal(raw, s.perms.last) {
 		g.Seq = s.perms.seq
@@ -84,13 +119,52 @@ func (s *Server) grantsLocked(skip *conn) perm.Grants {
 	return g
 }
 
+// foldLocked is F3, a new pairing under lineage: each class's Den level
+// becomes the lowest of its default, its Den level and its session; the
+// sessions, folded in, are cleared, and so is kept (when it exists); the
+// levels now belong to lineage. All in this one section under perms.mu, so
+// the read rises once. Den says so only when a class came down.
+// s.perms.mu is held.
+func (s *Server) foldLocked(st perm.State, lineage string) {
+	after := st
+	after.DenLevels, after.Sessions = perm.Fold(st), nil
+	var down []string
+	for _, id := range perm.Classes() {
+		if after.Cap(id) < st.Cap(id) {
+			down = append(down, id)
+		}
+	}
+	s.perms.denLevels, s.perms.caps, s.perms.lineage = after.DenLevels, nil, lineage
+	s.perms.gen++
+	if len(down) == 1 {
+		s.note("A new console was paired, so " + perm.Label(down[0]) + " went back to Den's default, " + strconv.Itoa(perm.Default(down[0])) + " of 5.")
+	} else if len(down) > 1 {
+		var said []string
+		for _, id := range down {
+			said = append(said, perm.Label(id)+" "+strconv.Itoa(perm.Default(id))+" of 5")
+		}
+		s.note("A new console was paired, so these went back to Den's defaults: " + strings.Join(said, ", ") + ".")
+	}
+}
+
 // grantsChanged pushes the read to the console's subscribed connections
 // when it changed: after a lock, God mode, the powers, and on each
 // publish, which catches a pairing or an unpairing.
 func (s *Server) grantsChanged() {
+	s.permsDo(func() { s.grantsLocked(nil) })
+}
+
+// permsDo runs f under perms.mu, then, once it is let go, asks the file's
+// writer for the state f left, when f changed what the file keeps.
+func (s *Server) permsDo(f func()) {
 	s.perms.mu.Lock()
-	s.grantsLocked(nil)
+	f()
+	dirty := s.perms.gen != s.perms.queued
+	s.perms.queued = s.perms.gen
 	s.perms.mu.Unlock()
+	if dirty {
+		s.kickPerms()
+	}
 }
 
 // grantsGet is grants.get: the read, for a proved console, which from
@@ -104,20 +178,25 @@ func (s *Server) grantsGet(c *conn, req Request) {
 		c.fail(req.ID, CodeForbidden, "prove first")
 		return
 	}
-	s.perms.mu.Lock()
-	defer s.perms.mu.Unlock()
-	// The read is the console paired now's: another console's connection,
-	// still open after a re-pair, does not read levels that are not its
-	// own. Checked under the lock the read is taken under.
-	if cur, ok := s.CurrentConsole(); !ok || cur.ID != id {
+	answered := false
+	s.permsDo(func() {
+		// The read is the console paired now's: another console's
+		// connection, still open after a re-pair, does not read levels
+		// that are not its own. Checked under the lock the read is taken
+		// under.
+		if cur, ok := s.CurrentConsole(); !ok || cur.ID != id {
+			return
+		}
+		g := s.grantsLocked(c)
+		c.mu.Lock()
+		c.subs[EventGrants] = true
+		c.mu.Unlock()
+		c.reply(req.ID, g)
+		answered = true
+	})
+	if !answered {
 		c.fail(req.ID, CodeForbidden, "not the console paired now")
-		return
 	}
-	g := s.grantsLocked(c)
-	c.mu.Lock()
-	c.subs[EventGrants] = true
-	c.mu.Unlock()
-	c.reply(req.ID, g)
 }
 
 // grantsLower is grants.lower {class, level, seq}: the console paired now
@@ -130,9 +209,10 @@ func (s *Server) grantsGet(c *conn, req Request) {
 // console's seq is only compared, never kept. The chat's note goes to Den
 // after the lock is let go.
 func (s *Server) grantsLower(c *conn, req Request) {
-	s.perms.mu.Lock()
-	g, code, msg, lowered := s.grantsLowerLocked(c, req.Params)
-	s.perms.mu.Unlock()
+	var g perm.Grants
+	var code, msg string
+	var lowered *GrantsLowered
+	s.permsDo(func() { g, code, msg, lowered = s.grantsLowerLocked(c, req.Params) })
 	if code != "" {
 		c.fail(req.ID, code, msg)
 		return
@@ -156,8 +236,8 @@ func (s *Server) grantsLowerLocked(c *conn, params json.RawMessage) (perm.Grants
 		return perm.Grants{}, CodeUnsupported, "kept comes in a later Den", nil
 	}
 	var class string
-	level, okLevel := jsonInt(p["level"])
-	seq, okSeq := jsonInt(p["seq"])
+	level, okLevel := perm.PlainInt(p["level"])
+	seq, okSeq := perm.PlainInt(p["seq"])
 	if json.Unmarshal(p["class"], &class) != nil || !okLevel || !okSeq || seq < 0 || !perm.Valid(class, int(level)) {
 		return perm.Grants{}, CodeBadRequest, "class, level and seq", nil
 	}
@@ -165,11 +245,9 @@ func (s *Server) grantsLowerLocked(c *conn, params json.RawMessage) (perm.Grants
 	if uint64(seq) != now.Seq {
 		return perm.Grants{}, CodeStale, "the levels changed: read them again", nil
 	}
-	label := ConsoleLabel
-	if cur.Exe != "" {
-		label = sanitize.Label(ExeLabel(cur.Exe), 40)
-	}
-	session, refused := perm.Lower(s.grantsInput(), class, int(level), time.Now().UTC().Format(time.RFC3339), label)
+	label := lowerLabel(cur)
+	st, _ := s.grantsInput()
+	session, refused := perm.Lower(st, class, int(level), time.Now().UTC().Format(time.RFC3339), label)
 	if refused != "" {
 		return perm.Grants{}, refused, "only a lower level than the class has now", nil
 	}
@@ -177,21 +255,15 @@ func (s *Server) grantsLowerLocked(c *conn, params json.RawMessage) (perm.Grants
 		s.perms.caps = map[string]perm.Session{}
 	}
 	s.perms.caps[class] = session
+	s.perms.gen++ // the record's notice of this session's lowerings
 	return s.grantsLocked(c), "", "", &GrantsLowered{Class: class, Label: perm.Label(class), Level: session.Level, Console: label}
 }
 
-// jsonInt is raw as an integer, if it is one written plainly: no string,
-// no fraction, no exponent, no null.
-func jsonInt(raw json.RawMessage) (int64, bool) {
-	s := string(bytes.TrimSpace(raw))
-	if s == "" || s == "-" {
-		return 0, false
+// lowerLabel is Den's label for console cur, as a lowering and the record
+// keep it.
+func lowerLabel(cur Console) string {
+	if cur.Exe == "" {
+		return ConsoleLabel
 	}
-	for i, r := range s {
-		if !(r >= '0' && r <= '9' || i == 0 && r == '-') {
-			return 0, false
-		}
-	}
-	n, err := strconv.ParseInt(s, 10, 64)
-	return n, err == nil
+	return sanitize.Label(ExeLabel(cur.Exe), 40)
 }
