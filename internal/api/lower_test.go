@@ -59,11 +59,35 @@ func asOtherConsole(h *harness) {
 	}
 }
 
+// repair pairs a new console by code and returns its proved connection.
+func repair(t *testing.T, h *harness) *client {
+	t.Helper()
+	d := newDock(t, h)
+	p := d.pair(h.s.StartConsoleCode())
+	c := h.dial()
+	c.hello()
+	if l, _, _, _ := d.auth(c, p); !l.OK {
+		t.Fatalf("auth %+v", l.Error)
+	}
+	return c
+}
+
+// classOf is class's entry in g.
+func classOf(g perm.Grants, class string) perm.Class {
+	for _, c := range g.Classes {
+		if c.Class == class {
+			return c
+		}
+	}
+	return perm.Class{}
+}
+
 // Every row of the lowering table, against grants.lower: the code, and
 // the cap and seq after it; a refusal changes nothing and pushes nothing.
 func TestLowerTable(t *testing.T) {
 	for _, row := range convcases.LowerCases {
 		h, c := provedConsole(t)
+		readNow(h) // the pairing is folded in (F3) before the caps are set
 		h.s.perms.mu.Lock()
 		h.s.perms.caps = map[string]perm.Session{}
 		for class, level := range row.Before {
@@ -76,7 +100,15 @@ func TestLowerTable(t *testing.T) {
 		case "nopowers":
 			h.s.LockConsolePowers("a test")
 		}
+		if row.Repaired {
+			c = repair(t, h)
+		}
 		before := getGrants(t, c) // subscribes c
+		if row.Repaired {
+			if cl := classOf(before, row.Class); cl.Session != nil || cl.DenLevel != row.DenLevel {
+				t.Errorf("%s: after the new pairing, session %+v and den_level %d, want null and %d", row.Name, cl.Session, cl.DenLevel, row.DenLevel)
+			}
+		}
 		sender := c
 		switch row.Holder {
 		case "unproved":
@@ -145,15 +177,9 @@ func TestLowerRefusesEveryRaise(t *testing.T) {
 		t.Fatalf("the lowering: %q", code)
 	}
 	raises(c, "after a lowering to 2")
-	d := newDock(t, h)
-	p := d.pair(h.s.StartConsoleCode())
-	c2 := h.dial()
-	c2.hello()
-	if l, _, _, _ := d.auth(c2, p); !l.OK {
-		t.Fatalf("auth %+v", l.Error)
-	}
-	if capOf(getGrants(t, c2), perm.Routine) != 2 {
-		t.Error("a re-pair dropped the lowering")
+	c2 := repair(t, h)
+	if g := getGrants(t, c2); capOf(g, perm.Routine) != 2 || classOf(g, perm.Routine).Session != nil {
+		t.Errorf("a re-pair: routine %+v, want den_level 2 folded in", classOf(g, perm.Routine))
 	}
 	raises(c2, "after a re-pair")
 }

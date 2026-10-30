@@ -66,8 +66,8 @@ func TestGrantsGetAndChanges(t *testing.T) {
 		t.Errorf("grants.get without a proof: %+v", l)
 	}
 	g := getGrants(t, c)
-	if !g.Powers || g.Locked || g.God || !g.StartConfirmed || g.Enforced || g.Seq == 0 {
-		t.Fatalf("the read %+v", g)
+	if !g.Powers || g.Locked || g.God || g.StartConfirmed || g.Enforced || g.Seq == 0 {
+		t.Fatalf("the read %+v", g) // a pairing's ^Y is not the start confirm
 	}
 	if lv := levelsOf(g); lv[perm.Routine] != 4 || lv[perm.Destructive] != 1 || lv[perm.Code] != 1 {
 		t.Errorf("levels %v", lv)
@@ -145,10 +145,13 @@ func TestGrantsSeqOnlyRises(t *testing.T) {
 // in every state.
 func TestGrantsTable(t *testing.T) {
 	states := map[string]perm.State{
-		"a console with its powers": {Powers: true},
+		"a console with its powers": {Powers: true, Confirmed: true},
 		"no console, or no powers":  {},
 		"locked":                    {Locked: true},
-		"God mode":                  {Powers: true, God: true},
+		"God mode":                  {Powers: true, God: true, Confirmed: true},
+		"a class above its default, before the start confirm": {Powers: true, DenLevels: map[string]int{perm.Destructive: 2}},
+		"a class above its default, after the start confirm":  {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Destructive: 2}},
+		"after a new pairing folded a lowering in":            {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Routine: 2}},
 	}
 	for _, c := range convcases.GrantsCases {
 		st, ok := states[c.Name]

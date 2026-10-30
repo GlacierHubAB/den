@@ -280,6 +280,7 @@ func (m *Model) startAPI() tea.Cmd {
 		Version:      Version,
 		ConsoleKey:   key,
 		ConsoleStore: filepath.Join(state, "consoles.json"),
+		PermStore:    filepath.Join(state, "permissions.json"),
 		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
 		Lane: api.LaneConfig{
 			Command:   laneCommand,

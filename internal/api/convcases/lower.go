@@ -14,6 +14,12 @@ type LowerCase struct {
 	Holder string
 	// Before is the session caps already held, level by class.
 	Before map[string]int
+	// Repaired: a new console was paired after Before, so a new pairing
+	// folded the caps into the Den levels (F3), and the new console sends
+	// it. Before the request, its read shows the class's session null and
+	// den_level at DenLevel; a taken lowering sets the session again.
+	Repaired bool
+	DenLevel int
 	// Request is grants.lower's params; "$seq" stands for the read's seq
 	// now and "$old" for one less.
 	Request string
@@ -52,4 +58,7 @@ var LowerCases = []LowerCase{
 	{Name: "a console not paired now", Holder: "other", Request: `{"class":"routine","level":2,"seq":$seq}`, Code: "forbidden", Class: "routine", Cap: 4},
 	{Name: "a lowering while locked", Holder: "locked", Request: `{"class":"routine","level":2,"seq":$seq}`, Class: "routine", Cap: 2},
 	{Name: "a lowering without powers", Holder: "nopowers", Request: `{"class":"routine","level":2,"seq":$seq}`, Class: "routine", Cap: 2},
+	{Name: "a re-send after a new pairing folded it in", Before: map[string]int{"routine": 2}, Repaired: true, DenLevel: 2, Request: `{"class":"routine","level":2,"seq":$seq}`, Code: "not_lower", Class: "routine", Cap: 2},
+	{Name: "a re-send above a folded lowering", Before: map[string]int{"routine": 2}, Repaired: true, DenLevel: 2, Request: `{"class":"routine","level":3,"seq":$seq}`, Code: "not_lower", Class: "routine", Cap: 2},
+	{Name: "below a folded lowering", Before: map[string]int{"routine": 2}, Repaired: true, DenLevel: 2, Request: `{"class":"routine","level":1,"seq":$seq}`, Class: "routine", Cap: 1},
 }

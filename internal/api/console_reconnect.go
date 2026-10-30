@@ -34,6 +34,9 @@ type ConsolePowersAsk struct {
 	PID     int
 	Started time.Time
 	Why     string
+	// Levels are the card's lines about the permission levels until the
+	// start confirm, in Den's own words (permsCardLines).
+	Levels []string
 }
 
 // SetGodMode tells the API how to know whether God mode is on: a console
@@ -141,7 +144,7 @@ func (s *Server) LockConsole(why string) {
 
 // askPowers puts the console's powers on a card in Den.
 func (s *Server) askPowers(rec *consoleRec, why string) {
-	s.act(Act{ConsolePowers: &ConsolePowersAsk{ID: rec.ID, PID: rec.PID, Started: rec.Started, Why: why}})
+	s.act(Act{ConsolePowers: &ConsolePowersAsk{ID: rec.ID, PID: rec.PID, Started: rec.Started, Why: why, Levels: s.permsCardLines()}})
 }
 
 // ConsolePowersAnswered is the human's ^Y (ok) or ^N on the powers card.
@@ -175,7 +178,17 @@ func (s *Server) ConsolePowersAnswered(id string, ok bool) {
 		s.powersEvent(cur, true)
 		s.act(Act{ConsoleChanged: true})
 	}
-	s.grantsChanged()
+	s.permsDo(func() {
+		if mine {
+			// The start confirm, and the end of a hold. Nothing else
+			// confirms: not a pairing's ^Y, an automatic pairing or
+			// den-api, and not "always" (AllowConsolePowersAlways), which
+			// leaves the levels capped at the defaults: that fails closed,
+			// and the panel's own confirm is the only other way.
+			s.perms.confirmed, s.perms.held = true, false
+		}
+		s.grantsLocked(nil)
+	})
 }
 
 // powersEvent tells the console's subscribed connections its powers.

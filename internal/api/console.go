@@ -764,6 +764,8 @@ func (s *Server) awaitConsole(c *conn, req Request, rec *consoleRec, confirm cha
 		s.act(Act{ConsoleDone: rec.ID, ConsoleChanged: true})
 		if locked {
 			s.askPowers(rec, "you locked the console's powers in Den")
+		} else if s.permsHeld() {
+			s.askPowers(rec, permsTamper)
 		}
 		c.reply(req.ID, reply())
 	}()

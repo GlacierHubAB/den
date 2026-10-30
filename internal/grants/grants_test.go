@@ -94,14 +94,15 @@ func levels(g Grants) map[string]int {
 	for _, c := range g.Classes {
 		out[c.Class] = c.Level
 		if c.DenLevel != c.Default || c.Session != nil {
-			panic("a level was set in (2)")
+			panic("a level was set")
 		}
 	}
 	return out
 }
 
 // The effective level: the default with powers; 0 everywhere without
-// powers or while locked; God mode puts desktop and outward at 0.
+// powers, while locked or held; God mode puts desktop and outward at 0.
+// start_confirmed is the start confirm, never the powers.
 func TestEffectiveLevels(t *testing.T) {
 	defaults := map[string]int{Routine: 4, Destructive: 1, Code: 1, Desktop: 0, Outward: 0}
 	zero := map[string]int{Routine: 0, Destructive: 0, Code: 0, Desktop: 0, Outward: 0}
@@ -113,6 +114,7 @@ func TestEffectiveLevels(t *testing.T) {
 		{"powered", State{Powers: true}, defaults},
 		{"no powers", State{}, zero},
 		{"locked", State{Powers: true, Locked: true}, zero},
+		{"held", State{Powers: true, Confirmed: true, Held: true}, zero},
 		{"God mode", State{Powers: true, God: true}, map[string]int{Routine: 4, Destructive: 1, Code: 1, Desktop: 0, Outward: 0}},
 	} {
 		g := Read(c.st)
@@ -122,7 +124,7 @@ func TestEffectiveLevels(t *testing.T) {
 				t.Errorf("%s: %s at %d, want %d", c.name, k, got[k], v)
 			}
 		}
-		if g.StartConfirmed != c.st.Powers || g.Powers != c.st.Powers || g.Locked != c.st.Locked || g.God != c.st.God {
+		if g.StartConfirmed != c.st.Confirmed || g.Powers != c.st.Powers || g.Locked != c.st.Locked || g.God != c.st.God {
 			t.Errorf("%s: flags %+v", c.name, g)
 		}
 	}
