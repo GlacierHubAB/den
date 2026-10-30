@@ -5,7 +5,7 @@ A conformance suite for servers of the Den API: the local JSON-lines socket
 inbox and chat. It needs only the standard library and a dialer, so a
 server's own repository can carry a copy as a test-only package and run it.
 
-Package SHA-256 `bc6e488fc71534f16b48dd8455e031eef1a910a9abc983cbc42390236ceadb78`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
+Package SHA-256 `93efc0cb4f1637faa31396ea6f987981453d0fdd9b54ea601ef487dd09aa966e`. Den's copy is pinned to the dev commit this package lands as: the commit that adds these files cannot name itself, so the line states the hash only, which is what proves the content.
 
 `MentionCases` (mention.go) is the table of the mention rule that Den's routing and a shell's colouring both follow: where an "@" starts a mention, how a name ends it (the end, white space, "@" or sentence punctuation) and what is no mention; a server runs its own resolver over it, offsets in runes.
 

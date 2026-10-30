@@ -233,11 +233,23 @@ func (c *conn) call(ctx context.Context, op string, params, result any) error {
 
 // open dials and says hello.
 func open(ctx context.Context, dial Dialer) (*conn, info, error) {
-	return openGroup(ctx, dial, "")
+	return openWith(ctx, dial, "", false)
+}
+
+// openV2 dials and says hello with card_hash 2: a console answers cards
+// only on such a connection (card.answer is hash_version on any other).
+func openV2(ctx context.Context, dial Dialer) (*conn, info, error) {
+	return openWith(ctx, dial, "", true)
 }
 
 // openGroup dials and says hello with a group ("" sends none).
 func openGroup(ctx context.Context, dial Dialer, group string) (*conn, info, error) {
+	return openWith(ctx, dial, group, false)
+}
+
+// openWith dials and says hello with a group ("" sends none), and with
+// card_hash 2 when v2.
+func openWith(ctx context.Context, dial Dialer, group string, v2 bool) (*conn, info, error) {
 	nc, err := dial(ctx)
 	if err != nil {
 		return nil, info{}, err
@@ -247,6 +259,9 @@ func openGroup(ctx context.Context, dial Dialer, group string) (*conn, info, err
 	params := map[string]any{"v": V, "client": "conformance", "version": "test"}
 	if group != "" {
 		params["group"] = group
+	}
+	if v2 {
+		params["card_hash"] = 2
 	}
 	if err := c.call(ctx, "hello", params, &in); err != nil {
 		c.close()
