@@ -792,6 +792,11 @@ func (c *conn) fail(id int64, code, msg string) {
 	c.push(Reply{ID: id, OK: false, Error: &WireError{Code: code, Message: msg}}, true)
 }
 
+// failData is fail with the refusal's data.
+func (c *conn) failData(id int64, code, msg string, data map[string]string) {
+	c.push(Reply{ID: id, OK: false, Error: &WireError{Code: code, Message: msg, Data: data}}, true)
+}
+
 // writeNow writes one line directly, before the writer runs, and closes.
 func writeNow(nc net.Conn, code, msg string) {
 	raw, _ := json.Marshal(Reply{ID: 0, OK: false, Error: &WireError{Code: code, Message: msg}})

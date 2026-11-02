@@ -4,8 +4,7 @@
 // is "Only in Den"; the five segments are levels 1 to 5. Den sets the
 // levels; a console only lowers them.
 //
-// Nothing here is enforced yet: Enforced is false until the answer check
-// reads the levels. The words are Den's own, fixed here; no string an agent
+// The levels are enforced: the answer check (Allow) reads them. The words are Den's own, fixed here; no string an agent
 // or a console wrote reaches the read.
 package grants
 
@@ -110,14 +109,23 @@ type Class struct {
 	SetInDen *string  `json:"set_in_den"`
 }
 
-// Kept is a kind kept from before the permission manager (upgrade only).
+// Kept is an entry kept from before the permission manager (upgrade
+// only): its closed id, Den's label, and whether it covers cards now, the
+// part that needs no card (the lock, a hold, the powers, the start confirm,
+// God mode for the kinds only Den's window answers then).
 type Kept struct {
-	Kind   string `json:"kind"`
+	ID     string `json:"id"`
 	Label  string `json:"label"`
-	Class  string `json:"class"`
-	Step   *int   `json:"step"`
 	Active bool   `json:"active"`
 }
+
+// keptGodTTY are the kept ids God mode pauses: their kinds only Den's
+// window answers while it is on, and "always" is Den's then too. The ui's
+// God table is checked against it.
+var keptGodTTY = map[string]bool{KeptBudget: true, KeptMerge: true, KeptAlways: true}
+
+// KeptGodTTY reports whether God mode pauses kept id.
+func KeptGodTTY(id string) bool { return keptGodTTY[id] }
 
 // Grants is the read: grants.get's answer and the grants event's data.
 type Grants struct {
@@ -153,6 +161,8 @@ type State struct {
 	// Held: Den's stored levels were changed by another program while Den
 	// ran; every level is 0 until the human's Ctrl+Y on the powers card.
 	Held bool
+	// Kept are the kept ids the pairing holds.
+	Kept []string
 }
 
 // The refusals of a lowering.
@@ -280,6 +290,7 @@ func Read(st State) Grants {
 		StartConfirmed: st.Confirmed,
 		Classes:        make([]Class, 0, len(table)),
 		Kept:           []Kept{},
+		Enforced:       true,
 		DenOnly:        append([]DenOnlyItem(nil), denOnly...),
 	}
 	for _, c := range table {
@@ -299,6 +310,12 @@ func Read(st State) Grants {
 			out.Level = 0
 		}
 		g.Classes = append(g.Classes, out)
+	}
+	for _, k := range keptTable {
+		if st.holds(k.id) {
+			active := !st.Locked && !st.Held && st.Powers && st.Confirmed && !(st.God && keptGodTTY[k.id])
+			g.Kept = append(g.Kept, Kept{ID: k.id, Label: k.label, Active: active})
+		}
 	}
 	return g
 }

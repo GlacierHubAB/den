@@ -21,6 +21,7 @@ func testModel(w, h int) Model {
 	m.input = newInput(m.st)
 	m.input.Focus()
 	m.fitInput()
+	atDefaults(&m)
 	return m
 }
 

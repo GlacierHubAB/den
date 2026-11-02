@@ -16,6 +16,7 @@ import (
 
 func treeModel() Model {
 	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), width: 120, height: 40, tree: newTreeState(), tab: tabFleet}
+	atDefaults(&m)
 	m.base = sample()
 	for i := range m.base {
 		m.base[i].Session.SessionID = strings.ToLower(strings.ReplaceAll(m.base[i].Name, " ", "-"))

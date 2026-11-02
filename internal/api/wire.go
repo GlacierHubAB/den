@@ -54,6 +54,8 @@ type Event struct {
 type WireError struct {
 	Code    string `json:"code"`
 	Message string `json:"message,omitempty"`
+	// Data says more about some refusals: below_level's {class}.
+	Data map[string]string `json:"data,omitempty"`
 }
 
 // Error codes.
