@@ -58,6 +58,9 @@ type permsState struct {
 	// listing is what each card's listing hangs on, as last told to Den:
 	// every class's cap, God mode, the start confirm and kept.
 	listing string
+	// setInDen is when the human last set each class in Den's window, by
+	// class: shown only, never read to decide a level.
+	setInDen map[string]string
 }
 
 // The class limit: allows above routine, or by kept, at least this far
@@ -110,6 +113,10 @@ func (s *Server) grantsInput() (perm.State, string) {
 	}
 	st.Confirmed, st.Held = s.perms.confirmed, s.perms.held
 	st.Kept = append([]string(nil), s.perms.kept...)
+	st.SetInDen = map[string]string{}
+	for k, v := range s.perms.setInDen {
+		st.SetInDen[k] = v
+	}
 	return st, lineage
 }
 
@@ -168,7 +175,7 @@ func (s *Server) foldLocked(st perm.State, lineage string) {
 			down = append(down, id)
 		}
 	}
-	s.perms.denLevels, s.perms.caps, s.perms.lineage, s.perms.kept = after.DenLevels, nil, lineage, nil
+	s.perms.denLevels, s.perms.caps, s.perms.lineage, s.perms.kept, s.perms.setInDen = after.DenLevels, nil, lineage, nil, nil
 	s.perms.gen++
 	if len(down) == 1 {
 		s.note("A new console was paired, so " + perm.Label(down[0]) + " went back to Den's default, " + strconv.Itoa(perm.Default(down[0])) + " of 5.")

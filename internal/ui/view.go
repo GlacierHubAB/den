@@ -41,17 +41,31 @@ func (m Model) View() tea.View {
 	// Rows: header, panes, [completions], prompt (rules, attachments, the
 	// command line at its current height), hints. The panes take what is
 	// left, so a growing command line pushes them up rather than over them.
-	popup := m.completionRows(w)
-	prompt := m.prompt(w)
-	_, paneH := m.paneArea()
-	out.WriteString(m.panes(w, paneH) + "\n")
-	for _, r := range popup {
-		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+	if p := m.panel(); m.perms.open && p != nil {
+		// /permissions takes the panes and the prompt; its lines wrap and
+		// are never cut.
+		lines := m.permLines(w)
+		rows := h - len(header) - 1
+		for i := 0; i < rows; i++ {
+			if i < len(lines) {
+				out.WriteString(lines[i])
+			}
+			out.WriteString("\n")
+		}
+		out.WriteString(ansi.Truncate(" "+m.st.muted.Render(m.permFooter(p.GrantsRead())), w, ""))
+	} else {
+		popup := m.completionRows(w)
+		prompt := m.prompt(w)
+		_, paneH := m.paneArea()
+		out.WriteString(m.panes(w, paneH) + "\n")
+		for _, r := range popup {
+			out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+		}
+		for _, r := range prompt {
+			out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+		}
+		out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 	}
-	for _, r := range prompt {
-		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
-	}
-	out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 
 	content := out.String()
 	if m.sel.active {

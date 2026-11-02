@@ -220,6 +220,7 @@ type Model struct {
 	att attention // desktop notifications, reminders and stalls
 
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
+	perms  permState   // the /permissions panel (permissions.go)
 
 	guide guidanceState // orchestrator guidance and its approval (guidance.go)
 
@@ -1114,6 +1115,11 @@ func (m Model) inboxActive() bool { return m.tab == tabInbox }
 // Ctrl keys or slash commands, and Enter sends or, when the line is empty,
 // focuses the selected agent's terminal.
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.perms.open && msg.String() != "ctrl+c" {
+		// The panel takes every key while it is open: a card's ^Y never
+		// answers a card behind it, and its questions take only their own.
+		return m.permKey(msg)
+	}
 	m.help = false
 	compl := completions(m.input.Value(), m.agents)
 	switch msg.String() {
@@ -1737,6 +1743,8 @@ func (m Model) command(text string) (tea.Model, tea.Cmd) {
 		return m.apiCommand(fields[1:])
 	case "/view":
 		return m.viewCommand(fields[1:])
+	case "/permissions":
+		return m.permissionsCommand()
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":

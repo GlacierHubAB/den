@@ -43,7 +43,12 @@ func TestParseRecordRefuses(t *testing.T) {
 		"data after the object":          goodRecord + `{}`,
 		"a field Den does not write":     strings.Replace(goodRecord, `"kept":[]`, `"kept":[],"extra":1`, 1),
 		"a missing field":                strings.Replace(goodRecord, `,"kept":[]`, ``, 1),
-		"version 3":                      strings.Replace(goodRecord, `"version":1`, `"version":3`, 1),
+		"version 4":                      strings.Replace(goodRecord, `"version":1`, `"version":4`, 1),
+		"version 3 without set_in_den":   strings.Replace(goodRecord, `"version":1`, `"version":3`, 1),
+		"set_in_den in version 1":        strings.Replace(goodRecord, `"kept":[]`, `"kept":[],"set_in_den":{}`, 1),
+		"set_in_den of no class":         strings.Replace(strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":3`, 1), `"kept":[]`, `"kept":[],"set_in_den":{"code":"2026-10-30T12:00:00Z"}`, 1), `"code":"2026`, `"admin":"2026`, 1),
+		"set_in_den with no time":        strings.Replace(strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":3`, 1), `"kept":[]`, `"kept":[],"set_in_den":{"code":"2026-10-30T12:00:00Z"}`, 1), `"2026-10-30T12:00:00Z"`, `"soon"`, 1),
+		"set_in_den twice":               strings.Replace(strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":3`, 1), `"kept":[]`, `"kept":[],"set_in_den":{"code":"2026-10-30T12:00:00Z"}`, 1), `{"code":`, `{"code":"2026-10-30T12:00:00Z","code":`, 1),
 		"version 1 with kept":            strings.Replace(goodRecord, `"kept":[]`, `"kept":["close"]`, 1),
 		"a kept id Den does not have":    strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["admin"]`, 1),
 		"a kept id twice":                strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":2`, 1), `"kept":[]`, `"kept":["close","close"]`, 1),
@@ -131,5 +136,18 @@ func TestParseRecordKept(t *testing.T) {
 	}
 	if r, err := ParseRecord([]byte(goodRecord)); err != nil || len(r.Kept) != 0 {
 		t.Errorf("version 1: %v %+v", err, r.Kept)
+	}
+}
+
+// Version 3 keeps set_in_den by class, in UTC, and reads back.
+func TestParseRecordSetInDen(t *testing.T) {
+	v3 := strings.Replace(strings.Replace(goodRecord, `"version":1`, `"version":3`, 1), `"kept":[]`, `"kept":[],"set_in_den":{"code":"2026-10-30T14:00:00+02:00"}`, 1)
+	r, err := ParseRecord([]byte(v3))
+	if err != nil || r.SetInDen[Code] != "2026-10-30T12:00:00Z" {
+		t.Fatalf("%v %+v", err, r.SetInDen)
+	}
+	again, err := ParseRecord(r.Encode())
+	if err != nil || again.SetInDen[Code] != "2026-10-30T12:00:00Z" {
+		t.Errorf("Encode: %v %+v", err, again.SetInDen)
 	}
 }

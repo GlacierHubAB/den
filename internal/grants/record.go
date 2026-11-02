@@ -12,8 +12,8 @@ import (
 )
 
 // RecordVersion is the version of the stored record Den writes. Version 1,
-// from before kept existed, is still read, with kept empty.
-const RecordVersion = 2
+// from before kept, and version 2, from before set_in_den, are still read.
+const RecordVersion = 3
 
 // Record is what Den keeps of the levels across its restarts, in
 // permissions.json: the Den level of every class, the pairing lineage they
@@ -25,6 +25,9 @@ type Record struct {
 	DenLevels map[string]int
 	Kept      []string
 	Lowered   []Lowered
+	// SetInDen is when the human last set each class in Den's window, by
+	// class: shown only, never read to decide a level.
+	SetInDen map[string]string
 }
 
 // Lowered is one of a session's lowerings, as the record keeps it.
@@ -37,17 +40,23 @@ type Lowered struct {
 
 // stored is the record as written, keys in a fixed order.
 type stored struct {
-	Version   int            `json:"version"`
-	Lineage   string         `json:"lineage"`
-	DenLevels map[string]int `json:"den_levels"`
-	Kept      []string       `json:"kept"`
-	Lowered   []Lowered      `json:"lowered"`
+	Version   int               `json:"version"`
+	Lineage   string            `json:"lineage"`
+	DenLevels map[string]int    `json:"den_levels"`
+	Kept      []string          `json:"kept"`
+	Lowered   []Lowered         `json:"lowered"`
+	SetInDen  map[string]string `json:"set_in_den"`
 }
 
 // Encode is r as Den writes it: every class's Den level (its default when
 // r has none), the lowerings in the table's order.
 func (r Record) Encode() []byte {
-	out := stored{Version: RecordVersion, Lineage: r.Lineage, DenLevels: map[string]int{}, Kept: []string{}, Lowered: []Lowered{}}
+	out := stored{Version: RecordVersion, Lineage: r.Lineage, DenLevels: map[string]int{}, Kept: []string{}, Lowered: []Lowered{}, SetInDen: map[string]string{}}
+	for _, c := range table {
+		if at, ok := r.SetInDen[c.id]; ok {
+			out.SetInDen[c.id] = at
+		}
+	}
 	st := State{DenLevels: r.DenLevels, Kept: r.Kept}
 	for _, k := range keptTable {
 		if st.holds(k.id) {
@@ -77,22 +86,27 @@ var ErrDamaged = errors.New("damaged")
 // lineage of 32 lowercase hex digits or none; kept ids from the closed
 // list, none twice (empty in version 1); at most one lowering per class,
 // with a time Den can read and a console label that is not empty once
-// sanitized. Anything else is ErrDamaged, never a partial read.
+// sanitized; in version 3, set_in_den times by known class, shown only.
+// Anything else is ErrDamaged, never a partial read.
 func ParseRecord(raw []byte) (Record, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	top, err := object(dec, "version", "lineage", "den_levels", "kept", "lowered")
+	top, err := object(dec, "version", "lineage", "den_levels", "kept", "lowered", "set_in_den")
 	if err != nil {
 		return Record{}, ErrDamaged
 	}
 	if _, err := dec.Token(); err != io.EOF {
 		return Record{}, ErrDamaged // something after the object
 	}
-	if len(top) != 5 {
-		return Record{}, ErrDamaged // Den writes every key
-	}
 	version, ok := PlainInt(top["version"])
-	if !ok || version != 1 && version != RecordVersion {
+	if !ok || version < 1 || version > RecordVersion {
+		return Record{}, ErrDamaged
+	}
+	keys := 5 // Den writes every key of its version
+	if version >= 3 {
+		keys = 6
+	}
+	if len(top) != keys {
 		return Record{}, ErrDamaged
 	}
 	var r Record
@@ -128,6 +142,27 @@ func ParseRecord(raw []byte) (Record, error) {
 			}
 			seen[id] = true
 			r.Kept = append(r.Kept, id)
+		}
+	}
+	if raw, ok := top["set_in_den"]; ok {
+		at, err := object(decoder(raw), Classes()...)
+		if err != nil {
+			return Record{}, ErrDamaged
+		}
+		r.SetInDen = map[string]string{}
+		for id, raw := range at {
+			var s string
+			if json.Unmarshal(raw, &s) != nil {
+				return Record{}, ErrDamaged
+			}
+			t, err := time.Parse(time.RFC3339, s)
+			if err != nil {
+				return Record{}, ErrDamaged
+			}
+			r.SetInDen[id] = t.UTC().Format(time.RFC3339)
+		}
+		if len(r.SetInDen) == 0 {
+			r.SetInDen = nil
 		}
 	}
 	if raw, ok := top["lowered"]; ok {
@@ -174,6 +209,9 @@ func lowered(raw json.RawMessage) (Lowered, error) {
 	}
 	return l, nil
 }
+
+// LastStep is class id's highest level (its last step), 0 for no class.
+func LastStep(id string) int { return steps(id) }
 
 // steps is how many steps class id has: its highest level.
 func steps(id string) int {

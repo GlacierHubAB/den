@@ -1,0 +1,41 @@
+ What Drey may do                                                      Esc back
+
+  Drey is the dock on your desktop. Each bar says how much Drey may do on
+  its own for one kind of action; everything else it can only show you. Less
+  is to the left. Drey can lower a bar itself, never raise one. Saying no,
+  pausing and stopping are always allowed from Drey.
+
+  Your levels above the defaults and kept items wait for your Ctrl+Y on the
+  powers card, or press c here to confirm them now.
+
+▎ Everyday answers        █ █ █ █ ·   Answer in your words
+    Also answer an agent in your own words, shown whole in Drey's confirm
+    window; never to an agent holding desktop control.
+
+  Stop and close          █ ▒ · · ·   What Den can undo
+    Close an agent; you can reopen it.
+
+  Run commands            █ · · · ·   One command, shown whole
+    Run one command from Drey's confirm window, once, never 'always'.
+
+  Desktop control         ░ ░ · · ·   Only in Den
+    Drey shows it; you act in Den's window.
+
+  Send out                ░ ░ ░ · ·   Only in Den
+    Drey shows it; you act in Den's window.
+
+  Saying no, pausing and stopping are always allowed from Drey.
+  Raising permissions, "always allow" and pairing are done in Den.
+
+  DEN ONLY
+    Turn on God mode
+    Pair or re-pair a console, add a console
+    Turn the API on or unlock it
+    Raise any level here
+    Turn off or loosen a check (rate limits, read-first, input idle, desktop
+    pause, the audit)
+    Anything about a remote host
+    Widen permissions: "always", raising the mode, installs, allowing a
+    refused click, reading private files
+    Keep going over a budget, resume or set the weekly usage limit
+    Den's own window, ending your session, reloading Hyprland, the panic key
