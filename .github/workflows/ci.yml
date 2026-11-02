@@ -36,7 +36,8 @@ env:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where several test packages fail; every job here runs on 24.04 until the 26.04 fixes land, then unpin.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -92,7 +93,7 @@ jobs:
           "$RUNNER_TEMP/actionlint" -color
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -158,7 +159,7 @@ jobs:
         run: go test -run '^$' -fuzz FuzzReadMessage -fuzztime 30s ./internal/sysd/
 
   vuln:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -176,7 +177,7 @@ jobs:
         run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
 
   secrets:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -199,7 +200,7 @@ jobs:
   # suite. If the file list cannot be read, the slow suite runs.
   paths:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -253,7 +254,7 @@ jobs:
   ci-passed:
     if: always()
     needs: [lint, test, vuln, secrets, paths, heavy]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:

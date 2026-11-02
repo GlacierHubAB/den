@@ -34,7 +34,8 @@ env:
 jobs:
   slow:
     if: inputs.which != 'race3'
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where several test packages fail; every job here runs on 24.04 until the 26.04 fixes land, then unpin.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -81,7 +82,7 @@ jobs:
 
   race3:
     if: inputs.which != 'slow'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
