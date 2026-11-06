@@ -84,6 +84,9 @@ type deskMission struct {
 	// humanPaused: the human paused it with /desktop pause; every call
 	// but a look waits until /desktop resume (desk_hold.go).
 	humanPaused bool
+	// x11: the start card's switch for a task, set there by the human and
+	// fixed for the mission: its launches get Xwayland (desk_sand.go).
+	x11 bool
 	// queued are the actions the human approved while it was paused: each
 	// runs only once it goes on, decided again then (desk_hold.go);
 	// flushing while that read of the desktop is out.

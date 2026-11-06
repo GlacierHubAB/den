@@ -88,6 +88,16 @@ func (s *Server) RaiseDenLevel(class string, level int, seq uint64) error {
 			err = ErrMoved
 			return
 		}
+		// The raise counter: only here does a count go up, by one, in the
+		// same step as the raise, so the read (and its seq) always moves.
+		if s.perms.raiseN == nil {
+			s.perms.raiseN = map[string]int{}
+		}
+		if s.perms.raisedAt == nil {
+			s.perms.raisedAt = map[string]string{}
+		}
+		s.perms.raiseN[class]++
+		s.perms.raisedAt[class] = time.Now().UTC().Format(time.RFC3339)
 		s.setDenLevelLocked(class, level, false)
 	})
 	return err

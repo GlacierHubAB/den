@@ -63,6 +63,38 @@ func tool(name string) (string, error) {
 	return "", fmt.Errorf("no %s in %s", name, strings.Join(toolDirs, " or "))
 }
 
+// RootTool is a tool from /usr/bin or /bin that is root's, as tool takes
+// systemd's: for the sandbox's bwrap and pasta.
+func RootTool(name string) (string, error) { return tool(name) }
+
+// RootToolLink is RootTool by its own name, the link not resolved: for a
+// tool that reads its mode from its name (pasta is a link to passt). The
+// link and its folder are root's as well as the file it leads to.
+func RootToolLink(name string) (string, error) {
+	real, err := tool(name)
+	if err != nil {
+		return "", err
+	}
+	for _, dir := range toolDirs {
+		p := filepath.Join(dir, name)
+		if r, err := filepath.EvalSymlinks(p); err != nil || r != real {
+			continue
+		}
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return "", err
+		}
+		if st, ok := fi.Sys().(*syscall.Stat_t); !ok || st.Uid != 0 {
+			return "", fmt.Errorf("%s: not owned by root", p)
+		}
+		if err := rootOwned(dir); err != nil {
+			return "", fmt.Errorf("%s: %v", dir, err)
+		}
+		return p, nil
+	}
+	return "", fmt.Errorf("no %s in %s", name, strings.Join(toolDirs, " or "))
+}
+
 // rootOwned checks a path is root's and not writable by group or others.
 func rootOwned(p string) error {
 	fi, err := os.Stat(p)

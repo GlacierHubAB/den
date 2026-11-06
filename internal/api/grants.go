@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -61,6 +63,24 @@ type permsState struct {
 	// setInDen is when the human last set each class in Den's window, by
 	// class: shown only, never read to decide a level.
 	setInDen map[string]string
+	// The raise counter (perm.State's): only RaiseDenLevel counts raiseN
+	// up and stamps raisedAt; resetRaisesLocked starts them again from 0
+	// under a new raiseEpoch. Never read to decide anything.
+	raiseEpoch string
+	raiseN     map[string]int
+	raisedAt   map[string]string
+}
+
+// resetRaisesLocked starts the raise counter again: a new epoch, every
+// count 0 and no raise time, in this one section under perms.mu, so no
+// read shows a new epoch with old counts or the other way round.
+// s.perms.mu is held.
+func (s *Server) resetRaisesLocked() {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("den: no randomness for the raise epoch: " + err.Error())
+	}
+	s.perms.raiseEpoch, s.perms.raiseN, s.perms.raisedAt = hex.EncodeToString(b), nil, nil
 }
 
 // The class limit: allows above routine, or by kept, at least this far
@@ -116,6 +136,18 @@ func (s *Server) grantsInput() (perm.State, string) {
 	st.SetInDen = map[string]string{}
 	for k, v := range s.perms.setInDen {
 		st.SetInDen[k] = v
+	}
+	if s.perms.raiseEpoch == "" {
+		// Den counts raises from its first read, with or without a file
+		// (loadPerms may never run): a read never says "" while it counts.
+		s.resetRaisesLocked()
+	}
+	st.RaiseEpoch, st.RaiseN, st.RaisedAt = s.perms.raiseEpoch, map[string]int{}, map[string]string{}
+	for k, v := range s.perms.raiseN {
+		st.RaiseN[k] = v
+	}
+	for k, v := range s.perms.raisedAt {
+		st.RaisedAt[k] = v
 	}
 	return st, lineage
 }
@@ -176,6 +208,7 @@ func (s *Server) foldLocked(st perm.State, lineage string) {
 		}
 	}
 	s.perms.denLevels, s.perms.caps, s.perms.lineage, s.perms.kept, s.perms.setInDen = after.DenLevels, nil, lineage, nil, nil
+	s.resetRaisesLocked() // the new pairing's counters start from 0, in this same section
 	s.perms.gen++
 	if len(down) == 1 {
 		s.note("A new console was paired, so " + perm.Label(down[0]) + " went back to Den's default, " + strconv.Itoa(perm.Default(down[0])) + " of 5.")

@@ -67,12 +67,19 @@ var dockVerbs = []dockVerb{
 		return api.DockRefused, "connecting with a changed policy is for Den only"
 	}},
 	// Stopping and pausing desktop control only lower: allowed from the
-	// dock. Resuming an agent is the human's, in Den's window.
+	// dock. Resuming an agent, and anything else /desktop does (X11 apps
+	// for a task), is the human's, in Den's window.
 	{"/desktop", nil, "/desktop [stop|pause|resume|keep]", "desktop control: stop or pause it at once, or keep the last mission's files", func(a []string) (string, string) {
-		if len(a) > 0 && a[0] == "resume" {
+		if len(a) == 0 {
+			return api.DockOK, ""
+		}
+		if w := strings.ToLower(a[0]); len(a) == 1 && (w == "stop" || w == "pause" || w == "keep") {
+			return api.DockOK, ""
+		}
+		if strings.EqualFold(a[0], "resume") {
 			return api.DockDenScreen, "resuming a desktop agent is done in Den's window"
 		}
-		return api.DockOK, ""
+		return api.DockDenScreen, "that is done in Den's window"
 	}},
 	{"/open", []string{"/o", "/focus"}, "/open", "focus the agent's terminal", always(api.DockDenScreen, whyScreen)},
 	// The levels are set in Den's window only: a console never opens it.

@@ -23,6 +23,9 @@ func TestParseRecord(t *testing.T) {
 		t.Errorf("read %+v", r)
 	}
 	again, err := ParseRecord(r.Encode())
+	// Version 4 writes every class's raise count, 0 here, and an epoch not
+	// started ("", which Den's store replaces with a new one).
+	want.RaiseN = map[string]int{Routine: 0, Destructive: 0, Code: 0, Desktop: 0, Outward: 0}
 	if err != nil || !reflect.DeepEqual(again, want) {
 		t.Errorf("Encode does not read back: %v %+v\n%s", err, again, r.Encode())
 	}

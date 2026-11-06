@@ -12,8 +12,10 @@ import (
 )
 
 // RecordVersion is the version of the stored record Den writes. Version 1,
-// from before kept, and version 2, from before set_in_den, are still read.
-const RecordVersion = 3
+// from before kept, version 2, from before set_in_den, and version 3, from
+// before the raise counter, are still read (with no raise counter: Den
+// starts one).
+const RecordVersion = 4
 
 // Record is what Den keeps of the levels across its restarts, in
 // permissions.json: the Den level of every class, the pairing lineage they
@@ -28,6 +30,11 @@ type Record struct {
 	// SetInDen is when the human last set each class in Den's window, by
 	// class: shown only, never read to decide a level.
 	SetInDen map[string]string
+	// The raise counter (State's): its epoch, "" in a record from before
+	// version 4; each class's count of raises; the last raise's time.
+	RaiseEpoch string
+	RaiseN     map[string]int
+	RaisedAt   map[string]string
 }
 
 // Lowered is one of a session's lowerings, as the record keeps it.
@@ -40,21 +47,29 @@ type Lowered struct {
 
 // stored is the record as written, keys in a fixed order.
 type stored struct {
-	Version   int               `json:"version"`
-	Lineage   string            `json:"lineage"`
-	DenLevels map[string]int    `json:"den_levels"`
-	Kept      []string          `json:"kept"`
-	Lowered   []Lowered         `json:"lowered"`
-	SetInDen  map[string]string `json:"set_in_den"`
+	Version    int               `json:"version"`
+	Lineage    string            `json:"lineage"`
+	DenLevels  map[string]int    `json:"den_levels"`
+	Kept       []string          `json:"kept"`
+	Lowered    []Lowered         `json:"lowered"`
+	SetInDen   map[string]string `json:"set_in_den"`
+	RaiseEpoch string            `json:"raise_epoch"`
+	RaiseN     map[string]int    `json:"raise_n"`
+	RaisedAt   map[string]string `json:"raised_at"`
 }
 
 // Encode is r as Den writes it: every class's Den level (its default when
-// r has none), the lowerings in the table's order.
+// r has none) and raise count, the lowerings in the table's order.
 func (r Record) Encode() []byte {
-	out := stored{Version: RecordVersion, Lineage: r.Lineage, DenLevels: map[string]int{}, Kept: []string{}, Lowered: []Lowered{}, SetInDen: map[string]string{}}
+	out := stored{Version: RecordVersion, Lineage: r.Lineage, DenLevels: map[string]int{}, Kept: []string{}, Lowered: []Lowered{}, SetInDen: map[string]string{},
+		RaiseEpoch: r.RaiseEpoch, RaiseN: map[string]int{}, RaisedAt: map[string]string{}}
 	for _, c := range table {
 		if at, ok := r.SetInDen[c.id]; ok {
 			out.SetInDen[c.id] = at
+		}
+		out.RaiseN[c.id] = r.RaiseN[c.id]
+		if at, ok := r.RaisedAt[c.id]; ok {
+			out.RaisedAt[c.id] = at
 		}
 	}
 	st := State{DenLevels: r.DenLevels, Kept: r.Kept}
@@ -86,12 +101,15 @@ var ErrDamaged = errors.New("damaged")
 // lineage of 32 lowercase hex digits or none; kept ids from the closed
 // list, none twice (empty in version 1); at most one lowering per class,
 // with a time Den can read and a console label that is not empty once
-// sanitized; in version 3, set_in_den times by known class, shown only.
+// sanitized; in version 3, set_in_den times by known class, shown only;
+// in version 4, the raise counter: an epoch of 32 lowercase hex digits,
+// every class's raise count as a plain integer from 0, and raised_at times
+// by known class. Times read as RFC 3339 and are kept in UTC, as Den writes them.
 // Anything else is ErrDamaged, never a partial read.
 func ParseRecord(raw []byte) (Record, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
-	top, err := object(dec, "version", "lineage", "den_levels", "kept", "lowered", "set_in_den")
+	top, err := object(dec, "version", "lineage", "den_levels", "kept", "lowered", "set_in_den", "raise_epoch", "raise_n", "raised_at")
 	if err != nil {
 		return Record{}, ErrDamaged
 	}
@@ -105,6 +123,11 @@ func ParseRecord(raw []byte) (Record, error) {
 	keys := 5 // Den writes every key of its version
 	if version >= 3 {
 		keys = 6
+	}
+	if version >= 4 {
+		keys = 9
+	} else if top["raise_epoch"] != nil || top["raise_n"] != nil || top["raised_at"] != nil {
+		return Record{}, ErrDamaged
 	}
 	if len(top) != keys {
 		return Record{}, ErrDamaged
@@ -145,24 +168,34 @@ func ParseRecord(raw []byte) (Record, error) {
 		}
 	}
 	if raw, ok := top["set_in_den"]; ok {
-		at, err := object(decoder(raw), Classes()...)
-		if err != nil {
+		if r.SetInDen, err = times(raw); err != nil {
 			return Record{}, ErrDamaged
 		}
-		r.SetInDen = map[string]string{}
-		for id, raw := range at {
-			var s string
-			if json.Unmarshal(raw, &s) != nil {
-				return Record{}, ErrDamaged
-			}
-			t, err := time.Parse(time.RFC3339, s)
-			if err != nil {
-				return Record{}, ErrDamaged
-			}
-			r.SetInDen[id] = t.UTC().Format(time.RFC3339)
+	}
+	if raw, ok := top["raised_at"]; ok {
+		if r.RaisedAt, err = times(raw); err != nil {
+			return Record{}, ErrDamaged
 		}
-		if len(r.SetInDen) == 0 {
-			r.SetInDen = nil
+	}
+	if raw, ok := top["raise_epoch"]; ok {
+		// "" is a counter not started: it starts again from 0, as one from
+		// before version 4 does.
+		if json.Unmarshal(raw, &r.RaiseEpoch) != nil || r.RaiseEpoch != "" && !lineageOK(r.RaiseEpoch) {
+			return Record{}, ErrDamaged
+		}
+	}
+	if raw, ok := top["raise_n"]; ok {
+		counts, err := object(decoder(raw), Classes()...)
+		if err != nil || len(counts) != len(table) {
+			return Record{}, ErrDamaged
+		}
+		r.RaiseN = map[string]int{}
+		for id, raw := range counts {
+			n, ok := PlainInt(raw)
+			if !ok || n < 0 || n > 1<<31 {
+				return Record{}, ErrDamaged
+			}
+			r.RaiseN[id] = int(n)
 		}
 	}
 	if raw, ok := top["lowered"]; ok {
@@ -181,6 +214,31 @@ func ParseRecord(raw []byte) (Record, error) {
 		}
 	}
 	return r, nil
+}
+
+// times reads an object of RFC 3339 times by known class, in UTC;
+// nil for none.
+func times(raw json.RawMessage) (map[string]string, error) {
+	at, err := object(decoder(raw), Classes()...)
+	if err != nil {
+		return nil, ErrDamaged
+	}
+	out := map[string]string{}
+	for id, raw := range at {
+		var s string
+		if json.Unmarshal(raw, &s) != nil {
+			return nil, ErrDamaged
+		}
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, ErrDamaged
+		}
+		out[id] = t.UTC().Format(time.RFC3339) // as Den writes them: so they read back unchanged
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // lowered reads one lowering of a stored record.

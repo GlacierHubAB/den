@@ -110,8 +110,20 @@ func (s *Server) loadPerms() []perm.Lowered {
 		// list entries a console removed. They are gone for good.
 		rec.Kept, keptGone = nil, true
 	}
+	if why != "" {
+		// What only a file Den vouches for may carry (F3): when the human
+		// last set a class, and the raise counter. From any other, the
+		// counter starts again, below.
+		rec.SetInDen, rec.RaiseEpoch, rec.RaiseN, rec.RaisedAt = nil, "", nil, nil
+	}
 	s.perms.mu.Lock()
 	s.perms.denLevels, s.perms.lineage, s.perms.startWhy, s.perms.kept, s.perms.setInDen = rec.DenLevels, rec.Lineage, why, rec.Kept, rec.SetInDen
+	s.perms.raiseEpoch, s.perms.raiseN, s.perms.raisedAt = rec.RaiseEpoch, rec.RaiseN, rec.RaisedAt
+	if s.perms.raiseEpoch == "" {
+		// No file, one Den cannot vouch for, or one from before the
+		// counter: it starts from 0 under a new epoch.
+		s.resetRaisesLocked()
+	}
 	// The file is written again at once: this session has no lowerings
 	// yet, and a file Den could not read becomes Den's own.
 	s.perms.gen++
@@ -201,6 +213,13 @@ func (s *Server) permRecordLocked() perm.Record {
 	}
 	for k, v := range s.perms.denLevels {
 		r.DenLevels[k] = v
+	}
+	r.RaiseEpoch, r.RaiseN, r.RaisedAt = s.perms.raiseEpoch, map[string]int{}, map[string]string{}
+	for k, v := range s.perms.raiseN {
+		r.RaiseN[k] = v
+	}
+	for k, v := range s.perms.raisedAt {
+		r.RaisedAt[k] = v
 	}
 	for class, c := range s.perms.caps {
 		r.Lowered = append(r.Lowered, perm.Lowered{Class: class, Level: c.Level, At: c.At, Console: c.Console})

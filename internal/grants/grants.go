@@ -107,6 +107,12 @@ type Class struct {
 	Default  int       `json:"default"`
 	Steps    []Step    `json:"steps"`
 	SetInDen *SetInDen `json:"set_in_den"`
+	// RaiseN counts the human's raises of the class in Den's window in
+	// this raise_epoch, RaisedAt the last one's time (null for none): a
+	// console reads them to drop a lowering the human has since raised
+	// over. Never read by Den to decide anything.
+	RaiseN   int     `json:"raise_n"`
+	RaisedAt *string `json:"raised_at"`
 }
 
 // SetInDen says when the human last set a class in Den's window: shown
@@ -144,10 +150,13 @@ type Grants struct {
 	God    bool `json:"god"`
 	// StartConfirmed: the human pressed Ctrl+Y on Den's powers card since
 	// Den started. Until then, each class is capped at its default.
-	StartConfirmed bool          `json:"start_confirmed"`
-	Classes        []Class       `json:"classes"`
-	Kept           []Kept        `json:"kept"`
-	DenOnly        []DenOnlyItem `json:"den_only"`
+	StartConfirmed bool `json:"start_confirmed"`
+	// RaiseEpoch is the run of raise counters the classes' raise_n belong
+	// to: a new one each time they all start again from 0.
+	RaiseEpoch string        `json:"raise_epoch"`
+	Classes    []Class       `json:"classes"`
+	Kept       []Kept        `json:"kept"`
+	DenOnly    []DenOnlyItem `json:"den_only"`
 }
 
 // State is what the read is worked out from: Den's own record only.
@@ -172,6 +181,15 @@ type State struct {
 	// SetInDen is when the human last set each class in Den's window, by
 	// class (RFC 3339 UTC): shown only.
 	SetInDen map[string]string
+	// The raise counter, for a console's own lowering: RaiseN is how many
+	// times the human raised each class in Den's window (only a raise
+	// counts it up), RaisedAt the last one's time, RaiseEpoch the run of
+	// counters they belong to (a new one each time the counters start
+	// again from 0). Read, written and shown only: never read to decide a
+	// level, a cap, the start rule, kept or an answer.
+	RaiseEpoch string
+	RaiseN     map[string]int
+	RaisedAt   map[string]string
 }
 
 // The refusals of a lowering.
@@ -297,6 +315,7 @@ func Read(st State) Grants {
 		Locked:         st.Locked,
 		God:            st.God,
 		StartConfirmed: st.Confirmed,
+		RaiseEpoch:     st.RaiseEpoch,
 		Classes:        make([]Class, 0, len(table)),
 		Kept:           []Kept{},
 		Enforced:       true,
@@ -310,6 +329,11 @@ func Read(st State) Grants {
 		}
 		if at, ok := st.SetInDen[c.id]; ok {
 			out.SetInDen = &SetInDen{At: at}
+		}
+		out.RaiseN = st.RaiseN[c.id]
+		if at, ok := st.RaisedAt[c.id]; ok {
+			at := at
+			out.RaisedAt = &at
 		}
 		for i := range out.Steps {
 			s := Step{Level: i + 1, Label: NoStep}

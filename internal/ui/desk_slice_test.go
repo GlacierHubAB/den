@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/desksand"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/notify"
@@ -29,6 +30,12 @@ type fakeSys struct {
 	failThaw, failStop, stuck bool // stuck: a stop never ends
 	freezeSlow                bool // FreezerState stays "freezing"
 	cgroups                   map[int]string
+	// The sandbox: why a launch's is refused, the X11 switch each
+	// launch's was built with, the walks run and what they find.
+	sandErr   error
+	sandX11   []bool
+	walks     int
+	walkFinds []string
 }
 
 var deskSys *fakeSys
@@ -37,6 +44,26 @@ var deskSys *fakeSys
 func deskSysFake() *fakeSys {
 	f := &fakeSys{units: map[string]*sysd.UnitState{}, cgroups: map[int]string{}}
 	deskSys = f
+	// Nor run bwrap or pasta: a launch's sandbox is built from fake tools
+	// (the argv is pinned in internal/desksand), and its walk is clean
+	// unless a test says otherwise.
+	deskSandSpec = func(dir, app string, x11 bool) (desksand.Spec, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.sandErr != nil {
+			return desksand.Spec{}, f.sandErr
+		}
+		f.sandX11 = append(f.sandX11, x11)
+		return desksand.Spec{Bwrap: "/fake/bwrap", Pasta: "/fake/pasta", Den: "/fake/den", Mission: dir, App: app, X11: x11,
+			Exists: func(string) bool { return false }}, nil
+	}
+	deskSandErr = func() error { return nil } // the card's text is the same on every machine
+	deskSandWalk = func(s desksand.Spec) ([]string, error) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.walks++
+		return f.walkFinds, nil
+	}
 	deskSysStart = func(s sysd.Service) error {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -531,12 +558,18 @@ func TestDeskLaunchRunsInTheSlice(t *testing.T) {
 		t.Fatalf("started %v", f.started)
 	}
 	s := f.started[0]
-	if s.Slice != dm.slice() || strings.Join(s.Argv, " ") != "/bin/sh -c foot -e sh" {
+	argv := strings.Join(s.Argv, " ")
+	if s.Slice != dm.slice() || !strings.HasPrefix(argv, "/fake/pasta ") || !strings.Contains(argv, " /fake/bwrap ") ||
+		!strings.HasSuffix(argv, " -- /bin/sh -c foot -e sh") || s.Dir != desksand.Work(dm.Dir) {
 		t.Errorf("service %+v", s)
 	}
 	env := strings.Join(s.Env, "\n")
-	if strings.Contains(env, "DEN_SOCKET=") || strings.Contains(env, "HYPRLAND_INSTANCE_SIGNATURE=") || strings.Contains(env, "TMUX=") {
+	if strings.Contains(env, "DEN_SOCKET=") || strings.Contains(env, "HYPRLAND_INSTANCE_SIGNATURE=") || strings.Contains(env, "TMUX=") ||
+		!strings.Contains(env, "DBUS_SESSION_BUS_ADDRESS=disabled:") {
 		t.Errorf("env keeps what it must not:\n%s", env)
+	}
+	if f.walks != 1 || !deskWalked(dm.Dir, dm.ID, false) {
+		t.Errorf("first launch: %d walks, walk.ok %v", f.walks, deskWalked(dm.Dir, dm.ID, false))
 	}
 	if !dm.launched {
 		t.Error("not marked launched")
