@@ -20,5 +20,6 @@ body:
       label: den doctor
       description: |
         If it is about your setup: output of `den doctor` (read it before you paste), or `den version`
-        and `claude --version` on releases up to v0.6.1.
+        and `claude --version` on releases up to v0.6.1. If something went wrong rather than you
+        asking how, `den feedback` gives us more, and is as safe to paste.
       render: text
