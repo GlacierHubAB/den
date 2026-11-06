@@ -15,6 +15,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
+	"github.com/GlacierHubAB/den/internal/desksand"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/sysd"
 )
@@ -117,28 +118,6 @@ func (dm *deskMission) inSlice(pid int) bool {
 	return pid > 1 && strings.Contains(deskCgroupOf(pid), "/"+dm.slice()+"/")
 }
 
-// deskLaunchNames are the only variables a launched program gets, with
-// Den's values: hypruse's passthrough (desktop.childPassthrough) without
-// Hyprland's instance, and the user's own names. Every other variable,
-// the user manager's own included, is unset for it (sysd.StartArgs):
-// never Den's, tmux's, or Hyprland's instance, and no DISPLAY (X11 apps
-// are a start-card choice of a later step).
-var deskLaunchNames = []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
-	"XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP",
-	"XDG_DATA_DIRS", "XDG_CONFIG_DIRS"}
-
-// deskLaunchEnv is what a launched program gets: deskLaunchNames, as Den
-// has them.
-func deskLaunchEnv() []string {
-	var out []string
-	for _, k := range deskLaunchNames {
-		if v, ok := os.LookupEnv(k); ok {
-			out = append(out, k+"="+v)
-		}
-	}
-	return out
-}
-
 // issueCall counts a call Den lets through as in flight, and names it for
 // the proxy's done. A look, and launch (Den's own), are not counted.
 func (dm *deskMission) issueCall(tool string) string {
@@ -192,17 +171,24 @@ func (m *Model) deskLaunch(r *bridge.Request, dm *deskMission, v desktop.Verdict
 		dm.inflight = map[string]time.Time{}
 	}
 	dm.inflight[call] = time.Now() // until its service runs and its window is placed
-	svc := sysd.Service{Name: dm.service(dm.launches), Slice: dm.slice(), Description: "Den desktop mission " + dm.ID, Argv: []string{"/bin/sh", "-c", command}, Env: deskLaunchEnv()}
-	if home, err := os.UserHomeDir(); err == nil {
-		svc.Dir = home
-	}
+	svc := sysd.Service{Name: dm.service(dm.launches), Slice: dm.slice(), Description: "Den desktop mission " + dm.ID}
 	seen := map[string]bool{}
 	for _, w := range before.Windows {
 		seen[w.Address] = true
 	}
-	id := dm.ID
+	id, dir, x11 := dm.ID, dm.Dir, dm.x11
 	return func() tea.Msg {
 		out := deskLaunchedMsg{req: r, mission: id, call: call}
+		// The sandbox (desk_sand.go): refused rather than loosened.
+		spec, err := deskSandSpec(dir, deskProfileName(command), x11)
+		if err == nil {
+			err = deskSandCheck(spec, id)
+		}
+		if err != nil {
+			out.err = err
+			return out
+		}
+		svc.Argv, svc.Env, svc.Dir = desksand.Argv(spec, command), desksand.Env(spec), desksand.Work(dir)
 		if err := deskSysStart(svc); err != nil {
 			out.err = err
 			return out

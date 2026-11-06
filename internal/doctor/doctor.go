@@ -68,6 +68,7 @@ type Env struct {
 	Home     string                              // the user's home directory
 	Getenv   func(string) string                 // the environment
 	LookPath func(string) (string, error)        // exec.LookPath
+	RootTool func(string) (string, error)        // sysd.RootTool: a root-owned tool from /usr/bin or /bin
 	Version  func(path string) (string, error)   // the output of `path --version`, bounded
 	ReadFile func(string) ([]byte, error)        // os.ReadFile
 	Tail     func(string, int64) ([]byte, error) // at most the last n bytes of a file
@@ -112,7 +113,7 @@ const (
 // Run runs every check, in README's order.
 func Run(e Env) []Result {
 	return []Result{
-		claude(e), sessions(e), hooksCheck(e), den(e), hookLog(e), focus(e), terminal(e),
+		claude(e), sessions(e), hooksCheck(e), den(e), hookLog(e), focus(e), sandbox(e), terminal(e),
 		notify(e), git(e), modsCheck(e), remotes(e), orchestrator(e), configCheck(e),
 	}
 }
@@ -415,6 +416,31 @@ func focus(e Env) Result {
 			"Run den from inside your Hyprland session; `den explain <name>` says how a window matched")
 	}
 	return result("focus", OK, "Hyprland and hyprctl found: Enter focuses an agent's terminal", "")
+}
+
+// sandbox is what a desktop task's opened apps run in: bwrap and pasta,
+// root's, from /usr/bin or /bin. Without either, a task opens no apps; Den
+// installs neither.
+func sandbox(e Env) Result {
+	if e.Getenv("HYPRLAND_INSTANCE_SIGNATURE") == "" {
+		return result("sandbox", Skip, "not on Hyprland: desktop missions are off", "")
+	}
+	look := e.RootTool
+	if look == nil {
+		look = func(string) (string, error) { return "", fs.ErrNotExist }
+	}
+	var missing []string
+	if _, err := look("bwrap"); err != nil {
+		missing = append(missing, "bwrap (bubblewrap)")
+	}
+	if _, err := look("pasta"); err != nil {
+		missing = append(missing, "pasta (passt)")
+	}
+	if len(missing) > 0 {
+		return result("sandbox", Warn, "no "+strings.Join(missing, " or ")+" in /usr/bin as root's: a desktop task can't open apps",
+			"Install "+strings.Join(missing, " and ")+" from your distribution; Den never installs them")
+	}
+	return result("sandbox", OK, "bwrap and pasta found: apps a desktop task opens run sandboxed", "")
 }
 
 // terminal follows spawn.launch: xdg-terminal-exec (which may choose

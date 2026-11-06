@@ -51,6 +51,7 @@ func healthy() Env {
 		LookPath: func(name string) (string, error) {
 			return "/usr/bin/" + name, nil
 		},
+		RootTool: func(name string) (string, error) { return "/usr/bin/" + name, nil },
 		Version: func(p string) (string, error) {
 			if strings.HasSuffix(p, "/git") {
 				return "git version 2.47.1\n", nil
@@ -92,8 +93,8 @@ func TestHealthyRunFailsNothing(t *testing.T) {
 			t.Errorf("%s: an ok result has a fix: %s", r.ID, r.Fix)
 		}
 	}
-	if len(rs) != 13 {
-		t.Errorf("%d checks, want 13", len(rs))
+	if len(rs) != 14 {
+		t.Errorf("%d checks, want 14", len(rs))
 	}
 }
 
@@ -161,6 +162,13 @@ func TestChecks(t *testing.T) {
 		}, Skip, "not on Hyprland"},
 		{"focus no hyprctl", "focus", func(e *Env) { e.LookPath = lookExcept("hyprctl") }, Warn, "hyprctl is not on PATH"},
 		{"focus no signature", "focus", func(e *Env) { e.Getenv = func(string) string { return "" } }, Warn, "HYPRLAND_INSTANCE_SIGNATURE is not set"},
+
+		// sandbox: bwrap and pasta, root's, never installed by Den
+		{"sandbox ok", "sandbox", nil, OK, "bwrap and pasta found"},
+		{"sandbox not hyprland", "sandbox", func(e *Env) { e.Getenv = func(string) string { return "" } }, Skip, "desktop missions are off"},
+		{"sandbox no pasta", "sandbox", func(e *Env) { e.RootTool = rootExcept("pasta") }, Warn, "no pasta (passt) in /usr/bin"},
+		{"sandbox no bwrap", "sandbox", func(e *Env) { e.RootTool = rootExcept("bwrap") }, Warn, "no bwrap (bubblewrap) in /usr/bin"},
+		{"sandbox neither", "sandbox", func(e *Env) { e.RootTool = nil }, Warn, "no bwrap (bubblewrap) or pasta (passt)"},
 
 		// terminal: spawn.launch's order
 		{"terminal xdg", "terminal", nil, OK, "xdg-terminal-exec"},
@@ -274,6 +282,15 @@ func lookExcept(missing string) func(string) (string, error) {
 			return "", errors.New("exec: " + name + ": not found")
 		}
 		return "/usr/bin/" + name, nil
+	}
+}
+
+func rootExcept(missing string) func(string) (string, error) {
+	return func(n string) (string, error) {
+		if n == missing {
+			return "", fs.ErrNotExist
+		}
+		return "/usr/bin/" + n, nil
 	}
 }
 

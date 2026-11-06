@@ -134,6 +134,8 @@ func main() {
 		desktopView(os.Args[2:])
 	case "desktop-mcp":
 		runDesktopMCP(os.Args[2:])
+	case "desk-wrap":
+		deskWrap(os.Args[2:])
 	case "install-hypruse":
 		installHypruseCmd(os.Args[2:])
 	case "pair":
@@ -185,6 +187,9 @@ func runTUI() {
 	if left := ui.SweepDesktopSlices(); len(left) > 0 {
 		fmt.Fprintf(os.Stderr, "den: %d app group(s) a desktop mission launched before are still stopping; Den's window holds approving answers until they are gone\n", len(left))
 	}
+	// The sandbox's tools and Den's own binary are taken now, once: a
+	// launch is refused if the binary changes after this.
+	ui.TakeDesktopSandbox()
 	m := ui.New(config.Load())
 	p := tea.NewProgram(m)
 	// A closed terminal (SIGHUP) ends Den as a quit does, so it exits
