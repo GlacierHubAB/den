@@ -153,6 +153,8 @@ func TestGrantsTable(t *testing.T) {
 		"a class above its default, after the start confirm":  {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Destructive: 2}},
 		"God mode, desktop set above 0":                       {Powers: true, God: true, Confirmed: true, DenLevels: map[string]int{perm.Desktop: 2}},
 		"after a new pairing folded a lowering in":            {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Routine: 2}},
+		"kept from before, one paused by God mode":            {Powers: true, God: true, Confirmed: true, Kept: []string{perm.KeptClose, perm.KeptMerge}},
+		"a class set in Den's window":                         {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Outward: 2}, SetInDen: map[string]string{perm.Outward: "2026-11-02T09:30:00Z"}},
 	}
 	for _, c := range convcases.GrantsCases {
 		st, ok := states[c.Name]

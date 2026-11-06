@@ -1060,7 +1060,12 @@ no, pausing and stopping are always allowed from the console).
   further step"); level 0, the empty bar, is "Only in Den". `session` is
   `{level, at, console}` while a console's lowering holds for this Den
   session (`console` is Den's label for it, `at` Den's clock), else null.
-  `set_in_den` is null for now.
+  `set_in_den` is `{"at": "<RFC 3339 UTC>"}` while the human last set the
+  class in Den's window (`/permissions`), else null: shown only, never a
+  level. Only the human raises a class, in Den's window with Ctrl+Y on its
+  question, and a console hears it as a `grants` event like any change;
+  no verb raises one. A human's lowering in Den keeps your session when
+  it is below the new `den_level`.
 - `grants.lower {class, level, seq}` lowers one class for this Den session:
   for a proved connection of the console paired now, with or without its
   powers, locked or in God mode (a lowering is always allowed). `level` and

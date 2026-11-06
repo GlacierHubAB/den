@@ -1,0 +1,18 @@
+ What Drey may do                                                                                                                  Esc back
+
+  Drey is the dock on your desktop. Each bar says how much Drey may do on its own for one kind of action; everything else it can only
+  show you. Less is to the left. Drey can lower a bar itself, never raise one. Saying no, pausing and stopping are always allowed from
+  Drey.
+
+  KEPT FROM BEFORE
+    Allow a tool once
+    Approve a plan
+    Close an agent
+    Keep going over a budget
+    Reopen a closed agent
+    Merge a branch
+    Clean up a worktree
+    Change a mission
+    Answer "always" on a card
+
+  Enter  Use the recommended settings (removes the kept items; raises nothing)   Esc  keep them for now

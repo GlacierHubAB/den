@@ -98,15 +98,21 @@ type Session struct {
 
 // Class is one class as the read carries it.
 type Class struct {
-	Class    string   `json:"class"`
-	Label    string   `json:"label"`
-	About    string   `json:"about"`
-	DenLevel int      `json:"den_level"`
-	Session  *Session `json:"session"`
-	Level    int      `json:"level"`
-	Default  int      `json:"default"`
-	Steps    []Step   `json:"steps"`
-	SetInDen *string  `json:"set_in_den"`
+	Class    string    `json:"class"`
+	Label    string    `json:"label"`
+	About    string    `json:"about"`
+	DenLevel int       `json:"den_level"`
+	Session  *Session  `json:"session"`
+	Level    int       `json:"level"`
+	Default  int       `json:"default"`
+	Steps    []Step    `json:"steps"`
+	SetInDen *SetInDen `json:"set_in_den"`
+}
+
+// SetInDen says when the human last set a class in Den's window: shown
+// only, never read to decide a level, a cap or the start rule.
+type SetInDen struct {
+	At string `json:"at"`
 }
 
 // Kept is an entry kept from before the permission manager (upgrade
@@ -163,6 +169,9 @@ type State struct {
 	Held bool
 	// Kept are the kept ids the pairing holds.
 	Kept []string
+	// SetInDen is when the human last set each class in Den's window, by
+	// class (RFC 3339 UTC): shown only.
+	SetInDen map[string]string
 }
 
 // The refusals of a lowering.
@@ -298,6 +307,9 @@ func Read(st State) Grants {
 		if s, ok := st.Sessions[c.id]; ok {
 			s := s
 			out.Session = &s
+		}
+		if at, ok := st.SetInDen[c.id]; ok {
+			out.SetInDen = &SetInDen{At: at}
 		}
 		for i := range out.Steps {
 			s := Step{Level: i + 1, Label: NoStep}

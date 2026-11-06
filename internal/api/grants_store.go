@@ -111,7 +111,7 @@ func (s *Server) loadPerms() []perm.Lowered {
 		rec.Kept, keptGone = nil, true
 	}
 	s.perms.mu.Lock()
-	s.perms.denLevels, s.perms.lineage, s.perms.startWhy, s.perms.kept = rec.DenLevels, rec.Lineage, why, rec.Kept
+	s.perms.denLevels, s.perms.lineage, s.perms.startWhy, s.perms.kept, s.perms.setInDen = rec.DenLevels, rec.Lineage, why, rec.Kept, rec.SetInDen
 	// The file is written again at once: this session has no lowerings
 	// yet, and a file Den could not read becomes Den's own.
 	s.perms.gen++
@@ -195,7 +195,10 @@ func (s *Server) permsWriter(stop <-chan struct{}) {
 
 // permRecordLocked is the record of the state now. s.perms.mu is held.
 func (s *Server) permRecordLocked() perm.Record {
-	r := perm.Record{Lineage: s.perms.lineage, DenLevels: map[string]int{}, Kept: append([]string(nil), s.perms.kept...)}
+	r := perm.Record{Lineage: s.perms.lineage, DenLevels: map[string]int{}, Kept: append([]string(nil), s.perms.kept...), SetInDen: map[string]string{}}
+	for k, v := range s.perms.setInDen {
+		r.SetInDen[k] = v
+	}
 	for k, v := range s.perms.denLevels {
 		r.DenLevels[k] = v
 	}

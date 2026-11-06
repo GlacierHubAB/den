@@ -69,6 +69,8 @@ var dockVerbs = []dockVerb{
 	// Stopping desktop control only lowers: always allowed from the dock.
 	{"/desktop", nil, "/desktop [stop|keep]", "desktop control: stop it at once, or keep the last mission's files", always(api.DockOK, "")},
 	{"/open", []string{"/o", "/focus"}, "/open", "focus the agent's terminal", always(api.DockDenScreen, whyScreen)},
+	// The levels are set in Den's window only: a console never opens it.
+	{"/permissions", nil, "/permissions", "what Drey may do: set the levels", always(api.DockDenScreen, whyScreen)},
 	{"/copy", nil, "/copy", "copy the last code block", always(api.DockDenScreen, whyScreen)},
 	{"/close", []string{"/kill"}, "/close <name>[, name…] | idle [dur] [--force]", "close agents, on a card", func(a []string) (string, string) {
 		if len(a) == 0 {
