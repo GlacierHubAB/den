@@ -453,6 +453,11 @@ func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end t
 func (m *Model) deskGateMission(dm *deskMission, snap *desktop.Snapshot) desktop.Mission {
 	snap.ExemptConsole(m.consoleProcs())
 	mission := dm.Mission
+	if dm.Scoped {
+		// A closed pick is gone for good; the slice is read for this call.
+		prunePicks(dm.Picked, *snap)
+		mission.InSlice = dm.inSlice
+	}
 	if dm.Task {
 		if console := m.consoleProcs(); len(console) > 0 {
 			mission.Protected = maps.Clone(dm.Protected)

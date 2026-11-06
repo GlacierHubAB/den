@@ -177,3 +177,26 @@ func narrowTask(tool string, args map[string]any, m Mission, s Snapshot, v Verdi
 	}
 	return v
 }
+
+// denClassPrefix starts the class of every window Den opens for itself:
+// its agents' terminals (hypr.Marker) and the agent view.
+const denClassPrefix = "io.glacierhub.den"
+
+// Pickable are the windows a start card may offer the human to pick: a
+// mapped Wayland window that isn't one Den opened for itself (by its
+// initial class, or the title Den gives an agent's terminal) and isn't a
+// process in exclude (the console's). Den's own window is refused again
+// at the start, once Den has found it.
+func Pickable(s Snapshot, exclude map[int]bool) []Window {
+	var out []Window
+	for _, w := range s.Windows {
+		switch {
+		case !w.Mapped, w.XWayland, w.PID <= 1, exclude[w.PID], w.Address == "":
+		case strings.HasPrefix(strings.ToLower(w.InitialClass), denClassPrefix), strings.HasPrefix(strings.ToLower(w.Class), denClassPrefix):
+		case strings.HasPrefix(w.Title, "den · "):
+		default:
+			out = append(out, w)
+		}
+	}
+	return out
+}

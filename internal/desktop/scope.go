@@ -25,6 +25,9 @@ type Window struct {
 	// XWayland is an X11 client's window, whose pid is the X client's own
 	// claim. A window Hyprland doesn't say is Wayland counts as X.
 	XWayland bool `json:"-"`
+	// InitialClass is the class the window opened with, which a program
+	// can't change later: Den's agents' terminals carry Den's marker.
+	InitialClass string `json:"-"`
 }
 
 // Contains reports whether the global point lies inside the window.
@@ -128,6 +131,7 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 		Mapped    *bool  `json:"mapped"`
 		Hidden    bool   `json:"hidden"`
 		XWayland  *bool  `json:"xwayland"`
+		Initial   string `json:"initialClass"`
 		Workspace struct {
 			ID int `json:"id"`
 		} `json:"workspace"`
@@ -137,7 +141,7 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 	}
 	for _, c := range clients {
 		mapped := (c.Mapped == nil || *c.Mapped) && !c.Hidden
-		s.Windows = append(s.Windows, Window{Address: c.Address, Class: c.Class, Title: c.Title, PID: c.PID, Workspace: c.Workspace.ID, At: c.At, Size: c.Size, Floating: c.Floating, Mapped: mapped, Pinned: c.Pinned, XWayland: c.XWayland == nil || *c.XWayland})
+		s.Windows = append(s.Windows, Window{Address: c.Address, Class: c.Class, Title: c.Title, PID: c.PID, Workspace: c.Workspace.ID, At: c.At, Size: c.Size, Floating: c.Floating, Mapped: mapped, Pinned: c.Pinned, XWayland: c.XWayland == nil || *c.XWayland, InitialClass: c.Initial})
 	}
 	out, err = hyprctl(ctx, "monitors", "-j")
 	if err != nil {

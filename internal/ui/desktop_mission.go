@@ -56,6 +56,12 @@ type deskOffer struct {
 	// window, with /desktop x11 (deskX11).
 	body []string
 	x11  bool
+	// wide is the card's "whole desktop" switch, off until the human turns
+	// it on with /desktop whole; picks are the windows the human picked
+	// with /desktop pick, from pickable, the list it last showed
+	// (desk_scope.go).
+	wide            bool
+	picks, pickable []deskPick
 }
 
 // cardBody is the card's whole text: its own, the X11 switch, and the
@@ -63,6 +69,7 @@ type deskOffer struct {
 func (o deskOffer) cardBody() []string {
 	out := append([]string(nil), o.body...)
 	if o.task != "" {
+		out = append(out, o.deskScopeLines()...)
 		out = append(out, deskX11Line(o.x11))
 	}
 	if o.setup != nil {
@@ -143,7 +150,8 @@ type deskPrepared struct {
 	workspace int
 	dir       string
 	windows   []deskLaunched
-	layers    map[string]bool // a task: the top and overlay surfaces up at its start
+	layers    map[string]bool         // a task: the top and overlay surfaces up at its start
+	picks     map[string]desktop.Pick // a held task: the windows the human picked
 	err       error
 }
 
@@ -499,6 +507,9 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		dm.LayersAtStart = p.layers
 		dm.limitActions = p.offer.actions
 		dm.x11 = p.offer.x11 // the card's switch, fixed for the mission
+		// Held to its own windows unless the card's whole-desktop switch
+		// was on; prepareTask checked the build and the picks.
+		dm.Scoped, dm.Picked = !p.offer.wide, p.picks
 		dm.deadline = time.Now().Add(time.Duration(p.offer.minutes) * time.Minute)
 	}
 	for _, l := range p.windows {
