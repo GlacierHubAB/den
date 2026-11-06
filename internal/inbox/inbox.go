@@ -1173,6 +1173,22 @@ func (s *Store) SettleWith(it *Item, d bridge.Decision, outcome string) {
 	}
 }
 
+// Hold resolves an answered item whose reply must wait: the item shows
+// outcome, and the asker hears only what the returned reply sends, once,
+// later. A reply that already went is a no-op.
+func (s *Store) Hold(it *Item, outcome string) func(bridge.Decision) {
+	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
+	req := it.req
+	sent := false
+	return func(d bridge.Decision) {
+		if req == nil || sent {
+			return
+		}
+		sent = true
+		req.Reply(d)
+	}
+}
+
 // SessionClosed resolves everything open for an agent Den closed.
 func (s *Store) SessionClosed(sessionID string) { s.SessionClosedOn("", sessionID) }
 

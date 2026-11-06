@@ -81,6 +81,14 @@ type deskMission struct {
 	// overlayPausedAt (deskOverlayCheck).
 	overlayPaused   bool
 	overlayPausedAt time.Time
+	// humanPaused: the human paused it with /desktop pause; every call
+	// but a look waits until /desktop resume (desk_hold.go).
+	humanPaused bool
+	// queued are the actions the human approved while it was paused: each
+	// runs only once it goes on, decided again then (desk_hold.go);
+	// flushing while that read of the desktop is out.
+	queued   []deskQueued
+	flushing bool
 	// overlayExpect: the task started while the console watched, and its
 	// first overlay.linked has not come; input waits for it until
 	// overlayFirstBy.
@@ -406,6 +414,28 @@ func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end t
 	return true, nil
 }
 
+// deskGateMission is the mission as the gate decides on snap, which it
+// readies: the console's pointer outline lies over the whole monitor and
+// takes no input, so it never blocks a click, and nothing else of the
+// console's is let through. A task's off-limits windows add the console's
+// (Drey's dock), read fresh on every call: the dock may reconnect.
+func (m *Model) deskGateMission(dm *deskMission, snap *desktop.Snapshot) desktop.Mission {
+	snap.ExemptConsole(m.consoleProcs())
+	mission := dm.Mission
+	if dm.Task {
+		if console := m.consoleProcs(); len(console) > 0 {
+			mission.Protected = maps.Clone(dm.Protected)
+			for _, w := range snap.Windows {
+				if w.PID > 1 && console[w.PID] {
+					mission.Protected[w.Address] = true
+				}
+			}
+			mission.Console = console
+		}
+	}
+	return mission
+}
+
 // deskOverlayPaused is what an input call hears while paused.
 const deskOverlayPaused = "paused: the dock's overlay is down; Den resumes when it is back"
 
@@ -465,30 +495,16 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 		deny(why + "; the task has ended")
 		return m.finishDeskMission(dm, why)
 	}
+	if dm.humanPaused && !deskLooks[in.Tool] {
+		return deny(deskHumanPaused)
+	}
 	if paused, end := m.deskOverlayCheck(dm, msg.snap.ConsoleGlow(m.consoleProcs())); end != nil {
 		deny(deskOverlayPaused)
 		return end
 	} else if paused && !deskLooks[in.Tool] {
 		return deny(deskOverlayPaused)
 	}
-	// The console's pointer outline lies over the whole monitor and takes
-	// no input: it never blocks a click, and nothing else of the console's
-	// is let through.
-	msg.snap.ExemptConsole(m.consoleProcs())
-	mission := dm.Mission
-	if dm.Task {
-		// The console's windows (Drey's dock) are off limits to a task like
-		// Den's own, read fresh on every call: the dock may reconnect.
-		if console := m.consoleProcs(); len(console) > 0 {
-			mission.Protected = maps.Clone(dm.Protected)
-			for _, w := range msg.snap.Windows {
-				if w.PID > 1 && console[w.PID] {
-					mission.Protected[w.Address] = true
-				}
-			}
-			mission.Console = console
-		}
-	}
+	mission := m.deskGateMission(dm, &msg.snap)
 	v := desktop.Decide(in.Tool, in.Args, mission, msg.snap)
 	// spend counts a call Den forwards to hypruse against a task's limits.
 	spend := func() (bool, tea.Cmd) {
@@ -707,6 +723,14 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		m.store.SettleWith(it, bridge.Decision{Behavior: "allow", Message: "Approved by the human: go ahead with that step, and only that step."}, "approved")
 		m.refresh()
 		return m.say("Approved.", false)
+	}
+	if dm.paused() {
+		// Approved, but nothing runs while the mission is paused: Den's
+		// window answers then. It runs when the mission goes on.
+		reply := m.store.Hold(it, "approved; runs when the mission goes on")
+		dm.queued = append(dm.queued, deskQueued{p: p, reply: reply})
+		m.refresh()
+		return m.say("Approved: it runs when the mission goes on, after Den checks it again.", false)
 	}
 	a := desktop.Answer{Args: mustJSON(p.verdict.Args), Bounds: p.verdict.Bounds}
 	if p.pieces > 0 && p.verdict.Target != nil {
