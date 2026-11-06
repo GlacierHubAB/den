@@ -5,12 +5,15 @@ import (
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/gitenvtest"
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
 // TestMain starts the tests without git's inherited variables, which would
 // send their git commands to another repository, and away from the
-// compositor the run sits in: System lists and closes real windows.
+// compositor the run sits in: System lists and closes real windows. Started
+// as a stand-in for Claude Code, the test binary only sleeps.
 func TestMain(m *testing.M) {
+	teststandin.Main()
 	os.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
 	os.Exit(gitenvtest.Main(m))
 }

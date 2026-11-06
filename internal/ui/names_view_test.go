@@ -17,6 +17,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/names"
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/roster"
+	"github.com/GlacierHubAB/den/internal/teststandin"
 	"github.com/GlacierHubAB/den/internal/theme"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -256,32 +257,27 @@ func TestDenNamesOnlyWhatItSawSpawn(t *testing.T) {
 // The spawner check compares the file a process runs, never its path: a
 // copy of a binary, even one named "<path> (deleted)", is another file.
 func TestRunsFileIsTheFileNotThePath(t *testing.T) {
-	sleep, err := exec.LookPath("sleep")
+	exe, err := os.Executable()
 	if err != nil {
-		t.Skip("no sleep")
+		t.Fatal(err)
 	}
-	real, _ := filepath.EvalSymlinks(sleep)
+	real, _ := filepath.EvalSymlinks(exe)
 	start := func(path string) *exec.Cmd {
 		t.Helper()
-		c := exec.Command(path, "5")
+		c := teststandin.Command(path, "5")
 		if err := c.Start(); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { c.Process.Kill(); c.Wait() })
+		teststandin.Started(t, c, filepath.Base(path))
 		return c
 	}
 	orig := start(real)
 	if !runsFile(orig.Process.Pid, real) {
 		t.Fatal("the binary itself is refused")
 	}
-	raw, err := os.ReadFile(real)
-	if err != nil {
-		t.Skip(err)
-	}
 	copyPath := filepath.Join(t.TempDir(), filepath.Base(real)+" (deleted)")
-	if err := os.WriteFile(copyPath, raw, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	teststandin.Copy(t, copyPath)
 	cp := start(copyPath)
 	if runsFile(cp.Process.Pid, real) {
 		t.Error("a copy named like the deleted binary passed")

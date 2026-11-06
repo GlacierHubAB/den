@@ -12,28 +12,25 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
-// child starts this test's own sleep under the given name (a symlink, so
-// its comm is that name) and reaps it when it ends. Only these children are
-// ever signalled.
+// child starts this test's own stand-in under the given name (a symlink to
+// the test binary, so its comm is that name) and reaps it when it ends.
+// Only these children are ever signalled.
 func child(t *testing.T, name string) (*exec.Cmd, chan struct{}) {
 	t.Helper()
-	sleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep")
-	}
 	bin := filepath.Join(t.TempDir(), name)
-	if err := os.Symlink(sleep, bin); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(bin, "30")
+	teststandin.Link(t, bin)
+	cmd := teststandin.Command(bin, "30")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
 	go func() { cmd.Wait(); close(done) }()
 	t.Cleanup(func() { cmd.Process.Kill(); <-done })
+	teststandin.Started(t, cmd, name)
 	return cmd, done
 }
 
