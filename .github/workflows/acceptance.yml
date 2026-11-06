@@ -42,8 +42,7 @@ env:
 
 jobs:
   acceptance:
-    # Pinned: ubuntu-latest moved to 26.04, where several test packages fail; every job here runs on 24.04 until the 26.04 fixes land, then unpin.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
