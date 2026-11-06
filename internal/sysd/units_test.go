@@ -234,11 +234,18 @@ func TestRealUnits(t *testing.T) {
 	if os.Getenv("DEN_REAL_SYSTEMD") != "1" {
 		t.Skip("set DEN_REAL_SYSTEMD=1 to start a unit on this machine's systemd user manager")
 	}
-	// No '-' in a slice's name: each one is a level of slices systemd
-	// makes above it, and leaves standing after.
-	id := "dentest" + strconv.Itoa(os.Getpid())
-	slice := "den_desk_" + Escape(id) + ".slice"
-	svc := "den_desk_" + Escape(id) + "_1.service"
+	// Names exactly as Den's ui makes them (deskSliceOf): den_desk_, an
+	// instance of 12 hex, '_', the id through EscapePart, from an id with
+	// both a '_' and a '-' (so \x5f and \x2d meet the real manager). No
+	// '-' in the name: each would be a level of slices systemd makes.
+	const inst = "00000000beef"
+	id := "dentest_a-" + strconv.Itoa(os.Getpid())
+	prefix := "den_desk_" + inst + "_"
+	slice := prefix + EscapePart(id) + ".slice"
+	svc := strings.TrimSuffix(slice, ".slice") + "_1.service"
+	if strings.Contains(slice, "-") || !strings.Contains(slice, `\x5f`) || !strings.Contains(slice, `\x2d`) {
+		t.Fatalf("the test's name %q is not the shape Den makes", slice)
+	}
 	t.Cleanup(func() { Stop(slice) })
 	// The unit writes its own environment to a file the test names (as
 	// an argument, never in the shell's text): another process's environ
@@ -297,7 +304,7 @@ func TestRealUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(func(u UnitState) bool { return u.Freeze == "running" }, slice)
-	names, err := List("den_desk_" + id)
+	names, err := List(prefix)
 	if err != nil || len(names) != 1 || names[0] != slice {
 		t.Errorf("List: %v %v", names, err)
 	}
@@ -314,9 +321,24 @@ func TestRealUnits(t *testing.T) {
 	}
 	// Nothing of the test's is left, and no level of slices above it was
 	// made: every den* slice listed is named.
-	left, _ := systemctl("list-units", "--all", "--plain", "--no-legend", "--type=slice", "--", "den*.slice")
-	t.Logf("den*.slice after: %q", left)
-	if strings.Contains(left, "den_desk_"+id) {
-		t.Errorf("the test's slice is left: %q", left)
+	left, err := systemctl("list-units", "--all", "--plain", "--no-legend", "--", "den*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("den* after: %q", left)
+	for _, l := range strings.Split(left, "\n") {
+		f := strings.Fields(l)
+		if len(f) > 0 && f[0] == "●" {
+			f = f[1:]
+		}
+		if len(f) == 0 {
+			continue
+		}
+		switch n := f[0]; {
+		case strings.HasPrefix(n, prefix):
+			t.Errorf("the test's unit %s is left", n)
+		case n == "den.slice", n == "den-desk.slice", strings.HasPrefix(n, "den_desk."), strings.HasPrefix(n, "den_desk_"+inst+"."):
+			t.Errorf("a parent slice %s was made", n)
+		}
 	}
 }
