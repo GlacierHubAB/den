@@ -10,6 +10,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/theme"
 )
 
 // Snapshot is what the UI hands the API after each refresh, on its own
@@ -101,17 +102,16 @@ const labelMax = 80
 // summaryMax caps a mission run's summary.
 const summaryMax = 200
 
-// hexColor is c as "#rrggbb" in lower case, "" unless it is one.
+// hexColor is c as "#rrggbb" in lower case, "" unless it is one the agent
+// colour rule takes (theme.AgentColor): Den draws agents only in those,
+// and a record from before, or from elsewhere, never reaches a console as
+// a colour it would refuse.
 func hexColor(c string) string {
-	if len(c) != 7 || c[0] != '#' {
+	c = strings.ToLower(c)
+	if ok, _ := theme.AgentColor(c); !ok {
 		return ""
 	}
-	for _, r := range c[1:] {
-		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
-			return ""
-		}
-	}
-	return strings.ToLower(c)
+	return c
 }
 
 // Project builds the View. It reads only the fields it names.
