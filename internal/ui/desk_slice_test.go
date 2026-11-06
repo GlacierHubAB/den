@@ -89,7 +89,7 @@ func deskSysFake() *fakeSys {
 			}
 			return nil
 		}
-		prefix := strings.TrimSuffix(unit, ".slice") + "-"
+		prefix := strings.TrimSuffix(unit, ".slice") + "_" // its services
 		for name := range f.units {
 			if name == unit || strings.HasSuffix(unit, ".slice") && strings.HasPrefix(name, prefix) {
 				delete(f.units, name)
@@ -350,9 +350,9 @@ func TestDeskEndStopsTheSlice(t *testing.T) {
 func TestDeskStartSweepsOnlyItsOwn(t *testing.T) {
 	f := deskSysFake()
 	mine := deskSliceOf("old")
-	other := "den-desk-000000000000-old.slice"
+	other := "den_desk_000000000000_old.slice"
 	deskSysStart(sysd.Service{Name: strings.TrimSuffix(mine, ".slice") + "-1.service", Slice: mine, Argv: []string{"x"}})
-	deskSysStart(sysd.Service{Name: "den-desk-000000000000-old-1.service", Slice: other, Argv: []string{"x"}})
+	deskSysStart(sysd.Service{Name: "den_desk_000000000000_old_1.service", Slice: other, Argv: []string{"x"}})
 	if left := SweepDesktopSlices(); len(left) != 0 {
 		t.Fatalf("left %v", left)
 	}
@@ -381,10 +381,51 @@ func TestDeskStartSweepsOnlyItsOwn(t *testing.T) {
 	deskSwept = nil
 }
 
+// A start whose listing fails holds Den's window (the manager is there):
+// it lists again from the retry, and only a listing read releases it
+// (sec's S2-3). With no manager at all, nothing holds.
+func TestDeskSweepFailsClosed(t *testing.T) {
+	f := deskSysFake()
+	oldList, oldHere := deskSysList, deskManagerHere
+	t.Cleanup(func() { deskSysList, deskManagerHere = oldList, oldHere; deskSwept = nil })
+	fail := true
+	deskSysList = func(prefix string) ([]string, error) {
+		if fail {
+			return nil, errors.New("systemctl took over 5s")
+		}
+		return oldList(prefix)
+	}
+	deskManagerHere = func() bool { return true }
+	left := SweepDesktopSlices()
+	m := testModel(140, 40)
+	m.desk.leftover = append([]string(nil), deskSwept...)
+	if len(left) != 1 || !m.deskHolds() {
+		t.Fatalf("a failed listing: left %v, held %v", left, m.deskHolds())
+	}
+	m = runSlice(t, m)
+	if !m.deskHolds() {
+		t.Error("released while the listing still fails")
+	}
+	fail = false
+	mine := deskSliceOf("old")
+	deskSysStart(sysd.Service{Name: strings.TrimSuffix(mine, ".slice") + "_1.service", Slice: mine, Argv: []string{"x"}})
+	// runSlice gave up with a retry still out: as if it had come back.
+	m.desk.leftoverRetry, m.desk.leftoverBusy = time.Time{}, false
+	m = runSlice(t, m)
+	if m.deskHolds() || !f.unit(mine).Gone() {
+		t.Errorf("after a good listing: held %v, %+v", m.deskHolds(), f.unit(mine))
+	}
+	fail = true
+	deskManagerHere = func() bool { return false }
+	if left := SweepDesktopSlices(); len(left) != 0 {
+		t.Errorf("no manager at all: left %v", left)
+	}
+}
+
 // The slice's name: this Den's instance, the escaped id, systemd's limit.
 func TestDeskSliceNames(t *testing.T) {
 	dm := &deskMission{Mission: desktop.Mission{ID: "a-b"}}
-	if s := dm.slice(); !strings.HasPrefix(s, "den-desk-"+deskInstance()+"-") || !strings.HasSuffix(s, `a\x2db.slice`) {
+	if s := dm.slice(); !strings.HasPrefix(s, "den_desk_"+deskInstance()+"_") || strings.Contains(strings.TrimSuffix(s, `a\x2db.slice`), "-") || !strings.HasSuffix(s, `a\x2db.slice`) {
 		t.Errorf("slice %q", s)
 	}
 	if (&deskMission{Mission: desktop.Mission{ID: "a/b"}}).slice() == dm.slice() {
@@ -392,6 +433,28 @@ func TestDeskSliceNames(t *testing.T) {
 	}
 	if why := dm.sliceOK(); why != "" {
 		t.Error(why)
+	}
+	// No '-' (a level of slices) and no '_' (Den's separator) in a part:
+	// every name maps back to one id, one launch or one app (sec's S2-6).
+	names := map[string]string{}
+	add := func(what, name string) {
+		if was, ok := names[name]; ok {
+			t.Errorf("%s and %s make one name %q", was, what, name)
+		}
+		names[name] = what
+	}
+	for _, id := range []string{"x_app", "x", "a", "a_1", "a/b", "a-b", "a_b"} {
+		m := &deskMission{Mission: desktop.Mission{ID: id}}
+		if why := m.sliceOK(); why != "" {
+			t.Errorf("%q: %s", id, why)
+		}
+		s := strings.TrimPrefix(m.slice(), deskSlicePrefix())
+		if strings.ContainsAny(strings.TrimSuffix(s, ".slice"), "_-") {
+			t.Errorf("%q's slice part %q holds a separator", id, s)
+		}
+		add("slice of "+id, m.slice())
+		add("launch 1 of "+id, m.service(1))
+		add("app 1 of "+id, strings.TrimSuffix(m.slice(), ".slice")+"_app_"+sysd.EscapePart("1")+".service")
 	}
 	long := &deskMission{Mission: desktop.Mission{ID: strings.Repeat("é", 100)}}
 	if why := long.sliceOK(); why == "" {

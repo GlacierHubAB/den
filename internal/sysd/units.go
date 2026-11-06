@@ -349,7 +349,7 @@ func parseState(out string) (UnitState, error) {
 
 // prefixGlob is a listing prefix: letters, digits and '-' only, so the
 // glob holds no character the manager's matching would read as special.
-var prefixGlob = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+var prefixGlob = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // List is the names of the loaded slices whose names start with prefix,
 // each matched whole against the units Den makes; any other line is left.
@@ -387,6 +387,23 @@ func Escape(s string) string {
 		case c == '/':
 			b.WriteByte('-')
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == ':', c == '_', c == '.' && i > 0:
+			b.WriteByte(c)
+		default:
+			fmt.Fprintf(&b, `\x%02x`, c)
+		}
+	}
+	return b.String()
+}
+
+// EscapePart is Escape for a part of a name Den joins with '_': '_', '-'
+// and '/' are escaped as well (\x5f, \x2d, \x2f), so the part holds no
+// '_' (Den's separator) and no '-' (a level of slices). Unescape undoes it.
+func EscapePart(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == ':', c == '.' && i > 0:
 			b.WriteByte(c)
 		default:
 			fmt.Fprintf(&b, `\x%02x`, c)

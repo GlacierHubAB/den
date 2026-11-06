@@ -395,12 +395,12 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		}
 		m.flash, m.flashErr = "The desktop mission did not start: "+why, true
 		m.refresh()
-		if len(p.windows) == 0 {
-			return nil
+		if len(p.windows) > 0 {
+			// What it launched ran in its slice: stopped as a leftover is,
+			// Den's window holding until it is gone.
+			m.desk.leftover = append(m.desk.leftover, deskSliceOf(p.id))
 		}
-		// What it launched ran in its slice: stopped with it.
-		slice := deskSliceOf(p.id)
-		return func() tea.Msg { deskSysStop(slice); return nil }
+		return nil
 	}
 	if p.err != nil {
 		return fail(sanitize.Line(p.err.Error()))
@@ -606,7 +606,7 @@ func launchApp(ctx context.Context, a desktop.App, dir string, before desktop.Sn
 	}
 	slice := deskSliceOf(filepath.Base(dir))
 	svc := sysd.Service{
-		Name:        strings.TrimSuffix(slice, ".slice") + "-app-" + sysd.Escape(a.Name) + ".service",
+		Name:        strings.TrimSuffix(slice, ".slice") + "_app_" + sysd.EscapePart(a.Name) + ".service",
 		Slice:       slice,
 		Description: "Den desktop mission app " + a.Name,
 		Argv:        a.Argv(dir),

@@ -267,8 +267,10 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 		return toolError("Den's answer carried no input; nothing was done")
 	}
 	typing := in.Name == "keyboard" && args["action"] == "type"
-	if ans.Call != "" && !typing {
-		defer p.Gate.Done(ans.Call) // a typed text reports each piece itself
+	if !typing { // a typed text reports each piece itself
+		wg := &sync.WaitGroup{}
+		ctx = withTrack(ctx, wg)
+		defer p.endCall(ctx, wg, ans.Call)
 	}
 	if in.Name == "keyboard" {
 		if text, ok := args["text"].(string); ok {
@@ -327,12 +329,13 @@ func (p *Proxy) typeText(ctx context.Context, args map[string]any, token, call s
 			}
 			call = ans.Call
 		}
-		// Each piece is its own call in flight, until hypruse has typed it.
-		res, err := p.callChild(ctx, "keyboard", step)
-		if call != "" {
-			p.Gate.Done(call)
-			call = ""
-		}
+		// Each piece is its own call in flight, until hypruse has typed it
+		// (after a cancel too: endCall waits for its answer).
+		wg := &sync.WaitGroup{}
+		pctx := withTrack(ctx, wg)
+		res, err := p.callChild(pctx, "keyboard", step)
+		p.endCall(pctx, wg, call)
+		call = ""
 		if err != nil {
 			return toolError(fmt.Sprintf("stopped after %d of %d characters: %v", typed, len([]rune(text)), err))
 		}
@@ -355,8 +358,36 @@ func (p *Proxy) callChild(ctx context.Context, name string, args map[string]any)
 	return p.roundTrip(ctx, "tools/call", params)
 }
 
+// childTrack counts the requests to the child a call made that have not
+// settled yet (answered, or the child ended): the call's done waits for
+// all of them, so a cancel never reports done while hypruse still acts.
+type childTrack struct{}
+
+// withTrack has the child requests made under ctx counted in wg.
+func withTrack(ctx context.Context, wg *sync.WaitGroup) context.Context {
+	return context.WithValue(ctx, childTrack{}, wg)
+}
+
+// endCall reports call done once every child request counted in wg has
+// settled: at once when they have, else (after a cancel) when they do.
+func (p *Proxy) endCall(ctx context.Context, wg *sync.WaitGroup, call string) {
+	if call == "" {
+		return
+	}
+	if ctx.Err() == nil {
+		wg.Wait() // every request returned: settled
+		p.Gate.Done(call)
+		return
+	}
+	go func() {
+		wg.Wait()
+		p.Gate.Done(call)
+	}()
+}
+
 // roundTrip sends a request to the child under the proxy's own id and
-// waits for its response.
+// waits for its response. A cancel returns at once, but the request
+// stays counted (childTrack) until the child answers it or ends.
 func (p *Proxy) roundTrip(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
 	ch := make(chan message, 1)
 	p.mu.Lock()
@@ -364,14 +395,22 @@ func (p *Proxy) roundTrip(ctx context.Context, method string, params json.RawMes
 	id := json.RawMessage(strconv.Itoa(p.nextID))
 	p.pending[string(id)] = ch
 	p.mu.Unlock()
+	track, _ := ctx.Value(childTrack{}).(*sync.WaitGroup)
+	settle := func() {}
+	if track != nil {
+		track.Add(1)
+		settle = track.Done
+	}
 	select {
 	case <-p.done:
+		settle()
 		return nil, errors.New("hypruse is not running")
 	default:
 	}
 	p.toChild(message{JSONRPC: "2.0", ID: id, Method: method, Params: params})
 	select {
 	case res, ok := <-ch:
+		settle()
 		if !ok {
 			return nil, errors.New("hypruse ended")
 		}
@@ -384,11 +423,20 @@ func (p *Proxy) roundTrip(ctx context.Context, method string, params json.RawMes
 		}
 		return res.Result, nil
 	case <-ctx.Done():
-		p.mu.Lock()
-		delete(p.pending, string(id))
-		p.mu.Unlock()
+		// The request stays pending: hypruse may still be acting on it.
+		go func() {
+			select {
+			case <-ch:
+			case <-p.done:
+			}
+			p.mu.Lock()
+			delete(p.pending, string(id))
+			p.mu.Unlock()
+			settle()
+		}()
 		return nil, errors.New("cancelled")
 	case <-p.done:
+		settle()
 		return nil, errors.New("hypruse ended")
 	}
 }
