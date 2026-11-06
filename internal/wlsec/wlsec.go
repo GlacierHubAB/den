@@ -2,7 +2,7 @@
 // the compositor treats as sandboxed (wp_security_context_v1), so the apps
 // a held task opens see only the ordinary globals.
 //
-// It speaks the Wayland wire itself, with the client the H3 probe used.
+// It speaks the Wayland wire itself, with the probe client's code.
 // Every request goes through send, the one function that writes to the
 // socket. send looks up (interface, opcode) in allowed, a fixed literal,
 // and panics without writing when the pair isn't there. An object's
@@ -15,6 +15,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -41,6 +42,10 @@ var allowed = map[request]string{
 	{"wp_security_context_v1", 3}:         "set_instance_id",
 	{"wp_security_context_v1", 4}:         "commit",
 }
+
+// wire, when set (only by this package's real test), gets one SEND line
+// per request, written just before it goes out: the run's audit.
+var wire io.Writer
 
 // manager is the one global bound.
 const manager = "wp_security_context_manager_v1"
@@ -99,6 +104,9 @@ func (w *conn) send(obj uint32, op uint16, fds []int, args ...[]byte) error {
 	var oob []byte
 	if len(fds) > 0 {
 		oob = syscall.UnixRights(fds...)
+	}
+	if wire != nil {
+		fmt.Fprintf(wire, "SEND obj=%d iface=%s op=%d len=%d fds=%d\n", obj, iface, op, len(msg), len(fds))
 	}
 	w.c.SetWriteDeadline(w.until)
 	_, _, err := w.c.WriteMsgUnix(msg, oob, nil)
