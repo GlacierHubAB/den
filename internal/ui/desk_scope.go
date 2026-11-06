@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/notify"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/sysd"
 	"github.com/GlacierHubAB/den/internal/wlsec"
@@ -296,4 +297,21 @@ func (dm *deskMission) closeListener() {
 		dm.listener.Close()
 		dm.listener = nil
 	}
+}
+
+// deskBuildChanged pauses a held task whose launch found Hyprland changed
+// (C1): it is held for the human in Den's window, and goes on only on the
+// checked build again. It never falls back to the whole desktop or the
+// compositor's own socket.
+func (m *Model) deskBuildChanged(dm *deskMission, why string) {
+	first := dm.buildChanged == ""
+	dm.buildChanged = why
+	dm.humanPaused = true
+	if first {
+		text := "Desktop agent paused: " + sanitize.Line(why) + " any more, so Den can't hold the task to its own windows. /desktop resume checks again; /desktop stop ends it."
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: text, at: time.Now()}))
+		m.flash, m.flashErr = text, true
+		deskNotify(notify.Note{Summary: "Desktop agent paused", Body: text})
+	}
+	m.refresh()
 }

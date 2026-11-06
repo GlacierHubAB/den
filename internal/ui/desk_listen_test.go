@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desksand"
+	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
@@ -137,5 +139,39 @@ func TestDeskHeldStartOpensItsListener(t *testing.T) {
 	runTask(t, m3, d3, "allow")
 	if dm := taskLive(t, *m3); dm.listener != nil || len(opened) != 0 {
 		t.Fatal("a whole-desktop task opened a listener")
+	}
+}
+
+// [C1] A build change found at a held task's launch refuses the launch
+// and pauses the task for the human: it stays held, never wider, and goes
+// on only once the build is the checked one again.
+func TestDeskBuildChangePausesAHeldTask(t *testing.T) {
+	m, _, _ := taskMission(t)
+	f := deskSysFake()
+	dm := m.deskMission("m1")
+	dm.limitActions = 100
+	l := &fakeListener{path: "/x"}
+	dm.Scoped, dm.listener = true, l
+	dm.Picked = map[string]desktop.Pick{"0xa": {PID: 900}}
+	deskScopedBuild = func(context.Context) string { return "this Hyprland build (v0.57.0) isn't the one checked" }
+	dv, svc := heldLaunch(t, m, f)
+	if svc != nil || dv.Behavior != "deny" {
+		t.Fatalf("a launch on a changed build: %+v %v", dv, svc)
+	}
+	if !dm.humanPaused || !dm.Scoped || dm.listener == nil || !l.Live() || dm.buildChanged == "" {
+		t.Fatalf("paused %v scoped %v listener %v changed %q", dm.humanPaused, dm.Scoped, dm.listener, dm.buildChanged)
+	}
+	if dv, done := deskCall(m, "keyboard", `{"action":"type","text":"hi","window":"0xa"}`); done && dv.Behavior == "allow" {
+		t.Fatal("keys went on while paused for the build")
+	}
+	if mm, _ := m.deskPause(dm, false); !mm.(Model).flashErr || !dm.humanPaused {
+		t.Fatal("resumed on a build still not the checked one")
+	}
+	deskScopedBuild = func(context.Context) string { return "" }
+	if m.deskPause(dm, false); dm.humanPaused || dm.buildChanged != "" {
+		t.Fatal("didn't resume on the checked build")
+	}
+	if dv, _ := deskCall(m, "keyboard", `{"action":"type","text":"hi","window":"0xh"}`); dv.Behavior == "allow" {
+		t.Fatal("after the change the task reached outside its windows")
 	}
 }

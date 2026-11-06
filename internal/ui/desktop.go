@@ -90,6 +90,10 @@ type deskMission struct {
 	// listener is a held task's Wayland socket for its apps (wlsec),
 	// closed once its slice is stopped (closeListener).
 	listener deskListener
+	// buildChanged is why Hyprland stopped being the checked build during
+	// a held task: it paused then, and resumes only once the build is the
+	// checked one again (C1).
+	buildChanged string
 	// queued are the actions the human approved while it was paused: each
 	// runs only once it goes on, decided again then (desk_hold.go);
 	// flushing while that read of the desktop is out.
