@@ -4,12 +4,14 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -258,6 +260,34 @@ func DesktopApps() map[string]map[string]string {
 func DesktopAgentView() bool {
 	v, err := strconv.ParseBool(parse(Path())["desktop.agent_view"])
 	return err == nil && v
+}
+
+// DesktopPaths is a [desktop] list of folders, task_writable (where apps
+// a task opens may write, besides their own) or task_hide (folders they
+// don't see at all): a JSON list of absolute paths or ~/ paths, cleaned.
+// The human's file alone sets them. A list that doesn't parse, or any
+// entry that isn't absolute or climbs with "..", makes the whole list
+// unusable: ok is false and the caller refuses to launch.
+func DesktopPaths(key string) (paths []string, ok bool) {
+	raw, set := parse(Path())["desktop."+key]
+	if !set || strings.TrimSpace(raw) == "" {
+		return nil, true
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil, false
+	}
+	home, _ := os.UserHomeDir()
+	for _, p := range list {
+		if rest, ok := strings.CutPrefix(p, "~/"); ok && home != "" {
+			p = filepath.Join(home, rest)
+		}
+		if !filepath.IsAbs(p) || slices.Contains(strings.Split(p, "/"), "..") {
+			return nil, false
+		}
+		paths = append(paths, filepath.Clean(p))
+	}
+	return paths, true
 }
 
 // Task mission limits when the [desktop] section sets none.
