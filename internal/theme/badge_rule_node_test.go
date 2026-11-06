@@ -48,8 +48,12 @@ func TestAgentBadgeRuleUnderNode(t *testing.T) {
 	if err := os.WriteFile(file, []byte(prog), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The block is the submodule's code, run in Den's CI: node gets only a
+	// PATH and a home of its own, nothing CI or the caller set (NODE_OPTIONS
+	// and the like).
 	cmd := exec.Command(node, file)
 	cmd.Dir = t.TempDir()
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + cmd.Dir}
 	out, err := cmd.Output()
 	if err != nil {
 		var stderr []byte
