@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -88,6 +89,7 @@ func (f *fakeHypruse) got() []map[string]any {
 type fakeGate struct {
 	mu    sync.Mutex
 	asked []string
+	done  []string // the calls reported done, in order
 	fn    func(tool string, args json.RawMessage, token string) (Answer, error)
 }
 
@@ -96,6 +98,18 @@ func (g *fakeGate) Call(ctx context.Context, tool string, args json.RawMessage, 
 	g.asked = append(g.asked, tool+" "+token)
 	g.mu.Unlock()
 	return g.fn(tool, args, token)
+}
+
+func (g *fakeGate) Done(call string) {
+	g.mu.Lock()
+	g.done = append(g.done, call)
+	g.mu.Unlock()
+}
+
+func (g *fakeGate) dones() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return append([]string(nil), g.done...)
 }
 
 // rig runs a proxy against the fake and returns a send-and-wait func.
@@ -284,6 +298,102 @@ func TestProxyTypesInCheckedPieces(t *testing.T) {
 	g.mu.Unlock()
 	if !strings.HasPrefix(asked, "keyboard |keyboard t1|keyboard t1|keyboard t1") {
 		t.Fatalf("Den was asked %q", asked)
+	}
+}
+
+// Every call Den allows with a Call id is reported done once hypruse has
+// answered it: a typed text piece by piece, each piece its own call; and
+// launch is Den's own, answered with Den's result and never forwarded.
+func TestProxyReportsCallsDone(t *testing.T) {
+	n := 0
+	g := &fakeGate{}
+	g.fn = func(tool string, args json.RawMessage, token string) (Answer, error) {
+		n++
+		id := "c" + strconv.Itoa(n)
+		switch tool {
+		case "launch":
+			return Answer{Allow: true, Message: `{"address":"0xnew","class":"foot"}`}, nil
+		case "keyboard":
+			if token == "" {
+				return Answer{Allow: true, Args: json.RawMessage(`{"action":"type","text":"` + strings.Repeat("x", 40) + `","window":"0xe"}`), Token: "t1", Call: id}, nil
+			}
+			return Answer{Allow: true, Args: args, Call: id}, nil
+		}
+		return Answer{Allow: true, Args: args, Call: id}, nil
+	}
+	send, f, _ := rigProxy(t, g, func(p *Proxy) { p.Task = true })
+	send("initialize", map[string]any{})
+	if text, isErr := resultText(t, send("tools/call", map[string]any{"name": "pointer", "arguments": map[string]any{"action": "click", "x": 10, "y": 10}})); isErr {
+		t.Fatalf("click: %q", text)
+	}
+	if d := g.dones(); len(d) != 1 || d[0] != "c1" {
+		t.Fatalf("after a click, done %v", d)
+	}
+	if text, isErr := resultText(t, send("tools/call", map[string]any{"name": "keyboard", "arguments": map[string]any{"action": "type", "text": "x"}})); isErr {
+		t.Fatalf("typing: %q", text)
+	}
+	// 40 characters: two pieces (32, 8), the first on the call's own
+	// answer (c2), the second on its own (c3).
+	if d := strings.Join(g.dones(), " "); d != "c1 c2 c3" {
+		t.Fatalf("after typing, done %q", d)
+	}
+	before := len(f.got())
+	text, isErr := resultText(t, send("tools/call", map[string]any{"name": "launch", "arguments": map[string]any{"command": "foot"}}))
+	if isErr || !strings.Contains(text, "0xnew") || len(f.got()) != before {
+		t.Fatalf("launch: %q (error %v), hypruse got %d more", text, isErr, len(f.got())-before)
+	}
+	if d := strings.Join(g.dones(), " "); d != "c1 c2 c3" {
+		t.Fatalf("launch reported done: %q", d)
+	}
+}
+
+// A cancelled call is reported done only once hypruse has answered it:
+// until then hypruse may still be acting (sec's S2-2).
+func TestProxyDoneWaitsForACancelledCall(t *testing.T) {
+	g := &fakeGate{fn: func(tool string, args json.RawMessage, _ string) (Answer, error) {
+		return Answer{Allow: true, Args: args, Call: "c1"}, nil
+	}}
+	cr, cw := io.Pipe()
+	pr, pw := io.Pipe()
+	chr, chw := io.Pipe()
+	hr, hw := io.Pipe()
+	f := &fakeHypruse{slow: 500 * time.Millisecond}
+	go f.serve(chr, hw)
+	p := &Proxy{Gate: g, Client: cr, ToClient: pw, Child: hr, ToChild: chw}
+	go p.Run(context.Background())
+	t.Cleanup(func() { cw.Close(); hw.Close(); chw.Close() })
+	replies := make(chan message, 16)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			var m message
+			json.Unmarshal(sc.Bytes(), &m)
+			replies <- m
+		}
+	}()
+	write := func(v any) {
+		b, _ := json.Marshal(v)
+		cw.Write(append(b, '\n'))
+	}
+	write(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}})
+	<-replies
+	write(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "pointer", "arguments": map[string]any{"action": "move", "x": 1, "y": 1}}})
+	time.Sleep(100 * time.Millisecond) // hypruse has it, and is slow
+	write(map[string]any{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": map[string]any{"requestId": 2}})
+	select {
+	case <-replies:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no reply to the cancelled call")
+	}
+	if d := g.dones(); len(d) != 0 {
+		t.Fatalf("done %v before hypruse answered", d)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(g.dones()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if d := g.dones(); len(d) != 1 || d[0] != "c1" {
+		t.Errorf("after hypruse answered: done %v", d)
 	}
 }
 

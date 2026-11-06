@@ -72,13 +72,21 @@ func (m Model) panel() panelLevels {
 	return m.perms.levels
 }
 
-// deskHolds reports whether a desktop agent can act now: a mission live
-// and not paused (a your-turn card open, the dock's overlay down, or
-// /desktop pause). While it does, Den's window takes only the keys and
-// commands of desk_hold.go.
+// deskHolds reports whether something a desktop agent started can act
+// now: a mission live and not both paused (a your-turn card or one of its
+// own cards open, the dock's overlay down, or /desktop pause) and frozen
+// (its slice, desk_slice.go); or an ended mission whose slice, or a slice
+// left from before Den started, is not gone yet. While it does, Den's
+// window takes only the keys and commands of desk_hold.go.
 func (m Model) deskHolds() bool {
+	if len(m.desk.leftover) > 0 {
+		return true
+	}
 	for _, dm := range m.desk.missions {
-		if dm.Ended == "" && !dm.Paused && !dm.overlayPaused && !dm.humanPaused {
+		switch {
+		case dm.Ended == "" && !(dm.paused() && dm.frozen):
+			return true
+		case dm.Ended != "" && dm.launched && !dm.reaped:
 			return true
 		}
 	}

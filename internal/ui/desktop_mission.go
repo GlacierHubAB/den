@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,9 +22,9 @@ import (
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
-	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // A desktop mission starts from one card (DesktopMission): the asker names
@@ -396,6 +395,11 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		}
 		m.flash, m.flashErr = "The desktop mission did not start: "+why, true
 		m.refresh()
+		if len(p.windows) > 0 {
+			// What it launched ran in its slice: stopped as a leftover is,
+			// Den's window holding until it is gone.
+			m.desk.leftover = append(m.desk.leftover, deskSliceOf(p.id))
+		}
 		return nil
 	}
 	if p.err != nil {
@@ -424,6 +428,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		AskedBy:   p.offer.in.AskedBy,
 	}
 	dm.consoleTurn, dm.turnLineage = p.offer.consoleTurn, p.offer.turnLineage
+	dm.launched = len(p.windows) > 0 // its apps run in its slice: stopped when it ends
 	if task {
 		// The whole desktop, with Den's window off limits from the start;
 		// the agent view joins it once it is up, and until then no call
@@ -589,25 +594,28 @@ func adoptAgent(dm *deskMission, proxyPID int) bool {
 	return dm.AgentStart != ""
 }
 
-// launchApp starts an app (argv, no shell, a session of its own) and
-// waits for its new window. Joined says the window belongs to a process
-// that was running before: the app handed the request to its running
-// instance.
+// launchApp starts an app (argv, no shell) as a service in the mission's
+// slice (desk_slice.go; the mission's id is its folder's name) and waits
+// for its new window. Joined says the window belongs to a process outside
+// the slice: the app handed the request to an instance already running.
 func launchApp(ctx context.Context, a desktop.App, dir string, before desktop.Snapshot) (deskLaunched, error) {
 	l := deskLaunched{App: a}
 	seen := map[string]bool{}
 	for _, w := range before.Windows {
 		seen[w.Address] = true
 	}
-	argv := a.Argv(dir)
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
+	slice := deskSliceOf(filepath.Base(dir))
+	svc := sysd.Service{
+		Name:        strings.TrimSuffix(slice, ".slice") + "_app_" + sysd.EscapePart(a.Name) + ".service",
+		Slice:       slice,
+		Description: "Den desktop mission app " + a.Name,
+		Argv:        a.Argv(dir),
+		Env:         deskLaunchEnv(),
+		Dir:         dir,
+	}
+	if err := deskSysStart(svc); err != nil {
 		return l, err
 	}
-	started := cmd.Process.Pid
-	go cmd.Wait()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		snap, err := deskSnapshot(ctx)
@@ -617,12 +625,7 @@ func launchApp(ctx context.Context, a desktop.App, dir string, before desktop.Sn
 					continue
 				}
 				l.Address, l.PID = w.Address, w.PID
-				l.Joined = true
-				for _, p := range procs.Ancestors(w.PID) {
-					if p.PID == started {
-						l.Joined = false
-					}
-				}
+				l.Joined = !strings.Contains(deskCgroupOf(w.PID), "/"+slice+"/")
 				return l, nil
 			}
 		}
