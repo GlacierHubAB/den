@@ -98,6 +98,9 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 		if m.Protects(s.Active) {
 			return deny("use_bind: one of Den's own windows is focused; focus another window first")
 		}
+		if ns := newLayer(m, s); ns != "" {
+			return deny("use_bind: a layer surface (%s) opened during the task and may hold the keyboard; wait until it is gone", ns)
+		}
 		if len(s.Binds) == 0 {
 			return deny("use_bind: %s", noBinds)
 		}
@@ -156,6 +159,43 @@ func protectedAt(x, y float64, m Mission, s Snapshot) string {
 			return "the point is on the console's dock"
 		}
 	}
+	// A layer surface (a bar, a dock, a launcher, a notification) isn't a
+	// task's: what it opens runs outside the mission. Top and overlay
+	// surfaces lie over windows; background and bottom ones take the
+	// point only where no window is.
+	under := len(s.At(x, y)) > 0
+	for _, l := range s.Layers {
+		if l.Under(x, y) && (l.Level >= 2 || !under) {
+			return "the point is on a layer surface (" + sanitizeNS(l.Namespace) + "), not a window"
+		}
+	}
+	return ""
+}
+
+// sanitizeNS is a layer's namespace for a reason: short, printable.
+func sanitizeNS(ns string) string {
+	ns = sanitize.Line(ns)
+	if r := []rune(ns); len(r) > 40 {
+		ns = string(r[:40])
+	}
+	if ns == "" {
+		return "unnamed"
+	}
+	return ns
+}
+
+// newLayer names a top or overlay surface that opened after the task
+// started, "" when none: one may hold the keyboard, so keys wait. The
+// console's own surfaces are the console's, judged elsewhere.
+func newLayer(m Mission, s Snapshot) string {
+	for _, l := range s.Layers {
+		if l.Level < 2 || l.W <= 0 || l.H <= 0 || l.PID > 1 && m.Console[l.PID] {
+			continue
+		}
+		if l.Address == "" || !m.LayersAtStart[l.Address] {
+			return sanitizeNS(l.Namespace)
+		}
+	}
 	return ""
 }
 
@@ -199,6 +239,9 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 
 func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 	args["then"] = "none"
+	if ns := newLayer(m, s); ns != "" {
+		return deny("keyboard: a layer surface (%s) opened during the task and may hold the keyboard; wait until it is gone", ns)
+	}
 	if m.Protects(s.Active) {
 		return deny("keyboard: one of Den's own windows is focused; focus another window first")
 	}
@@ -223,17 +266,11 @@ func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 		if text == "" {
 			return deny("keyboard type needs text")
 		}
-		// A typed character the human bound runs that bind: check it as one.
-		for _, b := range s.Binds {
-			if b.Mods&^modShift != 0 {
-				continue
-			}
-			if (len([]rune(b.Key)) == 1 && strings.Contains(strings.ToLower(text), b.Key)) || (b.Key == "space" && strings.ContainsRune(text, ' ')) ||
-				(b.Key == "return" && strings.ContainsAny(text, "\r\n")) || (b.Key == "tab" && strings.ContainsRune(text, '\t')) {
-				if why := refusedBind(b, m, s); why != "" {
-					return deny("keyboard: typing %q runs a bind: %s", b.Key, why)
-				}
-			}
+		// Typing never runs a bind: a piece with a key the human bound
+		// with no modifier is refused, whatever the bind does, since even a
+		// focus move would send the rest of the piece elsewhere.
+		if k := boundText(text, s.Binds); k != "" {
+			return deny("keyboard: typing %q would run one of your binds; press it with keyboard key or use_bind instead", k)
 		}
 	case "key":
 		keys := str(args, "keys")
@@ -386,33 +423,43 @@ var (
 	denWord     = regexp.MustCompile(`(^|[\s/;&|("'` + "`" + `])den([\s;&|)"'` + "`" + `]|$)`)
 )
 
-// taskDispatch is every bind dispatcher task mode may run, and how its
-// argument is checked. Anything else is refused: a dispatcher Den doesn't
+// taskDispatch is every bind dispatcher task mode may run, and the shape
+// of its argument. Anything else is refused: a dispatcher Den doesn't
 // know (a plugin's, a Lua function's) can't be checked, and programs a
 // task opens start only through launch, inside the mission's sandbox.
 var taskDispatch = map[string]dispatchArg{
-	// The view: workspaces, monitors and focus moves.
-	"workspace": argAny, "togglespecialworkspace": argAny, "focusmonitor": argAny,
-	"movefocus": argAny, "cyclenext": argAny, "focusurgentorlast": argAny, "focuscurrentorlast": argAny,
-	"layoutmsg": argAny, "togglesplit": argAny, "swapsplit": argAny, "splitratio": argAny,
-	"togglegroup": argAny, "changegroupactive": argAny, "lockactivegroup": argAny,
-	// The focused window, which must not be Den's.
-	"killactive": argActive, "forcekillactive": argActive, "togglefloating": argActive, "setfloating": argActive,
-	"settiled": argActive, "fullscreen": argActive, "fullscreenstate": argActive, "pseudo": argActive,
-	"pin": argActive, "centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive,
-	"swapnext": argActive, "movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive,
-	"moveoutofgroup": argActive, "movetoworkspace": argActive, "movetoworkspacesilent": argActive,
-	// A window named by address, which must not be Den's.
+	// Focus and view moves: no window is acted on.
+	"workspace": argView, "togglespecialworkspace": argView, "focusmonitor": argView,
+	"movefocus": argView, "cyclenext": argView, "focusurgentorlast": argView, "focuscurrentorlast": argView,
+	// The focused window; the argument names no window.
+	"killactive": argActive, "forcekillactive": argActive, "fullscreen": argActive, "fullscreenstate": argActive,
+	"centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive, "swapnext": argActive,
+	"movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive,
+	"togglesplit": argActive, "swapsplit": argActive, "splitratio": argActive, "togglegroup": argActive,
+	"changegroupactive": argActive, "lockactivegroup": argActive,
+	// The focused window, or the one the whole argument names.
+	"togglefloating": argWindow, "setfloating": argWindow, "settiled": argWindow, "pin": argWindow,
+	"pseudo": argWindow, "moveoutofgroup": argWindow,
+	// A workspace, then optionally ",<window>".
+	"movetoworkspace": argWorkspaceWindow, "movetoworkspacesilent": argWorkspaceWindow,
+	// One window, which the argument must name.
 	"focuswindow": argAddress, "closewindow": argAddress, "killwindow": argAddress,
 }
 
 type dispatchArg int
 
 const (
-	argAny     dispatchArg = iota // the argument names no window
-	argActive                     // acts on the focused window, or on one the argument names
-	argAddress                    // the argument must name one window by address
+	argView            dispatchArg = iota // acts on no window
+	argActive                             // acts on the focused window
+	argWindow                             // the focused window, or the argument's
+	argWorkspaceWindow                    // "<workspace>[,<window>]"
+	argAddress                            // the argument's window, which it must name
 )
+
+// addressArg is the one window form task mode takes: Hyprland reads a bare
+// word, "floating", "tiled" or "activewindow" as a selector too, and a
+// class regex could match Den's window.
+var addressArg = regexp.MustCompile(`^address:0x[0-9a-z]+$`)
 
 // refusedBind says why a bind is one task mode never runs, "" when it may.
 func refusedBind(b Bind, m Mission, s Snapshot) string {
@@ -421,36 +468,40 @@ func refusedBind(b Bind, m Mission, s Snapshot) string {
 	if !ok {
 		return "task mode runs only binds whose action Den can check (" + d + "); open apps with launch"
 	}
-	names := func() string {
-		for addr := range m.Protected {
-			a := strings.ToLower(addr)
-			if strings.Contains(arg, a) || strings.Contains(arg, strings.TrimPrefix(a, "0x")) {
-				return "it acts on one of Den's own windows"
+	window := ""
+	switch kind {
+	case argView:
+		return ""
+	case argWindow, argAddress:
+		window = arg
+	case argWorkspaceWindow:
+		if _, w, found := strings.Cut(arg, ","); found {
+			window = strings.TrimSpace(w)
+			if window == "" {
+				return "it names an empty window"
 			}
+		}
+	}
+	if window == "" {
+		if kind == argAddress {
+			return "it must name one window by address"
+		}
+		if m.Protects(s.Active) {
+			return "it acts on the focused window, which is one of Den's own"
 		}
 		return ""
 	}
-	switch kind {
-	case argActive:
-		if why := names(); why != "" {
-			return why
+	if !addressArg.MatchString(window) {
+		return "it names windows by " + window + ", which could match Den's; only address:0x… is taken"
+	}
+	addr := strings.TrimPrefix(window, "address:")
+	for p := range m.Protected {
+		if strings.EqualFold(p, addr) {
+			return "it acts on one of Den's own windows"
 		}
-		// A window picked by class, title or pid could be Den's.
-		for _, sel := range []string{"class:", "title:", "initialclass:", "initialtitle:", "pid:", "tag:"} {
-			if strings.Contains(arg, sel) {
-				return "it names windows by " + strings.TrimSuffix(sel, ":") + ", which could be Den's"
-			}
-		}
-		if !strings.Contains(arg, "address:") && m.Protects(s.Active) {
-			return "it acts on the focused window, which is one of Den's own"
-		}
-	case argAddress:
-		if !strings.HasPrefix(arg, "address:") || strings.ContainsAny(strings.TrimPrefix(arg, "address:"), " ,") {
-			return "it must name one window by address; a class or title could be Den's"
-		}
-		if why := names(); why != "" {
-			return why
-		}
+	}
+	if _, ok := s.Window(addr); !ok {
+		return "it names no window that exists (" + addr + ")"
 	}
 	return ""
 }

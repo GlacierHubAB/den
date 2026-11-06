@@ -143,6 +143,7 @@ type deskPrepared struct {
 	workspace int
 	dir       string
 	windows   []deskLaunched
+	layers    map[string]bool // a task: the top and overlay surfaces up at its start
 	err       error
 }
 
@@ -495,6 +496,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		// the agent view joins it once it is up, and until then no call
 		// is answered (decideDesktopCall).
 		dm.Task, dm.Protected = true, map[string]bool{p.own: true}
+		dm.LayersAtStart = p.layers
 		dm.limitActions = p.offer.actions
 		dm.x11 = p.offer.x11 // the card's switch, fixed for the mission
 		dm.deadline = time.Now().Add(time.Duration(p.offer.minutes) * time.Minute)

@@ -344,15 +344,16 @@ func TestTaskCombosNeedTheBinds(t *testing.T) {
 // The dispatcher list is small and literal; a change to it is a review.
 func TestTaskDispatchListIsPinned(t *testing.T) {
 	want := map[string]dispatchArg{
-		"workspace": argAny, "togglespecialworkspace": argAny, "focusmonitor": argAny,
-		"movefocus": argAny, "cyclenext": argAny, "focusurgentorlast": argAny, "focuscurrentorlast": argAny,
-		"layoutmsg": argAny, "togglesplit": argAny, "swapsplit": argAny, "splitratio": argAny,
-		"togglegroup": argAny, "changegroupactive": argAny, "lockactivegroup": argAny,
-		"killactive": argActive, "forcekillactive": argActive, "togglefloating": argActive, "setfloating": argActive,
-		"settiled": argActive, "fullscreen": argActive, "fullscreenstate": argActive, "pseudo": argActive,
-		"pin": argActive, "centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive,
-		"swapnext": argActive, "movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive,
-		"moveoutofgroup": argActive, "movetoworkspace": argActive, "movetoworkspacesilent": argActive,
+		"workspace": argView, "togglespecialworkspace": argView, "focusmonitor": argView,
+		"movefocus": argView, "cyclenext": argView, "focusurgentorlast": argView, "focuscurrentorlast": argView,
+		"killactive": argActive, "forcekillactive": argActive, "fullscreen": argActive, "fullscreenstate": argActive,
+		"centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive, "swapnext": argActive,
+		"movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive,
+		"togglesplit": argActive, "swapsplit": argActive, "splitratio": argActive, "togglegroup": argActive,
+		"changegroupactive": argActive, "lockactivegroup": argActive,
+		"togglefloating": argWindow, "setfloating": argWindow, "settiled": argWindow, "pin": argWindow,
+		"pseudo": argWindow, "moveoutofgroup": argWindow,
+		"movetoworkspace": argWorkspaceWindow, "movetoworkspacesilent": argWorkspaceWindow,
 		"focuswindow": argAddress, "closewindow": argAddress, "killwindow": argAddress,
 	}
 	if len(taskDispatch) != len(want) {
@@ -367,5 +368,139 @@ func TestTaskDispatchListIsPinned(t *testing.T) {
 		if _, ok := taskDispatch[d]; ok {
 			t.Errorf("%s is on the list", d)
 		}
+	}
+}
+
+// A window in a bind's argument is taken only as address:0x… of a window
+// that exists and isn't Den's: a bare word is a class regex to Hyprland.
+func TestTaskBindWindowArgsTakeOnlyAnAddress(t *testing.T) {
+	m, s := taskDesk()
+	other := s.Windows[len(s.Windows)-1].Address
+	cases := []struct {
+		d, arg string
+		ok     bool
+	}{
+		{"movetoworkspacesilent", "special,den", false},
+		{"togglefloating", "den", false},
+		{"togglefloating", "floating", false},
+		{"pin", "activewindow", false},
+		{"movetoworkspace", "3,class:ghostty", false},
+		{"movetoworkspace", "3,address:0xden", false},
+		{"movetoworkspace", "3,address:0xdead", false},
+		{"focuswindow", "title:Den", false},
+		{"closewindow", "address:0xview", false},
+		{"movetoworkspace", "3", true},
+		{"movetoworkspace", "3,address:" + other, true},
+		{"togglefloating", "", true},
+		{"togglefloating", "address:" + other, true},
+		{"focuswindow", "address:" + other, true},
+	}
+	for _, c := range cases {
+		s.Binds = []Bind{{Mods: modSuper, Key: "k", Dispatcher: c.d, Arg: c.arg}}
+		v := taskCall(t, "use_bind", map[string]any{"combo": "super+k"}, m, s)
+		if (v.Kind == Allow) != c.ok {
+			t.Errorf("%s %q: %v (%s), want allowed=%v", c.d, c.arg, v.Kind, v.Reason, c.ok)
+		}
+	}
+	// With Den's window focused, a bind on the focused window is refused.
+	s.Active = "0xden"
+	s.Binds = []Bind{{Mods: modSuper, Key: "k", Dispatcher: "togglesplit"}}
+	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+k"}, m, s); v.Kind != Deny {
+		t.Error("togglesplit allowed with Den's window focused")
+	}
+}
+
+// Typing never runs a bind, even one the list would allow, and keys are
+// matched by their keysym names.
+func TestTaskTypingNeverRunsABind(t *testing.T) {
+	m, s := taskDesk()
+	cases := []struct {
+		bind Bind
+		text string
+	}{
+		{Bind{Key: "n", Dispatcher: "cyclenext"}, "pwn"},
+		{Bind{Key: "minus", Dispatcher: "workspace", Arg: "-1"}, "a-b"},
+		{Bind{Key: "period", Dispatcher: "exec", Arg: "x"}, "end."},
+		{Bind{Key: "slash", Dispatcher: "exec", Arg: "x"}, "a/b"},
+		{Bind{Mods: modShift, Key: "1", Dispatcher: "exec", Arg: "x"}, "hi!"},
+		{Bind{Key: "odiaeresis", Dispatcher: "exec", Arg: "x"}, "höst"},
+		{Bind{Key: "odiaeresis", Dispatcher: "exec", Arg: "x"}, "a,b"},
+		{Bind{Key: "code:38", Dispatcher: "exec", Arg: "x"}, "x"},
+	}
+	for _, c := range cases {
+		s.Binds = append([]Bind(nil), c.bind)
+		if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": c.text, "window": "0xshell"}, m, s); v.Kind != Deny {
+			t.Errorf("typing %q with a bind on %q allowed", c.text, c.bind.Key)
+		}
+	}
+	// A bind on a key no text reaches, or with a modifier, leaves typing alone.
+	s.Binds = []Bind{{Key: "xf86audioraisevolume", Dispatcher: "__lua"}, {Key: "super_l", Dispatcher: "__lua"}, {Mods: modSuper, Key: "minus", Dispatcher: "exec"}}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "a-b, c./d!", "window": "0xshell"}, m, s); v.Kind != Allow {
+		t.Errorf("typing refused with no unmodified bind on its keys: %s", v.Reason)
+	}
+	// A combo spelled with the symbol matches a bind on its keysym name.
+	s.Binds = []Bind{{Mods: modCtrl, Key: "minus", Dispatcher: "exec", Arg: "x"}}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "ctrl+-"}, m, s); v.Kind != Deny {
+		t.Error("ctrl+- allowed with an exec bind on ctrl+minus")
+	}
+}
+
+// Layer surfaces aren't a task's: no click, drag or scroll lands on one,
+// and keys wait while a surface that opened during the task is up.
+func TestTaskLayerSurfacesAreNotATasks(t *testing.T) {
+	m, s := taskDesk()
+	s.Layers = []Layer{
+		{Address: "0xbg", Monitor: "DP-1", Level: 0, X: 0, Y: 0, W: 2000, H: 1200, Namespace: "wallpaper", PID: 70},
+		{Address: "0xbar", Monitor: "DP-1", Level: 2, X: 0, Y: 0, W: 2000, H: 26, Namespace: "omarchy-bar", PID: 71},
+		{Address: "0xnote", Monitor: "DP-1", Level: 3, X: 1400, Y: 700, W: 300, H: 120, Namespace: "notifications", PID: 72},
+	}
+	m.LayersAtStart = map[string]bool{"0xbg": true, "0xbar": true, "0xnote": true}
+	for _, c := range []map[string]any{
+		{"action": "click", "x": 700, "y": 10},                    // the bar, over the shell
+		{"action": "scroll", "x": 1500, "y": 800, "scroll_dy": 2}, // a notification
+		{"action": "drag", "x": 1500, "y": 500, "to_x": 700, "to_y": 10},
+	} {
+		if v := taskCall(t, "pointer", c, m, s); v.Kind != Deny {
+			t.Errorf("pointer %v on a layer surface allowed", c)
+		}
+	}
+	if v := taskCall(t, "click_ui", map[string]any{"name": "Open", "window": "0xbar"}, m, s); v.Kind != Deny {
+		t.Error("click_ui on a layer surface allowed")
+	}
+	// The wallpaper lies under every window: a click on a window is the
+	// window's, a click where no window is lands on the wallpaper.
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1500, "y": 500}, m, s); v.Kind != Allow {
+		t.Errorf("a click on a window above the wallpaper refused: %s", v.Reason)
+	}
+	s.Windows = s.Windows[:3] // the app's window closes: the wallpaper is bare there
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1500, "y": 500}, m, s); v.Kind != Deny || !strings.Contains(v.Reason, "wallpaper") {
+		t.Errorf("a click on the bare wallpaper: %v %s", v.Kind, v.Reason)
+	}
+
+	// Keys wait while a launcher that opened during the task is up.
+	m, s = taskDesk()
+	s.Layers = []Layer{{Address: "0xbar", Level: 2, W: 2000, H: 26, Namespace: "omarchy-bar", PID: 71}}
+	m.LayersAtStart = map[string]bool{"0xbar": true}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "ls", "window": "0xshell"}, m, s); v.Kind != Allow {
+		t.Errorf("typing with only the start's bar up refused: %s", v.Reason)
+	}
+	s.Layers = append(s.Layers, Layer{Address: "0xlaunch", Level: 3, X: 600, Y: 300, W: 600, H: 400, Namespace: "walker", PID: 73})
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"keyboard", map[string]any{"action": "type", "text": "ls", "window": "0xshell"}},
+		{"keyboard", map[string]any{"action": "key", "keys": "ctrl+c", "window": "0xshell"}},
+		{"use_bind", map[string]any{"combo": "super+w"}},
+	} {
+		if v := taskCall(t, c.tool, c.args, m, s); v.Kind != Deny {
+			t.Errorf("%s %v allowed with a launcher up", c.tool, c.args)
+		}
+	}
+	// With no start list, every top surface counts as new: keys wait.
+	m.LayersAtStart = nil
+	s.Layers = s.Layers[:1]
+	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "ls", "window": "0xshell"}, m, s); v.Kind != Deny {
+		t.Error("typing allowed with no start list of surfaces")
 	}
 }

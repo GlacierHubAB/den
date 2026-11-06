@@ -234,6 +234,11 @@ type Mission struct {
 	// call: a task treats their windows as Den's own (the caller adds them
 	// to Protected) and their top or overlay surfaces as off limits.
 	Console map[int]bool
+	// LayersAtStart are the addresses of the top and overlay surfaces up
+	// when a task started (the bar, the dock). A top or overlay surface
+	// not among them opened later (a launcher, a menu, a popup) and may
+	// hold the keyboard: a task's keys wait until it is gone.
+	LayersAtStart map[string]bool
 }
 
 // InScope reports whether a window is the mission's: on its workspace, and
