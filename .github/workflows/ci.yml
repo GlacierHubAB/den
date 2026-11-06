@@ -93,7 +93,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25 minutes, not 15: internal/ui alone takes about 510 s under -race, so
+    # the 20-minute go test limit below needs room around it.
+    timeout-minutes: 25
     permissions:
       contents: read
     strategy:
@@ -142,7 +144,7 @@ jobs:
           GIT_CONFIG_NOSYSTEM: "1"
           GOPROXY: "off"
           GOFLAGS: -mod=readonly
-        run: make test TESTFLAGS=-race
+        run: make test TESTFLAGS="-race -timeout 20m"
       - name: make build
         env:
           GOPROXY: "off"
