@@ -79,19 +79,25 @@ func deskInstance() string {
 	return hex.EncodeToString(sum[:6])
 }
 
-// deskSlicePrefix is the start of every slice of this Den's.
-func deskSlicePrefix() string { return "den-desk-" + deskInstance() + "-" }
+// deskSlicePrefix is the start of every slice of this Den's. No '-' in a
+// slice's name: systemd reads each '-' as a level of slices above it
+// (den.slice, den-desk.slice, ...) and leaves those standing after.
+func deskSlicePrefix() string { return "den_desk_" + deskInstance() + "_" }
 
 // slice is the mission's slice.
 func (dm *deskMission) slice() string { return deskSliceOf(dm.ID) }
 
 // deskSliceOf is the slice of the mission with that id.
-func deskSliceOf(id string) string { return deskSlicePrefix() + sysd.Escape(id) + ".slice" }
+func deskSliceOf(id string) string { return deskSlicePrefix() + sysd.EscapePart(id) + ".slice" }
 
 // sliceOK says why the mission's unit names do not hold, "" when they do:
 // the escape gives the id back, and the longest name fits systemd's limit.
 func (dm *deskMission) sliceOK() string {
-	if back, ok := sysd.Unescape(sysd.Escape(dm.ID)); !ok || back != dm.ID {
+	// EscapePart holds no '_' (Den's separator) and no '-' (a level of
+	// slices), and gives the id back: one id, one set of names.
+	if e := sysd.EscapePart(dm.ID); strings.ContainsAny(e, "_-") {
+		return "the mission's id does not make a unit name"
+	} else if back, ok := sysd.Unescape(e); !ok || back != dm.ID {
 		return "the mission's id does not make a unit name"
 	}
 	if len(dm.service(999999)) > sysd.MaxUnitName {
@@ -102,7 +108,7 @@ func (dm *deskMission) sliceOK() string {
 
 // service is the n-th launch's service.
 func (dm *deskMission) service(n int) string {
-	return strings.TrimSuffix(dm.slice(), ".slice") + "-" + strconv.Itoa(n) + ".service"
+	return strings.TrimSuffix(dm.slice(), ".slice") + "_" + strconv.Itoa(n) + ".service"
 }
 
 // inSlice reports whether a process runs in the mission's slice.
@@ -263,6 +269,21 @@ type (
 // deskSwept is what the start's sweep could not stop; New takes it.
 var deskSwept []string
 
+// deskListAgain stands in deskSwept and the leftovers for a listing that
+// failed: Den holds until one is read.
+const deskListAgain = "(the listing of this Den's slices)"
+
+// deskManagerHere reports whether the user has a systemd manager at all:
+// its private socket in the runtime dir. Tests replace it.
+var deskManagerHere = func() bool {
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(dir + "/systemd/private")
+	return err == nil
+}
+
 // deskDrive moves each mission's slice towards what its state asks:
 // frozen while paused (after its calls in flight end), running while
 // not, gone once the mission ended. It runs after every message.
@@ -274,6 +295,17 @@ func (m *Model) deskDrive() tea.Cmd {
 		cmds = append(cmds, func() tea.Msg {
 			var still []string
 			for _, n := range left {
+				if n == deskListAgain {
+					// The start's listing failed: list again; until a listing
+					// is read, this Den's slices are not known to be gone.
+					names, err := deskSysList(deskSlicePrefix())
+					if err != nil {
+						still = append(still, deskListAgain)
+						continue
+					}
+					still = append(still, names...)
+					continue
+				}
 				deskSysStop(n)
 				if u, err := deskSysState(n); err != nil || !u.Gone() {
 					still = append(still, n)
@@ -427,7 +459,14 @@ func (m *Model) deskSliceMsg(msg tea.Msg) tea.Cmd {
 func SweepDesktopSlices() []string {
 	names, err := deskSysList(deskSlicePrefix())
 	if err != nil {
-		return nil // no user manager: nothing of Den's can be running in one
+		if !deskManagerHere() {
+			deskSwept = nil
+			return nil // no user manager at all: nothing of Den's can run in one
+		}
+		// A listing that failed (a timeout, a bus error) is not a listing
+		// that is empty: hold, and list again from the retry.
+		deskSwept = []string{deskListAgain}
+		return deskSwept
 	}
 	var left []string
 	for _, n := range names {

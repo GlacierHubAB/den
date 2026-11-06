@@ -26,6 +26,13 @@ func TestEscapeRoundTrip(t *testing.T) {
 			}
 		}
 	}
+	// EscapePart: the same round trip, and never a '_' or a '-'.
+	for _, s := range []string{"", "x_app", "a-b", "a/b", "_", ".x", "ünï"} {
+		e := EscapePart(s)
+		if back, ok := Unescape(e); !ok || back != s || strings.ContainsAny(e, "_-/") {
+			t.Errorf("EscapePart(%q) = %q, back %q %v", s, e, back, ok)
+		}
+	}
 	if Escape("d-1") == Escape("d/1") {
 		t.Error("'-' and '/' escape alike")
 	}
@@ -206,10 +213,10 @@ func TestListTakesOnlyItsOwn(t *testing.T) {
 	old := runTool
 	t.Cleanup(func() { runTool = old })
 	runTool = func(_ string, _ time.Duration, args, _ []string) (string, error) {
-		return "den-desk-ab-m1.slice loaded active active Den\n● den-desk-ab-m2.slice loaded failed failed x\nden-desk-abc-m3.slice loaded active active y\nden-desk-ab-.slice x\nnot a line\n", nil
+		return "den_desk_ab_m1.slice loaded active active Den\n● den_desk_ab_m2.slice loaded failed failed x\nden_desk_abc_m3.slice loaded active active y\nden_desk_ab_.slice x\nnot a line\n", nil
 	}
-	got, err := List("den-desk-ab-")
-	if err != nil || strings.Join(got, " ") != "den-desk-ab-m1.slice den-desk-ab-m2.slice" {
+	got, err := List("den_desk_ab_")
+	if err != nil || strings.Join(got, " ") != "den_desk_ab_m1.slice den_desk_ab_m2.slice" {
 		t.Errorf("List: %v %v", got, err)
 	}
 	for _, bad := range []string{`den\-`, "den*", "den-[a]", ""} {
@@ -227,9 +234,11 @@ func TestRealUnits(t *testing.T) {
 	if os.Getenv("DEN_REAL_SYSTEMD") != "1" {
 		t.Skip("set DEN_REAL_SYSTEMD=1 to start a unit on this machine's systemd user manager")
 	}
-	id := "dentest-" + strconv.Itoa(os.Getpid())
-	slice := "den-desk-" + Escape(id) + ".slice"
-	svc := "den-desk-" + Escape(id) + "-1.service"
+	// No '-' in a slice's name: each one is a level of slices systemd
+	// makes above it, and leaves standing after.
+	id := "dentest" + strconv.Itoa(os.Getpid())
+	slice := "den_desk_" + Escape(id) + ".slice"
+	svc := "den_desk_" + Escape(id) + "_1.service"
 	t.Cleanup(func() { Stop(slice) })
 	// The unit writes its own environment to a file the test names (as
 	// an argument, never in the shell's text): another process's environ
@@ -288,7 +297,7 @@ func TestRealUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(func(u UnitState) bool { return u.Freeze == "running" }, slice)
-	names, err := List("den-desk-" + strings.SplitN(Escape(id), `\`, 2)[0])
+	names, err := List("den_desk_" + id)
 	if err != nil || len(names) != 1 || names[0] != slice {
 		t.Errorf("List: %v %v", names, err)
 	}
@@ -302,5 +311,12 @@ func TestRealUnits(t *testing.T) {
 	wait(UnitState.Gone, svc)
 	if err := Stop(slice); err != nil {
 		t.Errorf("a second stop of a gone slice: %v", err)
+	}
+	// Nothing of the test's is left, and no level of slices above it was
+	// made: every den* slice listed is named.
+	left, _ := systemctl("list-units", "--all", "--plain", "--no-legend", "--type=slice", "--", "den*.slice")
+	t.Logf("den*.slice after: %q", left)
+	if strings.Contains(left, "den_desk_"+id) {
+		t.Errorf("the test's slice is left: %q", left)
 	}
 }

@@ -347,6 +347,56 @@ func TestProxyReportsCallsDone(t *testing.T) {
 	}
 }
 
+// A cancelled call is reported done only once hypruse has answered it:
+// until then hypruse may still be acting (sec's S2-2).
+func TestProxyDoneWaitsForACancelledCall(t *testing.T) {
+	g := &fakeGate{fn: func(tool string, args json.RawMessage, _ string) (Answer, error) {
+		return Answer{Allow: true, Args: args, Call: "c1"}, nil
+	}}
+	cr, cw := io.Pipe()
+	pr, pw := io.Pipe()
+	chr, chw := io.Pipe()
+	hr, hw := io.Pipe()
+	f := &fakeHypruse{slow: 500 * time.Millisecond}
+	go f.serve(chr, hw)
+	p := &Proxy{Gate: g, Client: cr, ToClient: pw, Child: hr, ToChild: chw}
+	go p.Run(context.Background())
+	t.Cleanup(func() { cw.Close(); hw.Close(); chw.Close() })
+	replies := make(chan message, 16)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			var m message
+			json.Unmarshal(sc.Bytes(), &m)
+			replies <- m
+		}
+	}()
+	write := func(v any) {
+		b, _ := json.Marshal(v)
+		cw.Write(append(b, '\n'))
+	}
+	write(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{}})
+	<-replies
+	write(map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": map[string]any{"name": "pointer", "arguments": map[string]any{"action": "move", "x": 1, "y": 1}}})
+	time.Sleep(100 * time.Millisecond) // hypruse has it, and is slow
+	write(map[string]any{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": map[string]any{"requestId": 2}})
+	select {
+	case <-replies:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no reply to the cancelled call")
+	}
+	if d := g.dones(); len(d) != 0 {
+		t.Fatalf("done %v before hypruse answered", d)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for len(g.dones()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if d := g.dones(); len(d) != 1 || d[0] != "c1" {
+		t.Errorf("after hypruse answered: done %v", d)
+	}
+}
+
 // A piece Den refuses stops the text there.
 func TestProxyStopsTypingWhenDenRefuses(t *testing.T) {
 	g := policyGate()
