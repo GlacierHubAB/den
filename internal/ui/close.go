@@ -717,7 +717,7 @@ func (m *Model) finishClose(msg closeDoneMsg) tea.Cmd {
 	}
 	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], failed
 	m.refresh()
-	return tea.Batch(snapshot, flashTick(4*time.Second, m.flash))
+	return tea.Batch(snapshot, flashTick(flashFor, m.flash))
 }
 
 // closeNamed finds the agent a /close name means, through names.Resolve:

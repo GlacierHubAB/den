@@ -37,6 +37,10 @@ func TestMain(m *testing.M) {
 	os.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
 	// The settle guard is tested on its own; elsewhere ^Y acts at once.
 	answerSettle = 0
+	// A flash's timer is tested on its own (TestFlashStaysUpForItsTime);
+	// elsewhere it fires at once. A test that runs every command it gets
+	// back otherwise waits out each flash, 4 s at a time.
+	flashFor, flashBrief, copyFlashFor = 0, 0, 0
 	// Nor may a test pop a notification on the desktop the run sits on: a
 	// desktop mission test once showed "Desktop control on" there.
 	notify.Command = "true"

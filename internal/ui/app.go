@@ -101,6 +101,18 @@ type focusedMsg struct {
 // an older flash's timer must not take a newer one away.
 type flashClearMsg struct{ text string }
 
+// How long a flash stays in the top bar: most for 4 s, a brief one for 3 s.
+// The vars are for tests, which set them to 0.
+const (
+	flashDefault      = 4 * time.Second
+	flashBriefDefault = 3 * time.Second
+)
+
+var (
+	flashFor   = flashDefault
+	flashBrief = flashBriefDefault
+)
+
 // flashTick clears text from the top bar after d, unless another flash
 // took its place.
 func flashTick(d time.Duration, text string) tea.Cmd {
@@ -572,7 +584,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			m.flash, m.flashErr = "clipboard: "+msg.err.Error(), true
-			return m, flashTick(3*time.Second, m.flash)
+			return m, flashTick(flashBrief, m.flash)
 		case msg.path != "":
 			return m, m.attach(msg.path)
 		case msg.text != "":
@@ -711,7 +723,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
-		return m, flashTick(4*time.Second, m.flash)
+		return m, flashTick(flashFor, m.flash)
 	case closeDoneMsg:
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
@@ -759,7 +771,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.flash, m.flashErr = "Focused "+msg.note, false
 		}
-		return m, flashTick(3*time.Second, m.flash)
+		return m, flashTick(flashBrief, m.flash)
 	case flashClearMsg:
 		if msg.text == m.flash {
 			m.flash = ""
