@@ -64,9 +64,9 @@ var FocusReasons = []string{
 
 // focusFail refuses a focus with code, message and reason, and tells
 // Options.FocusFailed: the reason, and the session and name of hit when it
-// is an agent of this machine.
+// is an agent of this machine. The event is recorded before the app hears
+// the refusal, so an app that has been refused can rely on it being there.
 func (s *Server) focusFail(c *conn, id int64, code, msg, reason string, hit *Agent) {
-	c.failData(id, code, msg, map[string]string{"reason": reason})
 	if s.opts.FocusFailed != nil {
 		session, name := "", ""
 		if hit != nil && !hit.Remote {
@@ -74,6 +74,7 @@ func (s *Server) focusFail(c *conn, id int64, code, msg, reason string, hit *Age
 		}
 		s.opts.FocusFailed(reason, session, name)
 	}
+	c.failData(id, code, msg, map[string]string{"reason": reason})
 }
 
 type focusLimit struct {
