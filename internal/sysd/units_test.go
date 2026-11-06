@@ -183,7 +183,12 @@ func TestRealUnits(t *testing.T) {
 	slice := "den-desk-" + Escape(id) + ".slice"
 	svc := "den-desk-" + Escape(id) + "-1.service"
 	t.Cleanup(func() { Stop(slice) })
-	if err := StartService(Service{Name: svc, Slice: slice, Description: "Den test", Argv: []string{"/bin/sleep", "60"}, Env: []string{"PATH=/usr/bin:/bin", "DEN_TEST_ONLY=1"}}); err != nil {
+	// The unit writes its own environment to a file the test names (as
+	// an argument, never in the shell's text): another process's environ
+	// in /proc may be closed to the test even for the same user.
+	envFile := filepath.Join(t.TempDir(), "env")
+	argv := []string{"/bin/sh", "-c", `/usr/bin/env > "$1"; exec /bin/sleep 60`, "sh", envFile}
+	if err := StartService(Service{Name: svc, Slice: slice, Description: "Den test", Argv: argv, Env: []string{"PATH=/usr/bin:/bin", "DEN_TEST_ONLY=1"}}); err != nil {
 		t.Fatal(err)
 	}
 	wait := func(want func(UnitState) bool, unit string) UnitState {
@@ -204,18 +209,20 @@ func TestRealUnits(t *testing.T) {
 	wait(func(u UnitState) bool { return u.Active == "active" }, slice)
 	// E1: the program holds only what it was given, nothing of the
 	// manager's own (no Hyprland instance among it).
-	out, err := systemctl("show", "--property=MainPID", "--value", "--", svc)
-	if err != nil {
-		t.Fatal(err)
+	var raw []byte
+	for i := 0; i < 50 && len(raw) == 0; i++ {
+		raw, _ = os.ReadFile(envFile)
+		time.Sleep(100 * time.Millisecond)
 	}
-	raw, err := os.ReadFile("/proc/" + strings.TrimSpace(out) + "/environ")
-	if err != nil {
-		t.Fatal(err)
+	if len(raw) == 0 {
+		t.Fatal("the unit wrote no environment")
 	}
-	for _, kv := range strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00") {
+	for _, kv := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
 		k, _, _ := strings.Cut(kv, "=")
 		switch k {
 		case "PATH", "DEN_TEST_ONLY":
+		case "PWD", "SHLVL", "_":
+			// the shell's own
 		case "INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MANAGERPID", "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "HOME", "LANG", "LANGUAGE", "USER", "LOGNAME", "SHELL", "XDG_RUNTIME_DIR":
 			// set by the manager for every service it runs (not inherited)
 		default:
