@@ -1054,8 +1054,8 @@ no, pausing and stopping are always allowed from the console).
   `internal/api/convcases/answer.go` (`AnswerCases`) pin all of this.
 
 - `grants.get {}` needs a proved console and changes nothing. It answers
-  `{seq, enforced, powers, locked, god, start_confirmed, classes, kept,
-  den_only}`, and from then on this connection gets a `grants` event with
+  `{seq, enforced, powers, locked, god, start_confirmed, raise_epoch,
+  classes, kept, den_only}`, and from then on this connection gets a `grants` event with
   the same object on each change. `console.events` does not carry it.
 - `seq` rises on each change; it is per Den process. On one connection, keep
   the object with the highest `seq` (the reply's included) and drop an event
@@ -1073,7 +1073,7 @@ no, pausing and stopping are always allowed from the console).
 - `classes`, in this order: `routine` (Everyday answers), `destructive` (Stop
   and close), `code` (Run commands), `desktop` (Desktop control), `outward`
   (Send out). Each is `{class, label, about, den_level, session, level,
-  default, steps, set_in_den}`: `den_level` is the level Den keeps across
+  default, steps, set_in_den, raise_n, raised_at}`: `den_level` is the level Den keeps across
   its restarts; `level` is the effective level now, min(`den_level`,
   `session.level`), at most `default` until `start_confirmed`, then 0 as
   above; `steps`
@@ -1088,6 +1088,27 @@ no, pausing and stopping are always allowed from the console).
   question, and a console hears it as a `grants` event like any change;
   no verb raises one. A human's lowering in Den keeps your session when
   it is below the new `den_level`.
+- The raise counter, for your own lowering's re-send: `raise_epoch` (top
+  level, 32 hex digits) and, per class, `raise_n` (a count from 0) and
+  `raised_at` (the last raise's RFC 3339 UTC time, or null, shown only).
+  Only the human's raise of a class in Den's window counts its `raise_n`
+  up, by one, and a raise always moves `seq`. Nothing else ever counts up.
+  Den starts the counter again, every `raise_n` 0 under a new
+  `raise_epoch`, when it cannot vouch for its stored levels at start, and
+  at a new pairing. Your rule, on one read and with that read's `seq`,
+  against the epoch and count you held when you made your lowering:
+  - same epoch, `raise_n` above yours: the human raised over it, so drop
+    your lowering;
+  - same epoch, the same `raise_n`: keep it, and re-send it with this
+    read's `seq`;
+  - a new epoch, `raise_n` above 0: the human raised since, so drop it;
+  - a new epoch, `raise_n` 0: take the new epoch and 0 as yours, and keep
+    it.
+
+  A re-send that crosses a raise is `stale`: read again and apply the
+  rule. Den never reads these fields to decide a level, a cap or an
+  answer. The `GrantsCases` row "a class the human raised in Den's
+  window" pins them.
 - `grants.lower {class, level, seq}` lowers one class for this Den session:
   for a proved connection of the console paired now, with or without its
   powers, locked or in God mode (a lowering is always allowed). `level` and

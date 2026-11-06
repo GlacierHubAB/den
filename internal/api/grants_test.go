@@ -155,6 +155,8 @@ func TestGrantsTable(t *testing.T) {
 		"after a new pairing folded a lowering in":            {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Routine: 2}},
 		"kept from before, one paused by God mode":            {Powers: true, God: true, Confirmed: true, Kept: []string{perm.KeptClose, perm.KeptMerge}},
 		"a class set in Den's window":                         {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Outward: 2}, SetInDen: map[string]string{perm.Outward: "2026-11-02T09:30:00Z"}},
+		"a class the human raised in Den's window": {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Outward: 2}, SetInDen: map[string]string{perm.Outward: "2026-11-06T10:00:00Z"},
+			RaiseEpoch: "0123456789abcdef0123456789abcdef", RaiseN: map[string]int{perm.Outward: 2}, RaisedAt: map[string]string{perm.Outward: "2026-11-06T10:00:00Z"}},
 	}
 	for _, c := range convcases.GrantsCases {
 		st, ok := states[c.Name]
