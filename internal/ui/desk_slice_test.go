@@ -237,13 +237,26 @@ func TestDeskEveryPauseFreezes(t *testing.T) {
 
 // A freeze that fails or never confirms keeps the hold, with one note.
 func TestDeskFailedFreezeKeepsTheHold(t *testing.T) {
+	old := deskFreezeWait
+	t.Cleanup(func() { deskFreezeWait = old })
+	deskFreezeWait = 50 * time.Millisecond
 	for _, slow := range []bool{false, true} {
 		m, dm, f := sliceModel(t)
 		f.failFreeze, f.freezeSlow = !slow, slow
 		dm.humanPaused = true
-		m = runSlice(t, m)
+		// One freeze, as the update loop takes it; its retry tick is not
+		// run here.
+		for round := 0; round < 2; round++ {
+			for _, msg := range runBatch(m.deskDrive()) {
+				m.deskSliceMsg(msg)
+			}
+		}
 		if dm.frozen || !m.deskHolds() {
 			t.Errorf("slow %v: frozen %v, held %v", slow, dm.frozen, m.deskHolds())
+		}
+		// No retry at once: the manager is not asked in a loop.
+		if cmd := m.deskDrive(); cmd != nil {
+			t.Errorf("slow %v: a freeze tried again at once", slow)
 		}
 		n := 0
 		for _, e := range m.orch.chat {
@@ -253,6 +266,14 @@ func TestDeskFailedFreezeKeepsTheHold(t *testing.T) {
 		}
 		if n != 1 {
 			t.Errorf("slow %v: %d notes", slow, n)
+		}
+		// Once the wait is over, it tries again, and a freeze that works
+		// then frees Den's window.
+		dm.freezeAfter = time.Time{}
+		f.failFreeze, f.freezeSlow = false, false
+		m = runSlice(t, m)
+		if !dm.frozen || m.deskHolds() {
+			t.Errorf("slow %v: the retry: frozen %v, held %v", slow, dm.frozen, m.deskHolds())
 		}
 	}
 }

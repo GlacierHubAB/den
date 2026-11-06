@@ -60,16 +60,17 @@ const (
 	// deskDrainBound is how long a pause waits for the calls in flight;
 	// hypruse's own typing gives up after 15 s.
 	deskDrainBound = 20 * time.Second
-	// deskFreezeWait bounds the read of the slice going frozen.
-	deskFreezeWait = 2 * time.Second
 )
 
-// deskStopWait bounds the wait for a stopped slice to be gone, and
-// deskStopRetry is when a stop that failed is tried again; tests shorten
-// both.
+// deskFreezeWait bounds the read of the slice going frozen, and a freeze
+// that failed or did not confirm is tried again after deskStopRetry, never
+// at once; deskStopWait bounds the wait for a stopped slice to be gone,
+// and deskStopRetry is also when a stop that failed is tried again. Tests
+// shorten them.
 var (
-	deskStopWait  = 15 * time.Second
-	deskStopRetry = 5 * time.Second
+	deskFreezeWait = 2 * time.Second
+	deskStopWait   = 15 * time.Second
+	deskStopRetry  = 5 * time.Second
 )
 
 // deskInstance names this Den's slices apart from another Den's (a second
@@ -344,8 +345,8 @@ func (m *Model) deskDriveOne(dm *deskMission) tea.Cmd {
 			return deskStoppedMsg{mission: id}
 		}
 	case dm.paused():
-		if dm.frozen || dm.freezing {
-			return nil
+		if dm.frozen || dm.freezing || time.Now().Before(dm.freezeAfter) {
+			return nil // frozen, freezing, or a failed freeze waiting to be tried again
 		}
 		if dm.pausedAt.IsZero() {
 			dm.pausedAt = time.Now()
@@ -380,7 +381,7 @@ func (m *Model) deskDriveOne(dm *deskMission) tea.Cmd {
 			return deskFrozenMsg{mission: id}
 		}
 	default:
-		dm.pausedAt = time.Time{}
+		dm.pausedAt, dm.freezeAfter = time.Time{}, time.Time{}
 		if !dm.frozen {
 			return nil
 		}
@@ -422,9 +423,17 @@ func (m *Model) deskSliceMsg(msg tea.Msg) tea.Cmd {
 				slice := dm.slice()
 				return func() tea.Msg { return deskThawedMsg{mission: msg.mission, err: deskSysThaw(slice)} }
 			}
-		case !dm.freezeNoted:
-			dm.freezeNoted = true
-			m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den could not pause the apps the desktop agent launched: Den's window still answers nothing that approves. End the mission (/desktop stop) to answer.", at: time.Now()}))
+		default:
+			// The hold stays; Den tries again after deskStopRetry, never
+			// at once (a failing manager is not asked in a loop).
+			dm.freezeAfter = time.Now().Add(deskStopRetry)
+			id := msg.mission
+			retry := tea.Tick(deskStopRetry, func(time.Time) tea.Msg { return deskRetryMsg{mission: id} })
+			if !dm.freezeNoted {
+				dm.freezeNoted = true
+				m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Den could not pause the apps the desktop agent launched: Den's window still answers nothing that approves. End the mission (/desktop stop) to answer.", at: time.Now()}))
+			}
+			return retry
 		}
 	case deskThawedMsg:
 		dm := m.deskMission(msg.mission)

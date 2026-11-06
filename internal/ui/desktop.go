@@ -97,6 +97,7 @@ type deskMission struct {
 	cards                      map[string]bool
 	inflight                   map[string]time.Time
 	pausedAt, reapAfter        time.Time
+	freezeAfter                time.Time // a failed freeze is tried again from then
 	frozen, freezing, draining bool
 	freezeNoted, stopNoted     bool
 	launched, reaping, reaped  bool
