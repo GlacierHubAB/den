@@ -139,6 +139,22 @@ func runDesktopMCP(args []string) {
 // denGate is Den, asked over den.sock for every call.
 type denGate struct{ socket, mission string }
 
+// Done tells Den the call it named has ended. Den's answer is not
+// waited on beyond a short bound: a done that never lands leaves the
+// call in flight, which Den's own bound ends.
+func (g denGate) Done(call string) {
+	payload, err := json.Marshal(bridge.DesktopInput{Kind: "done", Mission: g.mission, Call: call})
+	if err != nil {
+		return
+	}
+	conn, err := bridge.Connect(g.socket)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	bridge.CallOn(conn, bridge.Envelope{Seq: time.Now().UnixNano(), Event: bridge.DesktopEvent, Payload: payload}, 5*time.Second)
+}
+
 func (g denGate) Call(ctx context.Context, tool string, args json.RawMessage, token string) (desktop.Answer, error) {
 	payload, err := json.Marshal(bridge.DesktopInput{Kind: "call", Mission: g.mission, Tool: tool, Args: args, Token: token})
 	if err != nil {

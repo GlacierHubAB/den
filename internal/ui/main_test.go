@@ -52,6 +52,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("XDG_RUNTIME_DIR", run)
+	// Nor start, freeze or stop a unit on the run's own systemd user
+	// manager: desktop missions' slices go to a fake one.
+	deskSysFake()
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

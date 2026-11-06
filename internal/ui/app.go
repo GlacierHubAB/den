@@ -255,6 +255,7 @@ func New(cfg config.Config) Model {
 		tree:  newTreeState(),
 		att:   newAttention(),
 	}
+	m.desk.leftover = append([]string(nil), deskSwept...) // slices the start could not stop: held
 	m.tree.path = tree.Path()
 	m.tree.edges = tree.Load(m.tree.path)
 	m.missions = mission.Load(mission.Path())
@@ -544,6 +545,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	mm, cmd := m.update(msg)
 	if n, ok := mm.(Model); ok {
 		n.deskHoldAfter(held, line, msg)
+		if drive := n.deskDrive(); drive != nil {
+			cmd = tea.Batch(cmd, drive)
+		}
 		if flush := n.deskFlush(); flush != nil {
 			cmd = tea.Batch(cmd, flush)
 		}
@@ -779,6 +783,11 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case deskFlushMsg:
 		m.deskFlushed(msg)
 		return m, nil
+	case deskLaunchedMsg:
+		m.deskLaunched(msg)
+		return m, nil
+	case deskFrozenMsg, deskThawedMsg, deskStoppedMsg, deskDrainMsg, deskRetryMsg, deskLeftoverMsg:
+		return m, m.deskSliceMsg(msg)
 	case tea.KeyPressMsg:
 		m.api.lastKey = time.Now()
 		return m.handleKey(msg)

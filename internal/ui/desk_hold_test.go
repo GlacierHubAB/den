@@ -33,6 +33,10 @@ func holdModel(t *testing.T) (Model, *deskMission, *inbox.Item) {
 	return m, dm, it
 }
 
+// pauseNow is the human's /desktop pause with its slice's freeze already
+// confirmed (the freeze itself: desk_slice_test.go).
+func pauseNow(dm *deskMission) { dm.humanPaused, dm.frozen = true, true }
+
 func holdKey(m Model, k string) Model {
 	var msg tea.KeyPressMsg
 	switch k {
@@ -178,8 +182,12 @@ func TestDeskHoldCards(t *testing.T) {
 	}
 	m.input.SetValue("")
 	m = holdLine(m, "/desktop pause")
-	if !dm.humanPaused || m.deskHolds() {
-		t.Fatalf("/desktop pause while held: paused %v, %q", dm.humanPaused, m.flash)
+	if !dm.humanPaused || !m.deskHolds() {
+		t.Fatalf("/desktop pause while held: paused %v, held %v (held until frozen), %q", dm.humanPaused, m.deskHolds(), m.flash)
+	}
+	dm.frozen = true // the slice's freeze confirmed (desk_slice_test.go)
+	if m.deskHolds() {
+		t.Fatal("paused and frozen, still held")
 	}
 	m = holdKey(m, "ctrl+y")
 	if it.State != inbox.Resolved {
@@ -236,7 +244,7 @@ func TestDeskHoldLineAsksAgain(t *testing.T) {
 	}
 	m, dm, _ := holdModel(t)
 	m = typeText(m, "/unread")
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = holdKey(m, "enter")
 	if m.flash != deskHeldAsk || m.input.Value() != "/unread" {
 		t.Fatalf("first Enter after the hold: %q, line %q", m.flash, m.input.Value())
@@ -253,7 +261,7 @@ func TestDeskHoldLineAsksAgain(t *testing.T) {
 	if !m.deskHolds() {
 		t.Fatal("not held")
 	}
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = holdKey(m, "enter")
 	if !ran(m) {
 		t.Errorf("a line typed before the hold asked: %q", m.flash)
@@ -265,7 +273,7 @@ func TestDeskHoldLineAsksAgain(t *testing.T) {
 func TestDeskHoldMovedSelection(t *testing.T) {
 	m, dm, it := holdModel(t)
 	m = holdKey(m, "down")
-	dm.humanPaused = true
+	pauseNow(dm)
 	m.selectItem(it)
 	m.shown = shownTarget{id: it.ID}
 	m = holdKey(m, "ctrl+y")
@@ -279,7 +287,7 @@ func TestDeskHoldMovedSelection(t *testing.T) {
 
 	m, dm, it = holdModel(t)
 	m = holdKey(m, "down")
-	dm.humanPaused = true
+	pauseNow(dm)
 	m.input.SetValue("")
 	m = holdLine(m, "/allow")
 	if it.State == inbox.Resolved || m.flash != deskHeldMoved {
@@ -301,7 +309,7 @@ func TestDeskHoldMovedSelection(t *testing.T) {
 		if it.State != inbox.Resolved {
 			t.Fatalf("%s while held did not deny: %q", deny, m.flash)
 		}
-		dm.humanPaused = true
+		pauseNow(dm)
 		m.selectItem(next)
 		m.shown = shownTarget{id: next.ID}
 		m = holdKey(m, "ctrl+y")
@@ -315,7 +323,7 @@ func TestDeskHoldMovedSelection(t *testing.T) {
 	for _, view := range []string{"/inbox", "/overview", "/fleet flat", "/orchestrator", "/map"} {
 		m, dm, it = holdModel(t)
 		m = holdLine(m, view)
-		dm.humanPaused = true
+		pauseNow(dm)
 		m.tab = tabInbox
 		m.selectItem(it)
 		m.shown = shownTarget{id: it.ID}
@@ -327,7 +335,7 @@ func TestDeskHoldMovedSelection(t *testing.T) {
 
 	m, dm, it = holdModel(t)
 	m = holdKey(m, "down")
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = holdKey(m, "down") // the human's own move, after the hold
 	m.selectItem(it)
 	m.shown = shownTarget{id: it.ID}
@@ -342,8 +350,8 @@ func TestDeskHoldMovedSelection(t *testing.T) {
 func TestDeskResumeEndsOnlyItsOwnPause(t *testing.T) {
 	m, dm, _ := holdModel(t)
 	for _, other := range []func(on bool){
-		func(on bool) { dm.Paused = on },
-		func(on bool) { dm.overlayPaused = on },
+		func(on bool) { dm.Paused, dm.frozen = on, on },
+		func(on bool) { dm.overlayPaused, dm.frozen = on, on },
 	} {
 		other(true)
 		typeLine(&m, "/desktop pause")
@@ -366,7 +374,7 @@ func TestDeskResumeEndsOnlyItsOwnPause(t *testing.T) {
 // typed while held stays marked through a pause and a resume.
 func TestDeskPauseIsNotAHold(t *testing.T) {
 	m, dm, _ := holdModel(t)
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = typeText(m, "/unread")
 	if m.hold.edited {
 		t.Error("a line typed during a pause is marked")
@@ -374,11 +382,11 @@ func TestDeskPauseIsNotAHold(t *testing.T) {
 	m.input.SetValue("")
 	dm.humanPaused = false
 	m = typeText(m, "/unread") // typed while held: marked
-	dm.humanPaused = true      // a pause,
+	pauseNow(dm)               // a pause,
 	m = holdKey(m, "down")
 	dm.humanPaused = false // a resume,
 	m = holdKey(m, "down")
-	dm.humanPaused = true // and a pause again, to send it
+	pauseNow(dm) // and a pause again, to send it
 	if !m.hold.edited || m.input.Value() != "/unread" {
 		t.Fatalf("the mark did not last through a pause and resume: %v %q", m.hold.edited, m.input.Value())
 	}
@@ -400,7 +408,7 @@ func TestDeskApprovedDuringAPauseRunsOnResume(t *testing.T) {
 		t.Fatal("no card")
 	}
 	dm := m.deskLive()
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = answerDeskCard(t, m, it, "allow")
 	if _, done := r.Decided(); done {
 		t.Fatal("an action approved during a pause ran during it")
@@ -430,7 +438,7 @@ func TestDeskApprovedDuringAPauseRunsOnResume(t *testing.T) {
 	// Its window gone by the resume: refused, never run.
 	r = deskReq(600, bridge.DesktopInput{Kind: "call", Tool: "keyboard", Args: json.RawMessage(`{"action":"type","text":"hello\nthere","window":"0xb"}`)})
 	deskDo(&m, r)
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = answerDeskCard(t, m, desktopCard(m, inbox.DesktopAct), "allow")
 	dm.humanPaused = false
 	for _, msg := range runBatch(m.deskFlush()) {
@@ -452,7 +460,7 @@ func TestDeskApprovedDuringAPauseRunsOnResume(t *testing.T) {
 	// The mission ended while paused: refused.
 	r = deskReq(600, bridge.DesktopInput{Kind: "call", Tool: "keyboard", Args: json.RawMessage(`{"action":"type","text":"hello\nthere","window":"0xb"}`)})
 	deskDo(&m, r)
-	dm.humanPaused = true
+	pauseNow(dm)
 	m = answerDeskCard(t, m, desktopCard(m, inbox.DesktopAct), "allow")
 	dm.Ended = "test"
 	m.deskFlush()
