@@ -7,11 +7,20 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/api/convcases"
 	"github.com/GlacierHubAB/den/internal/fleet"
+	"github.com/GlacierHubAB/den/internal/theme"
 )
 
 // consoleColor is a console's reading of `color`: "#" and six lower-case
-// hex digits, else none.
-var consoleColor = regexp.MustCompile(`^#[0-9a-f]{6}$`)
+// hex digits that the agent colour rule takes, else none.
+func consoleColor(c string) string {
+	if !regexp.MustCompile(`^#[0-9a-f]{6}$`).MatchString(c) {
+		return ""
+	}
+	if ok, _ := theme.AgentColor(c); !ok {
+		return ""
+	}
+	return c
+}
 
 // Den sends each fleet entry of the colour table with the `color` the
 // table gives, and leaves the field out where the table has none; a
@@ -39,7 +48,7 @@ func TestColorTable(t *testing.T) {
 			if entry["id"] != a.ID || got != a.Color || has != (a.Color != "") {
 				t.Errorf("%s: %s sent %s, want color %q", c.Name, a.ID, raw, a.Color)
 			}
-			if read := consoleColor.FindString(got); read != a.Color {
+			if read := consoleColor(got); read != a.Color {
 				t.Errorf("%s: %s: a console reads %q, the table %q", c.Name, a.ID, read, a.Color)
 			}
 		}

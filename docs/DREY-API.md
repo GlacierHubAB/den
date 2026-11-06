@@ -176,7 +176,13 @@ no transcript, and no request body outside `inbox.body`.
   have none. It is Den's own display colour, assigned by Den and never
   taken from anything an agent writes, and not a closed set: the theme's own
   hues, topped up from Den's curated list (`internal/theme` `Hues`, the
-  same list agent-badge uses). Key it on the agent's `id`. It stays with the
+  same list agent-badge uses). Den draws, and sends, only a colour the
+  agent colour rule takes (`theme.AgentColor`, the dock's own display
+  rule): it reads on the dock's dark and mid surfaces, is no grey and no
+  purple, and is neither in a meaning band nor near a meaning colour. A
+  record that fails it is sent as no `color`. The rows of
+  `internal/api/convcases/colorrule.go` (`ColorRuleCases`) pin the rule,
+  with each colour's first failing check. Key it on the agent's `id`. It stays with the
   session id: a rename never changes it, and across a Den restart the agent
   keeps it while the palette still offers it and no older session holds it.
   It can change when the human changes theme, when there are more live

@@ -12,10 +12,12 @@ import (
 	"github.com/GlacierHubAB/den/internal/theme"
 )
 
+// As many agents as the palette has colours each get their own; past that
+// colours repeat.
 func TestAgentsGetDistinctStableColors(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir()) // never touch the real colour record
 	m := Model{st: newStyles(theme.Deepharness), store: inbox.New()}
-	for i := 0; i < 8; i++ {
+	for i := 0; i < len(theme.Deepharness.Bodies); i++ {
 		m.base = append(m.base, fleet.Agent{Session: discover.Session{SessionID: string(rune('a'+i)) + "0123456789abcdef", StartedAt: int64(i), Alive: true}})
 	}
 	m.refresh()

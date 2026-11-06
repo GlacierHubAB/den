@@ -441,13 +441,13 @@ func snapshot() Snapshot {
 // that is not such a colour is left out.
 func TestFleetCarriesLocalColours(t *testing.T) {
 	s := snapshot()
-	s.Colors = map[string]string{"s-1": "#A0b1C2", "s-2": "red", "s-3": "#123456"}
+	s.Colors = map[string]string{"s-1": "#86C6e8", "s-2": "red", "s-3": "#123456"}
 	v := Project(s)
 	got := map[string]string{}
 	for _, a := range v.Fleet.Agents {
 		got[a.ID] = a.Color
 	}
-	if got["s-1"] != "#a0b1c2" || got["s-2"] != "" || got["s-3"] != "" {
+	if got["s-1"] != "#86c6e8" || got["s-2"] != "" || got["s-3"] != "" {
 		t.Errorf("colours %v", got)
 	}
 	raw, _ := json.Marshal(v.Fleet.Agents[1])
