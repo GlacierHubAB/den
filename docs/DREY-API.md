@@ -104,7 +104,7 @@ the connection's first `hello`, and a later `hello` with another value gets
 | `inbox.events` | | `{subscribed:true}`, then `inbox` events `{change: added\|answered, item}` |
 | `inbox.body` | `{id}` | `{id, kind, text, hash}` for a request on this machine; `unavailable` for one from another machine |
 | `mission.list` | | `[Mission]` |
-| `focus` | `{target}` an agent's id or the name Den gave it | `{focused}`: that agent's terminal comes to the front. An inbox item answers `unavailable` (open the Inbox in Den), as do an agent on another machine and any focus within 1.5 s of your last key in Den. One per app every 3 s, ten a minute in all. Den's own view, selection and command line never change. |
+| `focus` | `{target}` an agent's id or the name Den gave it | `{focused}`: that agent's terminal comes to the front. An inbox item answers `unavailable` (open the Inbox in Den), as do an agent on another machine and any focus within 1.5 s of your last key in Den. One per app every 3 s, ten a minute in all. Den's own view, selection and command line never change. A refusal carries `error.data.reason`, a code from a closed list (see "Focus refusals"); `error.message` is free text for a human. |
 | `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk. `ask` is 128 random bits, told only to the connection that asked: it is what cancels the ask, so keep it to yourself |
 | `ask.cancel` | `{ask}` | `{cancelled:true}`; the ask's stream ends with an `error` chunk `"cancelled"`. It takes the ask's id, on any connection of the program that asked; any other id is `not_found` |
 | `chat.history` | `{session}` | `[Message]` of an ask session |
@@ -119,6 +119,33 @@ console's. Control's verbs (`pair.claim`, `pair.challenge`, `pair.auth`,
 `cmd.*`) under Console. This release
 also answers `unsupported` for `theme.get`, `mission.start`,
 `mission.drop` and `view.data`.
+
+### Focus refusals
+
+A refused `focus` answers `not_found` or `unavailable` with
+`error.data.reason`, a code from this closed list. Key on the reason,
+never on `error.message`, which is free text for a human and may change.
+`data` holds the reason only: never the target you sent, and never what the
+compositor said. A code you do not know means Den could not focus it.
+
+| `reason` | `code` | when |
+|---|---|---|
+| `no_agent` | `not_found` | no agent by that id or name in Den's list |
+| `ambiguous` | `not_found` | more than one agent has that name: name it by its id |
+| `inbox_item` | `unavailable` | the target is an inbox item: open the Inbox in Den |
+| `remote` | `unavailable` | the agent runs on another machine |
+| `not_running` | `unavailable` | the agent has ended |
+| `waits_on_terminal` | `unavailable` | it waits on its own terminal |
+| `human_typing` | `unavailable` | within 1.5 s of the human's last key in Den |
+| `rate_limited` | `unavailable` | past one per app every 3 s, or ten a minute |
+| `busy` | `unavailable` | Den could not take the request now |
+| `no_answer` | `unavailable` | Den's UI did not answer within 3 s |
+| `no_window` | `unavailable` | Den knows no window, nor a herdr pane, for it |
+| `compositor_error` | `unavailable` | the compositor did not focus it |
+
+The rows of `internal/api/convcases/focus.go` (`FocusCases`) pin it. Den
+also writes each refusal to its event stream as a `focus_failed`
+(docs/EVENTS.md) when `[events] log` is on.
 
 ## Grants
 

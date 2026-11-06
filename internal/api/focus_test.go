@@ -35,7 +35,7 @@ func TestFocus(t *testing.T) {
 	if a.Focus == nil || a.Focus.AgentID != "s-1" {
 		t.Fatalf("act %+v", a)
 	}
-	a.Focus.Reply <- ""
+	a.Focus.Reply <- FocusAnswer{}
 	for {
 		l := c.next()
 		if l.ID != nil && *l.ID == id {

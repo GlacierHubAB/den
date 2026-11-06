@@ -3,6 +3,8 @@ package ui
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -287,26 +289,67 @@ func TestFocusLeavesDenAlone(t *testing.T) {
 	id := m.agents[0].Session.SessionID
 
 	m.api.lastKey = time.Now()
-	r := &api.FocusReq{AgentID: id, Reply: make(chan string, 1)}
+	r := &api.FocusReq{AgentID: id, Reply: make(chan api.FocusAnswer, 1)}
 	if cmd := m.applyAPIAct(api.Act{Focus: r}); cmd != nil {
 		t.Fatal("focused right after a key")
 	}
-	if why := <-r.Reply; !strings.Contains(why, "typing") {
-		t.Errorf("refusal %q", why)
+	if why := <-r.Reply; why.Reason != api.FocusHumanTyping || !strings.Contains(why.Message, "typing") {
+		t.Errorf("refusal %+v", why)
 	}
 
 	m.api.lastKey = time.Now().Add(-2 * time.Second)
-	r = &api.FocusReq{AgentID: id, Reply: make(chan string, 1)}
+	r = &api.FocusReq{AgentID: id, Reply: make(chan api.FocusAnswer, 1)}
 	cmd := m.applyAPIAct(api.Act{Focus: r})
 	if cmd == nil {
 		t.Fatal("no focus")
 	}
 	cmd()
-	if why := <-r.Reply; why != "" || len(focused) != 1 || focused[0] != id {
-		t.Errorf("focus: %q %v", why, focused)
+	if why := <-r.Reply; why != (api.FocusAnswer{}) || len(focused) != 1 || focused[0] != id {
+		t.Errorf("focus: %+v %v", why, focused)
 	}
 	if m.tab != tabOrch || m.input.Value() != "hello" || m.cursor != sel {
 		t.Error("an app's focus changed Den's tab, input or selection")
+	}
+}
+
+// The UI answers a focus it cannot do with a reason from the closed list:
+// the focuser's own error picks no_window or compositor_error, and the
+// compositor's words stay in the message, never in the reason; an agent
+// that has ended is not_running, one Den does not have no_agent.
+func TestFocusAnswersWithAReason(t *testing.T) {
+	apiEnv(t)
+	m := testModel(140, 30)
+	m.api.lastKey = time.Now().Add(-2 * time.Second)
+	defer func(f func(fleet.Agent) (string, error)) { focusAgent = f }(focusAgent)
+	id := m.agents[0].Session.SessionID
+	ask := func(agent string) api.FocusAnswer {
+		r := &api.FocusReq{AgentID: agent, Reply: make(chan api.FocusAnswer, 1)}
+		if cmd := m.applyAPIAct(api.Act{Focus: r}); cmd != nil {
+			cmd()
+		}
+		return <-r.Reply
+	}
+	for _, c := range []struct {
+		err    error
+		reason string
+	}{
+		{fleet.ErrFocusGone, api.FocusNotRunning},
+		{fmt.Errorf("no terminal window found for x: %w", fleet.ErrFocusNoWindow), api.FocusNoWindow},
+		{fmt.Errorf("hyprctl said: %w", fleet.ErrFocusCompositor), api.FocusCompositorError},
+		{errors.New("anything else"), api.FocusCompositorError},
+	} {
+		focusAgent = func(fleet.Agent) (string, error) { return "", c.err }
+		if a := ask(id); a.Reason != c.reason || a.Message == "" {
+			t.Errorf("%v: %+v, want reason %s", c.err, a, c.reason)
+		}
+	}
+	if a := ask("no-such-session"); a.Reason != api.FocusNoAgent {
+		t.Errorf("an agent Den does not have: %+v", a)
+	}
+	// The sample agents share one session id: give the ended one its own.
+	m.agents[0].Session.SessionID, m.agents[0].Status = "s-ended", fleet.Gone
+	if a := ask("s-ended"); a.Reason != api.FocusNotRunning {
+		t.Errorf("an agent that has ended: %+v", a)
 	}
 }
 
