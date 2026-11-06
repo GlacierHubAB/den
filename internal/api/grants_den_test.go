@@ -104,6 +104,23 @@ func TestConfirmAndRemoveFromDen(t *testing.T) {
 	}
 }
 
+// G1: after another program changed the stored levels, GrantsStart says
+// held and ConfirmLevels is ErrHeld on any seq: only the powers card ends
+// that hold.
+func TestConfirmLevelsRefusedWhileHeld(t *testing.T) {
+	h, _ := confirmed(t)
+	h.s.permsTampered(false)
+	if held, _ := h.s.GrantsStart(); !held {
+		t.Fatal("not held after the tamper")
+	}
+	if err := h.s.ConfirmLevels(readNow(h).Seq); err != ErrHeld || readNow(h).StartConfirmed {
+		t.Errorf("the confirm while held: %v", err)
+	}
+	if held, _ := h.s.GrantsStart(); !held {
+		t.Error("the hold ended without the powers card")
+	}
+}
+
 // P5: set_in_den is shown only. A version 3 file with set_in_den on every
 // class and levels above the defaults still loads capped until the
 // confirm.

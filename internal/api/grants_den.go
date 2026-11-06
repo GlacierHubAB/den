@@ -24,6 +24,10 @@ var (
 	ErrMoved = errors.New("the levels changed: ask again")
 	// ErrNotKept is a kept id that is not held.
 	ErrNotKept = errors.New("that is not kept")
+	// ErrHeld is the start confirm asked while the levels are held after
+	// another program changed the stored file: only the powers card's
+	// Ctrl+Y ends that hold.
+	ErrHeld = errors.New("another program changed the stored levels: answer the powers card")
 )
 
 // GrantsRead is the read now, for Den's own window.
@@ -122,12 +126,26 @@ func hasSession(st perm.State, class string) bool {
 	return ok
 }
 
+// GrantsStart is what the powers card says of the levels, for Den's
+// window: held after another program changed the stored file, and the
+// card's lines (permsCardLines: what Den found at start first), empty once
+// confirmed.
+func (s *Server) GrantsStart() (held bool, lines []string) {
+	return s.permsHeld(), s.permsCardLines()
+}
+
 // ConfirmLevels is the start confirm from Den's window (the panel's c,
 // then ^Y), for the levels and kept only, never the console's powers, and
-// only while the read is the one the question was asked on (seq).
+// only while the read is the one the question was asked on (seq). While
+// the levels are held after another program's change it is ErrHeld: that
+// hold ends only on the powers card.
 func (s *Server) ConfirmLevels(seq uint64) error {
 	var err error
 	s.permsDo(func() {
+		if s.perms.held {
+			err = ErrHeld
+			return
+		}
 		if now := s.grantsLocked(nil); now.Seq != seq {
 			err = ErrMoved
 			return

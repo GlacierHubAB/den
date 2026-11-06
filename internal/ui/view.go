@@ -42,10 +42,11 @@ func (m Model) View() tea.View {
 	// command line at its current height), hints. The panes take what is
 	// left, so a growing command line pushes them up rather than over them.
 	if p := m.panel(); m.perms.open && p != nil {
-		// /permissions takes the panes and the prompt; its lines wrap and
-		// are never cut.
-		lines := m.permLines(w)
+		// /permissions takes the panes and the prompt; its lines wrap, the
+		// body scrolls to the selected row, and an open question is always
+		// drawn above the footer.
 		rows := h - len(header) - 1
+		lines := m.permFit(w, rows)
 		for i := 0; i < rows; i++ {
 			if i < len(lines) {
 				out.WriteString(lines[i])

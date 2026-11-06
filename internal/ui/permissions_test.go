@@ -22,6 +22,14 @@ type fakePanel struct {
 	seq     uint64
 	raises  int
 	removed []string
+	lines   []string // the powers card's lines until the confirm
+}
+
+func (f *fakePanel) GrantsStart() (bool, []string) {
+	if f.st.Confirmed {
+		return f.st.Held, nil
+	}
+	return f.st.Held, f.lines
 }
 
 func (f *fakePanel) GrantsRead() perm.Grants {
@@ -73,6 +81,9 @@ func (f *fakePanel) RaiseDenLevel(class string, level int, seq uint64) error {
 }
 
 func (f *fakePanel) ConfirmLevels(seq uint64) error {
+	if f.st.Held {
+		return api.ErrHeld
+	}
 	if seq != f.seq {
 		return api.ErrMoved
 	}
@@ -244,7 +255,8 @@ func TestPanelNoRaiseWhileAnAgentHasTheDesktop(t *testing.T) {
 
 // P4: c asks with the powers card's lines, and only ^Y confirms.
 func TestPanelConfirmAsks(t *testing.T) {
-	f := &fakePanel{st: perm.State{Powers: true, DenLevels: map[string]int{perm.Destructive: 2}, Kept: []string{perm.KeptClose}}, seq: 1}
+	f := &fakePanel{st: perm.State{Powers: true, DenLevels: map[string]int{perm.Destructive: 2}, Kept: []string{perm.KeptClose}}, seq: 1,
+		lines: []string{"Den did not stop cleanly last time.", "Ctrl+Y also confirms the levels you set above Den's defaults: Stop and close 2 of 5 (default 1). Until then they are at the defaults."}}
 	m := panelModel(t, f, 140)
 	m = panelPress(m, "esc") // past the upgrade screen, keeping kept
 	mm, _ := m.permissionsCommand()
@@ -252,7 +264,8 @@ func TestPanelConfirmAsks(t *testing.T) {
 	if m.perms.ask == nil || m.perms.ask.kind != "confirm" || f.st.Confirmed {
 		t.Fatalf("c: %+v, confirmed %v", m.perms.ask, f.st.Confirmed)
 	}
-	if q := permQuestion(f.GrantsRead(), *m.perms.ask); q != "Confirm your levels: Stop and close 2 of 5, Close an agent? ^Y to confirm, ^N not now" {
+	// The powers card's lines, what Den found at start first.
+	if q := permQuestion(f.GrantsRead(), *m.perms.ask); q != "Confirm your levels? "+f.lines[0]+" "+f.lines[1]+" ^Y to confirm, ^N not now" {
 		t.Errorf("the question: %q", q)
 	}
 	m = panelPress(m, "ctrl+y")
@@ -300,6 +313,7 @@ func TestPanelGoldens(t *testing.T) {
 		"locked":    {Powers: true, Locked: true, Confirmed: true},
 		"god":       {Powers: true, God: true, Confirmed: true, DenLevels: map[string]int{perm.Desktop: 2}, Kept: []string{perm.KeptClose, perm.KeptMerge}},
 		"nopowers":  {Confirmed: true},
+		"held":      {Powers: true, Held: true, DenLevels: map[string]int{perm.Destructive: 2}},
 		"unconfirm": {Powers: true, DenLevels: map[string]int{perm.Destructive: 2}},
 	}
 	for _, w := range []int{140, 80} {
@@ -338,5 +352,84 @@ func check(t *testing.T, name, got string) {
 	}
 	if got != string(want) {
 		t.Errorf("%s changed\n--- got\n%s\n--- want\n%s", name, got, want)
+	}
+}
+
+// G1: after another program changed the stored levels, the panel says so,
+// every bar is at 0, and c is refused: that hold ends only on the powers
+// card.
+func TestPanelHeldAfterATamper(t *testing.T) {
+	f := &fakePanel{st: perm.State{Powers: true, Held: true, DenLevels: map[string]int{perm.Destructive: 2}}, seq: 1,
+		lines: []string{"Ctrl+Y also confirms the levels you set above Den's defaults: Stop and close 2 of 5 (default 1). Until then they are at the defaults."}}
+	m := panelModel(t, f, 140)
+	out := ansi.Strip(strings.Join(m.permLines(140), "\n"))
+	if !strings.Contains(out, permHeld) || strings.Contains(out, "█") || strings.Contains(out, "press c") {
+		t.Errorf("the held panel:\n%s", out)
+	}
+	// c is refused while held, so neither the panel nor its keys offer it.
+	if k := m.permFooter(f.GrantsRead()); strings.Contains(k, "c confirm") {
+		t.Errorf("the held key line offers c: %q", k)
+	}
+	m = panelPress(m, "c")
+	if m.perms.ask != nil || m.perms.note != permHeldC || f.st.Confirmed {
+		t.Errorf("c while held: %+v %q", m.perms.ask, m.perms.note)
+	}
+	// A question asked before the hold is refused at ^Y, too.
+	f.st.Held = false
+	m = panelPress(m, "c")
+	f.st.Held = true
+	m = panelPress(m, "ctrl+y")
+	if f.st.Confirmed || m.perms.note != permHeldC {
+		t.Errorf("^Y after the hold: confirmed %v, %q", f.st.Confirmed, m.perms.note)
+	}
+}
+
+// G2: on a short terminal the body scrolls to the selected row, and an
+// open question or note is drawn above the footer, never cut while ^Y can
+// answer it.
+func TestPanelQuestionDrawnOnAShortTerminal(t *testing.T) {
+	view := func(m Model) string {
+		m.width, m.height = 80, 24
+		return ansi.Strip(m.View().Content)
+	}
+	f := &fakePanel{st: perm.State{Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Outward: 2}}, seq: 1}
+	m := panelModel(t, f, 80)
+	m = panelPress(m, "down", "down", "down", "down", "right")
+	if v := view(m); !strings.Contains(v, "Raise Send out") {
+		t.Errorf("the raise question at 80x24:\n%s", v)
+	}
+	u := &fakePanel{st: perm.State{Powers: true, DenLevels: map[string]int{perm.Destructive: 2}, Kept: perm.KeptAll()}, seq: 1,
+		lines: []string{"Ctrl+Y also confirms the levels you set above Den's defaults: Stop and close 2 of 5 (default 1). Until then they are at the defaults."}}
+	m = panelModel(t, u, 80)
+	m = panelPress(m, "esc")
+	mm, _ := m.permissionsCommand()
+	m = panelPress(mm.(Model), "c")
+	if v := view(m); !strings.Contains(v, "^Y to confirm, ^N not now") {
+		t.Errorf("the confirm question at 80x24:\n%s", v)
+	}
+	m = panelPress(m, "ctrl+n")
+	m.desk.missions = map[string]*deskMission{"d1": {}}
+	m = panelPress(m, "c")
+	// The note, in the rows above the footer (the state line at the top
+	// says it too, and may be scrolled away).
+	if v := strings.Split(view(m), "\n"); !strings.Contains(strings.Join(v[len(v)-4:], "\n"), "pause or end it to raise levels") {
+		t.Errorf("the desk-held note at 80x24:\n%s", strings.Join(v, "\n"))
+	}
+	m.desk.missions = nil
+	for i := 0; i < len(perm.Classes())+len(perm.KeptAll()); i++ {
+		m = panelPress(m, "down")
+	}
+	m = panelPress(m, "enter")
+	v := view(m)
+	last := perm.KeptLabel(perm.KeptAll()[len(perm.KeptAll())-1])
+	if !strings.Contains(v, "It cannot come back.") || !strings.Contains(v, "▎ "+last) {
+		t.Errorf("the last kept row and its question at 80x24:\n%s", v)
+	}
+	if n := strings.Count(v, "\n") + 1; n > 24 {
+		t.Errorf("%d lines at 24 rows", n)
+	}
+	// A terminal with no room for the panel at all draws without a panic.
+	for _, rows := range []int{-3, 0, 1, 2} {
+		m.permFit(80, rows)
 	}
 }

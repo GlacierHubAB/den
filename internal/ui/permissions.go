@@ -20,6 +20,7 @@ import (
 // panelLevels is what the panel asks of den-api (api.Server).
 type panelLevels interface {
 	GrantsRead() perm.Grants
+	GrantsStart() (held bool, lines []string)
 	SetDenLevel(class string, level int) error
 	RaiseDenLevel(class string, level int, seq uint64) error
 	ConfirmLevels(seq uint64) error
@@ -48,6 +49,7 @@ type permAsk struct {
 	level int
 	kept  string
 	seq   uint64
+	lines []string // confirm: the powers card's lines, as asked
 }
 
 // The panel's fixed words.
@@ -59,6 +61,8 @@ const (
 	permFixed2     = "Raising permissions, \"always allow\" and pairing are done in Den."
 	permDeskHeld   = "An agent has the desktop: pause or end it to raise levels."
 	permMoved      = "The levels changed while you were asked: nothing was raised. Ask again."
+	permHeld       = "Den's stored permission levels were changed by another program: every level is 0 until you press ^Y on the powers card"
+	permHeldC      = "Another program changed the stored levels: answer the powers card."
 )
 
 func (m Model) panel() panelLevels {
@@ -165,11 +169,15 @@ func (m Model) permKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if g.StartConfirmed || !permUnconfirmed(g) {
 			return m, nil
 		}
-		if m.deskHolds() {
+		held, lines := p.GrantsStart()
+		switch {
+		case held:
+			m.perms.note = permHeldC
+		case m.deskHolds():
 			m.perms.note = permDeskHeld
-			return m, nil
+		default:
+			m.perms.ask = &permAsk{kind: "confirm", seq: g.Seq, lines: lines}
 		}
-		m.perms.ask = &permAsk{kind: "confirm", seq: g.Seq}
 	case "enter":
 		i := m.perms.sel - len(g.Classes)
 		if i < 0 || i >= len(g.Kept) {
@@ -216,6 +224,8 @@ func (m Model) permApply(p panelLevels, g perm.Grants, a permAsk) string {
 	switch {
 	case err == api.ErrMoved:
 		return permMoved
+	case err == api.ErrHeld:
+		return permHeldC
 	case err != nil:
 		return err.Error()
 	}
@@ -257,17 +267,9 @@ func permQuestion(g perm.Grants, a permAsk) string {
 	case "remove":
 		return "Remove \"" + perm.KeptLabel(a.kept) + "\" from Drey? It cannot come back. ^Y to remove, ^N to keep"
 	case "confirm":
-		var raised, kept []string
-		for _, c := range g.Classes {
-			if c.DenLevel > c.Default {
-				raised = append(raised, c.Label+" "+strconv.Itoa(c.DenLevel)+" of 5")
-			}
-		}
-		for _, k := range g.Kept {
-			kept = append(kept, k.Label)
-		}
-		what := strings.Join(append(raised, kept...), ", ")
-		return "Confirm your levels: " + what + "? ^Y to confirm, ^N not now"
+		// The powers card's lines, what Den found at start first: c
+		// confirms exactly what that card's Ctrl+Y would, the powers aside.
+		return "Confirm your levels? " + strings.Join(a.lines, " ") + " ^Y to confirm, ^N not now"
 	}
 	return ""
 }
@@ -339,17 +341,25 @@ func listAnd(xs []string) string {
 
 // permLines is the panel, wrapped at w, never cut.
 func (m Model) permLines(w int) []string {
+	out, _, _, _ := m.permPanel(w)
+	return out
+}
+
+// permPanel is the panel's lines, wrapped at w, with the selected row's
+// lines [from, to) and the count of last lines (the open question, the
+// note, the upgrade screen's keys) that View keeps above the footer.
+func (m Model) permPanel(w int) (out []string, from, to, pin int) {
 	s := m.st
 	p := m.panel()
 	if p == nil {
-		return nil
+		return nil, 0, 0, 0
 	}
 	g := p.GrantsRead()
+	held, _ := p.GrantsStart()
 	in := w - 4
 	if in < 20 {
 		in = 20
 	}
-	var out []string
 	add := func(st func(...string) string, indent, text string) {
 		for _, l := range wrapLines(text, in-len(indent)) {
 			out = append(out, indent+st(l))
@@ -368,9 +378,10 @@ func (m Model) permLines(w int) []string {
 		for _, k := range g.Kept {
 			add(s.fg.Render, "    ", k.Label)
 		}
+		start := len(out)
 		out = append(out, "")
 		add(s.fg.Render, "  ", "Enter  Use the recommended settings (removes the kept items; raises nothing)   Esc  keep them for now")
-		return out
+		return out, 0, 0, len(out) - start
 	}
 	if m.perms.seen {
 		add(s.dim.Render, "  ", permIntroShort)
@@ -380,6 +391,8 @@ func (m Model) permLines(w int) []string {
 	out = append(out, "")
 	// The state lines.
 	switch {
+	case held:
+		add(s.attn.Render, "  ", permHeld)
 	case g.Locked:
 		add(s.attn.Render, "  ", "Locked: every level is 0 until you unlock (^Y on the powers card)")
 	case !g.Powers:
@@ -403,7 +416,7 @@ func (m Model) permLines(w int) []string {
 			add(s.attn.Render, "  ", "God mode: kept items are paused while it is on")
 		}
 	}
-	if !g.StartConfirmed && permUnconfirmed(g) {
+	if !held && !g.StartConfirmed && permUnconfirmed(g) {
 		add(s.attn.Render, "  ", "Your levels above the defaults and kept items wait for your Ctrl+Y on the powers card, or press c here to confirm them now.")
 	}
 	if m.deskHolds() {
@@ -423,11 +436,14 @@ func (m Model) permLines(w int) []string {
 		if !g.StartConfirmed && level > c.Default {
 			level = c.Default // above the default waits for the confirm
 		}
-		if g.Locked || g.God && len(godHeld(g)) > 0 && c.Level < level {
+		if g.Locked || held || g.God && len(godHeld(g)) > 0 && c.Level < level {
 			ghost, level = level, 0
 		}
 		if a := m.perms.ask; a != nil && a.kind == "raise" && a.class == c.Class {
 			ghost = a.level
+		}
+		if sel {
+			from = len(out)
 		}
 		label := c.Label + strings.Repeat(" ", max(1, 22-len([]rune(c.Label))))
 		out = append(out, mark+s.bright.Render(label)+"  "+m.permBar(c, level, ghost)+"   "+s.fg.Render(stepName(c, level)))
@@ -443,6 +459,9 @@ func (m Model) permLines(w int) []string {
 		if c.DenLevel != c.Default && level != c.Default {
 			add(s.dim.Render, "    ", "▴ recommended: "+stepName(c, c.Default))
 		}
+		if sel {
+			to = len(out)
+		}
 		out = append(out, "")
 	}
 	add(s.fg.Render, "  ", permFixed1)
@@ -454,6 +473,7 @@ func (m Model) permLines(w int) []string {
 			mark := "  "
 			if row == m.perms.sel {
 				mark = s.attn.Render("▎") + " "
+				from, to = len(out), len(out)+1
 			}
 			line := "  " + mark + s.fg.Render(k.Label)
 			if !k.Active {
@@ -466,6 +486,7 @@ func (m Model) permLines(w int) []string {
 	for _, d := range g.DenOnly {
 		add(s.dim.Render, "    ", d.Label)
 	}
+	start := len(out)
 	if a := m.perms.ask; a != nil && a.kind != "raise" {
 		out = append(out, "")
 		add(s.attn.Render, "  ", permQuestion(g, *a))
@@ -474,7 +495,46 @@ func (m Model) permLines(w int) []string {
 		out = append(out, "")
 		add(s.attn.Render, "  ", m.perms.note)
 	}
-	return out
+	return out, from, to, len(out) - start
+}
+
+// permFit is the panel in rows lines: the title, then the body scrolled
+// so the selected row is in view, then the open question and the note,
+// which are never cut while a ^Y can answer them.
+func (m Model) permFit(w, rows int) []string {
+	lines, from, to, pin := m.permPanel(w)
+	if rows < 1 {
+		return nil // no room at all: the header and footer only
+	}
+	if len(lines) <= rows {
+		return lines
+	}
+	if pin > rows-1 {
+		pin = rows - 1 // a terminal too short for the question: its end, with the keys
+	}
+	head, body, bottom := lines[:1], lines[1:len(lines)-pin], lines[len(lines)-pin:]
+	room := rows - 1 - len(bottom)
+	off := 0
+	if to-1 > room {
+		off = to - 1 - room
+	}
+	if from-1 >= 0 && from-1 < off {
+		off = from - 1
+	}
+	if off > len(body)-room {
+		off = len(body) - room
+	}
+	if off < 0 {
+		off = 0
+	}
+	out := append([]string{}, head...)
+	if room > 0 {
+		out = append(out, body[off:min(len(body), off+room)]...)
+	}
+	for len(out) < rows-len(bottom) {
+		out = append(out, "")
+	}
+	return append(out, bottom...)
 }
 
 // permFooter is the panel's key line.
@@ -483,7 +543,10 @@ func (m Model) permFooter(g perm.Grants) string {
 	if len(g.Kept) > 0 {
 		keys += "   Enter remove (kept)"
 	}
-	if !g.StartConfirmed && permUnconfirmed(g) {
+	if p := m.panel(); p != nil && !g.StartConfirmed && permUnconfirmed(g) {
+		if held, _ := p.GrantsStart(); held {
+			return keys + "   Esc back"
+		}
 		keys += "   c confirm"
 	}
 	return keys + "   Esc back"
