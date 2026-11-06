@@ -57,7 +57,11 @@ var (
 		"shift+enter": true, "alt+enter": true, "ctrl+j": true, "ctrl+v": true,
 		"1": true, "2": true, "3": true, "4": true, "5": true, "6": true, "7": true, "8": true, "9": true,
 	}
-	deskHoldRuns  = map[string]bool{"ctrl+c": true, "ctrl+n": true}
+	deskHoldRuns = map[string]bool{"ctrl+c": true, "ctrl+n": true}
+	// deskHoldStays are the commands that run while held and leave the
+	// view and its selection as they are; any other that runs then (a
+	// view command) counts as a move.
+	deskHoldStays = map[string]bool{"/desktop": true, "/quit": true, "/pause": true, "/stop": true, "/mode": true, "/api": true, "/god": true, "/usage": true, "/help": true}
 	deskHoldWaits = map[string]bool{"ctrl+y": true, "ctrl+x": true}
 )
 
@@ -68,6 +72,11 @@ func (m Model) deskHeldKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 	k := msg.String()
 	switch {
 	case deskHoldMoves[k]:
+		m.hold.moved = true
+		return m, nil, false
+	case k == "ctrl+n":
+		// A deny stands, but the selection moves on to the next card:
+		// the first answer after the hold is held once.
 		m.hold.moved = true
 		return m, nil, false
 	case deskHoldTypes[k], deskHoldRuns[k]:
@@ -81,6 +90,9 @@ func (m Model) deskHeldKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd, bool) {
 		m.input.SetValue("")
 		m.fitInput()
 		m.hold.edited, m.hold.confirm = false, false
+		if !deskHoldStays[words[0]] {
+			m.hold.moved = true // it may change the view, and so what ^Y answers
+		}
 		mm, cmd := m.command(strings.Join(words, " "))
 		return mm, cmd, true
 	case deskHoldWaits[k]:

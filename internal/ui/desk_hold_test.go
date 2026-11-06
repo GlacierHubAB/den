@@ -286,6 +286,45 @@ func TestDeskHoldMovedSelection(t *testing.T) {
 		t.Errorf("/allow after a moved hold: state %v, %q", it.State, m.flash)
 	}
 
+	// A deny while held stands, but moves the selection on to the next
+	// card: the first ^Y after the hold is held once.
+	for _, deny := range []string{"ctrl+n", "/deny"} {
+		m, dm, it = holdModel(t)
+		next := m.store.AddClose(m.agents[0].Session.SessionID, "Close Otter?", []string{"Otter"}, nil)
+		m.refresh()
+		m.selectItem(it)
+		if deny == "ctrl+n" {
+			m = holdKey(m, "ctrl+n")
+		} else {
+			m = holdLine(m, deny)
+		}
+		if it.State != inbox.Resolved {
+			t.Fatalf("%s while held did not deny: %q", deny, m.flash)
+		}
+		dm.humanPaused = true
+		m.selectItem(next)
+		m.shown = shownTarget{id: next.ID}
+		m = holdKey(m, "ctrl+y")
+		if next.State == inbox.Resolved || m.flash != deskHeldMoved {
+			t.Errorf("first ^Y after %s while held: state %v, %q", deny, next.State, m.flash)
+		}
+	}
+
+	// A view command typed while held is a move too (sec's S1-1); the
+	// pause itself is not (TestDeskHoldCards: ^Y right after it answers).
+	for _, view := range []string{"/inbox", "/overview", "/fleet flat", "/orchestrator", "/map"} {
+		m, dm, it = holdModel(t)
+		m = holdLine(m, view)
+		dm.humanPaused = true
+		m.tab = tabInbox
+		m.selectItem(it)
+		m.shown = shownTarget{id: it.ID}
+		m = holdKey(m, "ctrl+y")
+		if it.State == inbox.Resolved || m.flash != deskHeldMoved {
+			t.Errorf("first ^Y after %s while held: state %v, %q", view, it.State, m.flash)
+		}
+	}
+
 	m, dm, it = holdModel(t)
 	m = holdKey(m, "down")
 	dm.humanPaused = true
