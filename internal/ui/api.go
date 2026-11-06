@@ -15,6 +15,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/events"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
@@ -70,6 +71,22 @@ const focusQuiet = 1500 * time.Millisecond
 
 // focusAgent brings an agent's terminal to the front; tests replace it.
 var focusAgent = fleet.Focus
+
+// focusAnswer is what an app hears of focusAgent's err: a reason from the
+// closed list and a line for a human. A compositor's own words stay in the
+// line, never in the reason.
+func focusAnswer(err error) api.FocusAnswer {
+	switch {
+	case err == nil:
+		return api.FocusAnswer{}
+	case errors.Is(err, fleet.ErrFocusGone):
+		return api.FocusAnswer{Reason: api.FocusNotRunning, Message: "that agent is gone"}
+	case errors.Is(err, fleet.ErrFocusNoWindow):
+		return api.FocusAnswer{Reason: api.FocusNoWindow, Message: sanitize.Label(err.Error(), 120)}
+	default:
+		return api.FocusAnswer{Reason: api.FocusCompositorError, Message: sanitize.Label(err.Error(), 120)}
+	}
+}
 
 // laneCommand is the claude the read-only lane runs, nil for claude on
 // PATH; tests set a fake.
@@ -130,28 +147,34 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	}
 	if f := act.Focus; f != nil {
 		if time.Since(m.api.lastKey) < focusQuiet {
-			f.Reply <- "the human is typing in Den"
+			f.Reply <- api.FocusAnswer{Reason: api.FocusHumanTyping, Message: "the human is typing in Den"}
 			return nil
 		}
 		var target *fleet.Agent
+		ended := false
 		for i := range m.agents {
-			if a := &m.agents[i]; a.Session.SessionID == f.AgentID && a.Host == "" && a.Status != fleet.Gone {
+			if a := &m.agents[i]; a.Session.SessionID == f.AgentID && a.Host == "" {
+				if a.Status == fleet.Gone {
+					ended = true
+					continue
+				}
 				target = a
 			}
 		}
 		if target == nil {
-			f.Reply <- "no such agent here"
+			if ended {
+				f.Reply <- api.FocusAnswer{Reason: api.FocusNotRunning, Message: "that agent is gone"}
+			} else {
+				f.Reply <- api.FocusAnswer{Reason: api.FocusNoAgent, Message: "no such agent here"}
+			}
 			return nil
 		}
 		a := *target
 		// Only the agent's own terminal moves: Den's tab, selection and
 		// command line stay as the human left them.
 		return func() tea.Msg {
-			if _, err := focusAgent(a); err != nil {
-				f.Reply <- sanitize.Label(err.Error(), 120)
-			} else {
-				f.Reply <- ""
-			}
+			_, err := focusAgent(a)
+			f.Reply <- focusAnswer(err)
 			return nil
 		}
 	}
@@ -290,6 +313,13 @@ func (m *Model) startAPI() tea.Cmd {
 		ConsoleStore: filepath.Join(state, "consoles.json"),
 		PermStore:    filepath.Join(state, "permissions.json"),
 		ChatLog:      filepath.Join(state, "api-chat.jsonl"),
+		// A refused focus is one metadata line in the event stream: its
+		// reason and, for an agent of this machine, its session.
+		FocusFailed: func(reason, session, agent string) {
+			if cfg.Events.Log {
+				events.Append(events.Path(), events.FocusFailedEvent(reason, session, agent)) // best effort
+			}
+		},
 		Lane: api.LaneConfig{
 			Command:   laneCommand,
 			Dir:       lane,

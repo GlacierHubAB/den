@@ -304,11 +304,28 @@ func clean(a *Agent) {
 	}
 }
 
+// Why Focus failed, for errors.Is: the error's own text still says it for
+// a human.
+var (
+	ErrFocusGone       = errors.New("that agent is gone")
+	ErrFocusNoWindow   = errors.New("no terminal window")
+	ErrFocusCompositor = errors.New("the compositor did not focus it")
+)
+
+// focusError is a Focus failure: text for a human, kind for errors.Is.
+type focusError struct {
+	text string
+	kind error
+}
+
+func (e focusError) Error() string { return e.text }
+func (e focusError) Unwrap() error { return e.kind }
+
 // Focus brings the agent's terminal to the front. Inside herdr it also asks
 // herdr to focus the pane. It returns a short description of what it did.
 func Focus(a Agent) (string, error) {
 	if a.Status == Gone {
-		return "", errors.New("that agent is gone")
+		return "", ErrFocusGone
 	}
 	var notes []string
 	if a.InHerdr {
@@ -322,10 +339,10 @@ func Focus(a Agent) (string, error) {
 		if len(notes) > 0 {
 			return strings.Join(notes, ", "), nil
 		}
-		return "", fmt.Errorf("no terminal window found for %s", a.Name)
+		return "", focusError{fmt.Sprintf("no terminal window found for %s", a.Name), ErrFocusNoWindow}
 	}
 	if err := hypr.Focus(a.Window.Client.Address); err != nil {
-		return "", err
+		return "", focusError{err.Error(), ErrFocusCompositor}
 	}
 	notes = append(notes, fmt.Sprintf("window on workspace %s (matched by %s)", a.Window.Client.Workspace.Name, a.Window.How))
 	return strings.Join(notes, ", "), nil

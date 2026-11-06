@@ -40,6 +40,11 @@ type Options struct {
 	Version string // Den's release, for hello
 	ChatLog string // api-chat.jsonl
 	Lane    LaneConfig
+	// FocusFailed, when set, hears every refused focus: its reason (one of
+	// FocusReasons) and the session and Den's name of the agent of this
+	// machine it was about, both "" when the target was not one. It is
+	// called on the connection's goroutine.
+	FocusFailed func(reason, session, agent string)
 	// ConsoleKey is Den's Ed25519 key for console proofs (console.go);
 	// nil leaves console pairing off.
 	ConsoleKey ed25519.PrivateKey

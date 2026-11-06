@@ -1360,9 +1360,10 @@ func cleanMeta(a fleet.Meta) fleet.Meta {
 
 // cleanEvent keeps a known kind of version 1 only, sanitises its strings,
 // takes the agent name from the session id as Den would, and sets the host
-// from the connection.
+// from the connection. A focus_failed is never a host's: it is this Den's
+// own refusal of an app, with a reason from Den's closed list.
 func cleanEvent(ev events.Event, host string) (events.Event, bool) {
-	if ev.V != events.Version || !slices.Contains(events.Kinds, ev.Kind) {
+	if ev.V != events.Version || !slices.Contains(events.Kinds, ev.Kind) || ev.Kind == events.FocusFailed {
 		return events.Event{}, false
 	}
 	l := func(s string) string { return sanitize.Label(s, fleet.LabelMax) }
