@@ -33,7 +33,9 @@ func Path() string {
 	return filepath.Join(dir, "den", "colors.json")
 }
 
-// Load reads the record; a missing file is an empty map.
+// Load reads the record; a missing file is an empty map, never nil (a
+// record holding null included), so a caller that loads it once never
+// takes it for not loaded.
 func Load(path string) map[string]string {
 	out := map[string]string{}
 	raw, err := os.ReadFile(path)
@@ -41,6 +43,9 @@ func Load(path string) map[string]string {
 		return out
 	}
 	_ = json.Unmarshal(raw, &out)
+	if out == nil {
+		out = map[string]string{}
+	}
 	return out
 }
 
