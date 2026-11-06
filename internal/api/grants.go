@@ -137,6 +137,11 @@ func (s *Server) grantsInput() (perm.State, string) {
 	for k, v := range s.perms.setInDen {
 		st.SetInDen[k] = v
 	}
+	if s.perms.raiseEpoch == "" {
+		// Den counts raises from its first read, with or without a file
+		// (loadPerms may never run): a read never says "" while it counts.
+		s.resetRaisesLocked()
+	}
 	st.RaiseEpoch, st.RaiseN, st.RaisedAt = s.perms.raiseEpoch, map[string]int{}, map[string]string{}
 	for k, v := range s.perms.raiseN {
 		st.RaiseN[k] = v

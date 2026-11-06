@@ -137,6 +137,23 @@ func TestRaiseCounterFromTheFile(t *testing.T) {
 	})
 }
 
+// With no file at all (no store, so the start's load never runs), the
+// first read already carries a real epoch, and a raise counts under it:
+// a read never says "" while Den counts (drey-lead's edge).
+func TestRaiseEpochFromTheFirstRead(t *testing.T) {
+	h := newHarness(t, 2)
+	g := readNow(h)
+	if !epochOK(g.RaiseEpoch) {
+		t.Fatalf("the first read's epoch: %q", g.RaiseEpoch)
+	}
+	if err := h.s.RaiseDenLevel(perm.Routine, 4, g.Seq); err != nil {
+		t.Fatal(err)
+	}
+	if again := readNow(h); again.RaiseEpoch != g.RaiseEpoch || classOf(again, perm.Routine).RaiseN != 1 {
+		t.Errorf("after a raise: epoch %q (was %q), %+v", again.RaiseEpoch, g.RaiseEpoch, classOf(again, perm.Routine))
+	}
+}
+
 // A new pairing's fold starts the counter again: a new epoch, every count
 // 0, every time gone, all in the read the fold makes (P2).
 func TestRaiseCounterResetsOnAFold(t *testing.T) {
