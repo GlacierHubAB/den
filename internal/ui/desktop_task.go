@@ -223,7 +223,7 @@ func prepareTask(itemID string, offer deskOffer, own string, pid int) deskPrepar
 	p.layers = map[string]bool{}
 	for _, l := range snap.Layers {
 		if l.Level >= 2 && l.Address != "" {
-			p.layers[l.Address] = true
+			p.layers[desktop.LayerKey(l)] = true
 		}
 	}
 	p.dir = filepath.Join(deskStateDir(), p.id)

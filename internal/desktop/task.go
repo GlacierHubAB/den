@@ -184,6 +184,12 @@ func sanitizeNS(ns string) string {
 	return ns
 }
 
+// LayerKey names one layer surface: its address, namespace and pid, so a
+// new surface given a closed one's address isn't taken for it.
+func LayerKey(l Layer) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", l.Address, l.Namespace, l.PID)
+}
+
 // newLayer names a top or overlay surface that opened after the task
 // started, "" when none: one may hold the keyboard, so keys wait. The
 // console's own surfaces are the console's, judged elsewhere.
@@ -192,7 +198,7 @@ func newLayer(m Mission, s Snapshot) string {
 		if l.Level < 2 || l.W <= 0 || l.H <= 0 || l.PID > 1 && m.Console[l.PID] {
 			continue
 		}
-		if l.Address == "" || !m.LayersAtStart[l.Address] {
+		if l.Address == "" || !m.LayersAtStart[LayerKey(l)] {
 			return sanitizeNS(l.Namespace)
 		}
 	}
@@ -434,9 +440,11 @@ var taskDispatch = map[string]dispatchArg{
 	// The focused window; the argument names no window.
 	"killactive": argActive, "forcekillactive": argActive, "fullscreen": argActive, "fullscreenstate": argActive,
 	"centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive, "swapnext": argActive,
-	"movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive,
+	"movewindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive,
 	"togglesplit": argActive, "swapsplit": argActive, "splitratio": argActive, "togglegroup": argActive,
 	"changegroupactive": argActive, "lockactivegroup": argActive,
+	// The focused window and a direction, or the window the argument names.
+	"swapwindow": argDirOrAddress,
 	// The focused window, or the one the whole argument names.
 	"togglefloating": argWindow, "setfloating": argWindow, "settiled": argWindow, "pin": argWindow,
 	"pseudo": argWindow, "moveoutofgroup": argWindow,
@@ -454,7 +462,84 @@ const (
 	argWindow                             // the focused window, or the argument's
 	argWorkspaceWindow                    // "<workspace>[,<window>]"
 	argAddress                            // the argument's window, which it must name
+	argDirOrAddress                       // a direction, or a window it must name
 )
+
+// Arguments for the argActive dispatchers, as Hyprland 0.56.2 parses them
+// (config/legacy/DispatcherTranslator.cpp). Each is a closed grammar: no
+// form names a window, so only the focused one is acted on. An argument
+// off the grammar is refused, even when Hyprland would read it.
+var (
+	dirWord    = `(l|r|u|d|left|right|up|down)`
+	number     = `[+-]?[0-9]+(\.[0-9]+)?`
+	vectorArgs = regexp.MustCompile(`^(exact )?` + number + `%? ` + number + `%?$`)
+	activeArgs = map[string]*regexp.Regexp{
+		"killactive":        regexp.MustCompile(`^$`),
+		"forcekillactive":   regexp.MustCompile(`^$`),
+		"centerwindow":      regexp.MustCompile(`^$`),
+		"togglegroup":       regexp.MustCompile(`^$`),
+		"togglesplit":       regexp.MustCompile(`^$`),
+		"swapsplit":         regexp.MustCompile(`^$`),
+		"fullscreen":        regexp.MustCompile(`^([0-2]( (toggle|set|unset))?)?$`),
+		"fullscreenstate":   regexp.MustCompile(`^-?[0-3]( -?[0-3])?$`),
+		"resizeactive":      vectorArgs,
+		"moveactive":        vectorArgs,
+		"swapnext":          regexp.MustCompile(`^(|l|last|prev|b|back|n|next|f|forward)$`),
+		"movewindow":        regexp.MustCompile(`^(` + dirWord + `|mon:[a-z0-9+_.-]+)( silent)?$`),
+		"moveintogroup":     regexp.MustCompile(`^` + dirWord + `$`),
+		"changegroupactive": regexp.MustCompile(`^(|f|b|next|prev|forward|back|-?[0-9]{1,3})$`),
+		"lockactivegroup":   regexp.MustCompile(`^(lock|unlock|toggle)$`),
+		"splitratio":        regexp.MustCompile(`^(exact )?` + number + `$`),
+	}
+	swapDir = regexp.MustCompile(`^` + dirWord + `$`)
+)
+
+// layoutVerbs are the layout messages of dwindle, master, scrolling and
+// monocle in 0.56.2. dwindle's movetoroot reads its first argument as a
+// window selector, so it is taken bare; every other argument must be one
+// of layoutWords or a number.
+var (
+	layoutVerbs = map[string]bool{
+		"togglesplit": true, "swapsplit": true, "rotatesplit": true, "movetoroot": true, "preselect": true,
+		"splitratio": true, "swapwithmaster": true, "focusmaster": true, "cyclenext": true, "cycleprev": true,
+		"swapnext": true, "swapprev": true, "addmaster": true, "removemaster": true, "orientationleft": true,
+		"orientationright": true, "orientationtop": true, "orientationbottom": true, "orientationcenter": true,
+		"orientationnext": true, "orientationprev": true, "orientationcycle": true, "mfact": true,
+		"rollnext": true, "rollprev": true, "move": true, "colresize": true, "fit": true, "focus": true,
+		"promote": true, "consume": true, "expel": true, "consume_or_expel": true, "swapcol": true,
+		"center": true, "inhibit_scroll": true, "fit_into_view": true,
+	}
+	layoutWords = map[string]bool{
+		"exact": true, "master": true, "child": true, "auto": true, "ignoremaster": true, "previous": true,
+		"noloop": true, "all": true, "+conf": true, "-conf": true, "col": true, "+col": true, "-col": true,
+		"active": true, "expand": true, "toend": true, "tobeg": true, "visible": true, "prev": true,
+		"next": true, "l": true, "r": true, "u": true, "d": true, "t": true, "b": true, "left": true,
+		"right": true, "up": true, "down": true, "true": true, "false": true,
+	}
+	layoutNumber = regexp.MustCompile(`^` + number + `%?$`)
+)
+
+// badActiveArg says why a focused-window dispatcher's argument is refused,
+// "" when it is in the grammar.
+func badActiveArg(d, arg string) string {
+	why := "its argument (" + arg + ") is not one Den can check; only directions, monitors and numbers are taken"
+	if d == "layoutmsg" {
+		f := strings.Fields(arg)
+		if len(f) == 0 || !layoutVerbs[f[0]] || f[0] == "movetoroot" && len(f) > 1 {
+			return why
+		}
+		for _, w := range f[1:] {
+			if !layoutWords[w] && !layoutNumber.MatchString(w) {
+				return why
+			}
+		}
+		return ""
+	}
+	if re, ok := activeArgs[d]; !ok || !re.MatchString(arg) {
+		return why
+	}
+	return ""
+}
 
 // addressArg is the one window form task mode takes: Hyprland reads a bare
 // word, "floating", "tiled" or "activewindow" as a selector too, and a
@@ -472,6 +557,17 @@ func refusedBind(b Bind, m Mission, s Snapshot) string {
 	switch kind {
 	case argView:
 		return ""
+	case argActive:
+		if why := badActiveArg(d, arg); why != "" {
+			return why
+		}
+	case argDirOrAddress:
+		if !swapDir.MatchString(arg) {
+			if m.Protects(s.Active) {
+				return "it acts on the focused window, which is one of Den's own"
+			}
+			window = arg
+		}
 	case argWindow, argAddress:
 		window = arg
 	case argWorkspaceWindow:
@@ -483,7 +579,7 @@ func refusedBind(b Bind, m Mission, s Snapshot) string {
 		}
 	}
 	if window == "" {
-		if kind == argAddress {
+		if kind == argAddress || kind == argDirOrAddress && arg == "" {
 			return "it must name one window by address"
 		}
 		if m.Protects(s.Active) {

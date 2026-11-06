@@ -348,7 +348,7 @@ func TestTaskDispatchListIsPinned(t *testing.T) {
 		"movefocus": argView, "cyclenext": argView, "focusurgentorlast": argView, "focuscurrentorlast": argView,
 		"killactive": argActive, "forcekillactive": argActive, "fullscreen": argActive, "fullscreenstate": argActive,
 		"centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive, "swapnext": argActive,
-		"movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive,
+		"movewindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive, "swapwindow": argDirOrAddress,
 		"togglesplit": argActive, "swapsplit": argActive, "splitratio": argActive, "togglegroup": argActive,
 		"changegroupactive": argActive, "lockactivegroup": argActive,
 		"togglefloating": argWindow, "setfloating": argWindow, "settiled": argWindow, "pin": argWindow,
@@ -410,6 +410,69 @@ func TestTaskBindWindowArgsTakeOnlyAnAddress(t *testing.T) {
 	}
 }
 
+// A focused-window dispatcher takes only the arguments of its grammar:
+// none of them names a window, so a class regex can't reach Den's.
+func TestTaskActiveBindArgsAreAClosedGrammar(t *testing.T) {
+	m, s := taskDesk()
+	other := s.Windows[len(s.Windows)-1].Address
+	cases := []struct {
+		d, arg string
+		ok     bool
+	}{
+		{"swapwindow", "den", false},
+		{"swapwindow", "class:den", false},
+		{"swapwindow", "", false},
+		{"swapwindow", "address:0xden", false},
+		{"swapwindow", "l", true},
+		{"swapwindow", "address:" + other, true},
+		{"movewindow", "den", false},
+		{"movewindow", "mon:DP-1", true},
+		{"movewindow", "r silent", true},
+		{"moveintogroup", "den", false},
+		{"moveintogroup", "u", true},
+		{"changegroupactive", "title:Den", false},
+		{"changegroupactive", "b", true},
+		{"changegroupactive", "2", true},
+		{"fullscreenstate", "2 den", false},
+		{"fullscreenstate", "2 0", true},
+		{"fullscreen", "1", true},
+		{"fullscreen", "1 den", false},
+		{"killactive", "den", false},
+		{"killactive", "", true},
+		{"resizeactive", "exact 50% 50%", true},
+		{"resizeactive", "den", false},
+		{"lockactivegroup", "toggle", true},
+		{"lockactivegroup", "den", false},
+		{"layoutmsg", "movetoroot den", false},
+		{"layoutmsg", "movetoroot", true},
+		{"layoutmsg", "swapwithmaster master", true},
+		{"layoutmsg", "mfact exact 0.6", true},
+		{"layoutmsg", "colresize +0.1", true},
+		{"layoutmsg", "focus den", false},
+		{"layoutmsg", "frobnicate", false},
+		{"layoutmsg", "", false},
+	}
+	for _, c := range cases {
+		s.Binds = []Bind{{Mods: modSuper, Key: "k", Dispatcher: c.d, Arg: c.arg}}
+		v := taskCall(t, "use_bind", map[string]any{"combo": "super+k"}, m, s)
+		if (v.Kind == Allow) != c.ok {
+			t.Errorf("%s %q: %v (%s), want allowed=%v", c.d, c.arg, v.Kind, v.Reason, c.ok)
+		}
+	}
+	// Every argActive dispatcher has a grammar; one without would refuse all.
+	for d, k := range taskDispatch {
+		if _, ok := activeArgs[d]; k == argActive && !ok && d != "layoutmsg" {
+			t.Errorf("%s has no argument grammar", d)
+		}
+	}
+	// A swap with an address still needs a focused window that isn't Den's.
+	s.Active = "0xden"
+	s.Binds = []Bind{{Mods: modSuper, Key: "k", Dispatcher: "swapwindow", Arg: "address:" + other}}
+	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+k"}, m, s); v.Kind != Deny {
+		t.Error("swapwindow allowed with Den's window focused")
+	}
+}
+
 // Typing never runs a bind, even one the list would allow, and keys are
 // matched by their keysym names.
 func TestTaskTypingNeverRunsABind(t *testing.T) {
@@ -454,7 +517,7 @@ func TestTaskLayerSurfacesAreNotATasks(t *testing.T) {
 		{Address: "0xbar", Monitor: "DP-1", Level: 2, X: 0, Y: 0, W: 2000, H: 26, Namespace: "omarchy-bar", PID: 71},
 		{Address: "0xnote", Monitor: "DP-1", Level: 3, X: 1400, Y: 700, W: 300, H: 120, Namespace: "notifications", PID: 72},
 	}
-	m.LayersAtStart = map[string]bool{"0xbg": true, "0xbar": true, "0xnote": true}
+	m.LayersAtStart = startLayers(s.Layers)
 	for _, c := range []map[string]any{
 		{"action": "click", "x": 700, "y": 10},                    // the bar, over the shell
 		{"action": "scroll", "x": 1500, "y": 800, "scroll_dy": 2}, // a notification
@@ -480,7 +543,7 @@ func TestTaskLayerSurfacesAreNotATasks(t *testing.T) {
 	// Keys wait while a launcher that opened during the task is up.
 	m, s = taskDesk()
 	s.Layers = []Layer{{Address: "0xbar", Level: 2, W: 2000, H: 26, Namespace: "omarchy-bar", PID: 71}}
-	m.LayersAtStart = map[string]bool{"0xbar": true}
+	m.LayersAtStart = startLayers(s.Layers)
 	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "ls", "window": "0xshell"}, m, s); v.Kind != Allow {
 		t.Errorf("typing with only the start's bar up refused: %s", v.Reason)
 	}
@@ -497,10 +560,30 @@ func TestTaskLayerSurfacesAreNotATasks(t *testing.T) {
 			t.Errorf("%s %v allowed with a launcher up", c.tool, c.args)
 		}
 	}
+	// A surface that opens later with a closed one's address is new: keys
+	// wait. Its namespace or its pid tells it apart.
+	for _, l := range []Layer{
+		{Address: "0xbar", Level: 3, W: 600, H: 400, Namespace: "walker", PID: 71},
+		{Address: "0xbar", Level: 2, W: 2000, H: 26, Namespace: "omarchy-bar", PID: 74},
+	} {
+		s.Layers = []Layer{l}
+		if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "ls", "window": "0xshell"}, m, s); v.Kind != Deny {
+			t.Errorf("typing allowed with %s (pid %d) at the start bar's address", l.Namespace, l.PID)
+		}
+	}
 	// With no start list, every top surface counts as new: keys wait.
 	m.LayersAtStart = nil
 	s.Layers = s.Layers[:1]
 	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "ls", "window": "0xshell"}, m, s); v.Kind != Deny {
 		t.Error("typing allowed with no start list of surfaces")
 	}
+}
+
+// startLayers is the start list a task would record for these surfaces.
+func startLayers(ls []Layer) map[string]bool {
+	m := map[string]bool{}
+	for _, l := range ls {
+		m[LayerKey(l)] = true
+	}
+	return m
 }
