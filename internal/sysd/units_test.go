@@ -2,6 +2,7 @@ package sysd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -108,24 +109,71 @@ func TestStartArgs(t *testing.T) {
 	}
 }
 
-// show is read strictly: the three keys once each, known values only.
+// show is read strictly: the four keys once each, known values only.
 func TestParseState(t *testing.T) {
-	u, err := parseState("LoadState=loaded\nActiveState=active\nFreezerState=frozen\n")
-	if err != nil || !u.Loaded || u.Freeze != "frozen" || u.Gone() {
+	u, err := parseState("LoadState=loaded\nActiveState=active\nFreezerState=frozen\nControlGroup=/user.slice/x.slice\n")
+	if err != nil || !u.Loaded || u.Freeze != "frozen" || u.Cgroup != "/user.slice/x.slice" {
 		t.Errorf("%+v %v", u, err)
 	}
-	if u, err := parseState("LoadState=not-found\nActiveState=inactive\nFreezerState=running\n"); err != nil || !u.Gone() {
+	if u, err := parseState("LoadState=not-found\nActiveState=inactive\nFreezerState=running\nControlGroup=\n"); err != nil || u.Loaded || !u.Gone() {
 		t.Errorf("not-found: %+v %v", u, err)
 	}
 	for _, bad := range []string{
-		"", "LoadState=loaded\nActiveState=active\n",
-		"LoadState=loaded\nActiveState=active\nFreezerState=frozen\nExtra=1\n",
-		"LoadState=loaded\nActiveState=active\nFreezerState=iced\n",
-		"LoadState=loaded\nLoadState=loaded\nFreezerState=frozen\n",
-		"LoadState=loaded\nActiveState=active\nFreezerState\n",
+		"", "LoadState=loaded\nActiveState=active\nFreezerState=frozen\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState=frozen\nControlGroup=\nExtra=1\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState=iced\nControlGroup=\n",
+		"LoadState=loaded\nLoadState=loaded\nFreezerState=frozen\nControlGroup=\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState\nControlGroup=\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState=frozen\nControlGroup=\nControlGroup=\n",
 	} {
 		if _, err := parseState(bad); err == nil {
 			t.Errorf("%q read", bad)
+		}
+	}
+}
+
+// Stopped is not-found, or loaded and inactive with the kernel saying no
+// process is left under its cgroup; every other state holds.
+func TestGoneNeedsAnEmptyCgroup(t *testing.T) {
+	old := cgroupRoot
+	t.Cleanup(func() { cgroupRoot = old })
+	cgroupRoot = t.TempDir()
+	mk := func(cg, events string) {
+		os.MkdirAll(filepath.Join(cgroupRoot, cg), 0o755)
+		if events != "" {
+			os.WriteFile(filepath.Join(cgroupRoot, cg, "cgroup.events"), []byte(events), 0o644)
+		}
+	}
+	mk("/empty.slice", "populated 0\nfrozen 0\n")
+	mk("/busy.slice", "populated 1\nfrozen 0\n")
+	mk("/noevents.slice", "")
+	state := func(load, active, cg string) UnitState {
+		u, err := parseState("LoadState=" + load + "\nActiveState=" + active + "\nFreezerState=running\nControlGroup=" + cg + "\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		u.Empty = cgroupEmpty(u.Cgroup)
+		return u
+	}
+	for _, c := range []struct {
+		load, active, cg string
+		gone             bool
+	}{
+		{"not-found", "inactive", "", true},
+		{"loaded", "inactive", "", true},
+		{"loaded", "inactive", "/empty.slice", true},
+		{"loaded", "inactive", "/gone.slice", true}, // its directory is gone
+		{"loaded", "inactive", "/busy.slice", false},
+		{"loaded", "inactive", "/noevents.slice", false},
+		{"loaded", "inactive", "../etc", false},
+		{"loaded", "inactive", "/a/../../etc", false},
+		{"loaded", "active", "", false},
+		{"loaded", "activating", "", false},
+		{"loaded", "deactivating", "/empty.slice", false},
+		{"loaded", "failed", "", false},
+	} {
+		if g := state(c.load, c.active, c.cg).Gone(); g != c.gone {
+			t.Errorf("%s %s %q: gone %v, want %v", c.load, c.active, c.cg, g, c.gone)
 		}
 	}
 }
@@ -203,7 +251,10 @@ func TestRealUnits(t *testing.T) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		t.Fatalf("%s stayed %+v", unit, u)
+		// The test's own unit's last log lines, read only, so a failure
+		// explains itself.
+		log, _ := exec.Command("journalctl", "--user", "-u", svc, "-n", "20", "--no-pager", "-o", "short-iso").CombinedOutput()
+		t.Fatalf("%s stayed %+v\n%s's log:\n%s", unit, u, svc, log)
 		return u
 	}
 	wait(func(u UnitState) bool { return u.Active == "active" }, slice)
@@ -244,7 +295,10 @@ func TestRealUnits(t *testing.T) {
 	if err := Stop(slice); err != nil {
 		t.Fatal(err)
 	}
-	wait(UnitState.Gone, slice)
+	u := wait(UnitState.Gone, slice)
+	// Which branch the real manager takes after a stop (sec asked).
+	events, _ := os.ReadFile(filepath.Join(cgroupRoot, u.Cgroup, "cgroup.events"))
+	t.Logf("after the stop: %+v; cgroup.events %q", u, events)
 	wait(UnitState.Gone, svc)
 	if err := Stop(slice); err != nil {
 		t.Errorf("a second stop of a gone slice: %v", err)

@@ -261,14 +261,50 @@ func unitCall(verb, unit string) error {
 
 // UnitState is a unit as the manager has it now: Loaded false when the
 // manager has no such unit (LoadState not-found: never started, or
-// collected).
+// collected). Empty says the kernel holds no process anywhere under the
+// unit's cgroup (cgroupEmpty).
 type UnitState struct {
 	Loaded         bool
 	Active, Freeze string // ActiveState, FreezerState
+	Cgroup         string // ControlGroup, "" for none
+	Empty          bool
 }
 
-// Gone reports whether the manager has no such unit any more.
-func (u UnitState) Gone() bool { return !u.Loaded }
+// Gone reports whether nothing of the unit runs: the manager has no such
+// unit, or keeps it loaded and inactive (a stopped slice stays so a
+// while) with its cgroup empty. Anything else, failed included, runs.
+func (u UnitState) Gone() bool { return !u.Loaded || u.Active == "inactive" && u.Empty }
+
+// cgroupRoot is where the cgroup v2 tree is mounted; tests replace it.
+var cgroupRoot = "/sys/fs/cgroup"
+
+// cgroupEmpty reports whether no process is left under a cgroup: none
+// named, its directory gone, or its cgroup.events reading "populated 0".
+// Anything else (a path that is not one, a read that fails) is not empty.
+func cgroupEmpty(cg string) bool {
+	if cg == "" {
+		return true
+	}
+	if !strings.HasPrefix(cg, "/") || strings.Contains(cg, "/../") || strings.HasSuffix(cg, "/..") || strings.ContainsAny(cg, "\n\x00") {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(cgroupRoot, cg, "cgroup.events"))
+	if errors.Is(err, os.ErrNotExist) {
+		if _, derr := os.Stat(filepath.Join(cgroupRoot, cg)); errors.Is(derr, os.ErrNotExist) {
+			return true // the cgroup is gone with everything in it
+		}
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(string(raw), "\n") {
+		if l == "populated 0" {
+			return true
+		}
+	}
+	return false
+}
 
 var (
 	loadStates   = map[string]bool{"loaded": true, "not-found": true, "stub": true, "error": true, "merged": true, "masked": true, "bad-setting": true}
@@ -276,32 +312,39 @@ var (
 	freezeStates = map[string]bool{"running": true, "freezing": true, "frozen": true, "thawing": true, "freezing-by-parent": true, "frozen-by-parent": true}
 )
 
-// State reads a unit's LoadState, ActiveState and FreezerState: exactly
-// those three, each a value systemd has, or an error.
+// State reads a unit's LoadState, ActiveState, FreezerState and
+// ControlGroup: exactly those four, the first three each a value systemd
+// has, or an error; and whether its cgroup is empty.
 func State(unit string) (UnitState, error) {
 	if err := checkUnit(unit); err != nil {
 		return UnitState{}, err
 	}
-	out, err := systemctl("show", "--property=LoadState", "--property=ActiveState", "--property=FreezerState", "--", unit)
+	out, err := systemctl("show", "--property=LoadState", "--property=ActiveState", "--property=FreezerState", "--property=ControlGroup", "--", unit)
 	if err != nil {
 		return UnitState{}, err
 	}
-	return parseState(out)
+	u, err := parseState(out)
+	if err != nil {
+		return UnitState{}, err
+	}
+	u.Empty = cgroupEmpty(u.Cgroup)
+	return u, nil
 }
 
 func parseState(out string) (UnitState, error) {
 	got := map[string]string{}
+	seen := map[string]bool{}
 	for _, l := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
 		k, v, ok := strings.Cut(l, "=")
-		if !ok || got[k] != "" {
+		if !ok || seen[k] {
 			return UnitState{}, fmt.Errorf("show line %q does not read", l)
 		}
-		got[k] = v
+		seen[k], got[k] = true, v
 	}
-	if len(got) != 3 || !loadStates[got["LoadState"]] || !activeStates[got["ActiveState"]] || !freezeStates[got["FreezerState"]] {
+	if len(seen) != 4 || !seen["ControlGroup"] || !loadStates[got["LoadState"]] || !activeStates[got["ActiveState"]] || !freezeStates[got["FreezerState"]] {
 		return UnitState{}, fmt.Errorf("show answered %q", out)
 	}
-	return UnitState{Loaded: got["LoadState"] != "not-found", Active: got["ActiveState"], Freeze: got["FreezerState"]}, nil
+	return UnitState{Loaded: got["LoadState"] != "not-found", Active: got["ActiveState"], Freeze: got["FreezerState"], Cgroup: got["ControlGroup"]}, nil
 }
 
 // prefixGlob is a listing prefix: letters, digits and '-' only, so the
