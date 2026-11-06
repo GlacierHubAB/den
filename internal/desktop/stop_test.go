@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
 func sleeper(t *testing.T) *exec.Cmd {
@@ -101,23 +103,17 @@ func TestStopChecksIdentity(t *testing.T) {
 // Stop still ends a process whose binary was updated in place during the
 // mission (Claude Code updates itself): it is the process recorded.
 func TestStopAfterAnUpdateInPlace(t *testing.T) {
-	src, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Skip("no sleep")
-	}
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
+	raw := teststandin.Bytes(t)
 	bin := filepath.Join(t.TempDir(), "claude")
 	if err := os.WriteFile(bin, raw, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	c := exec.Command(bin, "30")
+	c := teststandin.Command(bin, "30")
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { c.Process.Kill(); c.Wait() })
+	teststandin.Started(t, c, "claude")
 	p := RecordProc(c.Process.Pid)
 	os.Remove(bin) // the update writes a new file at the path
 	os.WriteFile(bin, raw, 0o755)

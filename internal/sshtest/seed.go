@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
 // SessionOpts describes a fake remote Claude Code session. Zero values give a
@@ -112,12 +114,13 @@ func (h *seedDir) add(o SessionOpts) *Session {
 	}
 	s := &Session{ID: o.ID, PID: o.PID, h: h, opts: o, reaped: make(chan struct{}), started: time.Now().UnixMilli()}
 	if o.PID == 0 {
-		cmd := exec.Command(h.lab.claudeStandIn(), "3600")
-		cmd.Env = append(os.Environ(), "DEN_SSHTEST="+h.lab.Dir)
+		cmd := teststandin.Command(h.lab.claudeStandIn(), "3600")
+		cmd.Env = append(cmd.Env, "DEN_SSHTEST="+h.lab.Dir)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		must(t, cmd.Start())
 		s.PID, s.proc = cmd.Process.Pid, cmd
 		go func() { cmd.Wait(); close(s.reaped) }()
+		teststandin.Started(t, cmd, "claude")
 	}
 	h.sessions = append(h.sessions, s)
 	s.File = filepath.Join(h.claudeDir, "sessions", fmt.Sprintf("%d.json", s.PID))
@@ -259,18 +262,15 @@ func (h *seedDir) stop() {
 	}
 }
 
-// claudeStandIn is sleep under the name claude (a symlink in the lab), so a
-// dummy session process has the comm a native Claude Code install has.
+// claudeStandIn is the test binary under the name claude (a symlink in the
+// lab), so a dummy session process has the comm a native Claude Code install
+// has. The package's TestMain must run Main, which makes it sleep.
 func (l *Lab) claudeStandIn() string {
 	p := filepath.Join(l.Dir, "bin", "claude")
 	if _, err := os.Lstat(p); err == nil {
 		return p
 	}
-	sleep, err := exec.LookPath("sleep")
-	must(l.t, err)
 	must(l.t, os.MkdirAll(filepath.Dir(p), 0o755))
-	if err := os.Symlink(sleep, p); err != nil && !os.IsExist(err) {
-		l.t.Fatalf("sshtest: %v", err)
-	}
+	teststandin.Link(l.t, p)
 	return p
 }

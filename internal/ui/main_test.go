@@ -10,12 +10,14 @@ import (
 	"github.com/GlacierHubAB/den/internal/colors"
 	"github.com/GlacierHubAB/den/internal/gitenvtest"
 	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
 // TestMain gives the package's tests a state folder of their own. The UI
 // writes the shared colour record and the task history there, and a test run
 // against the real one replaced the colours every agent badge reads.
 func TestMain(m *testing.M) {
+	teststandin.Main() // started as a stand-in, the test binary only sleeps
 	// Started as "den-test-sleep", the test binary stands in for Den's own
 	// processes under a fake orchestrator (its hook, its den mcp).
 	if len(os.Args) > 1 && os.Args[1] == "den-test-sleep" {

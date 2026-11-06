@@ -10,7 +10,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
+
+// TestMain: started as a stand-in for den, the test binary only sleeps.
+func TestMain(m *testing.M) {
+	teststandin.Main()
+	os.Exit(m.Run())
+}
 
 // TestDevUpdateCountsOnlyItsOwnBinary: dev-update.sh refuses while a den
 // runs from the binary it would replace, also once that file was replaced
@@ -21,12 +29,11 @@ func TestDevUpdateCountsOnlyItsOwnBinary(t *testing.T) {
 	if _, err := os.Stat("/proc/self/exe"); err != nil {
 		t.Skip("no /proc")
 	}
-	for _, tool := range []string{"bash", "pgrep", "readlink", "sleep"} {
+	for _, tool := range []string{"bash", "pgrep", "readlink"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skip(tool + " not found")
 		}
 	}
-	sleep, _ := exec.LookPath("sleep")
 	dir, err := filepath.EvalSymlinks(t.TempDir()) // as /proc shows it
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +42,7 @@ func TestDevUpdateCountsOnlyItsOwnBinary(t *testing.T) {
 	bin := filepath.Join(dir, "bin", name)
 	other := filepath.Join(dir, "elsewhere", name)
 	for _, p := range []string{bin, other} {
-		copyFile(t, sleep, p)
+		copyStandIn(t, p)
 	}
 
 	run := func() string {
@@ -69,7 +76,7 @@ func TestDevUpdateCountsOnlyItsOwnBinary(t *testing.T) {
 	}
 
 	// An earlier update renamed a new binary over the one it runs.
-	copyFile(t, sleep, bin+".new")
+	copyStandIn(t, bin+".new")
 	if err := os.Rename(bin+".new", bin); err != nil {
 		t.Fatal(err)
 	}
@@ -78,29 +85,25 @@ func TestDevUpdateCountsOnlyItsOwnBinary(t *testing.T) {
 	}
 }
 
-func copyFile(t *testing.T, src, dst string) {
+// copyStandIn writes a copy of the test binary at dst, a den stand-in.
+func copyStandIn(t *testing.T, dst string) {
 	t.Helper()
-	b, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(dst, b, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	teststandin.Copy(t, dst)
 }
 
-// startSleep runs path (a copy of sleep) until the test ends, and waits
-// until /proc shows it running path.
+// startSleep runs path (a stand-in copy) until the test ends, and waits
+// until /proc shows it running path under its own name.
 func startSleep(t *testing.T, path string) int {
 	t.Helper()
-	cmd := exec.Command(path, "60")
+	cmd := teststandin.Command(path, "60")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	teststandin.Started(t, cmd, filepath.Base(path))
 	pid := cmd.Process.Pid
 	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
 		if exe, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)); exe == path {

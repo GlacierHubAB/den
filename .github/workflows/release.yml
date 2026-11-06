@@ -28,8 +28,7 @@ env:
 
 jobs:
   verify:
-    # Pinned: ubuntu-latest moved to 26.04, where several test packages fail; every job here runs on 24.04 until the 26.04 fixes land, then unpin.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -87,7 +86,7 @@ jobs:
 
   build:
     needs: [verify, ci, heavy]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read
@@ -132,7 +131,7 @@ jobs:
   publish:
     needs: build
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
