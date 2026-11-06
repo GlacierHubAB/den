@@ -931,7 +931,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent (also one on a remote host, `/close Name@devbox`); `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
-| `/desktop`, `/desktop stop`, `/desktop keep` | how a desktop mission stands; stop it at once; keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
+| `/desktop`, `/desktop stop`, `/desktop pause`, `/desktop resume`, `/desktop keep` | how a desktop mission stands; stop it at once; pause it and resume it (resume in Den's window only); keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
@@ -1758,6 +1758,21 @@ screenshot of the window, and is answered only in Den's own window, once.
 For a step only you do, the agent calls `your_turn`: every desktop tool is
 paused until you say it is done (`Ctrl+Y`) or end the mission (`Ctrl+N`). The
 header shows `DESKTOP · on` (or `acting`) while a mission runs.
+
+**While it runs, Den's window answers nothing that approves.** No approving
+answer while an agent has the desktop: pause or end it first. `^Y`, `/allow`,
+`/always`, a typed answer and every command that widens anything wait, and so
+do a message to an agent and Enter on an empty line. What still works: `^N`
+and `/deny`, stopping, pausing and ending, every lowering (a tighter `/mode`,
+`/api off`, `/god off`, `/usage stop`), moving around, and typing a line,
+which you send after the pause. A line typed while the agent had the desktop
+asks once more before it is sent, and if the selection moved meanwhile, the
+first answer after the pause is held once so you can check it. A card the
+mission itself raises is answered the same way: pause, then answer.
+
+**Pause it.** `/desktop pause` in Den or from the dock: every action of the
+agent but a look waits, and Den's window answers again. `/desktop resume`,
+in Den's window only, lets it go on.
 
 **Stop it.** `/desktop stop` in Den, `/desktop stop` from the dock, or
 `den desktop stop` from anywhere: it stops hypruse, the agent and its server

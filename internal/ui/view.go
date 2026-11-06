@@ -1548,6 +1548,9 @@ func (m Model) hints(w int) string {
 	s := m.st
 	var items [][2]string
 	switch {
+	case m.deskHolds() && !m.perms.open:
+		// Only what runs while an agent has the desktop (desk_hold.go).
+		items = [][2]string{{"^Y", "waits: an agent has the desktop"}, {"/desktop pause", ""}, {"/desktop stop", ""}, {"^N", "deny"}, {"↑ ↓", "select"}, {"type", "Enter waits"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.help:
 		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/fleet project · flat", "the Fleet by project, or not"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/view [rescue]", "the window view · bring back windows on special:den"}, {"/mission <goal> · move <project>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:
