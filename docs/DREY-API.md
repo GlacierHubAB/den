@@ -183,8 +183,9 @@ no transcript, and no request body outside `inbox.body`.
   record that fails it is sent as no `color`. `color` is always a colour of
   Den's current palette (the theme's hues that pass the agent colour rule,
   then Den's curated list), assigned by Den. A colour record
-  (`colors.json`) entry outside that palette is replaced, never sent, and
-  Den reads the record only when it starts. The rows of
+  (`colors.json`) entry outside that palette is replaced, never sent. Den
+  takes colours from the record only once, at its first assignment after
+  it starts; after that it only writes its own copy back. The rows of
   `internal/api/convcases/colorrule.go` (`ColorRuleCases`) pin the rule,
   with each colour's first failing check. Key it on the agent's `id`. It stays with the
   session id: a rename never changes it, and across a Den restart the agent
