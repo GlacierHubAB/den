@@ -168,6 +168,9 @@ func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
 	if dm == nil {
 		return m.say("No desktop mission is running. /desktop stop stops one at once.", false)
 	}
+	if len(args) > 0 && (strings.EqualFold(args[0], "pause") || strings.EqualFold(args[0], "resume")) {
+		return m.deskPause(dm, strings.EqualFold(args[0], "pause"))
+	}
 	if dm.Task {
 		left := time.Until(dm.deadline).Round(time.Second)
 		return m.say(fmt.Sprintf("Desktop task by %s: %d of %d actions used, %s left. /desktop stop ends it at once.", sanitize.Label(dm.AgentName, 40), dm.actions, dm.limitActions, left), false)

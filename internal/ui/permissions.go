@@ -73,10 +73,12 @@ func (m Model) panel() panelLevels {
 }
 
 // deskHolds reports whether a desktop agent can act now: a mission live
-// and not paused (a your-turn card open, or the dock's overlay down).
+// and not paused (a your-turn card open, the dock's overlay down, or
+// /desktop pause). While it does, Den's window takes only the keys and
+// commands of desk_hold.go.
 func (m Model) deskHolds() bool {
 	for _, dm := range m.desk.missions {
-		if dm.Ended == "" && !dm.Paused && !dm.overlayPaused {
+		if dm.Ended == "" && !dm.Paused && !dm.overlayPaused && !dm.humanPaused {
 			return true
 		}
 	}
