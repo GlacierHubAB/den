@@ -24,6 +24,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/mods"
 	"github.com/GlacierHubAB/den/internal/remote"
 	"github.com/GlacierHubAB/den/internal/stats"
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // Bounds on running `<program> --version`.
@@ -44,6 +45,7 @@ func System() Env {
 		Home:         home,
 		Getenv:       os.Getenv,
 		LookPath:     exec.LookPath,
+		RootTool:     sysd.RootTool,
 		Version:      runVersion,
 		ReadFile:     os.ReadFile,
 		Tail:         tail,
