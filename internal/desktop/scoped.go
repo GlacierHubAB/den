@@ -117,8 +117,21 @@ func bindsOutside(bs []Bind, active string, m Mission, s Snapshot) string {
 	return ""
 }
 
+// scopedAsIs are the tools a scoped task runs as the task rules decide:
+// reads of the screen (whole-screen, the human's Q2), launch (sandboxed,
+// its window joins the set through the slice) and the card and status
+// tools. Every other tool is checked below, and one named nowhere is
+// refused, so a tool added later can't skip scoping.
+var scopedAsIs = map[string]bool{
+	"screenshot": true, "zoom": true, "ui": true, "marks": true, "launch": true,
+	"desktop": true, "binds": true, "request_approval": true, "your_turn": true,
+}
+
 // narrowTask applies the scoped rules to a verdict the task rules allowed.
 func narrowTask(tool string, args map[string]any, m Mission, s Snapshot, v Verdict) Verdict {
+	if scopedAsIs[tool] {
+		return v
+	}
 	switch tool {
 	case "keyboard":
 		if v.Target == nil || !m.InSet(*v.Target) {
@@ -174,6 +187,8 @@ func narrowTask(tool string, args map[string]any, m Mission, s Snapshot, v Verdi
 		if why := bindsOutside(findBinds(str(args, "combo"), s.Binds), s.Active, m, s); why != "" {
 			return deny("use_bind: %s", why)
 		}
+	default:
+		return deny("%s isn't one a task held to its own windows may use", tool)
 	}
 	return v
 }

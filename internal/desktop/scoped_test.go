@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -205,5 +206,23 @@ func fakeHyprctl(out map[string]string) func(context.Context, ...string) ([]byte
 			return nil, errors.New("no " + args[0])
 		}
 		return []byte(o), nil
+	}
+}
+
+// [E2] A tool scoping doesn't name is refused, so one added later can't
+// skip it; the ones run as the task rules decide are a fixed list.
+func TestScopedUnknownToolIsRefused(t *testing.T) {
+	m, s := scopedDesk()
+	if v := narrowTask("type_anywhere", map[string]any{}, m, s, Verdict{Kind: Allow}); v.Kind != Deny {
+		t.Error("an unnamed tool passed scoping")
+	}
+	want := []string{"binds", "desktop", "launch", "marks", "request_approval", "screenshot", "ui", "your_turn", "zoom"}
+	var got []string
+	for k := range scopedAsIs {
+		got = append(got, k)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("scopedAsIs %v, want %v", got, want)
 	}
 }

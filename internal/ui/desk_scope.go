@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/desktop"
+	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/sysd"
@@ -180,8 +181,21 @@ func (m Model) deskPickCmd(args []string) (tea.Model, tea.Cmd) {
 }
 
 // deskNeverPickable are processes whose windows a card never offers: the
-// console's (Drey's dock).
-func (m Model) deskNeverPickable() map[int]bool { return m.consoleProcs() }
+// console's (Drey's dock), and the terminal of every agent Den knows a
+// window of (its spawn and window records). One terminal process can hold
+// the human's other windows too; none of them is offered either.
+func (m Model) deskNeverPickable() map[int]bool {
+	out := map[int]bool{}
+	for pid := range m.consoleProcs() {
+		out[pid] = true
+	}
+	for _, a := range append(append([]fleet.Agent(nil), m.base...), m.agents...) {
+		if a.Window != nil && a.Window.Client.PID > 1 {
+			out[a.Window.Client.PID] = true
+		}
+	}
+	return out
+}
 
 // finishPicks puts the list on the card.
 func (m *Model) finishPicks(msg deskPicksMsg) tea.Cmd {

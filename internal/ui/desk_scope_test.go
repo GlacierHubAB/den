@@ -8,6 +8,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/desktop"
+	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
 )
 
@@ -213,4 +214,34 @@ func settledTask(m Model) *inbox.Item {
 		}
 	}
 	return nil
+}
+
+// [E1] While Den's window holds for a desktop mission, neither switch
+// may be typed.
+func TestDeskScopeRefusedWhileHeld(t *testing.T) {
+	for _, a := range [][]string{{"whole"}, {"whole", "on"}, {"pick"}, {"pick", "1"}} {
+		if deskHeldCommand("/desktop", a, "default") {
+			t.Errorf("/desktop %v runs while held", a)
+		}
+	}
+}
+
+// [E3] The terminal of an agent Den has a window record of is never
+// offered, nor any window of that terminal process.
+func TestDeskAgentTerminalsAreNeverPickable(t *testing.T) {
+	m := testModel(140, 40)
+	m.base = append(m.base, m.agents...)
+	if len(m.base) == 0 {
+		t.Skip("no agents in the test model")
+	}
+	a := m.base[0]
+	a.Window = &hypr.Match{Client: hypr.Client{Address: "0xt", PID: 4444}}
+	m.base[0] = a
+	if !m.deskNeverPickable()[4444] {
+		t.Fatal("an agent's terminal process is pickable")
+	}
+	s := desktop.Snapshot{Windows: []desktop.Window{{Address: "0xt", Class: "ghostty", PID: 4444, Mapped: true}, {Address: "0xu", Class: "ghostty", PID: 4444, Mapped: true}}}
+	if got := desktop.Pickable(s, m.deskNeverPickable()); len(got) != 0 {
+		t.Errorf("offered %v", got)
+	}
 }
