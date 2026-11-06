@@ -170,5 +170,5 @@ func (m *Model) finishInstall(msg installDoneMsg) tea.Cmd {
 	}
 	m.flash, m.flashErr = strings.ToUpper(outcome[:1])+outcome[1:], msg.err != nil
 	m.refresh()
-	return flashTick(4*time.Second, m.flash)
+	return flashTick(flashFor, m.flash)
 }

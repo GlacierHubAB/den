@@ -345,7 +345,9 @@ type DesktopMissionInput struct {
 
 // DesktopInput is the payload of a DesktopEvent.
 type DesktopInput struct {
-	Kind    string          `json:"kind"` // "start", "child" or "call"
+	Kind string `json:"kind"` // "start", "child", "call" or "done"
+	// done: the allowed call Den named in its answer has ended.
+	Call    string          `json:"call,omitempty"`
 	Mission string          `json:"mission"`
 	Tool    string          `json:"tool,omitempty"`
 	Args    json.RawMessage `json:"args,omitempty"`

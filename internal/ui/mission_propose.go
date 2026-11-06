@@ -45,7 +45,7 @@ func (m *Model) handlePropose(r *bridge.Request) tea.Cmd {
 	m.ov.proposal = ms.ID
 	r.Reply(bridge.Decision{Behavior: "allow", Message: "Den shows the human mission " + ms.ID + " (" + ms.Name + ") as a proposal: nothing starts, and nothing may be dispatched for it, until they select it in Den's chat (↑, in the strip above the chat) and press ^Y; tell them so in those words. Change it with propose_mission and this id."})
 	m.flash, m.flashErr = "The orchestrator proposes mission "+ms.Name+": select it with ↑ above the chat, then ^Y starts it, ^N drops it.", false
-	return flashTick(4*time.Second, m.flash)
+	return flashTick(flashFor, m.flash)
 }
 
 // proposal builds the proposed mission from the call, a new one or the

@@ -215,7 +215,15 @@ func answerDeskCard(t *testing.T, m Model, it *inbox.Item, verb string) Model {
 	m.selectItem(it)
 	mm, cmd := m.answer(verb)
 	runBatch(cmd)
-	return mm.(Model)
+	m = mm.(Model)
+	// The card was a pause of its mission: an approved action waited for
+	// its answer, and runs now on a fresh read, as Update would run it.
+	for _, msg := range runBatch(m.deskFlush()) {
+		if f, ok := msg.(deskFlushMsg); ok {
+			m.deskFlushed(f)
+		}
+	}
+	return m
 }
 
 func TestDesktopAskWaitsForTheHuman(t *testing.T) {

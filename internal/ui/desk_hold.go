@@ -217,7 +217,9 @@ func (m *Model) deskHeldAnswer() bool {
 
 // paused reports whether the mission is paused in any way: the human's
 // /desktop pause, a your-turn card open, or the dock's overlay down.
-func (dm *deskMission) paused() bool { return dm.humanPaused || dm.Paused || dm.overlayPaused }
+func (dm *deskMission) paused() bool {
+	return dm.humanPaused || dm.Paused || dm.overlayPaused || len(dm.cards) > 0
+}
 
 // deskQueued is an action the human approved while its mission was
 // paused, and the reply that lets it run.
@@ -297,7 +299,7 @@ func (m *Model) deskFlushed(msg deskFlushMsg) {
 			deny("the target window changed while the mission was paused")
 			continue
 		}
-		a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds}
+		a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds, Call: dm.issueCall(q.p.tool)}
 		if q.p.pieces > 0 && v.Target != nil {
 			a.Token = newToken()
 			dm.tokens[a.Token] = deskToken{window: v.Target.Address, left: q.p.pieces, until: time.Now().Add(2 * time.Minute)}

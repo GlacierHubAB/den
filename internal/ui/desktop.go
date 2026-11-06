@@ -89,6 +89,19 @@ type deskMission struct {
 	// flushing while that read of the desktop is out.
 	queued   []deskQueued
 	flushing bool
+	// The slice (desk_slice.go): cards are the mission's own cards open
+	// now, a pause too; inflight the calls Den let through that have not
+	// ended; frozen once the slice is (only then does Den's window answer
+	// while it is paused). launched once anything ran in the slice;
+	// reaped once its slice is gone after the mission ended.
+	cards                      map[string]bool
+	inflight                   map[string]time.Time
+	pausedAt, reapAfter        time.Time
+	freezeAfter                time.Time // a failed freeze is tried again from then
+	frozen, freezing, draining bool
+	freezeNoted, stopNoted     bool
+	launched, reaping, reaped  bool
+	launches                   int
 	// overlayExpect: the task started while the console watched, and its
 	// first overlay.linked has not come; input waits for it until
 	// overlayFirstBy.
@@ -123,9 +136,15 @@ type deskPending struct {
 // deskState is Den's desktop missions.
 type deskState struct {
 	missions map[string]*deskMission
-	pending  map[string]deskPending // card item id -> its call
-	offers   map[string]deskOffer   // mission card item id -> its request
-	chip     string                 // the header chip while a mission is live
+	// leftover are this Den's slices from before it started that the
+	// start's sweep could not stop (SweepDesktopSlices): Den's window
+	// holds until they are gone, and Den tries them again every 5 s.
+	leftover      []string
+	leftoverBusy  bool
+	leftoverRetry time.Time
+	pending       map[string]deskPending // card item id -> its call
+	offers        map[string]deskOffer   // mission card item id -> its request
+	chip          string                 // the header chip while a mission is live
 	// installing is the install question's item id while its approved
 	// install runs: the question stays open until the install's own result
 	// settles it, which is what answers `den install-hypruse`.
@@ -297,11 +316,20 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 	if dm == nil {
 		return deny("no such desktop mission")
 	}
+	if in.Kind == "done" {
+		// Taken even from a mission that is refused or ended: a call that
+		// ended must stop counting as in flight.
+		m.deskDone(r, dm, in)
+		return nil
+	}
 	if why := dm.refusal(); why != "" {
 		return deny(why)
 	}
 	switch in.Kind {
 	case "start":
+		if why := dm.sliceOK(); why != "" {
+			return deny(why)
+		}
 		// Only the agent's own MCP server: Den's binary, started by that
 		// agent's Claude Code, once.
 		if dm.AgentPID <= 1 && !adoptAgent(dm, r.PeerPID) {
@@ -498,6 +526,9 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 	if dm.humanPaused && !deskLooks[in.Tool] {
 		return deny(deskHumanPaused)
 	}
+	if len(dm.cards) > 0 && !deskLooks[in.Tool] {
+		return deny("paused: Den is asking the human about this mission's last call; nothing else runs until they answer")
+	}
 	if paused, end := m.deskOverlayCheck(dm, msg.snap.ConsoleGlow(m.consoleProcs())); end != nil {
 		deny(deskOverlayPaused)
 		return end
@@ -547,6 +578,10 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 		if in.Tool == "marks" && v.Target != nil {
 			dm.MarksWindow = v.Target.Address
 		}
+		if in.Tool == "launch" {
+			// Den runs it itself, in the mission's slice (desk_slice.go).
+			return m.deskLaunch(r, dm, v, msg.snap)
+		}
 		m.deskAllow(r, dm, in.Tool, v, deskPieces(in.Tool, v))
 		if in.Tool == "desktop" {
 			// mission, not dm.Mission: a task hides the console's windows too.
@@ -576,7 +611,7 @@ func (m *Model) deskAllow(r *bridge.Request, dm *deskMission, tool string, v des
 	if tool == "desktop" {
 		return
 	}
-	a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds}
+	a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds, Call: dm.issueCall(tool)}
 	if pieces > 0 && v.Target != nil {
 		a.Token = newToken()
 		dm.tokens[a.Token] = deskToken{window: v.Target.Address, left: pieces, until: time.Now().Add(2 * time.Minute)}
@@ -622,6 +657,15 @@ func (m *Model) askDesktop(r *bridge.Request, dm *deskMission, in bridge.Desktop
 		it = m.store.AddDesktopAct(dm.SessionID, in.Tool, title, body, r)
 	}
 	m.desk.pending[it.ID] = deskPending{mission: dm.ID, tool: in.Tool, verdict: v, pieces: deskPieces(in.Tool, v)}
+	if in.Tool != "your_turn" {
+		// One of the mission's own cards: a pause until it is answered,
+		// so its slice freezes before its ^Y works (your_turn pauses as
+		// dm.Paused).
+		if dm.cards == nil {
+			dm.cards = map[string]bool{}
+		}
+		dm.cards[it.ID] = true
+	}
 	m.flash, m.flashErr = it.Title+": ^Y allows, ^N denies.", false
 	m.refresh()
 	id := it.ID
@@ -692,6 +736,11 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 	p, ok := m.desk.pending[it.ID]
 	delete(m.desk.pending, it.ID)
 	dm := m.deskMission(p.mission)
+	if dm != nil {
+		// Its card's pause ends with the answer; an approved action waits
+		// in the queue until then, and runs once the hold is back.
+		defer delete(dm.cards, it.ID)
+	}
 	if !ok || dm == nil {
 		m.store.SettleWith(it, bridge.Decision{Behavior: "deny", Message: "Den: that question is stale"}, "stale; denied")
 		return m.say("That desktop question is stale; denied.", true)
@@ -732,7 +781,7 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		m.refresh()
 		return m.say("Approved: it runs when the mission goes on, after Den checks it again.", false)
 	}
-	a := desktop.Answer{Args: mustJSON(p.verdict.Args), Bounds: p.verdict.Bounds}
+	a := desktop.Answer{Args: mustJSON(p.verdict.Args), Bounds: p.verdict.Bounds, Call: dm.issueCall(p.tool)}
 	if p.pieces > 0 && p.verdict.Target != nil {
 		a.Token = newToken()
 		dm.tokens[a.Token] = deskToken{window: p.verdict.Target.Address, left: p.pieces, until: time.Now().Add(2 * time.Minute)}
@@ -751,6 +800,9 @@ func (m *Model) timeoutDesktopCard(msg deskCardTimeoutMsg) {
 		}
 		p := m.desk.pending[it.ID]
 		delete(m.desk.pending, it.ID)
+		if dm := m.deskMission(p.mission); dm != nil {
+			delete(dm.cards, it.ID)
+		}
 		if dm := m.deskMission(p.mission); dm != nil && it.Kind == inbox.YourTurn {
 			// The human's step was not done: the mission stays paused until
 			// they end it or ask again.
