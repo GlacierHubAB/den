@@ -187,6 +187,27 @@ func TestGoneNeedsAnEmptyCgroup(t *testing.T) {
 
 // A tool is taken only from the system's own directories, and only a
 // root's file in a root's directory, neither writable by others.
+// RootToolLink keeps a tool's own name where RootTool resolves it: pasta
+// is a link to passt, and passt reads its mode from its name. sh is a
+// link on most systems, so it stands in here.
+func TestRootToolLinkKeepsTheName(t *testing.T) {
+	fi, err := os.Lstat("/usr/bin/sh")
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Skip("/usr/bin/sh is not a link here")
+	}
+	real, err := RootTool("sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link, err := RootToolLink("sh")
+	if err != nil || filepath.Base(link) != "sh" || link == real {
+		t.Fatalf("RootToolLink(sh) = %q, %v; RootTool = %q", link, err, real)
+	}
+	if _, err := RootToolLink("den-no-such-tool"); err == nil {
+		t.Fatal("a missing tool was found")
+	}
+}
+
 func TestToolOnlyFromRootsDirs(t *testing.T) {
 	old := toolDirs
 	t.Cleanup(func() { toolDirs = old })
