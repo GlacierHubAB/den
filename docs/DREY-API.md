@@ -172,10 +172,21 @@ no transcript, and no request body outside `inbox.body`.
   label; what their hosts report is passed on as labels, never as Den's own
   words. Windows of agents on other machines are not listed. `color` is the
   colour Den draws an agent of this machine in, its critter and an `@Name`
-  in Den's own text, as `#rrggbb`; agents on other machines have none.
-  Den colours a name only where it is Den's word that the agent is in the
-  fleet: never inside an agent's or a host's own text, and never a name two
-  local agents share. `permission_mode` is the mode an agent of this machine
+  in Den's own text, as `#rrggbb` in lower case; agents on other machines
+  have none. It is Den's own display colour, assigned by Den and never
+  taken from anything an agent writes, and not a closed set: the theme's own
+  hues, topped up from Den's curated list (`internal/theme` `Hues`, the
+  same list agent-badge uses). Key it on the agent's `id`. It stays with the
+  session id: a rename never changes it, and across a Den restart the agent
+  keeps it while the palette still offers it and no older session holds it.
+  It can change when the human changes theme, when there are more live
+  agents than hues (they repeat, and a restart can reshuffle them), and
+  when the agent is gone; draw from the latest fleet. Two local agents that
+  share a name each still carry theirs. In Den's text, Den colours a name
+  only where it is Den's word that the agent is in the fleet: never inside
+  an agent's or a host's own text, and never a name two local agents share.
+  The rows of `internal/api/convcases/color.go` (`ColorCases`) pin the
+  field. `permission_mode` is the mode an agent of this machine
   runs in as its own hooks last reported it (`default`, `acceptEdits`,
   `plan`, `auto`, `dontAsk`, `bypassPermissions`, or `unknown` for a value
   Den does not know); it is absent when none reported one. The fleet's

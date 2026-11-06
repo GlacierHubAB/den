@@ -98,6 +98,10 @@ var paletteKeys = []string{
 
 // Hues is the curated set of body colours: soft, distinct, readable on a
 // dark background. Themes with real hues come first; these fill the rest.
+// Olive and slate came last, picked to stay apart from the others under
+// the common kinds of colour blindness. Slate sits about as close to sky
+// and periwinkle, for red-green colour blindness, as those two sit to each
+// other. agent-badge keeps the same list in the same order.
 var Hues = []string{
 	"#ea9e9e", // rose
 	"#f0b07a", // apricot
@@ -109,12 +113,14 @@ var Hues = []string{
 	"#9bb0f0", // periwinkle
 	"#b9a3f0", // lilac
 	"#e39ad8", // orchid
+	"#a6b562", // olive
+	"#9fabc9", // slate
 	"#f0a8c0", // pink
 	"#c9b89a", // sand
 }
 
 // MinHues is how many body colours a palette should offer.
-const MinHues = 10
+const MinHues = 12
 
 // fillHues appends curated hues until the list has MinHues entries, skipping
 // ones that are already present or that vanish against the background.
