@@ -3,6 +3,7 @@ package ui
 import (
 	"maps"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/colors"
@@ -34,6 +35,52 @@ func TestAgentsGetDistinctStableColors(t *testing.T) {
 	m.refresh()
 	if m.agentColor(m.agents[0]) != first {
 		t.Errorf("oldest agent changed colour after others left")
+	}
+}
+
+// The colour record is a file any process of the user can write. What it
+// holds when Den starts can only pick among Den's own hues: a colour
+// outside the palette, even one the agent colour rule takes, or one the
+// rule refuses, is replaced, and of two sessions recorded with one hue the
+// older keeps it. Den never reads the record again, so a later rewrite
+// changes no agent's colour. Every agent's colour, as drawn and as the API
+// gets it, is one of the palette's.
+func TestColourRecordCanOnlyPickPaletteHues(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	if ok, _ := theme.AgentColor("#b8be7a"); !ok || slices.Contains(theme.Deepharness.Bodies, "#b8be7a") {
+		t.Fatal("#b8be7a must pass the rule and be outside the palette")
+	}
+	sid := func(i int) string { return string(rune('a'+i)) + "0123456789abcdef" }
+	tampered := map[string]string{sid(0): "#b8be7a", sid(1): "#ea9e9e", sid(2): "#86c6e8", sid(3): "#86c6e8"}
+	if err := colors.Save(colors.Path(), tampered); err != nil {
+		t.Fatal(err)
+	}
+	m := Model{st: newStyles(theme.Deepharness), store: inbox.New()}
+	for i := 0; i < 4; i++ {
+		m.base = append(m.base, fleet.Agent{Session: discover.Session{SessionID: sid(i), StartedAt: int64(i), Alive: true}})
+	}
+	m.refresh()
+	inPalette := func(when string) map[string]string {
+		shown := map[string]string{}
+		for _, a := range m.agents {
+			c, api := m.agentColor(a), m.colorFor(a.Session.SessionID)
+			if !slices.Contains(theme.Deepharness.Bodies, c) || api != c {
+				t.Errorf("%s: %s drawn %s, sent %s; the palette is %v", when, a.Session.SessionID, c, api, theme.Deepharness.Bodies)
+			}
+			shown[a.Session.SessionID] = c
+		}
+		return shown
+	}
+	shown := inPalette("after a tampered record at start")
+	if shown[sid(2)] != "#86c6e8" || shown[sid(3)] == "#86c6e8" {
+		t.Errorf("the older session keeps a recorded palette hue, the younger yields it: %v", shown)
+	}
+	if err := colors.Save(colors.Path(), map[string]string{sid(0): "#b8be7a", sid(1): "#b8be7a", sid(2): "#ea9e9e", sid(3): "#ea9e9e"}); err != nil {
+		t.Fatal(err)
+	}
+	m.refresh()
+	if again := inPalette("after a later rewrite"); !maps.Equal(again, shown) {
+		t.Errorf("a later rewrite recoloured agents: %v → %v", shown, again)
 	}
 }
 
