@@ -1,6 +1,7 @@
 package colors
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -71,5 +72,14 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got := Load(filepath.Join(t.TempDir(), "missing.json")); len(got) != 0 {
 		t.Errorf("missing file should load empty, got %v", got)
+	}
+	// A record holding null loads as an empty map, not nil: the UI loads
+	// the record once, while it has none.
+	null := filepath.Join(t.TempDir(), "colors.json")
+	if err := os.WriteFile(null, []byte("null\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := Load(null); got == nil || len(got) != 0 {
+		t.Errorf("a null record loads as %#v", got)
 	}
 }
