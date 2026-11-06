@@ -50,12 +50,14 @@ func TestDesktopTaskLeavesTheDockAlone(t *testing.T) {
 	if dm := m.deskMission("m1"); dm.Ended != "" || len(dm.Protected) != 2 {
 		t.Fatalf("the dock leaked into the mission's own record: ended %q, protected %v", dm.Ended, dm.Protected)
 	}
-	// The pid is no longer the process that connected: nothing of it is
-	// protected (and its outline is no longer exempt, so a click under it
-	// is refused by nothing in a task, which checks no other layers).
+	// The pid is no longer the process that connected: its window is no
+	// longer protected as the dock's, and its outline is no longer exempt,
+	// so it is an overlay surface of a process Den can't place, and a task
+	// takes no click under it until the console proves itself again.
 	start = "99999"
-	if dv, _ := deskCall(m, "pointer", `{"action":"click","x":1100,"y":700}`); dv.Behavior != "allow" {
-		t.Fatalf("a stale console pid still protects: %+v", dv)
+	dv, _ := deskCall(m, "pointer", `{"action":"click","x":1100,"y":700}`)
+	if dv.Behavior != "deny" || !strings.Contains(dv.Message, "layer surface") || strings.Contains(dv.Message, "dock") {
+		t.Fatalf("a stale console pid: %+v, want a refusal for the layer surface, not the dock", dv)
 	}
 }
 

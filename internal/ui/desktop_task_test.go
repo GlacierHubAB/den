@@ -38,6 +38,9 @@ func (d *taskDesk) snap() desktop.Snapshot {
 			{Address: "0xa", Class: "zen", Title: "Inbox", PID: 900, Workspace: 1, At: [2]int{960, 540}, Size: [2]int{960, 540}, Mapped: true},
 		},
 		Active: "0xh",
+		// The human's binds as Hyprland lists them: a task checks every
+		// combo against them, and runs none without them.
+		Binds: []desktop.Bind{{Mods: 64, Key: "w", Dispatcher: "killactive"}},
 	}
 	if !d.noDen {
 		s.Windows = append(s.Windows, desktop.Window{Address: "0xden", Class: "ghostty", Title: d.title, PID: 300, Workspace: 1, At: [2]int{0, 0}, Size: [2]int{960, 1080}, Mapped: true})
