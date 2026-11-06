@@ -554,7 +554,7 @@ func (m *Model) finishRestore(msg restoreDoneMsg) tea.Cmd {
 	m.restore.saved = now
 	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], len(failed) > 0
 	m.refresh()
-	return tea.Batch(snapshot, flashTick(4*time.Second, m.flash))
+	return tea.Batch(snapshot, flashTick(flashFor, m.flash))
 }
 
 // relinkReopened puts reopened agents back under their parents once they

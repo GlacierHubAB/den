@@ -80,7 +80,9 @@ func readPID(t *testing.T, path string) int {
 }
 
 // killTree kills every process under pid, not pid itself, until none is
-// left or two seconds pass.
+// left or two seconds pass. A killed child stays listed until its parent
+// reaps it, and the fake orchestrator's cat never does: a zombie counts as
+// gone.
 func killTree(pid int) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -91,7 +93,7 @@ func killTree(pid int) {
 			raw, _ := os.ReadFile(fmt.Sprintf("/proc/%d/task/%d/children", p, p))
 			for _, f := range strings.Fields(string(raw)) {
 				var c int
-				if _, err := fmt.Sscan(f, &c); err == nil && c > 0 {
+				if _, err := fmt.Sscan(f, &c); err == nil && c > 0 && !zombie(c) {
 					all = append(all, c)
 					todo = append(todo, c)
 				}
@@ -105,6 +107,18 @@ func killTree(pid int) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// zombie reports whether pid has ended and waits only to be reaped (state
+// Z in /proc/<pid>/stat, after the command's closing parenthesis), or is
+// gone altogether.
+func zombie(pid int) bool {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return true
+	}
+	i := strings.LastIndexByte(string(raw), ')')
+	return i < 0 || i+2 >= len(raw) || raw[i+2] == 'Z'
 }
 
 // orchDeepPID is Den's binary two shells under the test orchestrator, as

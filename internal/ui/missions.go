@@ -41,11 +41,11 @@ func (m *Model) requestMission(text string) tea.Cmd {
 	p, ok := m.curProject()
 	if !ok {
 		m.flash, m.flashErr = "Pick a project first: /project <name> or /project add <dir>.", true
-		return flashTick(4*time.Second, m.flash)
+		return flashTick(flashFor, m.flash)
 	}
 	if host := projectHost(p.Root); host != "" {
 		m.flash, m.flashErr = p.Name+" is on "+host+": missions on remote hosts come later.", true
-		return flashTick(4*time.Second, m.flash)
+		return flashTick(flashFor, m.flash)
 	}
 	m.openOrchestrator()
 	prompt := fmt.Sprintf("The human asks for a mission on project %s (repository %s, branch %s). Propose it with propose_mission. The human's words:\n%s", promptValue(p.Name), promptValue(p.Root), promptValue(p.Branch), text)
@@ -149,13 +149,13 @@ func (m *Model) startMission() tea.Cmd {
 	}
 	if len(ms.Criteria) == 0 || len(ms.Goals) == 0 {
 		m.flash, m.flashErr = "The orchestrator has not set the done criteria and the owners yet: ask it to.", true
-		return flashTick(4*time.Second, m.flash)
+		return flashTick(flashFor, m.flash)
 	}
 	// The orchestrator can change a proposal at any moment: a ^Y right
 	// after it did is not taken as a yes to what the human has not read.
 	if time.Since(ms.Updated) < proposalSettle {
 		m.flash, m.flashErr = "The proposal just changed: read it again, then ^Y.", true
-		return flashTick(4*time.Second, m.flash)
+		return flashTick(flashFor, m.flash)
 	}
 	if why := m.usageStopped(); why != "" {
 		m.flash, m.flashErr = why, true

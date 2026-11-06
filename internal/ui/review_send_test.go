@@ -123,8 +123,11 @@ func TestSendReviewOneMessagePerAgent(t *testing.T) {
 	if c := byID(m, "m1"); !c.Draft() || !m.rev.sending["m1"] {
 		t.Fatalf("m1 before delivery = %+v sending=%v", c, m.rev.sending)
 	}
-	if _, again := m.command("/send"); len(runQuick(again)) != 0 {
-		t.Error("a second /send delivered the same drafts again")
+	_, again := m.command("/send")
+	for _, msg := range runQuick(again) {
+		if _, ok := msg.(sentMsg); ok {
+			t.Error("a second /send delivered the same drafts again")
+		}
 	}
 	for _, msg := range runQuick(cmd) {
 		if s, ok := msg.(sentMsg); ok {
