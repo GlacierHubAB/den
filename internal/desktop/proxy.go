@@ -38,12 +38,17 @@ type Answer struct {
 	Scope *Scope `json:"scope,omitempty"`
 	// Bounds comes with an allowed pointer call: its glide stays inside.
 	Bounds *Rect `json:"bounds,omitempty"`
+	// Call names an allowed call Den counts as in flight until the proxy
+	// reports it Done: hypruse has answered it, and its effect has ended.
+	Call string `json:"call,omitempty"`
 }
 
 // Gate is Den, as the proxy asks it. token is "" for a new call; for the
-// next piece of an allowed call it is the Answer's Token.
+// next piece of an allowed call it is the Answer's Token. Done tells Den
+// that the allowed call it named in Answer.Call has ended.
 type Gate interface {
 	Call(ctx context.Context, tool string, args json.RawMessage, token string) (Answer, error)
+	Done(call string)
 }
 
 // message is one JSON-RPC message, either way.
@@ -244,14 +249,26 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 		return toolError(ans.Message)
 	}
 	if ctx.Err() != nil {
+		if ans.Call != "" {
+			p.Gate.Done(ans.Call)
+		}
 		return toolError("cancelled; nothing was done")
 	}
-	if in.Name == "request_approval" || in.Name == "your_turn" {
+	// Den's own tools, and launch, which Den runs itself (in the
+	// mission's slice): the answer is the result, nothing is forwarded.
+	if in.Name == "request_approval" || in.Name == "your_turn" || in.Name == "launch" {
 		return toolText(ans.Message)
 	}
 	var args map[string]any
 	if json.Unmarshal(ans.Args, &args) != nil || args == nil {
+		if ans.Call != "" {
+			p.Gate.Done(ans.Call)
+		}
 		return toolError("Den's answer carried no input; nothing was done")
+	}
+	typing := in.Name == "keyboard" && args["action"] == "type"
+	if ans.Call != "" && !typing {
+		defer p.Gate.Done(ans.Call) // a typed text reports each piece itself
 	}
 	if in.Name == "keyboard" {
 		if text, ok := args["text"].(string); ok {
@@ -262,8 +279,8 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 		}
 		p.hideOutline()
 	}
-	if in.Name == "keyboard" && args["action"] == "type" {
-		return p.typeText(ctx, args, ans.Token)
+	if typing {
+		return p.typeText(ctx, args, ans.Token, ans.Call)
 	}
 	if in.Name == "pointer" && ans.Bounds != nil {
 		if err := p.glide(ctx, args, *ans.Bounds); err != nil {
@@ -288,7 +305,7 @@ func (p *Proxy) call(ctx context.Context, params json.RawMessage) json.RawMessag
 // typeText forwards an allowed text in pieces (Chunks), each one a call
 // that names the window, so hypruse focuses and checks it again before
 // typing; before every piece after the first, Den re-checks the target.
-func (p *Proxy) typeText(ctx context.Context, args map[string]any, token string) json.RawMessage {
+func (p *Proxy) typeText(ctx context.Context, args map[string]any, token, call string) json.RawMessage {
 	text, _ := args["text"].(string)
 	window, _ := args["window"].(string)
 	pieces := Chunks(text)
@@ -308,8 +325,14 @@ func (p *Proxy) typeText(ctx context.Context, args map[string]any, token string)
 				}
 				return toolError(fmt.Sprintf("stopped after %d of %d characters: %s", typed, len([]rune(text)), why))
 			}
+			call = ans.Call
 		}
+		// Each piece is its own call in flight, until hypruse has typed it.
 		res, err := p.callChild(ctx, "keyboard", step)
+		if call != "" {
+			p.Gate.Done(call)
+			call = ""
+		}
 		if err != nil {
 			return toolError(fmt.Sprintf("stopped after %d of %d characters: %v", typed, len([]rune(text)), err))
 		}

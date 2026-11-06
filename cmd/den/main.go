@@ -180,6 +180,11 @@ func runTUI() {
 		fail("%s", why)
 	}
 	ui.Version = version
+	// What a desktop mission launched before Den last ended is stopped
+	// before Den's window takes any answer; what does not stop is held.
+	if left := ui.SweepDesktopSlices(); len(left) > 0 {
+		fmt.Fprintf(os.Stderr, "den: %d app group(s) a desktop mission launched before are still stopping; Den's window holds approving answers until they are gone\n", len(left))
+	}
 	m := ui.New(config.Load())
 	p := tea.NewProgram(m)
 	// A closed terminal (SIGHUP) ends Den as a quit does, so it exits
