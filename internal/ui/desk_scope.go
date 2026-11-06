@@ -2,6 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +14,8 @@ import (
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/sysd"
+	"github.com/GlacierHubAB/den/internal/wlsec"
 )
 
 // A task is held to its own windows unless the human turns on "whole
@@ -234,5 +239,47 @@ func prunePicks(picks map[string]desktop.Pick, snap desktop.Snapshot) {
 		if w, ok := snap.Window(addr); !ok || w.PID != p.PID {
 			delete(picks, addr)
 		}
+	}
+}
+
+// deskOpenListener makes a held task's Wayland listener (wlsec): a socket
+// the compositor serves as sandboxed, in a 0700 folder of Den's runtime
+// folder, for as long as Den holds its close fd. A seam for tests.
+var deskOpenListener = func(id string) (deskListener, error) {
+	run, way := os.Getenv("XDG_RUNTIME_DIR"), os.Getenv("WAYLAND_DISPLAY")
+	if run == "" || way == "" {
+		return nil, errors.New("no Wayland session")
+	}
+	if !filepath.IsAbs(way) {
+		way = filepath.Join(run, way)
+	}
+	parent := filepath.Join(run, "den-wl")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(parent, 0o700); err != nil {
+		return nil, err
+	}
+	l, err := wlsec.Open(way, filepath.Join(parent, sysd.EscapePart(id)), "io.glacierhub.den.desktop", id, 3*time.Second)
+	if err != nil {
+		return nil, err // never a nil *Listener in the interface
+	}
+	return l, nil
+}
+
+// deskListener is a held task's listener as Den uses it.
+type deskListener interface {
+	Socket() string
+	Live() bool
+	Close() error
+}
+
+// closeListener ends a held task's listener, once nothing it launched
+// runs: a context outlives its close fd for clients already connected, so
+// the slice is stopped first (sec).
+func (dm *deskMission) closeListener() {
+	if dm.listener != nil {
+		dm.listener.Close()
+		dm.listener = nil
 	}
 }

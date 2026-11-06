@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -177,10 +178,20 @@ func (m *Model) deskLaunch(r *bridge.Request, dm *deskMission, v desktop.Verdict
 		seen[w.Address] = true
 	}
 	id, dir, x11 := dm.ID, dm.Dir, dm.x11
+	listen := ""
+	if dm.Scoped {
+		if dm.listener == nil || !dm.listener.Live() {
+			return func() tea.Msg {
+				return deskLaunchedMsg{req: r, mission: id, call: call, err: errors.New("the task's sandboxed Wayland socket is gone, and Den never opens apps on the compositor's own")}
+			}
+		}
+		listen = dm.listener.Socket()
+	}
 	return func() tea.Msg {
 		out := deskLaunchedMsg{req: r, mission: id, call: call}
 		// The sandbox (desk_sand.go): refused rather than loosened.
 		spec, err := deskSandSpec(dir, deskProfileName(command), x11)
+		spec.WaylandListener = listen
 		if err == nil {
 			err = deskSandCheck(spec, id)
 		}
@@ -434,6 +445,7 @@ func (m *Model) deskSliceMsg(msg tea.Msg) tea.Cmd {
 		dm.reaping = false
 		if msg.gone {
 			dm.reaped = true
+			dm.closeListener() // nothing it launched runs now
 			m.refresh()
 			return nil
 		}

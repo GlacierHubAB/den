@@ -280,6 +280,9 @@ func (m *Model) finishDeskMission(dm *deskMission, why string) tea.Cmd {
 	}
 	why = dm.Ended
 	dm.save()
+	if !dm.launched {
+		dm.closeListener() // no slice to stop first
+	}
 	deskNotify(notify.Note{Summary: "Desktop control ended", Body: why})
 	ended := "Desktop mission ended: " + why + "; " + r.Line() + ". Its journal, screenshots and log are deleted in 10 minutes; /desktop keep keeps them."
 	if dm.stepsHidden > 0 {

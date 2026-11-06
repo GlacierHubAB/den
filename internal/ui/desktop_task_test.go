@@ -76,9 +76,10 @@ func taskRig(t *testing.T) (*Model, *taskDesk, *[]spawn.Request, *[]desktop.Targ
 	m, spawned, _ := missionRig(t, false)
 	d := &taskDesk{}
 	deskSnapshot = func(context.Context) (desktop.Snapshot, error) { return d.snap(), nil }
-	old := []any{deskLimits, deskAncestors, deskKeepOnTop, deskOwnWait, deskSettle, deskTaskEvery, deskStopFn, deskNotify, deskStart, deskScopedBuild}
+	old := []any{deskLimits, deskAncestors, deskKeepOnTop, deskOwnWait, deskSettle, deskTaskEvery, deskStopFn, deskNotify, deskStart, deskScopedBuild, deskOpenListener}
 	t.Cleanup(func() {
 		deskScopedBuild = old[9].(func(context.Context) string)
+		deskOpenListener = old[10].(func(string) (deskListener, error))
 		deskLimits = old[0].(func() (int, int))
 		deskAncestors = old[1].(func() []int)
 		deskKeepOnTop = old[2].(func(string, bool, bool) error)
@@ -91,6 +92,7 @@ func taskRig(t *testing.T) (*Model, *taskDesk, *[]spawn.Request, *[]desktop.Targ
 	})
 	deskLimits = func() (int, int) { return 5, 3 }
 	deskScopedBuild = func(context.Context) string { return "" }
+	deskOpenListener = func(string) (deskListener, error) { return &fakeListener{path: "/run/user/1000/den-wl/t/wayland"}, nil }
 	deskAncestors = func() []int { return []int{300, 1} }
 	var pins [][2]bool
 	deskKeepOnTop = func(addr string, floating, pinned bool) error {

@@ -87,6 +87,9 @@ type deskMission struct {
 	// x11: the start card's switch for a task, set there by the human and
 	// fixed for the mission: its launches get Xwayland (desk_sand.go).
 	x11 bool
+	// listener is a held task's Wayland socket for its apps (wlsec),
+	// closed once its slice is stopped (closeListener).
+	listener deskListener
 	// queued are the actions the human approved while it was paused: each
 	// runs only once it goes on, decided again then (desk_hold.go);
 	// flushing while that read of the desktop is out.

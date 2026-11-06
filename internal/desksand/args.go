@@ -55,8 +55,12 @@ type Spec struct {
 	Home       string
 	RuntimeDir string // XDG_RUNTIME_DIR
 	Wayland    string // WAYLAND_DISPLAY, a name in RuntimeDir or absolute
-	DenState   string // Den's own state dir ($XDG_STATE_HOME/den)
-	DenConfig  string // Den's own config dir
+	// WaylandListener, when set, is the mission's sandboxed listener
+	// (wlsec): it is bound at the WAYLAND_DISPLAY path inside, in place of
+	// the compositor's own socket, which then appears nowhere.
+	WaylandListener string
+	DenState        string // Den's own state dir ($XDG_STATE_HOME/den)
+	DenConfig       string // Den's own config dir
 
 	Mission string // the mission's folder, read-only inside
 	App     string // the app's profile name, escaped by the caller
@@ -180,7 +184,10 @@ func Bwrap(s Spec) []string {
 		if way != "" && !filepath.IsAbs(way) {
 			way = filepath.Join(s.RuntimeDir, way)
 		}
-		if way != "" {
+		switch {
+		case way != "" && s.WaylandListener != "":
+			a = append(a, "--ro-bind", s.WaylandListener, way)
+		case way != "":
 			a = append(a, "--ro-bind", way, way)
 		}
 		for _, p := range []string{"pipewire-0", "pulse/native"} {

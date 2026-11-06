@@ -240,6 +240,16 @@ func prepareTask(itemID string, offer deskOffer, own string, pid int, exclude ma
 		return p
 	}
 	os.Chmod(filepath.Dir(p.dir), 0o700)
+	if !offer.wide {
+		// The apps it opens connect through its own listener, never the
+		// compositor's socket; without one, it doesn't start.
+		l, err := deskOpenListener(p.id)
+		if err != nil {
+			p.err = errors.New("Den could not make the task's sandboxed Wayland socket (" + sanitize.Line(err.Error()) + "); use /desktop whole on a new card, or decline")
+			return p
+		}
+		p.listener = l
+	}
 	return p
 }
 

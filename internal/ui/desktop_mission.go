@@ -152,6 +152,7 @@ type deskPrepared struct {
 	windows   []deskLaunched
 	layers    map[string]bool         // a task: the top and overlay surfaces up at its start
 	picks     map[string]desktop.Pick // a held task: the windows the human picked
+	listener  deskListener            // a held task: its apps' Wayland socket
 	err       error
 }
 
@@ -455,6 +456,9 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		}
 	}
 	fail := func(why string) tea.Cmd {
+		if p.listener != nil {
+			p.listener.Close() // nothing launched through it yet
+		}
 		for _, l := range p.windows {
 			if !l.Joined {
 				deskClose(l.Address)
@@ -509,7 +513,7 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		dm.x11 = p.offer.x11 // the card's switch, fixed for the mission
 		// Held to its own windows unless the card's whole-desktop switch
 		// was on; prepareTask checked the build and the picks.
-		dm.Scoped, dm.Picked = !p.offer.wide, p.picks
+		dm.Scoped, dm.Picked, dm.listener = !p.offer.wide, p.picks, p.listener
 		dm.deadline = time.Now().Add(time.Duration(p.offer.minutes) * time.Minute)
 	}
 	for _, l := range p.windows {
