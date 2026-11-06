@@ -241,7 +241,7 @@ func TestPanelNoRaiseWhileAnAgentHasTheDesktop(t *testing.T) {
 	if levelOf(f, perm.Routine) != 1 {
 		t.Errorf("lowering under a mission: %d", levelOf(f, perm.Routine))
 	}
-	dm.Paused = true
+	dm.Paused, dm.frozen = true, true
 	m = panelPress(m, "right")
 	if m.perms.ask == nil {
 		t.Error("a paused mission still holds the raise")
