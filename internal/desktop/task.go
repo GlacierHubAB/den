@@ -21,11 +21,13 @@ import (
 //     Den runs in and the agent view. No click, drag or scroll lands on
 //     them, no key goes to them, no window action targets them. When one
 //     is focused, no key, bind or typing at all.
-//   - Binds whose dispatcher ends the human's control: exit,
-//     forcerendererreload, any hyprctl through exec (reload, keyword,
-//     unbind…), the panic stop's bind, closing or killing while Den's
-//     window is active or by naming it, and sending keys to another
-//     window (pass, sendshortcut, sendkeystate).
+//   - Every bind whose dispatcher isn't on taskDispatch, Den's short list
+//     of window and workspace moves. Programs start only through launch,
+//     inside the mission's sandbox, so exec and every dispatcher Den can't
+//     check (a plugin's, a Lua function's) is refused, on use_bind, on a
+//     key combo, on typed text and on the mouse. A listed dispatcher that
+//     acts on Den's window, or names windows by class or title, is refused
+//     too. With no binds read, no combo runs.
 //   - Launching hyprctl or den directly (sec's P3).
 //
 // Binds are checked as Hyprland has them at that call (the snapshot is
@@ -75,6 +77,9 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 		if _, ok := s.Window(addr); !ok {
 			return deny("click_ui: no window %s", addr)
 		}
+		if why := refusedBinds(mouseBinds("click", str(args, "button"), s.Binds), m, s); why != "" {
+			return deny("click_ui runs a bind: %s", why)
+		}
 		args["window"] = addr
 		return Verdict{Kind: Allow, Args: args}
 	case "hypr":
@@ -92,6 +97,9 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 		args["then"] = "none"
 		if m.Protects(s.Active) {
 			return deny("use_bind: one of Den's own windows is focused; focus another window first")
+		}
+		if len(s.Binds) == 0 {
+			return deny("use_bind: %s", noBinds)
 		}
 		combo := str(args, "combo")
 		if why := oneCombo(combo); why != "" {
@@ -169,6 +177,9 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 		if why := protectedAt(x, y, m, s); why != "" {
 			return deny("pointer %s: %s", act, why)
 		}
+		if why := refusedBinds(mouseBinds(act, str(args, "button"), s.Binds), m, s); why != "" {
+			return deny("pointer %s runs a bind: %s", act, why)
+		}
 		if act == "drag" {
 			tx, okt := num(args, "to_x")
 			ty, oku := num(args, "to_y")
@@ -217,7 +228,8 @@ func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 			if b.Mods&^modShift != 0 {
 				continue
 			}
-			if (len([]rune(b.Key)) == 1 && strings.Contains(strings.ToLower(text), b.Key)) || (b.Key == "space" && strings.ContainsRune(text, ' ')) {
+			if (len([]rune(b.Key)) == 1 && strings.Contains(strings.ToLower(text), b.Key)) || (b.Key == "space" && strings.ContainsRune(text, ' ')) ||
+				(b.Key == "return" && strings.ContainsAny(text, "\r\n")) || (b.Key == "tab" && strings.ContainsRune(text, '\t')) {
 				if why := refusedBind(b, m, s); why != "" {
 					return deny("keyboard: typing %q runs a bind: %s", b.Key, why)
 				}
@@ -227,6 +239,9 @@ func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 		keys := str(args, "keys")
 		if keys == "" {
 			return deny("keyboard key needs keys")
+		}
+		if len(s.Binds) == 0 {
+			return deny("keyboard: %s", noBinds)
 		}
 		// One combo only, as hypruse takes it (T2), and never one the
 		// system takes for itself (T1).
@@ -277,6 +292,37 @@ func findBinds(combo string, binds []Bind) []Bind {
 	for _, b := range binds {
 		if b.Mods == mods && b.Key == key {
 			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// noBinds is why a combo is refused when Hyprland listed no binds: Den
+// can't tell what the combo runs, so it runs nothing.
+const noBinds = "Den could not read your binds, so no combo can be checked"
+
+// mouseBinds are the human's binds a pointer action fires with no key
+// held: a click's or drag's button, or the wheel for a scroll.
+func mouseBinds(act, button string, binds []Bind) []Bind {
+	var keys []string
+	if act == "scroll" {
+		keys = []string{"mouse_up", "mouse_down", "mouse_left", "mouse_right"}
+	} else {
+		switch button {
+		case "right":
+			keys = []string{"mouse:273"}
+		case "middle":
+			keys = []string{"mouse:274"}
+		default:
+			keys = []string{"mouse:272"}
+		}
+	}
+	var out []Bind
+	for _, b := range binds {
+		for _, k := range keys {
+			if b.Mods == 0 && b.Key == k {
+				out = append(out, b)
+			}
 		}
 	}
 	return out
@@ -340,34 +386,71 @@ var (
 	denWord     = regexp.MustCompile(`(^|[\s/;&|("'` + "`" + `])den([\s;&|)"'` + "`" + `]|$)`)
 )
 
+// taskDispatch is every bind dispatcher task mode may run, and how its
+// argument is checked. Anything else is refused: a dispatcher Den doesn't
+// know (a plugin's, a Lua function's) can't be checked, and programs a
+// task opens start only through launch, inside the mission's sandbox.
+var taskDispatch = map[string]dispatchArg{
+	// The view: workspaces, monitors and focus moves.
+	"workspace": argAny, "togglespecialworkspace": argAny, "focusmonitor": argAny,
+	"movefocus": argAny, "cyclenext": argAny, "focusurgentorlast": argAny, "focuscurrentorlast": argAny,
+	"layoutmsg": argAny, "togglesplit": argAny, "swapsplit": argAny, "splitratio": argAny,
+	"togglegroup": argAny, "changegroupactive": argAny, "lockactivegroup": argAny,
+	// The focused window, which must not be Den's.
+	"killactive": argActive, "forcekillactive": argActive, "togglefloating": argActive, "setfloating": argActive,
+	"settiled": argActive, "fullscreen": argActive, "fullscreenstate": argActive, "pseudo": argActive,
+	"pin": argActive, "centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive,
+	"swapnext": argActive, "movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive,
+	"moveoutofgroup": argActive, "movetoworkspace": argActive, "movetoworkspacesilent": argActive,
+	// A window named by address, which must not be Den's.
+	"focuswindow": argAddress, "closewindow": argAddress, "killwindow": argAddress,
+}
+
+type dispatchArg int
+
+const (
+	argAny     dispatchArg = iota // the argument names no window
+	argActive                     // acts on the focused window, or on one the argument names
+	argAddress                    // the argument must name one window by address
+)
+
 // refusedBind says why a bind is one task mode never runs, "" when it may.
 func refusedBind(b Bind, m Mission, s Snapshot) string {
-	d, arg := strings.ToLower(b.Dispatcher), strings.TrimSpace(b.Arg)
-	switch d {
-	case "exit", "forcerendererreload":
-		return "it ends the human's session or display (" + d + ")"
-	case "exec", "execr":
-		switch {
-		case hyprctlWord.MatchString(arg):
-			return "it runs hyprctl, which can reload, rebind or unbind the compositor"
-		case denWord.MatchString(arg):
-			return "it runs den, which holds the panic stop"
-		}
-	case "killactive", "forcekillactive":
-		if m.Protects(s.Active) {
-			return "it closes the focused window, which is one of Den's own"
-		}
-	case "closewindow", "killwindow", "movetoworkspace", "movetoworkspacesilent", "movewindow", "pin", "togglefloating", "fullscreen":
+	d, arg := strings.ToLower(strings.TrimSpace(b.Dispatcher)), strings.ToLower(strings.TrimSpace(b.Arg))
+	kind, ok := taskDispatch[d]
+	if !ok {
+		return "task mode runs only binds whose action Den can check (" + d + "); open apps with launch"
+	}
+	names := func() string {
 		for addr := range m.Protected {
-			if strings.Contains(strings.ToLower(arg), strings.ToLower(addr)) || strings.Contains(strings.ToLower(arg), strings.TrimPrefix(strings.ToLower(addr), "0x")) {
+			a := strings.ToLower(addr)
+			if strings.Contains(arg, a) || strings.Contains(arg, strings.TrimPrefix(a, "0x")) {
 				return "it acts on one of Den's own windows"
 			}
 		}
-		if (d == "closewindow" || d == "killwindow") && !strings.Contains(strings.ToLower(arg), "address:") {
-			return "it closes windows matched by class or title, which could be Den's"
+		return ""
+	}
+	switch kind {
+	case argActive:
+		if why := names(); why != "" {
+			return why
 		}
-	case "pass", "sendshortcut", "sendkeystate":
-		return "it sends keys to another window by name"
+		// A window picked by class, title or pid could be Den's.
+		for _, sel := range []string{"class:", "title:", "initialclass:", "initialtitle:", "pid:", "tag:"} {
+			if strings.Contains(arg, sel) {
+				return "it names windows by " + strings.TrimSuffix(sel, ":") + ", which could be Den's"
+			}
+		}
+		if !strings.Contains(arg, "address:") && m.Protects(s.Active) {
+			return "it acts on the focused window, which is one of Den's own"
+		}
+	case argAddress:
+		if !strings.HasPrefix(arg, "address:") || strings.ContainsAny(strings.TrimPrefix(arg, "address:"), " ,") {
+			return "it must name one window by address; a class or title could be Den's"
+		}
+		if why := names(); why != "" {
+			return why
+		}
 	}
 	return ""
 }

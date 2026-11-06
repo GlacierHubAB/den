@@ -151,7 +151,7 @@ func readBinds(raw []byte) ([]Bind, error) {
 	var out []Bind
 	for _, b := range binds {
 		k := strings.ToLower(b.Key)
-		if b.Mouse || k == "" || strings.HasPrefix(k, "mouse") || strings.HasPrefix(k, "switch:") {
+		if k == "" || strings.HasPrefix(k, "switch:") {
 			continue
 		}
 		out = append(out, Bind{Mods: b.Modmask &^ (modCaps | modNum), Key: keyName(k), Dispatcher: strings.ToLower(strings.TrimSpace(b.Dispatcher)), Arg: b.Arg})

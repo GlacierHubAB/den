@@ -110,9 +110,12 @@ func TestTaskFixedDispatchListIsRefused(t *testing.T) {
 	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+w"}, m, s); v.Kind != Allow {
 		t.Errorf("killactive on the human's shell refused: %s", v.Reason)
 	}
-	// Launching apps through the human's binds is the agent's.
-	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+return"}, m, s); v.Kind != Allow {
-		t.Errorf("super+return refused: %s", v.Reason)
+	// Programs start only through launch, never through a bind.
+	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+return"}, m, s); v.Kind != Deny {
+		t.Error("use_bind super+return (exec) allowed")
+	}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "super+return"}, m, s); v.Kind != Deny {
+		t.Error("keyboard key super+return (exec) allowed")
 	}
 	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+z"}, m, s); v.Kind != Deny {
 		t.Error("a combo the human never bound was run as a bind")
@@ -241,6 +244,128 @@ func TestTaskPointerGlidesOnTheTargetsMonitor(t *testing.T) {
 		v := taskCall(t, "pointer", c.args, m, s)
 		if v.Kind != Allow || v.Bounds == nil || *v.Bounds != c.want {
 			t.Errorf("%v: %v %s, bounds %+v", c.args, v.Kind, v.Reason, v.Bounds)
+		}
+	}
+}
+
+// Task mode runs a bind only when its dispatcher is on Den's short list;
+// anything else, a Lua function's or a plugin's included, is refused on
+// every route a call can reach it by.
+func TestTaskBindsRunOnlyListedDispatchers(t *testing.T) {
+	m, s := taskDesk()
+	s.Binds = append(s.Binds,
+		Bind{Mods: modSuper, Key: "1", Dispatcher: "workspace", Arg: "1"},
+		Bind{Mods: modSuper, Key: "g", Dispatcher: "global", Arg: "app:action"},
+		Bind{Mods: modSuper, Key: "e", Dispatcher: "execr", Arg: "nautilus"},
+		Bind{Mods: modSuper, Key: "y", Dispatcher: "hy3:makegroup", Arg: "h"},
+		Bind{Mods: modSuper, Key: "s", Dispatcher: "submap", Arg: "resize"},
+		Bind{Mods: modSuper, Key: "o", Dispatcher: "focuswindow", Arg: "class:ghostty"},
+		Bind{Mods: modSuper, Key: "i", Dispatcher: "focuswindow", Arg: "address:0xshell"},
+		Bind{Mods: modSuper, Key: "u", Dispatcher: "movetoworkspace", Arg: "3,class:ghostty"},
+	)
+	for _, combo := range []string{"super+g", "super+e", "super+y", "super+s", "super+o", "super+u"} {
+		if v := taskCall(t, "use_bind", map[string]any{"combo": combo}, m, s); v.Kind != Deny {
+			t.Errorf("use_bind %s allowed", combo)
+		}
+		if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": combo}, m, s); v.Kind != Deny {
+			t.Errorf("keyboard key %s allowed", combo)
+		}
+	}
+	for _, combo := range []string{"super+1", "super+i", "super+w"} {
+		if v := taskCall(t, "use_bind", map[string]any{"combo": combo}, m, s); v.Kind != Allow {
+			t.Errorf("use_bind %s refused: %s", combo, v.Reason)
+		}
+	}
+	// A combo that hits none of the human's binds is an app's: it passes.
+	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "ctrl+c"}, m, s); v.Kind != Allow {
+		t.Errorf("ctrl+c refused: %s", v.Reason)
+	}
+}
+
+// Hyprland's Lua config lists every bind as "__lua" with a function id:
+// Den can't tell what it runs, so a task never runs one.
+func TestTaskLuaBindsAreNotRun(t *testing.T) {
+	m, s := taskDesk()
+	s.Binds = []Bind{
+		{Mods: modSuper, Key: "return", Dispatcher: "__lua", Arg: "5"},
+		{Mods: 0, Key: "x", Dispatcher: "__lua", Arg: "9"},
+		{Mods: 0, Key: "mouse:274", Dispatcher: "__lua", Arg: "11"},
+		{Mods: 0, Key: "mouse_down", Dispatcher: "__lua", Arg: "12"},
+	}
+	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+return"}, m, s); v.Kind != Deny {
+		t.Error("use_bind on a Lua bind allowed")
+	}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "super+return"}, m, s); v.Kind != Deny {
+		t.Error("keyboard key on a Lua bind allowed")
+	}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "fix", "window": "0xshell"}, m, s); v.Kind != Deny {
+		t.Error("typed text hitting an unmodified Lua bind allowed")
+	}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": "hello", "window": "0xshell"}, m, s); v.Kind != Allow {
+		t.Errorf("typed text hitting no bind refused: %s", v.Reason)
+	}
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1500, "y": 800, "button": "middle"}, m, s); v.Kind != Deny {
+		t.Error("a middle click on an unmodified Lua mouse bind allowed")
+	}
+	if v := taskCall(t, "pointer", map[string]any{"action": "click", "x": 1500, "y": 800}, m, s); v.Kind != Allow {
+		t.Errorf("a left click with no bind on it refused: %s", v.Reason)
+	}
+	if v := taskCall(t, "pointer", map[string]any{"action": "scroll", "x": 1500, "y": 800, "scroll_dy": 2}, m, s); v.Kind != Deny {
+		t.Error("a scroll on an unmodified Lua wheel bind allowed")
+	}
+	if v := taskCall(t, "click_ui", map[string]any{"name": "OK", "window": "0xshell", "button": "middle"}, m, s); v.Kind != Deny {
+		t.Error("click_ui with a middle click on a Lua mouse bind allowed")
+	}
+}
+
+// Typed Return and Tab are keys too: an unmodified bind on them is checked.
+func TestTaskTypedReturnAndTabAreChecked(t *testing.T) {
+	m, s := taskDesk()
+	s.Binds = append(s.Binds, Bind{Mods: 0, Key: "return", Dispatcher: "exec", Arg: "x"}, Bind{Mods: 0, Key: "tab", Dispatcher: "exec", Arg: "y"})
+	for _, text := range []string{"ls\n", "a\tb"} {
+		if v := taskCall(t, "keyboard", map[string]any{"action": "type", "text": text, "window": "0xshell"}, m, s); v.Kind != Deny {
+			t.Errorf("typing %q allowed", text)
+		}
+	}
+}
+
+// With no binds read, Den can't check a combo, so none runs.
+func TestTaskCombosNeedTheBinds(t *testing.T) {
+	m, s := taskDesk()
+	s.Binds = nil
+	if v := taskCall(t, "use_bind", map[string]any{"combo": "super+w"}, m, s); v.Kind != Deny {
+		t.Error("use_bind allowed with no binds read")
+	}
+	if v := taskCall(t, "keyboard", map[string]any{"action": "key", "keys": "ctrl+c"}, m, s); v.Kind != Deny {
+		t.Error("keyboard key allowed with no binds read")
+	}
+}
+
+// The dispatcher list is small and literal; a change to it is a review.
+func TestTaskDispatchListIsPinned(t *testing.T) {
+	want := map[string]dispatchArg{
+		"workspace": argAny, "togglespecialworkspace": argAny, "focusmonitor": argAny,
+		"movefocus": argAny, "cyclenext": argAny, "focusurgentorlast": argAny, "focuscurrentorlast": argAny,
+		"layoutmsg": argAny, "togglesplit": argAny, "swapsplit": argAny, "splitratio": argAny,
+		"togglegroup": argAny, "changegroupactive": argAny, "lockactivegroup": argAny,
+		"killactive": argActive, "forcekillactive": argActive, "togglefloating": argActive, "setfloating": argActive,
+		"settiled": argActive, "fullscreen": argActive, "fullscreenstate": argActive, "pseudo": argActive,
+		"pin": argActive, "centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive,
+		"swapnext": argActive, "movewindow": argActive, "swapwindow": argActive, "moveintogroup": argActive,
+		"moveoutofgroup": argActive, "movetoworkspace": argActive, "movetoworkspacesilent": argActive,
+		"focuswindow": argAddress, "closewindow": argAddress, "killwindow": argAddress,
+	}
+	if len(taskDispatch) != len(want) {
+		t.Fatalf("taskDispatch has %d entries, want %d", len(taskDispatch), len(want))
+	}
+	for d, k := range want {
+		if got, ok := taskDispatch[d]; !ok || got != k {
+			t.Errorf("taskDispatch[%q] = %v, %v; want %v", d, got, ok, k)
+		}
+	}
+	for _, d := range []string{"exec", "execr", "global", "__lua", "pass", "sendshortcut", "sendkeystate", "exit", "submap", "dpms", "signal", "forcerendererreload"} {
+		if _, ok := taskDispatch[d]; ok {
+			t.Errorf("%s is on the list", d)
 		}
 	}
 }
