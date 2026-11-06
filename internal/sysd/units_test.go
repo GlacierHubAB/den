@@ -2,7 +2,9 @@ package sysd
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,24 +38,143 @@ func TestEscapeRoundTrip(t *testing.T) {
 	}
 }
 
-// A service needs a command, a .service name and a .slice: anything else
-// is refused before the manager is asked.
+// A service's shape is checked before any tool runs: a command, a
+// .service and a .slice of Den's characters, an absolute directory.
 func TestStartServiceRefusesShapes(t *testing.T) {
-	t.Setenv("XDG_RUNTIME_DIR", t.TempDir()) // no manager here: a refusal must come first
+	ran := false
+	old := runTool
+	t.Cleanup(func() { runTool = old })
+	runTool = func(string, time.Duration, []string, []string) (string, error) { ran = true; return "", nil }
 	for _, s := range []Service{
 		{Name: "a.service", Slice: "b.slice"},
 		{Name: "a", Slice: "b.slice", Argv: []string{"true"}},
 		{Name: "a.service", Slice: "b", Argv: []string{"true"}},
+		{Name: "-a.service", Slice: "b.slice", Argv: []string{"true"}},
+		{Name: "a b.service", Slice: "b.slice", Argv: []string{"true"}},
+		{Name: "a.service", Slice: "b.slice", Argv: []string{"true"}, Dir: "rel"},
+		{Name: "a.service", Slice: "b.slice", Argv: []string{"true"}, Description: "two\nlines"},
+		{Name: "a.service", Slice: "b.slice", Argv: []string{"true"}, Env: []string{"A=1", "A=2"}},
+		{Name: "a.service", Slice: "b.slice", Argv: []string{"true"}, Env: []string{"no-good=1"}},
 	} {
-		if err := StartService(s); err == nil || err.Error() != "a service needs a command, a .service name and a .slice" {
-			t.Errorf("%+v: %v", s, err)
+		if err := StartService(s); err == nil {
+			t.Errorf("%+v was taken", s)
+		}
+	}
+	if ran {
+		t.Error("a tool ran for a refused service")
+	}
+}
+
+// systemd-run's argv: one token per flag, names only for the
+// environment (no value ever on a command line, which every user can
+// read), every manager variable the service does not set unset, then --
+// and the argv as given.
+func TestStartArgs(t *testing.T) {
+	s := Service{Name: `den-desk-ab-m\x2d1-1.service`, Slice: `den-desk-ab-m\x2d1.slice`, Description: "Den mission", Argv: []string{"/bin/sh", "-c", "foot -e sh"},
+		Env: []string{"PATH=/usr/bin", "DEN_TEST_VALUE_NAME=plain-value-not-in-argv"}, Dir: "/home/u"}
+	args, values, err := StartArgs(s, []string{"PATH", "HYPRLAND_INSTANCE_SIGNATURE", "DISPLAY", "DEN_SOCKET"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, "\x00")
+	if strings.Contains(joined, "plain-value-not-in-argv") || strings.Contains(joined, "/usr/bin") {
+		t.Errorf("a value is on the command line: %q", args)
+	}
+	for _, want := range []string{"--setenv=PATH", "--setenv=DEN_TEST_VALUE_NAME", "--property=UnsetEnvironment=HYPRLAND_INSTANCE_SIGNATURE", "--property=UnsetEnvironment=DISPLAY", "--property=UnsetEnvironment=DEN_SOCKET",
+		"--unit=" + s.Name, "--slice=" + s.Slice, "--working-directory=/home/u", "--collect", "--no-ask-password"} {
+		if !strings.Contains("\x00"+joined+"\x00", "\x00"+want+"\x00") {
+			t.Errorf("no %q in %q", want, args)
+		}
+	}
+	if strings.Contains(joined, "UnsetEnvironment=PATH") {
+		t.Error("a name the service sets is unset")
+	}
+	dd := -1
+	for i, a := range args {
+		if a == "--" {
+			dd = i
+			break
+		}
+	}
+	if dd < 0 || strings.Join(args[dd+1:], " ") != "/bin/sh -c foot -e sh" {
+		t.Errorf("the argv after --: %q", args)
+	}
+	if strings.Join(values, " ") != "PATH=/usr/bin DEN_TEST_VALUE_NAME=plain-value-not-in-argv" {
+		t.Errorf("values %q", values)
+	}
+	env := strings.Join(toolEnv(values), " ")
+	if !strings.Contains(env, "DEN_TEST_VALUE_NAME=plain-value-not-in-argv") || !strings.Contains(env, "SYSTEMD_PAGER=cat") {
+		t.Errorf("the tool's environment: %q", env)
+	}
+}
+
+// show is read strictly: the three keys once each, known values only.
+func TestParseState(t *testing.T) {
+	u, err := parseState("LoadState=loaded\nActiveState=active\nFreezerState=frozen\n")
+	if err != nil || !u.Loaded || u.Freeze != "frozen" || u.Gone() {
+		t.Errorf("%+v %v", u, err)
+	}
+	if u, err := parseState("LoadState=not-found\nActiveState=inactive\nFreezerState=running\n"); err != nil || !u.Gone() {
+		t.Errorf("not-found: %+v %v", u, err)
+	}
+	for _, bad := range []string{
+		"", "LoadState=loaded\nActiveState=active\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState=frozen\nExtra=1\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState=iced\n",
+		"LoadState=loaded\nLoadState=loaded\nFreezerState=frozen\n",
+		"LoadState=loaded\nActiveState=active\nFreezerState\n",
+	} {
+		if _, err := parseState(bad); err == nil {
+			t.Errorf("%q read", bad)
+		}
+	}
+}
+
+// A tool is taken only from the system's own directories, and only a
+// root's file in a root's directory, neither writable by others.
+func TestToolOnlyFromRootsDirs(t *testing.T) {
+	old := toolDirs
+	t.Cleanup(func() { toolDirs = old })
+	mine := t.TempDir()
+	os.WriteFile(filepath.Join(mine, "systemctl"), []byte("#!/bin/sh\necho frozen\n"), 0o755)
+	toolDirs = []string{mine}
+	if _, err := tool("systemctl"); err == nil {
+		t.Error("a user's own systemctl was taken")
+	}
+	toolDirs = []string{t.TempDir()}
+	if _, err := tool("systemctl"); err == nil {
+		t.Error("a missing tool was found")
+	}
+	t.Setenv("PATH", mine)
+	toolDirs = old
+	if p, err := tool("systemctl"); err == nil && strings.HasPrefix(p, mine) {
+		t.Errorf("PATH was read: %s", p)
+	}
+}
+
+// The listing takes only whole names with this Den's prefix, and the
+// prefix holds no character the manager's matching reads as special.
+func TestListTakesOnlyItsOwn(t *testing.T) {
+	old := runTool
+	t.Cleanup(func() { runTool = old })
+	runTool = func(_ string, _ time.Duration, args, _ []string) (string, error) {
+		return "den-desk-ab-m1.slice loaded active active Den\n● den-desk-ab-m2.slice loaded failed failed x\nden-desk-abc-m3.slice loaded active active y\nden-desk-ab-.slice x\nnot a line\n", nil
+	}
+	got, err := List("den-desk-ab-")
+	if err != nil || strings.Join(got, " ") != "den-desk-ab-m1.slice den-desk-ab-m2.slice" {
+		t.Errorf("List: %v %v", got, err)
+	}
+	for _, bad := range []string{`den\-`, "den*", "den-[a]", ""} {
+		if _, err := List(bad); err == nil {
+			t.Errorf("prefix %q taken", bad)
 		}
 	}
 }
 
 // With DEN_REAL_SYSTEMD=1: a real transient service in a slice of its
 // own is started, frozen, thawed and stopped on this machine's user
-// manager, and is gone after. Never in CI.
+// manager, holds only the environment it was given, and is gone after.
+// Never in CI.
 func TestRealUnits(t *testing.T) {
 	if os.Getenv("DEN_REAL_SYSTEMD") != "1" {
 		t.Skip("set DEN_REAL_SYSTEMD=1 to start a unit on this machine's systemd user manager")
@@ -62,7 +183,7 @@ func TestRealUnits(t *testing.T) {
 	slice := "den-desk-" + Escape(id) + ".slice"
 	svc := "den-desk-" + Escape(id) + "-1.service"
 	t.Cleanup(func() { Stop(slice) })
-	if err := StartService(Service{Name: svc, Slice: slice, Description: "Den test", Argv: []string{"/bin/sleep", "60"}, Env: []string{"PATH=/usr/bin:/bin"}}); err != nil {
+	if err := StartService(Service{Name: svc, Slice: slice, Description: "Den test", Argv: []string{"/bin/sleep", "60"}, Env: []string{"PATH=/usr/bin:/bin", "DEN_TEST_ONLY=1"}}); err != nil {
 		t.Fatal(err)
 	}
 	wait := func(want func(UnitState) bool, unit string) UnitState {
@@ -81,6 +202,26 @@ func TestRealUnits(t *testing.T) {
 		return u
 	}
 	wait(func(u UnitState) bool { return u.Active == "active" }, slice)
+	// E1: the program holds only what it was given, nothing of the
+	// manager's own (no Hyprland instance among it).
+	out, err := systemctl("show", "--property=MainPID", "--value", "--", svc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("/proc/" + strings.TrimSpace(out) + "/environ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00") {
+		k, _, _ := strings.Cut(kv, "=")
+		switch k {
+		case "PATH", "DEN_TEST_ONLY":
+		case "INVOCATION_ID", "JOURNAL_STREAM", "SYSTEMD_EXEC_PID", "MANAGERPID", "MEMORY_PRESSURE_WATCH", "MEMORY_PRESSURE_WRITE", "HOME", "LANG", "LANGUAGE", "USER", "LOGNAME", "SHELL", "XDG_RUNTIME_DIR":
+			// set by the manager for every service it runs (not inherited)
+		default:
+			t.Errorf("the unit holds %s", k)
+		}
+	}
 	if err := Freeze(slice); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +230,7 @@ func TestRealUnits(t *testing.T) {
 		t.Fatal(err)
 	}
 	wait(func(u UnitState) bool { return u.Freeze == "running" }, slice)
-	names, err := List("den-desk-" + Escape(id) + "*.slice")
+	names, err := List("den-desk-" + strings.SplitN(Escape(id), `\`, 2)[0])
 	if err != nil || len(names) != 1 || names[0] != slice {
 		t.Errorf("List: %v %v", names, err)
 	}

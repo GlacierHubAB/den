@@ -110,16 +110,24 @@ func (dm *deskMission) inSlice(pid int) bool {
 	return pid > 1 && strings.Contains(deskCgroupOf(pid), "/"+dm.slice()+"/")
 }
 
-// deskLaunchEnv is what a launched program gets: Den's environment
-// without Den's own, tmux's, or Hyprland's instance (apps need none).
+// deskLaunchNames are the only variables a launched program gets, with
+// Den's values: hypruse's passthrough (desktop.childPassthrough) without
+// Hyprland's instance, and the user's own names. Every other variable,
+// the user manager's own included, is unset for it (sysd.StartArgs):
+// never Den's, tmux's, or Hyprland's instance, and no DISPLAY (X11 apps
+// are a start-card choice of a later step).
+var deskLaunchNames = []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE",
+	"XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "XDG_CURRENT_DESKTOP",
+	"XDG_DATA_DIRS", "XDG_CONFIG_DIRS"}
+
+// deskLaunchEnv is what a launched program gets: deskLaunchNames, as Den
+// has them.
 func deskLaunchEnv() []string {
 	var out []string
-	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(k, "DEN_") || strings.HasPrefix(k, "TMUX") || k == "HYPRLAND_INSTANCE_SIGNATURE" {
-			continue
+	for _, k := range deskLaunchNames {
+		if v, ok := os.LookupEnv(k); ok {
+			out = append(out, k+"="+v)
 		}
-		out = append(out, kv)
 	}
 	return out
 }
@@ -417,7 +425,7 @@ func (m *Model) deskSliceMsg(msg tea.Msg) tea.Cmd {
 // any answer: only this Den's own slices, never another Den's. It waits,
 // bounded, for each to be gone, and says what it could not stop.
 func SweepDesktopSlices() []string {
-	names, err := deskSysList(deskSlicePrefix() + "*.slice")
+	names, err := deskSysList(deskSlicePrefix())
 	if err != nil {
 		return nil // no user manager: nothing of Den's can be running in one
 	}
