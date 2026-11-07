@@ -187,6 +187,16 @@ var (
 	deskStart   = procs.StartTicks
 	deskParent  = procs.Parent
 	deskExeOf   = procs.Exe
+	// deskPython is the file hypruse's interpreter runs as, resolved by Den
+	// itself from the venv's python link (never from a proxy's word): what
+	// /proc shows for the server's child once it has exec'd.
+	deskPython = func() (string, error) {
+		p, err := filepath.EvalSymlinks(desktop.DefaultPaths().Python())
+		if err != nil {
+			return "", err
+		}
+		return procs.Undeleted(p), nil
+	}
 	// deskCardWait is how long a desktop card waits before it denies.
 	deskCardWait = 5 * time.Minute
 	// deskConsole is the console's proved processes, pid to start, from
@@ -373,7 +383,15 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 		if !ok || pp != dm.ProxyPID || in.ChildStart == "" || deskStart(in.ChildPID) != in.ChildStart {
 			return deny("that is not the desktop server's child")
 		}
-		dm.ChildPID, dm.ChildStart, dm.ChildExe = in.ChildPID, in.ChildStart, deskExeOf(in.ChildPID)
+		// Recorded only once it runs hypruse's interpreter: read before its
+		// exec, it would be the proxy's own binary, and the stop would then
+		// refuse to signal it. Never recorded empty (hold skips the check).
+		want, err := deskPython()
+		got := deskExeOf(in.ChildPID)
+		if err != nil || want == "" || got == "" || got != want {
+			return deny("that is not the desktop server's child")
+		}
+		dm.ChildPID, dm.ChildStart, dm.ChildExe = in.ChildPID, in.ChildStart, got
 		dm.save()
 		r.Reply(bridge.Decision{Behavior: "allow"})
 		return nil
