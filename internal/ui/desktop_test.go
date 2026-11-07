@@ -17,10 +17,13 @@ import (
 
 // The test desktop: the mission on workspace 9 holds an editor (0xe) and a
 // browser (0xb, outward); the human's terminal (0xh) is on workspace 1.
+// rigPython is the interpreter hypruse runs as in deskRig.
+const rigPython = "/usr/lib/den-rig/python3.13"
+
 // The agent is pid 500, its proxy 600, hypruse 700.
 func deskRig(t *testing.T) Model {
 	t.Helper()
-	old := []any{deskSnapshot, deskVerify, deskExe, deskChildOf, deskStart, deskParent, deskGrab}
+	old := []any{deskSnapshot, deskVerify, deskExe, deskChildOf, deskStart, deskParent, deskGrab, deskExeOf, deskPython}
 	oldWait := deskCardWait
 	deskCardWait = time.Millisecond // runBatch runs the card's timer; deskDo drops its message
 	t.Cleanup(func() {
@@ -32,6 +35,8 @@ func deskRig(t *testing.T) Model {
 		deskStart = old[4].(func(int) string)
 		deskParent = old[5].(func(int) (int, string, bool))
 		deskGrab = old[6].(func(context.Context, desktop.Window, string) error)
+		deskExeOf = old[7].(func(int) string)
+		deskPython = old[8].(func() (string, error))
 	})
 	deskSnapshot = func(context.Context) (desktop.Snapshot, error) {
 		return desktop.Snapshot{
@@ -59,6 +64,15 @@ func deskRig(t *testing.T) Model {
 		return 1, "x", true
 	}
 	deskGrab = func(context.Context, desktop.Window, string) error { return nil }
+	// hypruse (700) runs the venv's interpreter, as /proc shows it.
+	realExe := old[7].(func(int) string)
+	deskExeOf = func(pid int) string {
+		if pid == 700 {
+			return rigPython
+		}
+		return realExe(pid)
+	}
+	deskPython = func() (string, error) { return rigPython, nil }
 	oldNoFocus := deskNoFocus
 	t.Cleanup(func() { deskNoFocus = oldNoFocus })
 	noFocusCalls = nil
