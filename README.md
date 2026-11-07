@@ -932,6 +932,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/close` `/kill` | close the selected agent (also one on a remote host, `/close Name@devbox`); `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
 | `/desktop`, `/desktop stop`, `/desktop pause`, `/desktop resume`, `/desktop keep` | how a desktop mission stands; stop it at once; pause it and resume it (resume in Den's window only); keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
+| `/desktop pick [n]`, `/desktop whole [on\|off]` | on a waiting task card, in Den's window only: list the windows you can pick, or pick or unpick one; let the task use the whole desktop, or hold it to its own windows again (see [Desktop control](#desktop-control)) |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
@@ -1687,18 +1688,48 @@ says and does shows in Den's chat. To watch it in a terminal of its own
 instead, set `agent_view = true` in the `[desktop]` section; `Ctrl+C` there
 stops it.
 
-**A task: the whole desktop.** The orchestrator can instead call
-`desktop_mission` with one task and no apps. The card reads "Control your
-mouse and keyboard to: …" with the whole task (a task too long to show whole
-is refused, and so is one holding hidden characters). On `Ctrl+Y` the agent
-may use your whole desktop for that task: the pointer and keyboard in any
-window, your Hyprland binds, and launching apps, with no app config. Its
-view of the desktop lists every monitor, workspace and window, the focused
-window and the cursor, but not Den's own windows or the dock's. No step
-asks you except the agent's own `request_approval` and `your_turn`.
+**A task.** The orchestrator can instead call `desktop_mission` with one
+task and no apps. The card reads "Control your mouse and keyboard to: …"
+with the whole task (a task too long to show whole is refused, and so is
+one holding hidden characters). On `Ctrl+Y` the agent works on that task
+with no app config, and may launch apps. Its view of the desktop lists
+every monitor, workspace and window, the focused window and the cursor, but
+not Den's own windows or the dock's. No step asks you except the agent's
+own `request_approval` and `your_turn`.
 
-Read this before you say yes: **while a task runs, the agent can do anything
-you can at the keyboard.** That includes running commands as you in a
+**Held to its own windows, by default.** A task's keys and clicks go only
+to the windows of the apps it opens and to the windows you pick on its
+card. It can still read the whole screen.
+
+- `/desktop pick` lists the windows you can pick, and `/desktop pick <n>`
+  picks or unpicks one. Each pick says: "Keys into this window run as you,
+  outside the task's sandbox. Pausing doesn't stop what they start." Den's
+  own windows, the console's, Den's agents' terminals and X windows are
+  never offered.
+- A picked window that closes is gone for the task, even if its address
+  comes back.
+- Apps a held task opens get a sandboxed connection to the compositor of
+  their own, made for the mission and ended after its apps are stopped. A
+  held task that can't get one doesn't start, and a launch without one is
+  refused.
+- A held task needs the Hyprland build Den has checked (0.56.2). On any
+  other build it doesn't start held: use the whole desktop, or decline. If
+  Hyprland changes while a held task runs, its next launch is refused and
+  the task pauses for you; `/desktop resume` goes on only once the build is
+  the checked one again.
+
+**The whole desktop.** `/desktop whole` on the card lets the task use your
+whole desktop instead: the pointer and keyboard in any window, and your
+Hyprland binds. The card then says: "While it runs, the agent can do
+anything you can at the keyboard: run commands as you in a terminal, type
+into other agents' terminals and their permission prompts, use the
+clipboard, read the screen, and act in apps you are signed in to."
+`/desktop whole off` holds it again. `/desktop pick` and `/desktop whole`
+are typed in Den's window only (never from the dock), and both are fixed
+once the task starts.
+
+Read this before you turn on the whole desktop: **while a task runs on the
+whole desktop, the agent can do anything you can at the keyboard.** That includes running commands as you in a
 terminal, typing into other agents' terminals (their permission prompts
 too), the clipboard, everything on the screen, and every app you are signed
 in to. Den refuses only a short fixed list: anything on Den's own window,
