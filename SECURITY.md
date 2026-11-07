@@ -44,8 +44,9 @@ Design-level attacks on these rules are in scope too.
 ## What does not count
 
 - What the README says stays open by design: anything running as your user
-  can change Den's files, type into its window or drive a paired app, and an
-  agent in God mode, or in a mode a classifier approves, can do what you can.
+  can change Den's files, send keys to its window (and so answer its cards),
+  or drive a paired app. An agent in God mode, or in a mode a classifier
+  approves, can do what you can.
   See "God mode", "Apps (den-api.sock)" and "Desktop control" in the
   [README](README.md).
 - Problems in Claude Code itself: please report those to Anthropic. The same
