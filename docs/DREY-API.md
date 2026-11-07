@@ -1000,6 +1000,12 @@ same way. A later kind that carries state joins the snapshot.
   ends, with `verbs` empty and `dock_answers` false, its text as it was
   when it started; show it as running. The snapshot's cards carry the
   same.
+- A card's `agent` names the session it concerns. It is a label, not
+  proof of who wrote the card's words: key on `kind` and `agent_id`. A
+  fleet agent's card carries its name and `agent_id`. A card of Den's own
+  (its settings, pairings and notices) reads `Den`, a project's tuning
+  card `orchestrator`, and a mission's card `mission <name>`, or `mission`
+  alone; none of those three carries an `agent_id`.
 - `class` and `step` are what your `allow` on the card does, as Den classed
   it from its own record: `class` is `routine`, `destructive`, `code`,
   `desktop`, `outward` or `den_only`; `step` is the class's step, routine
