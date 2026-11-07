@@ -76,6 +76,12 @@ func (m Model) proposal(in bridge.ProposeInput) (*mission.Mission, error) {
 	if ms.Name == "" {
 		ms.Name = sanitize.Label(strings.Join(firstWords(ms.Mission, 6), " "), 80)
 	}
+	// A name is a label the human reads as the mission's; one that is just a
+	// word Den reserves (Den, the orchestrator, the console…) is refused.
+	// Missions are addressed by id, never by name, so this is only a label.
+	if why := names.ReservedWord(ms.Name); why != "" {
+		return nil, fmt.Errorf("the mission's name %q is a name Den keeps (%s); give it another name", ms.Name, why)
+	}
 	shape := mission.Shape(strings.ToLower(strings.ReplaceAll(strings.TrimSpace(in.Shape), "-", "")))
 	switch shape {
 	case mission.Once, mission.Loop, mission.FanOut, mission.Schedule:

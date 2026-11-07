@@ -59,6 +59,25 @@ func TestReserved(t *testing.T) {
 	}
 }
 
+func TestReservedWord(t *testing.T) {
+	// A label that is one reserved word, however it is written: Normalise
+	// drops what is not ASCII, so invisible or foreign extra characters do
+	// not hide it.
+	for _, label := range []string{"Den", "den", "DEN", " Den ", "Den!", "den2", "Drey", "drey", "Orchestrator", "the human", "The-Orchestrator",
+		"System", "console", "Claude", "Anthropic", "everyone", "\u202eden", "d\u200ben", "Den\u0435"} {
+		if ReservedWord(label) == "" {
+			t.Errorf("%q was allowed", label)
+		}
+	}
+	// A label that only contains one, a command word, or any other word.
+	for _, label := range []string{"Den v0.6.3 release", "den-bot", "Ship v1", "Stop", "Mission", "Budget", "Denver", "decoder", "drey ui",
+		"Ship the console", ""} {
+		if why := ReservedWord(label); why != "" {
+			t.Errorf("%q refused: %s", label, why)
+		}
+	}
+}
+
 func TestValid(t *testing.T) {
 	for name, want := range map[string]bool{
 		"backend-engineer": true, "backend-engineer2": true, "backend-engineer999": true, "k8s-operator": true,
