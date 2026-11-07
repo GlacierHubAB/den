@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desksand"
 	"github.com/GlacierHubAB/den/internal/desktop"
@@ -164,14 +165,74 @@ func TestDeskBuildChangePausesAHeldTask(t *testing.T) {
 	if dv, done := deskCall(m, "keyboard", `{"action":"type","text":"hi","window":"0xa"}`); done && dv.Behavior == "allow" {
 		t.Fatal("keys went on while paused for the build")
 	}
-	if mm, _ := m.deskPause(dm, false); !mm.(Model).flashErr || !dm.humanPaused {
+	if mm := resumeChecked(t, m, dm); !mm.flashErr || !dm.humanPaused {
 		t.Fatal("resumed on a build still not the checked one")
 	}
 	deskScopedBuild = func(context.Context) string { return "" }
-	if m.deskPause(dm, false); dm.humanPaused || dm.buildChanged != "" {
+	if resumeChecked(t, m, dm); dm.humanPaused || dm.buildChanged != "" {
 		t.Fatal("didn't resume on the checked build")
 	}
 	if dv, _ := deskCall(m, "keyboard", `{"action":"type","text":"hi","window":"0xh"}`); dv.Behavior == "allow" {
 		t.Fatal("after the change the task reached outside its windows")
+	}
+}
+
+// resumeChecked types /desktop resume on a task paused for a build
+// change, runs the build read it asks for, and hands its answer back.
+func resumeChecked(t *testing.T, m *Model, dm *deskMission) Model {
+	t.Helper()
+	_, cmd := m.deskPause(dm, false)
+	var mm tea.Model = *m
+	for _, msg := range runBatch(cmd) {
+		if c, ok := msg.(deskResumeCheckMsg); ok {
+			mm, _ = m.finishResumeCheck(c)
+		}
+	}
+	return mm.(Model)
+}
+
+// [L1] /desktop resume after a build change reads the build off the
+// update loop: the task stays paused until the answer is in, a second
+// resume asks for no second read, and an answer for a task ended or
+// paused differently meanwhile resumes nothing.
+func TestDeskResumeReadsTheBuildOffTheLoop(t *testing.T) {
+	m, _, _ := taskMission(t)
+	dm := m.deskMission("m1")
+	dm.Scoped, dm.humanPaused, dm.buildChanged = true, true, "this Hyprland build (v0.57.0) isn't the one checked"
+	reads := 0
+	deskScopedBuild = func(context.Context) string { reads++; return "" }
+	_, cmd := m.deskPause(dm, false)
+	if reads != 0 || !dm.humanPaused || !dm.resumeChecking {
+		t.Fatalf("resume read the build on the loop (%d reads) or went on before the answer (paused %v)", reads, dm.humanPaused)
+	}
+	_, again := m.deskPause(dm, false)
+	for _, msg := range runBatch(again) {
+		if _, ok := msg.(deskResumeCheckMsg); ok || reads != 0 {
+			t.Fatal("a second resume asked for a second read")
+		}
+	}
+	var answer deskResumeCheckMsg
+	for _, msg := range runBatch(cmd) {
+		if c, ok := msg.(deskResumeCheckMsg); ok {
+			answer = c
+		}
+	}
+	if reads != 1 || answer.mission != "m1" {
+		t.Fatalf("reads %d, answer %+v", reads, answer)
+	}
+	// The mission ended while the read was out: nothing resumes.
+	dm.Ended = "stopped"
+	m.finishResumeCheck(answer)
+	if !dm.humanPaused || dm.buildChanged == "" || dm.resumeChecking {
+		t.Fatal("an answer resumed an ended mission")
+	}
+	dm.Ended = ""
+	// An answer for a mission Den no longer has is dropped.
+	if _, c := m.finishResumeCheck(deskResumeCheckMsg{mission: "gone"}); c != nil {
+		t.Fatal("an answer for no mission did something")
+	}
+	m.finishResumeCheck(answer)
+	if dm.humanPaused || dm.buildChanged != "" {
+		t.Fatal("the checked build's answer didn't resume the task")
 	}
 }

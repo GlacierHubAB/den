@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/permmode"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // While an agent has the desktop (deskHolds), Den's window takes only what
@@ -385,12 +386,50 @@ func (m Model) deskPause(dm *deskMission, pause bool) (tea.Model, tea.Cmd) {
 		return m.say("The desktop mission is not paused.", false)
 	}
 	if dm.buildChanged != "" {
-		// C1: only on the checked build again; never wider instead.
-		if why := deskScopedBuild(context.Background()); why != "" {
-			return m.say("The desktop agent stays paused: "+why+". /desktop stop ends it.", true)
+		// C1: only on the checked build again; never wider instead. The
+		// read runs off the update loop, and the task stays paused until
+		// its answer is in (finishResumeCheck).
+		if dm.resumeChecking {
+			return m.say("Den is still checking Hyprland's build; the desktop agent stays paused until it knows.", false)
 		}
-		dm.buildChanged = ""
+		dm.resumeChecking = true
+		id := dm.ID
+		check := func() tea.Msg {
+			return deskResumeCheckMsg{mission: id, why: deskScopedBuild(context.Background())}
+		}
+		mm, flash := m.say("Checking Hyprland's build before the desktop agent goes on…", false)
+		return mm, tea.Batch(check, flash)
 	}
+	return m.deskResumed(dm)
+}
+
+// deskResumeCheckMsg is a held task's build read, asked for by
+// /desktop resume after a build change: why is "" on the checked build.
+type deskResumeCheckMsg struct {
+	mission string
+	why     string
+}
+
+// finishResumeCheck resumes the task only if the build is the checked one
+// again and it is still the same paused, held, live mission; otherwise it
+// stays as it is.
+func (m Model) finishResumeCheck(msg deskResumeCheckMsg) (tea.Model, tea.Cmd) {
+	dm := m.deskMission(msg.mission)
+	if dm == nil {
+		return m, nil
+	}
+	dm.resumeChecking = false
+	if dm.Ended != "" || !dm.humanPaused || dm.buildChanged == "" {
+		return m, nil
+	}
+	if msg.why != "" {
+		return m.say("The desktop agent stays paused: "+sanitize.Line(msg.why)+". /desktop stop ends it.", true)
+	}
+	dm.buildChanged = ""
+	return m.deskResumed(dm)
+}
+
+func (m Model) deskResumed(dm *deskMission) (tea.Model, tea.Cmd) {
 	dm.humanPaused = false
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop agent resumed.", at: time.Now()}))
 	return m.say("Desktop agent resumed: Den's window takes no approving answer until you pause or end it.", false)
