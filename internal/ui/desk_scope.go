@@ -306,6 +306,7 @@ func (dm *deskMission) closeListener() {
 func (m *Model) deskBuildChanged(dm *deskMission, why string) {
 	first := dm.buildChanged == ""
 	dm.buildChanged = why
+	dm.buildGen++
 	dm.humanPaused = true
 	if first {
 		text := "Desktop agent paused: " + sanitize.Line(why) + " any more, so Den can't hold the task to its own windows. /desktop resume checks again; /desktop stop ends it."
