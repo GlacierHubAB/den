@@ -231,6 +231,8 @@ type Model struct {
 
 	att attention // desktop notifications, reminders and stalls
 
+	refused refusals // the requests refused for a session id Den makes up (madeup.go)
+
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
 	perms  permState   // the /permissions panel (permissions.go)
 	hold   deskHold    // what was typed and moved while an agent had the desktop (desk_hold.go)
@@ -811,6 +813,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // handleRequest folds a hook event into the inbox and decides whether a
 // permission request is held for Den or released to the terminal.
 func (m *Model) handleRequest(r *bridge.Request) tea.Cmd {
+	if madeUpRequest(r) {
+		m.refuseMadeUp(r, time.Now())
+		return nil
+	}
 	if r.Host != "" {
 		// Never local: a remote host's request takes remoteHeld's path, so
 		// it cannot reach the close, skills or install questions, the

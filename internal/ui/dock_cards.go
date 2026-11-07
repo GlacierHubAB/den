@@ -247,22 +247,11 @@ func (m Model) dockName(key string) string {
 	return n
 }
 
-// madeUpSession reports whether a session id is one Den makes up for a
-// card of its own, a mission's, a project's memory or a project's tuning:
-// never an agent's, so such a card carries no agent id.
-func madeUpSession(id string) bool {
-	for _, p := range []string{inbox.SessionPrefix, tuneSessionPrefix, missionSessionPrefix, memorySessionPrefix} {
-		if strings.HasPrefix(id, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // dockAgentID is the id of the agent a card is for, "" for a card from a
-// host, from Den, or for a mission, a project's memory or tuning.
+// host or from Den, or for a mission, a project's memory or tuning: any
+// session id Den makes up (inbox.MadeUpSession).
 func (m Model) dockAgentID(key string) string {
-	if madeUpSession(key) {
+	if inbox.MadeUpSession(key) {
 		return ""
 	}
 	if a, ok := m.agentFor(key); ok && a.Host == "" {

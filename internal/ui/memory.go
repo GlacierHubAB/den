@@ -315,7 +315,7 @@ func (m *Model) rulesCard(repo string) {
 // or not, and where it came from in Den's words.
 // memorySessionPrefix keys a project's memory cards (proposed rules,
 // rules edited outside Den) by its repository id.
-const memorySessionPrefix = "memory:"
+const memorySessionPrefix = inbox.MemoryPrefix
 
 // A rules card fences each note it shows between these lines; a console's
 // copy of the card leaves the fenced notes out (withoutNotes).

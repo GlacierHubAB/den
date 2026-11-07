@@ -20,7 +20,7 @@ import (
 // waiting in the terminal on its host. Every title says which host.
 func (s *Store) ApplyRemote(ev events.Event) *Item {
 	host, sid := ev.Host, ev.Session
-	if host == "" || sid == "" {
+	if host == "" || sid == "" || MadeUpSession(sid) {
 		return nil
 	}
 	on := " on " + host

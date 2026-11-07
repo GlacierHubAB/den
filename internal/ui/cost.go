@@ -24,7 +24,7 @@ import (
 // session id is "mission:<id>".
 const budgetTool = "mission_budget"
 
-const missionSessionPrefix = "mission:"
+const missionSessionPrefix = inbox.MissionPrefix
 
 // spent is what a run or a mission used.
 type spent struct {
