@@ -425,6 +425,13 @@ func TestBackstopUnpairs(t *testing.T) {
 	if len(consoleWhy) != 1 || !strings.Contains(consoleWhy[0], "the console is unpaired") {
 		t.Errorf("the console after the backstop: %q", consoleWhy)
 	}
+	// The backstop starts a fresh session. Wait for it: left running, it
+	// writes its settings file into the run folder as the test's cleanup
+	// removes that folder.
+	l.until("the fresh session to start", func() bool { return !l.m.orch.starting }, nil)
+	if l.m.orch.proc == nil {
+		t.Errorf("no fresh session after the backstop: %q", l.m.orch.status)
+	}
 }
 
 // An orchestrator silent for too long in an app's turn: the app is told,
