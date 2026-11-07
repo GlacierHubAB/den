@@ -38,7 +38,8 @@ var deskHeldVerbs = map[string]bool{"deny": true}
 
 // deskHeldAct answers a console's act that Den's window wouldn't take
 // while held, and reports whether it did: a card answer but a deny, a
-// mode.set but a lowering, a command deskHeldCommand doesn't list. A line
+// mode.set but a lowering, a turn for the orchestrator, a command
+// deskHeldCommand doesn't list. A line
 // the dock refuses anyway (dockLine) is left to runFromDock, which keeps
 // the dock's own narrower rules (/desktop pause and stop only).
 func (m *Model) deskHeldAct(act api.Act) bool {
@@ -53,6 +54,10 @@ func (m *Model) deskHeldAct(act api.Act) bool {
 			return false
 		}
 		act.ModeSet.Reply <- api.ModeSetResult{Code: api.CodeUnavailable, Note: deskHeldDock}
+	case act.Say != nil:
+		// A turn for the orchestrator is a message to an agent, which
+		// waits in Den's window too: an app's and a console's alike.
+		deskSayFail(act.Say, deskHeldDock)
 	case act.Command != nil:
 		words, _, why := dockLine(act.Command.Text)
 		if why != "" {
@@ -68,14 +73,15 @@ func (m *Model) deskHeldAct(act api.Act) bool {
 	return true
 }
 
-// deskHeldDockLine is deskHeldCommand on a dock line's words, lowered as
-// Den's window lowers a line (deskHeldLine).
+// deskSayFail ends a turn that waits (a seam: tests make turns with no
+// connection).
+var deskSayFail = func(y *api.Say, why string) { y.Fail(why) }
+
+// deskHeldDockLine is deskHeldCommand on exactly the words runFromDock
+// will run (dockLine lowers only the words it judges): a word the window
+// would lower first and take is refused here, never the other way round.
 func deskHeldDockLine(words []string, mode string) bool {
-	low := make([]string, len(words))
-	for i, w := range words {
-		low[i] = strings.ToLower(w)
-	}
-	return deskHeldCommand(low[0], low[1:], mode)
+	return deskHeldCommand(words[0], words[1:], mode)
 }
 
 // deskHeldAsk is what the first Enter on a line typed while an agent had

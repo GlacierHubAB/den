@@ -182,3 +182,24 @@ func TestDockHeldCommands(t *testing.T) {
 		t.Error("/desktop resume from the dock")
 	}
 }
+
+// While held, a turn for the orchestrator (a console's or an app's chat)
+// waits, as a message typed in Den's window does; once paused and frozen
+// it is taken again.
+func TestDockHeldSay(t *testing.T) {
+	m, dm := dockHeldModel(t)
+	old := deskSayFail
+	t.Cleanup(func() { deskSayFail = old })
+	var failed []string
+	deskSayFail = func(y *api.Say, why string) { failed = append(failed, y.Turn+": "+why) }
+	y := &api.Say{Turn: "t1", Text: "go on", Console: "app-host"}
+	m.applyAPIAct(api.Act{Say: y})
+	if m.ctl.turn != nil || len(failed) != 1 || failed[0] != "t1: "+deskHeldDock {
+		t.Fatalf("a turn while held: started %v, failed %v", m.ctl.turn != nil, failed)
+	}
+	pauseNow(dm)
+	// applyAPIAct asks deskHeldAct only while deskHolds().
+	if m.deskHolds() {
+		t.Fatal("a turn after a frozen pause is still held")
+	}
+}
