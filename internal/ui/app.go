@@ -751,6 +751,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.deskOnTick()
 	case deskPrepared:
 		return m, m.finishPrepare(msg)
+	case deskPicksMsg:
+		return m, m.finishPicks(msg)
 	case deskSpawned:
 		return m, m.finishSpawn(msg)
 	case deskHeadlessStarted:

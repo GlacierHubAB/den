@@ -96,6 +96,31 @@ func TestX11OnlyWithTheSwitch(t *testing.T) {
 	}
 }
 
+// TestListenerInPlaceOfTheSocket: with a listener, it is bound at the
+// WAYLAND_DISPLAY path, and the compositor's own socket appears nowhere in
+// the argv; the walk still allows only that inside path.
+func TestListenerInPlaceOfTheSocket(t *testing.T) {
+	s := testSpec()
+	s.WaylandListener = "/run/user/1000/den-wl/m1/wayland"
+	a := Argv(s, "firefox")
+	i := slices.Index(a, s.WaylandListener)
+	if i < 1 || a[i-1] != "--ro-bind" || a[i+1] != "/run/user/1000/wayland-1" {
+		t.Fatalf("no bind of the listener at the Wayland path: %q", a)
+	}
+	for j, v := range a {
+		if v == "/run/user/1000/wayland-1" && j != i+1 {
+			t.Fatalf("the compositor's socket is in the argv at %d: %q", j, a)
+		}
+	}
+	if got := Allowed(s); !slices.Contains(got, "/run/user/1000/wayland-1") || slices.Contains(got, s.WaylandListener) {
+		t.Fatalf("allowed %q", got)
+	}
+	env := strings.Join(Env(s), " ")
+	if !strings.Contains(env, "WAYLAND_DISPLAY=wayland-1") || strings.Contains(env, "den-wl") {
+		t.Fatalf("env %s", env)
+	}
+}
+
 // TestEnvClosed: only the fixed names, with the bus disabled; nothing of
 // Hyprland's, ssh's, Den's or tmux's.
 func TestEnvClosed(t *testing.T) {

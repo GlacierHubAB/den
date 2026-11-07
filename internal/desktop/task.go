@@ -37,8 +37,17 @@ import (
 // Protects reports whether a window is one of Den's own surfaces.
 func (m Mission) Protects(addr string) bool { return addr != "" && m.Protected[addr] }
 
-// decideTask is the gate for a task mission's calls.
+// decideTask is the gate for a task mission's calls: the task rules, then,
+// for a scoped task, the narrower rules of scoped.go on what they allow.
 func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict {
+	v := taskRules(tool, args, m, s)
+	if v.Kind != Allow || !m.Scoped {
+		return v
+	}
+	return narrowTask(tool, args, m, s, v)
+}
+
+func taskRules(tool string, args map[string]any, m Mission, s Snapshot) Verdict {
 	if len(m.Protected) == 0 {
 		return deny("Den has not placed its own windows; the task cannot run")
 	}
@@ -238,7 +247,7 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 		}
 		// protectedAt has checked that the point is on a monitor.
 		bounds, _ := monitorAt(x, y, s)
-		return Verdict{Kind: Allow, Args: args, Bounds: bounds}
+		return Verdict{Kind: Allow, Args: args, Bounds: bounds, Target: topAt(x, y, s)}
 	}
 	return deny("pointer: unknown action")
 }

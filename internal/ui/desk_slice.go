@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -151,6 +152,9 @@ type deskLaunchedMsg struct {
 	call    string
 	result  string
 	err     error
+	// changed: a held task's launch found Hyprland no longer the checked
+	// build (why); the mission pauses for the human (C1).
+	changed string
 }
 
 // deskLaunch runs an allowed launch in the mission's slice: the command,
@@ -177,10 +181,28 @@ func (m *Model) deskLaunch(r *bridge.Request, dm *deskMission, v desktop.Verdict
 		seen[w.Address] = true
 	}
 	id, dir, x11 := dm.ID, dm.Dir, dm.x11
+	listen, held := "", dm.Scoped
+	if dm.Scoped {
+		if dm.listener == nil || !dm.listener.Live() {
+			return func() tea.Msg {
+				return deskLaunchedMsg{req: r, mission: id, call: call, err: errors.New("the task's sandboxed Wayland socket is gone, and Den never opens apps on the compositor's own")}
+			}
+		}
+		listen = dm.listener.Socket()
+	}
 	return func() tea.Msg {
 		out := deskLaunchedMsg{req: r, mission: id, call: call}
+		// A held task's launch checks the build again: the probe holds for
+		// one build only, and a restart between could change it (S4-3).
+		if held {
+			if why := deskScopedBuild(context.Background()); why != "" {
+				out.err, out.changed = errors.New(why), why
+				return out
+			}
+		}
 		// The sandbox (desk_sand.go): refused rather than loosened.
 		spec, err := deskSandSpec(dir, deskProfileName(command), x11)
+		spec.WaylandListener = listen
 		if err == nil {
 			err = deskSandCheck(spec, id)
 		}
@@ -222,6 +244,9 @@ func (m *Model) deskLaunch(r *bridge.Request, dm *deskMission, v desktop.Verdict
 func (m *Model) deskLaunched(msg deskLaunchedMsg) {
 	if dm := m.deskMission(msg.mission); dm != nil {
 		delete(dm.inflight, msg.call)
+		if msg.changed != "" {
+			m.deskBuildChanged(dm, msg.changed)
+		}
 	}
 	if msg.err != nil {
 		msg.req.Reply(bridge.Decision{Behavior: "deny", Message: "Den: could not start it in the mission's slice (" + oneLine(msg.err.Error()) + "); nothing runs"})
@@ -434,6 +459,7 @@ func (m *Model) deskSliceMsg(msg tea.Msg) tea.Cmd {
 		dm.reaping = false
 		if msg.gone {
 			dm.reaped = true
+			dm.closeListener() // nothing it launched runs now
 			m.refresh()
 			return nil
 		}

@@ -87,6 +87,13 @@ type deskMission struct {
 	// x11: the start card's switch for a task, set there by the human and
 	// fixed for the mission: its launches get Xwayland (desk_sand.go).
 	x11 bool
+	// listener is a held task's Wayland socket for its apps (wlsec),
+	// closed once its slice is stopped (closeListener).
+	listener deskListener
+	// buildChanged is why Hyprland stopped being the checked build during
+	// a held task: it paused then, and resumes only once the build is the
+	// checked one again (C1).
+	buildChanged string
 	// queued are the actions the human approved while it was paused: each
 	// runs only once it goes on, decided again then (desk_hold.go);
 	// flushing while that read of the desktop is out.
@@ -453,6 +460,11 @@ func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end t
 func (m *Model) deskGateMission(dm *deskMission, snap *desktop.Snapshot) desktop.Mission {
 	snap.ExemptConsole(m.consoleProcs())
 	mission := dm.Mission
+	if dm.Scoped {
+		// A closed pick is gone for good; the slice is read for this call.
+		prunePicks(dm.Picked, *snap)
+		mission.InSlice = dm.inSlice
+	}
 	if dm.Task {
 		if console := m.consoleProcs(); len(console) > 0 {
 			mission.Protected = maps.Clone(dm.Protected)

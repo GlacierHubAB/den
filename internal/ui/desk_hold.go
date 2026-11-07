@@ -384,6 +384,13 @@ func (m Model) deskPause(dm *deskMission, pause bool) (tea.Model, tea.Cmd) {
 	case !dm.humanPaused:
 		return m.say("The desktop mission is not paused.", false)
 	}
+	if dm.buildChanged != "" {
+		// C1: only on the checked build again; never wider instead.
+		if why := deskScopedBuild(context.Background()); why != "" {
+			return m.say("The desktop agent stays paused: "+why+". /desktop stop ends it.", true)
+		}
+		dm.buildChanged = ""
+	}
 	dm.humanPaused = false
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop agent resumed.", at: time.Now()}))
 	return m.say("Desktop agent resumed: Den's window takes no approving answer until you pause or end it.", false)

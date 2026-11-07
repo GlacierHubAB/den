@@ -28,6 +28,14 @@ type taskDesk struct {
 	noDen    bool   // Den's window is gone
 	stranger bool   // a window of another process shows Den's title too
 	viewPin  bool   // the agent view floats, pinned
+	// held leaves the card's whole-desktop switch off: the task is held
+	// to its own windows. runTask turns it on otherwise, as the human
+	// would with /desktop whole.
+	held bool
+	// appGone closes the app's window; appPID, when set, is the pid its
+	// address comes back on.
+	appGone bool
+	appPID  int
 }
 
 func (d *taskDesk) snap() desktop.Snapshot {
@@ -35,12 +43,18 @@ func (d *taskDesk) snap() desktop.Snapshot {
 		Monitors: []desktop.Monitor{{Name: "DP-1", W: 1920, H: 1080, Workspace: 1}},
 		Windows: []desktop.Window{
 			{Address: "0xh", Class: "ghostty", Title: "~", PID: 300, Workspace: 1, At: [2]int{960, 0}, Size: [2]int{960, 540}, Mapped: true},
-			{Address: "0xa", Class: "zen", Title: "Inbox", PID: 900, Workspace: 1, At: [2]int{960, 540}, Size: [2]int{960, 540}, Mapped: true},
 		},
 		Active: "0xh",
 		// The human's binds as Hyprland lists them: a task checks every
 		// combo against them, and runs none without them.
 		Binds: []desktop.Bind{{Mods: 64, Key: "w", Dispatcher: "killactive"}},
+	}
+	if !d.appGone {
+		pid := 900
+		if d.appPID != 0 {
+			pid = d.appPID
+		}
+		s.Windows = append(s.Windows, desktop.Window{Address: "0xa", Class: "zen", Title: "Inbox", PID: pid, Workspace: 1, At: [2]int{960, 540}, Size: [2]int{960, 540}, Mapped: true})
 	}
 	if !d.noDen {
 		s.Windows = append(s.Windows, desktop.Window{Address: "0xden", Class: "ghostty", Title: d.title, PID: 300, Workspace: 1, At: [2]int{0, 0}, Size: [2]int{960, 1080}, Mapped: true})
@@ -62,8 +76,10 @@ func taskRig(t *testing.T) (*Model, *taskDesk, *[]spawn.Request, *[]desktop.Targ
 	m, spawned, _ := missionRig(t, false)
 	d := &taskDesk{}
 	deskSnapshot = func(context.Context) (desktop.Snapshot, error) { return d.snap(), nil }
-	old := []any{deskLimits, deskAncestors, deskKeepOnTop, deskOwnWait, deskSettle, deskTaskEvery, deskStopFn, deskNotify, deskStart}
+	old := []any{deskLimits, deskAncestors, deskKeepOnTop, deskOwnWait, deskSettle, deskTaskEvery, deskStopFn, deskNotify, deskStart, deskScopedBuild, deskOpenListener}
 	t.Cleanup(func() {
+		deskScopedBuild = old[9].(func(context.Context) string)
+		deskOpenListener = old[10].(func(string) (deskListener, error))
 		deskLimits = old[0].(func() (int, int))
 		deskAncestors = old[1].(func() []int)
 		deskKeepOnTop = old[2].(func(string, bool, bool) error)
@@ -75,6 +91,8 @@ func taskRig(t *testing.T) (*Model, *taskDesk, *[]spawn.Request, *[]desktop.Targ
 		deskStart = old[8].(func(int) string)
 	})
 	deskLimits = func() (int, int) { return 5, 3 }
+	deskScopedBuild = func(context.Context) string { return "" }
+	deskOpenListener = func(string) (deskListener, error) { return &fakeListener{path: "/run/user/1000/den-wl/t/wayland"}, nil }
 	deskAncestors = func() []int { return []int{300, 1} }
 	var pins [][2]bool
 	deskKeepOnTop = func(addr string, floating, pinned bool) error {
@@ -122,6 +140,10 @@ func runTask(t *testing.T, m *Model, d *taskDesk, verb string) {
 	it := desktopCard(*m, inbox.DesktopMission)
 	if it == nil {
 		t.Fatal("no task card")
+	}
+	if !d.held {
+		mm, _ := m.deskWhole(nil)
+		*m = mm.(Model)
 	}
 	m.tab = tabInbox
 	m.selectItem(it)
@@ -174,11 +196,24 @@ func TestDesktopTaskCardAndStart(t *testing.T) {
 	body := strings.Join(it.Body, "\n")
 	for _, want := range []string{
 		desktop.TaskSentence + task,
-		"anything you can at the keyboard", "run commands as you", "other agents' terminals and their permission prompts", "clipboard", "signed in",
+		"only into the windows it opens", "/desktop pick", "/desktop whole", "read the whole screen", "hasn't checked",
 		"5 minutes or 3 actions", "/desktop stop", "if Den quits", "its own terminal window",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("card lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "anything you can at the keyboard") {
+		t.Errorf("a held task's card says it may do anything:\n%s", body)
+	}
+	// With the whole desktop on, the card says what that lets it do.
+	mm, _ := m.deskWhole(nil)
+	*m = mm.(Model)
+	it = desktopCard(*m, inbox.DesktopMission)
+	body = strings.Join(it.Body, "\n")
+	for _, want := range []string{"Whole desktop: on", "anything you can at the keyboard", "run commands as you", "other agents' terminals and their permission prompts", "clipboard", "signed in", "/desktop whole off"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("whole-desktop card lacks %q:\n%s", want, body)
 		}
 	}
 	if dockMayAnswer(it) {
