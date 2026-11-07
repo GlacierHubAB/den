@@ -1041,6 +1041,14 @@ same way. A later kind that carries state joins the snapshot.
     answered only in part (Den shows the rest), or more than 20 answers in
     a minute.
 - Five answers in a row less than a second apart unpair the console.
+- While an agent has the desktop (a desktop mission runs and isn't both
+  paused and frozen, or an ended one's apps aren't all stopped yet), Den
+  takes from a console only what Den's own window takes then.
+  A `card.answer` other than `deny`, a `cmd.run` outside that list (deny,
+  pause, stop and lowerings), and a `mode.set` that isn't a lowering answer
+  `unavailable` with "a desktop agent has the desktop: pause or end it in
+  Den first". An `orch.say` ends at once with an `error` chunk with the
+  same words.
 - Never from the dock: a console or app pairing, turning the API on,
   orchestrator guidance, installing on a host, a message to an agent on a
   host, an app's grant, skills, an agent's question, and any card of or
