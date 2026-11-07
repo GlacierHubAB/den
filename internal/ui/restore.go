@@ -14,6 +14,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/names"
+	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/roster"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/skills"
@@ -57,6 +58,10 @@ type restoreState struct {
 // restorePlan is what a restore question would reopen.
 type restorePlan struct {
 	agents []roster.Agent
+	// modes are the modes the card said each agent reopens in, by session
+	// id: a raise of the global mode before the answer never reopens one
+	// in more than its card showed.
+	modes  map[string]string
 	fork   bool
 	reopen bool // asked by /reopen, not at startup: ^N dismisses nothing
 }
@@ -155,6 +160,7 @@ func (m Model) rosterEntry(a fleet.Agent) roster.Agent {
 		Given:     givenOf(a),
 		Role:      a.Labels.Role,
 		Model:     a.Model,
+		Mode:      m.modeOfAgent(id),
 		CWD:       a.Session.CWD,
 		Parent:    e.Parent,
 		Brief:     e.Brief,
@@ -298,6 +304,10 @@ func (m Model) missionVia(id string, byCard map[string]string) string {
 func (m *Model) askRestore(agents []roster.Agent, plan restorePlan) *inbox.Item {
 	m.ensureRestore()
 	plan.agents = agents
+	plan.modes = map[string]string{}
+	for _, a := range agents {
+		plan.modes[a.SessionID] = m.reopenMode(a)
+	}
 	var title string
 	switch {
 	case plan.fork:
@@ -361,6 +371,7 @@ func (m Model) restoreLines(a roster.Agent) (lines []string, usd float64, priced
 	if !a.LastSeen.IsZero() {
 		more = append(more, "last seen "+humanAge(restoreNow().Sub(a.LastSeen))+" ago")
 	}
+	more = append(more, "reopens in "+m.reopenMode(a))
 	if u, ok := transcript.ReadUsage(transcript.Path(a.SessionID)); ok {
 		model := reopenModel(a)
 		if model == "" {
@@ -418,7 +429,7 @@ func (m Model) decideRestore(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m.say("They are running already.", false)
 	}
-	it.Resolved = "reopening…"
+	m.store.Start(it, "reopening…", time.Duration(len(plan.agents))*(spawn.SessionWait+spawn.WindowWait+5*time.Second))
 	reqs := m.restoreRequests(plan)
 	id := it.ID
 	cmd := func() tea.Msg {
@@ -452,12 +463,25 @@ func reopenModel(a roster.Agent) string {
 	return a.Model
 }
 
+// reopenMode is the mode an agent is reopened in: the lower of its mode
+// at close and the global mode now (permmode.Lower), so a reopen never
+// gives it more than it had nor more than Den allows. A mode Den never
+// saw, or one not ranked (God mode's), counts as default.
+func (m Model) reopenMode(a roster.Agent) string {
+	return permmode.Lower(a.Mode, m.agentMode())
+}
+
 func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 	exe, _ := os.Executable()
 	var out []spawn.Request
 	for _, a := range plan.agents {
-		// The mode in force now: nothing in the agent's record picks it.
-		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: m.agentMode()}
+		// The mode the card showed, lowered by any lowering since: the
+		// global mode now may only take it down.
+		mode := m.reopenMode(a)
+		if shown, ok := plan.modes[a.SessionID]; ok {
+			mode = permmode.Lower(shown, mode)
+		}
+		req := spawn.Request{Dir: a.CWD, Agent: true, Resume: a.SessionID, Fork: plan.fork, Name: a.Peer, Orchestrator: m.cfg.Orchestrator.Name, PermissionMode: mode}
 		if model := reopenModel(a); strings.HasPrefix(model, "claude-") {
 			req.Model = model
 		}
@@ -479,13 +503,15 @@ func (m Model) restoreRequests(plan restorePlan) []spawn.Request {
 func (m *Model) finishRestore(msg restoreDoneMsg) tea.Cmd {
 	m.ensureRestore()
 	delete(m.restore.plans, msg.itemID)
-	var done, failed []string
+	var done, failed, doneNames, failedNames []string
 	now := restoreNow()
 	for _, r := range msg.results {
 		if r.err != nil {
 			failed = append(failed, r.agent.Name()+" ("+r.err.Error()+")")
+			failedNames = append(failedNames, r.agent.Name())
 			continue
 		}
+		doneNames = append(doneNames, r.agent.Name())
 		name := r.agent.Name()
 		if r.res.Untrusted {
 			name += " (trust the folder in its terminal first)"
@@ -516,15 +542,19 @@ func (m *Model) finishRestore(msg restoreDoneMsg) tea.Cmd {
 		summary = "nothing to reopen"
 	}
 	for _, it := range m.store.Items() {
-		if it.ID == msg.itemID {
+		if it.ID == msg.itemID && it.State != inbox.Resolved {
 			m.store.Settle(it, len(done) > 0, summary)
+			if len(failed) > 0 && it.Outcome == inbox.OutcomeDone {
+				it.Outcome = inbox.OutcomeFailed // an agent it was to reopen did not come back
+			}
+			m.cardEnd(it, "reopen", doneNames, failedNames, false, summary)
 		}
 	}
 	_ = m.restore.r.Save(m.restore.path, now)
 	m.restore.saved = now
 	m.flash, m.flashErr = strings.ToUpper(summary[:1])+summary[1:], len(failed) > 0
 	m.refresh()
-	return tea.Batch(snapshot, flashTick(4*time.Second, m.flash))
+	return tea.Batch(snapshot, flashTick(flashFor, m.flash))
 }
 
 // relinkReopened puts reopened agents back under their parents once they

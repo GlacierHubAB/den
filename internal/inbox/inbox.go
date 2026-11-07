@@ -66,6 +66,7 @@ const (
 	RulesEdited                 // Den asks: rules.md changed outside Den; take it as the rules again? y/n, in Den only
 	PowersSet                   // Den asks: let config.toml's console_powers = "always" hold until Den restarts? y/n, in Den only
 	RenamePick                  // Den asks: which agents get the names suggested from their own labels? 1-9 pick, y renames the picked, in Den only
+	Setup                       // Den asks: install Den's hooks and mods into Claude Code? y installs, n hides it until the next Den version, in Den only
 )
 
 func (k Kind) String() string {
@@ -152,6 +153,8 @@ func (k Kind) String() string {
 		return "rules changed"
 	case RenamePick:
 		return "rename agents"
+	case Setup:
+		return "setup"
 	case MissionDone:
 		return "mission done"
 	case MirrorAsk:
@@ -188,10 +191,19 @@ type Item struct {
 	// Den, "console" for the console's.
 	Answer     string
 	AnsweredBy string
-	Role       string // the agent's role when this happened
-	Task       string // what the agent was working on when this happened
-	Seen       bool   // shown on the Inbox view at least once
-	Unread     bool   // kept unread by the human: counts as new until opened or dismissed
+	// Started means an answer started its action (a close, a reopen, an
+	// install) and it settles when that ends: no one may answer it again.
+	Started bool
+	// StartedUntil is when Den stops waiting for a Started item's action:
+	// past it, LoseStarted settles it.
+	StartedUntil time.Time
+	// Outcome is how a Started item's action ended: done, failed or lost
+	// (it never reported); "" for an item that was never Started.
+	Outcome string
+	Role    string // the agent's role when this happened
+	Task    string // what the agent was working on when this happened
+	Seen    bool   // shown on the Inbox view at least once
+	Unread  bool   // kept unread by the human: counts as new until opened or dismissed
 	// A question Den holds (hooks.answer_questions): all of the call's
 	// questions, the answers so far by question text, and the one asked now.
 	Questions []question.Question
@@ -199,10 +211,21 @@ type Item struct {
 	Step      int
 	req       *bridge.Request
 	fromHost  bool // made by a remote host's event stream: counts towards its caps
+	// A permission's class and step, worked out once by classifyTool: the
+	// call never changes, and the walk of a Glob's reach is not redone on
+	// every projection. A link planted after this is the accepted
+	// swap-after-approval residual: one swapped after the answer and
+	// before the tool runs was already accepted.
+	toolClassed bool
+	toolClass   Class
+	toolStep    int
 }
 
 // Answerable reports whether y/n/a act on this item.
 func (it *Item) Answerable() bool {
+	if it.Started {
+		return false
+	}
 	if it.DenAsks() {
 		return it.State == Waiting
 	}
@@ -226,7 +249,7 @@ func (it *Item) DenAsks() bool {
 	return it.Kind == Close || it.Kind == Skills || it.Kind == Budget || it.Kind == Restore || it.Kind == Merge || it.Kind == Cleanup || it.Kind == Install || it.Kind == Message || it.Kind == Guidance || it.Kind == MissionUpdate || it.Kind == UsageResume || it.Kind == MissionMove || it.Kind == APIOn || it.Kind == Grant || it.Kind == Pair || it.Kind == ControlAsk || it.Kind == Console || it.Kind == UsageSet || it.Kind == ModeSet ||
 		it.Kind == DesktopInstall || it.Kind == DesktopMission || it.Kind == DesktopAct || it.Kind == YourTurn ||
 		it.Kind == MissionCriteria || it.Kind == MissionDone || it.Kind == MirrorAsk || it.Kind == ProcessTuned || it.Kind == PromptProposal ||
-		it.Kind == RulesPick || it.Kind == RulesEdited || it.Kind == PowersSet || it.Kind == RenamePick
+		it.Kind == RulesPick || it.Kind == RulesEdited || it.Kind == PowersSet || it.Kind == RenamePick || it.Kind == Setup
 }
 
 // needsYou reports whether the item still waits on the human.
@@ -245,7 +268,10 @@ type Store struct {
 	// heldQ is when a host's agent last had a question held for Den: the
 	// host's own "has a question" event for it, which can come late, says
 	// nothing more for a while (heldQuiet).
-	heldQ   map[string]time.Time
+	heldQ map[string]time.Time
+	// now is the store's clock for Start and LoseStarted, time.Now when
+	// nil: a test may freeze it.
+	now     func() time.Time
 	items   []*Item
 	always  map[string]map[string]bool // agentKey(host, session) -> allow key
 	seq     int
@@ -281,6 +307,11 @@ func (s *Store) Items() []*Item {
 			return wi
 		}
 		if wi {
+			// Den's setup card waits behind everything else: it is never
+			// what a ^Y or the Inbox's first selection meant (P10).
+			if si, sj := out[i].Kind == Setup, out[j].Kind == Setup; si != sj {
+				return sj
+			}
 			return out[i].At.Before(out[j].At) // answer in the order they asked
 		}
 		return out[i].At.After(out[j].At) // newest notice on top
@@ -999,6 +1030,19 @@ func (s *Store) AddRenamePick(title string, body []string) *Item {
 // RenameSession is the rename card's session key: Den's own.
 const RenameSession = "den:rename"
 
+// SetupSession is the setup card's session key: Den's own.
+const SetupSession = "den:setup"
+
+// AddSetup adds Den's question: install Den's hooks and mods into Claude
+// Code? Only Den's own start-up check raises it, from its own findings;
+// one at a time, nil while one is open.
+func (s *Store) AddSetup(title string, body []string) *Item {
+	if s.hasOpen("", SetupSession, Setup) {
+		return nil
+	}
+	return s.add(&Item{SessionID: SetupSession, Kind: Setup, Tool: "setup", Title: title, Body: body})
+}
+
 // AddRulesPick adds Den's question: which of these proposed rules
 // become the project's rules?
 func (s *Store) AddRulesPick(sessionID, title string, body []string) *Item {
@@ -1034,9 +1078,78 @@ func (s *Store) AddCleanup(sessionID, title string, body []string) *Item {
 	return s.add(&Item{SessionID: sessionID, Kind: Cleanup, Tool: "worktree_cleanup", Title: title, Body: body})
 }
 
+// StartGrace is how long past its action's own timeout Den waits for a
+// Started item to settle.
+const StartGrace = 5 * time.Minute
+
+// Start records that an answer started the item's action, with what it
+// is doing ("closing…") and the action's own timeout: it waits for the
+// action to end, which settles it, and no one may answer it again
+// meanwhile. Den stops waiting StartGrace after the timeout (LoseStarted).
+func (s *Store) Start(it *Item, doing string, timeout time.Duration) {
+	it.Started, it.Resolved = true, sanitize.Line(doing)
+	it.StartedUntil = s.clock().Add(timeout + StartGrace)
+}
+
+// clock is the store's time now.
+func (s *Store) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
+
+// LoseStarted settles every Started item whose action never reported by
+// its deadline on the store's clock: Den lost track of it. It never
+// becomes answerable again, and nothing is retried. A send may still have
+// gone out, and its asker is told so. It returns the items it settled.
+func (s *Store) LoseStarted() []*Item {
+	now := s.clock()
+	var lost []*Item
+	for _, it := range s.items {
+		if it.Started && it.State != Resolved && now.After(it.StartedUntil) {
+			why := "Den lost track of this; check the agents"
+			if it.Kind == Message {
+				why = "Den lost track of this send; it may still have been sent, so check before sending again"
+			}
+			s.Settle(it, false, why)
+			it.Outcome = OutcomeLost
+			lost = append(lost, it)
+		}
+	}
+	return lost
+}
+
+// The outcomes of a Started item's action.
+const (
+	OutcomeDone   = "done"
+	OutcomeFailed = "failed"
+	OutcomeLost   = "lost"
+)
+
+// endStarted records how a Started item's action ended, and reports
+// whether the item may settle: a Started item settles once, so a late
+// report after LoseStarted settled it lost changes nothing.
+func endStarted(it *Item, allowed bool) bool {
+	if !it.Started {
+		return true
+	}
+	if it.State == Resolved {
+		return false
+	}
+	it.Outcome = OutcomeFailed
+	if allowed {
+		it.Outcome = OutcomeDone
+	}
+	return true
+}
+
 // Settle resolves a Close or Skills item with the outcome and sends it to whoever
 // asked. allowed says whether the close ran.
 func (s *Store) Settle(it *Item, allowed bool, outcome string) {
+	if !endStarted(it, allowed) {
+		return
+	}
 	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
 	if it.req == nil {
 		return
@@ -1051,9 +1164,28 @@ func (s *Store) Settle(it *Item, allowed bool, outcome string) {
 // SettleWith resolves an item with the outcome and answers whoever asked
 // with d as it is (its Data included).
 func (s *Store) SettleWith(it *Item, d bridge.Decision, outcome string) {
+	if !endStarted(it, d.Behavior == "allow") {
+		return
+	}
 	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
 	if it.req != nil {
 		it.req.Reply(d)
+	}
+}
+
+// Hold resolves an answered item whose reply must wait: the item shows
+// outcome, and the asker hears only what the returned reply sends, once,
+// later. A reply that already went is a no-op.
+func (s *Store) Hold(it *Item, outcome string) func(bridge.Decision) {
+	it.State, it.Resolved = Resolved, sanitize.Line(outcome)
+	req := it.req
+	sent := false
+	return func(d bridge.Decision) {
+		if req == nil || sent {
+			return
+		}
+		sent = true
+		req.Reply(d)
 	}
 }
 
@@ -1067,6 +1199,9 @@ func (s *Store) SessionClosedOn(host, sessionID string) {
 
 // Release hands a waiting permission back to the terminal dialog.
 func (s *Store) Release(it *Item, why string) {
+	if it.Started {
+		return // its action runs; only its end settles it
+	}
 	if it.req != nil {
 		it.req.Reply(bridge.Decision{})
 	}
@@ -1093,7 +1228,7 @@ func (s *Store) MarkRead(it *Item) {
 
 // Dismiss removes an item that needs no answer, or a resolved one.
 func (s *Store) Dismiss(it *Item) {
-	if it.Answerable() {
+	if it.Answerable() || it.Started && it.State != Resolved {
 		return
 	}
 	for i, o := range s.items {
@@ -1232,7 +1367,7 @@ func (s *Store) hasOpen(host, sessionID string, kinds ...Kind) bool {
 // nothing about them, and only their own outcome may answer whoever asked.
 func (s *Store) resolveSession(host, sessionID, why string, match func(*Item) bool) {
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && !it.DenAsks() && match(it) {
+		if it.is(host, sessionID) && it.State != Resolved && !it.Started && !it.DenAsks() && match(it) {
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{})
 			}
@@ -1263,7 +1398,9 @@ func (s *Store) cancelMessages(host, sessionID string) {
 		where = "on " + host
 	}
 	for _, it := range s.items {
-		if it.is(host, sessionID) && it.State != Resolved && it.Kind == Message {
+		// A Started send may have gone out: only its end, or LoseStarted,
+		// settles it.
+		if it.is(host, sessionID) && it.State != Resolved && !it.Started && it.Kind == Message {
 			it.State, it.Resolved = Resolved, "cancelled: the session "+where+" ended; nothing was sent"
 			if it.req != nil {
 				it.req.Reply(bridge.Decision{Behavior: bridge.SendCancelled, Message: "the request was " + it.Resolved})

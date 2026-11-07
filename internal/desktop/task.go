@@ -21,11 +21,13 @@ import (
 //     Den runs in and the agent view. No click, drag or scroll lands on
 //     them, no key goes to them, no window action targets them. When one
 //     is focused, no key, bind or typing at all.
-//   - Binds whose dispatcher ends the human's control: exit,
-//     forcerendererreload, any hyprctl through exec (reload, keyword,
-//     unbind…), the panic stop's bind, closing or killing while Den's
-//     window is active or by naming it, and sending keys to another
-//     window (pass, sendshortcut, sendkeystate).
+//   - Every bind whose dispatcher isn't on taskDispatch, Den's short list
+//     of window and workspace moves. Programs start only through launch,
+//     inside the mission's sandbox, so exec and every dispatcher Den can't
+//     check (a plugin's, a Lua function's) is refused, on use_bind, on a
+//     key combo, on typed text and on the mouse. A listed dispatcher that
+//     acts on Den's window, or names windows by class or title, is refused
+//     too. With no binds read, no combo runs.
 //   - Launching hyprctl or den directly (sec's P3).
 //
 // Binds are checked as Hyprland has them at that call (the snapshot is
@@ -75,6 +77,9 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 		if _, ok := s.Window(addr); !ok {
 			return deny("click_ui: no window %s", addr)
 		}
+		if why := refusedBinds(mouseBinds("click", str(args, "button"), s.Binds), m, s); why != "" {
+			return deny("click_ui runs a bind: %s", why)
+		}
 		args["window"] = addr
 		return Verdict{Kind: Allow, Args: args}
 	case "hypr":
@@ -92,6 +97,12 @@ func decideTask(tool string, args map[string]any, m Mission, s Snapshot) Verdict
 		args["then"] = "none"
 		if m.Protects(s.Active) {
 			return deny("use_bind: one of Den's own windows is focused; focus another window first")
+		}
+		if ns := newLayer(m, s); ns != "" {
+			return deny("use_bind: a layer surface (%s) opened during the task and may hold the keyboard; wait until it is gone", ns)
+		}
+		if len(s.Binds) == 0 {
+			return deny("use_bind: %s", noBinds)
 		}
 		combo := str(args, "combo")
 		if why := oneCombo(combo); why != "" {
@@ -148,6 +159,49 @@ func protectedAt(x, y float64, m Mission, s Snapshot) string {
 			return "the point is on the console's dock"
 		}
 	}
+	// A layer surface (a bar, a dock, a launcher, a notification) isn't a
+	// task's: what it opens runs outside the mission. Top and overlay
+	// surfaces lie over windows; background and bottom ones take the
+	// point only where no window is.
+	under := len(s.At(x, y)) > 0
+	for _, l := range s.Layers {
+		if l.Under(x, y) && (l.Level >= 2 || !under) {
+			return "the point is on a layer surface (" + sanitizeNS(l.Namespace) + "), not a window"
+		}
+	}
+	return ""
+}
+
+// sanitizeNS is a layer's namespace for a reason: short, printable.
+func sanitizeNS(ns string) string {
+	ns = sanitize.Line(ns)
+	if r := []rune(ns); len(r) > 40 {
+		ns = string(r[:40])
+	}
+	if ns == "" {
+		return "unnamed"
+	}
+	return ns
+}
+
+// LayerKey names one layer surface: its address, namespace and pid, so a
+// new surface given a closed one's address isn't taken for it.
+func LayerKey(l Layer) string {
+	return fmt.Sprintf("%s\x00%s\x00%d", l.Address, l.Namespace, l.PID)
+}
+
+// newLayer names a top or overlay surface that opened after the task
+// started, "" when none: one may hold the keyboard, so keys wait. The
+// console's own surfaces are the console's, judged elsewhere.
+func newLayer(m Mission, s Snapshot) string {
+	for _, l := range s.Layers {
+		if l.Level < 2 || l.W <= 0 || l.H <= 0 || l.PID > 1 && m.Console[l.PID] {
+			continue
+		}
+		if l.Address == "" || !m.LayersAtStart[LayerKey(l)] {
+			return sanitizeNS(l.Namespace)
+		}
+	}
 	return ""
 }
 
@@ -169,6 +223,9 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 		if why := protectedAt(x, y, m, s); why != "" {
 			return deny("pointer %s: %s", act, why)
 		}
+		if why := refusedBinds(mouseBinds(act, str(args, "button"), s.Binds), m, s); why != "" {
+			return deny("pointer %s runs a bind: %s", act, why)
+		}
 		if act == "drag" {
 			tx, okt := num(args, "to_x")
 			ty, oku := num(args, "to_y")
@@ -188,6 +245,9 @@ func taskPointer(args map[string]any, m Mission, s Snapshot) Verdict {
 
 func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 	args["then"] = "none"
+	if ns := newLayer(m, s); ns != "" {
+		return deny("keyboard: a layer surface (%s) opened during the task and may hold the keyboard; wait until it is gone", ns)
+	}
 	if m.Protects(s.Active) {
 		return deny("keyboard: one of Den's own windows is focused; focus another window first")
 	}
@@ -212,21 +272,19 @@ func taskKeyboard(args map[string]any, m Mission, s Snapshot) Verdict {
 		if text == "" {
 			return deny("keyboard type needs text")
 		}
-		// A typed character the human bound runs that bind: check it as one.
-		for _, b := range s.Binds {
-			if b.Mods&^modShift != 0 {
-				continue
-			}
-			if (len([]rune(b.Key)) == 1 && strings.Contains(strings.ToLower(text), b.Key)) || (b.Key == "space" && strings.ContainsRune(text, ' ')) {
-				if why := refusedBind(b, m, s); why != "" {
-					return deny("keyboard: typing %q runs a bind: %s", b.Key, why)
-				}
-			}
+		// Typing never runs a bind: a piece with a key the human bound
+		// with no modifier is refused, whatever the bind does, since even a
+		// focus move would send the rest of the piece elsewhere.
+		if k := boundText(text, s.Binds); k != "" {
+			return deny("keyboard: typing %q would run one of your binds; press it with keyboard key or use_bind instead", k)
 		}
 	case "key":
 		keys := str(args, "keys")
 		if keys == "" {
 			return deny("keyboard key needs keys")
+		}
+		if len(s.Binds) == 0 {
+			return deny("keyboard: %s", noBinds)
 		}
 		// One combo only, as hypruse takes it (T2), and never one the
 		// system takes for itself (T1).
@@ -277,6 +335,37 @@ func findBinds(combo string, binds []Bind) []Bind {
 	for _, b := range binds {
 		if b.Mods == mods && b.Key == key {
 			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// noBinds is why a combo is refused when Hyprland listed no binds: Den
+// can't tell what the combo runs, so it runs nothing.
+const noBinds = "Den could not read your binds, so no combo can be checked"
+
+// mouseBinds are the human's binds a pointer action fires with no key
+// held: a click's or drag's button, or the wheel for a scroll.
+func mouseBinds(act, button string, binds []Bind) []Bind {
+	var keys []string
+	if act == "scroll" {
+		keys = []string{"mouse_up", "mouse_down", "mouse_left", "mouse_right"}
+	} else {
+		switch button {
+		case "right":
+			keys = []string{"mouse:273"}
+		case "middle":
+			keys = []string{"mouse:274"}
+		default:
+			keys = []string{"mouse:272"}
+		}
+	}
+	var out []Bind
+	for _, b := range binds {
+		for _, k := range keys {
+			if b.Mods == 0 && b.Key == k {
+				out = append(out, b)
+			}
 		}
 	}
 	return out
@@ -340,34 +429,175 @@ var (
 	denWord     = regexp.MustCompile(`(^|[\s/;&|("'` + "`" + `])den([\s;&|)"'` + "`" + `]|$)`)
 )
 
-// refusedBind says why a bind is one task mode never runs, "" when it may.
-func refusedBind(b Bind, m Mission, s Snapshot) string {
-	d, arg := strings.ToLower(b.Dispatcher), strings.TrimSpace(b.Arg)
-	switch d {
-	case "exit", "forcerendererreload":
-		return "it ends the human's session or display (" + d + ")"
-	case "exec", "execr":
-		switch {
-		case hyprctlWord.MatchString(arg):
-			return "it runs hyprctl, which can reload, rebind or unbind the compositor"
-		case denWord.MatchString(arg):
-			return "it runs den, which holds the panic stop"
+// taskDispatch is every bind dispatcher task mode may run, and the shape
+// of its argument. Anything else is refused: a dispatcher Den doesn't
+// know (a plugin's, a Lua function's) can't be checked, and programs a
+// task opens start only through launch, inside the mission's sandbox.
+var taskDispatch = map[string]dispatchArg{
+	// Focus and view moves: no window is acted on.
+	"workspace": argView, "togglespecialworkspace": argView, "focusmonitor": argView,
+	"movefocus": argView, "cyclenext": argView, "focusurgentorlast": argView, "focuscurrentorlast": argView,
+	// The focused window; the argument names no window.
+	"killactive": argActive, "forcekillactive": argActive, "fullscreen": argActive, "fullscreenstate": argActive,
+	"centerwindow": argActive, "resizeactive": argActive, "moveactive": argActive, "swapnext": argActive,
+	"movewindow": argActive, "moveintogroup": argActive, "layoutmsg": argActive,
+	"togglesplit": argActive, "swapsplit": argActive, "splitratio": argActive, "togglegroup": argActive,
+	"changegroupactive": argActive, "lockactivegroup": argActive,
+	// The focused window and a direction, or the window the argument names.
+	"swapwindow": argDirOrAddress,
+	// The focused window, or the one the whole argument names.
+	"togglefloating": argWindow, "setfloating": argWindow, "settiled": argWindow, "pin": argWindow,
+	"pseudo": argWindow, "moveoutofgroup": argWindow,
+	// A workspace, then optionally ",<window>".
+	"movetoworkspace": argWorkspaceWindow, "movetoworkspacesilent": argWorkspaceWindow,
+	// One window, which the argument must name.
+	"focuswindow": argAddress, "closewindow": argAddress, "killwindow": argAddress,
+}
+
+type dispatchArg int
+
+const (
+	argView            dispatchArg = iota // acts on no window
+	argActive                             // acts on the focused window
+	argWindow                             // the focused window, or the argument's
+	argWorkspaceWindow                    // "<workspace>[,<window>]"
+	argAddress                            // the argument's window, which it must name
+	argDirOrAddress                       // a direction, or a window it must name
+)
+
+// Arguments for the argActive dispatchers, as Hyprland 0.56.2 parses them
+// (config/legacy/DispatcherTranslator.cpp). Each is a closed grammar: no
+// form names a window, so only the focused one is acted on. An argument
+// off the grammar is refused, even when Hyprland would read it.
+var (
+	dirWord    = `(l|r|u|d|left|right|up|down)`
+	number     = `[+-]?[0-9]+(\.[0-9]+)?`
+	vectorArgs = regexp.MustCompile(`^(exact )?` + number + `%? ` + number + `%?$`)
+	activeArgs = map[string]*regexp.Regexp{
+		"killactive":        regexp.MustCompile(`^$`),
+		"forcekillactive":   regexp.MustCompile(`^$`),
+		"centerwindow":      regexp.MustCompile(`^$`),
+		"togglegroup":       regexp.MustCompile(`^$`),
+		"togglesplit":       regexp.MustCompile(`^$`),
+		"swapsplit":         regexp.MustCompile(`^$`),
+		"fullscreen":        regexp.MustCompile(`^([0-2]( (toggle|set|unset))?)?$`),
+		"fullscreenstate":   regexp.MustCompile(`^-?[0-3]( -?[0-3])?$`),
+		"resizeactive":      vectorArgs,
+		"moveactive":        vectorArgs,
+		"swapnext":          regexp.MustCompile(`^(|l|last|prev|b|back|n|next|f|forward)$`),
+		"movewindow":        regexp.MustCompile(`^(` + dirWord + `|mon:[a-z0-9+_.-]+)( silent)?$`),
+		"moveintogroup":     regexp.MustCompile(`^` + dirWord + `$`),
+		"changegroupactive": regexp.MustCompile(`^(|f|b|next|prev|forward|back|-?[0-9]{1,3})$`),
+		"lockactivegroup":   regexp.MustCompile(`^(lock|unlock|toggle)$`),
+		"splitratio":        regexp.MustCompile(`^(exact )?` + number + `$`),
+	}
+	swapDir = regexp.MustCompile(`^` + dirWord + `$`)
+)
+
+// layoutVerbs are the layout messages of dwindle, master, scrolling and
+// monocle in 0.56.2. dwindle's movetoroot reads its first argument as a
+// window selector, so it is taken bare; every other argument must be one
+// of layoutWords or a number.
+var (
+	layoutVerbs = map[string]bool{
+		"togglesplit": true, "swapsplit": true, "rotatesplit": true, "movetoroot": true, "preselect": true,
+		"splitratio": true, "swapwithmaster": true, "focusmaster": true, "cyclenext": true, "cycleprev": true,
+		"swapnext": true, "swapprev": true, "addmaster": true, "removemaster": true, "orientationleft": true,
+		"orientationright": true, "orientationtop": true, "orientationbottom": true, "orientationcenter": true,
+		"orientationnext": true, "orientationprev": true, "orientationcycle": true, "mfact": true,
+		"rollnext": true, "rollprev": true, "move": true, "colresize": true, "fit": true, "focus": true,
+		"promote": true, "consume": true, "expel": true, "consume_or_expel": true, "swapcol": true,
+		"center": true, "inhibit_scroll": true, "fit_into_view": true,
+	}
+	layoutWords = map[string]bool{
+		"exact": true, "master": true, "child": true, "auto": true, "ignoremaster": true, "previous": true,
+		"noloop": true, "all": true, "+conf": true, "-conf": true, "col": true, "+col": true, "-col": true,
+		"active": true, "expand": true, "toend": true, "tobeg": true, "visible": true, "prev": true,
+		"next": true, "l": true, "r": true, "u": true, "d": true, "t": true, "b": true, "left": true,
+		"right": true, "up": true, "down": true, "true": true, "false": true,
+	}
+	layoutNumber = regexp.MustCompile(`^` + number + `%?$`)
+)
+
+// badActiveArg says why a focused-window dispatcher's argument is refused,
+// "" when it is in the grammar.
+func badActiveArg(d, arg string) string {
+	why := "its argument (" + arg + ") is not one Den can check; only directions, monitors and numbers are taken"
+	if d == "layoutmsg" {
+		f := strings.Fields(arg)
+		if len(f) == 0 || !layoutVerbs[f[0]] || f[0] == "movetoroot" && len(f) > 1 {
+			return why
 		}
-	case "killactive", "forcekillactive":
-		if m.Protects(s.Active) {
-			return "it closes the focused window, which is one of Den's own"
-		}
-	case "closewindow", "killwindow", "movetoworkspace", "movetoworkspacesilent", "movewindow", "pin", "togglefloating", "fullscreen":
-		for addr := range m.Protected {
-			if strings.Contains(strings.ToLower(arg), strings.ToLower(addr)) || strings.Contains(strings.ToLower(arg), strings.TrimPrefix(strings.ToLower(addr), "0x")) {
-				return "it acts on one of Den's own windows"
+		for _, w := range f[1:] {
+			if !layoutWords[w] && !layoutNumber.MatchString(w) {
+				return why
 			}
 		}
-		if (d == "closewindow" || d == "killwindow") && !strings.Contains(strings.ToLower(arg), "address:") {
-			return "it closes windows matched by class or title, which could be Den's"
+		return ""
+	}
+	if re, ok := activeArgs[d]; !ok || !re.MatchString(arg) {
+		return why
+	}
+	return ""
+}
+
+// addressArg is the one window form task mode takes: Hyprland reads a bare
+// word, "floating", "tiled" or "activewindow" as a selector too, and a
+// class regex could match Den's window.
+var addressArg = regexp.MustCompile(`^address:0x[0-9a-z]+$`)
+
+// refusedBind says why a bind is one task mode never runs, "" when it may.
+func refusedBind(b Bind, m Mission, s Snapshot) string {
+	d, arg := strings.ToLower(strings.TrimSpace(b.Dispatcher)), strings.ToLower(strings.TrimSpace(b.Arg))
+	kind, ok := taskDispatch[d]
+	if !ok {
+		return "task mode runs only binds whose action Den can check (" + d + "); open apps with launch"
+	}
+	window := ""
+	switch kind {
+	case argView:
+		return ""
+	case argActive:
+		if why := badActiveArg(d, arg); why != "" {
+			return why
 		}
-	case "pass", "sendshortcut", "sendkeystate":
-		return "it sends keys to another window by name"
+	case argDirOrAddress:
+		if !swapDir.MatchString(arg) {
+			if m.Protects(s.Active) {
+				return "it acts on the focused window, which is one of Den's own"
+			}
+			window = arg
+		}
+	case argWindow, argAddress:
+		window = arg
+	case argWorkspaceWindow:
+		if _, w, found := strings.Cut(arg, ","); found {
+			window = strings.TrimSpace(w)
+			if window == "" {
+				return "it names an empty window"
+			}
+		}
+	}
+	if window == "" {
+		if kind == argAddress || kind == argDirOrAddress && arg == "" {
+			return "it must name one window by address"
+		}
+		if m.Protects(s.Active) {
+			return "it acts on the focused window, which is one of Den's own"
+		}
+		return ""
+	}
+	if !addressArg.MatchString(window) {
+		return "it names windows by " + window + ", which could match Den's; only address:0x… is taken"
+	}
+	addr := strings.TrimPrefix(window, "address:")
+	for p := range m.Protected {
+		if strings.EqualFold(p, addr) {
+			return "it acts on one of Den's own windows"
+		}
+	}
+	if _, ok := s.Window(addr); !ok {
+		return "it names no window that exists (" + addr + ")"
 	}
 	return ""
 }

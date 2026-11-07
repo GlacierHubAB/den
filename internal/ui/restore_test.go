@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/closer"
 	"github.com/GlacierHubAB/den/internal/fleet"
 	"github.com/GlacierHubAB/den/internal/inbox"
@@ -86,6 +87,7 @@ func restoreModel(t *testing.T) (Model, *fakeRestoreRun) {
 	r.Saved = before.Add(time.Hour)
 
 	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), width: 120, height: 40, tree: newTreeState(), tab: tabFleet}
+	atDefaults(&m)
 	m.cfg.Restore.Ask = true
 	m.cfg.Orchestrator.Spawn = true
 	m.cfg.Orchestrator.Name = "den-orchestrator"
@@ -138,7 +140,7 @@ func TestRestartAsksOnceAboutTheGoneAgents(t *testing.T) {
 	body := strings.Join(items[0].Body, "\n")
 	for _, want := range []string{
 		"Snug Capybara · release lead · Sonnet 5.5 · /home/u/code/demo-app",
-		"under the orchestrator · mission ship 2.0 · last seen 2h ago · 123k tokens to reload, ≈ $0.309",
+		"under the orchestrator · mission ship 2.0 · last seen 2h ago · reopens in default · 123k tokens to reload, ≈ $0.309",
 		"Mossy Lemur · coding agent · Haiku 4.5",
 		"under Snug Capybara",
 		"≈ $0.359 in all",
@@ -365,6 +367,7 @@ func TestRestoreUsesTheModelOutsidePlanMode(t *testing.T) {
 	os.WriteFile(filepath.Join(proj, "brave-ferret.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644)
 	a := roster.Agent{SessionID: "brave-ferret", Critter: "Brave Ferret", Model: "claude-sonnet-5-5", CWD: "/home/u/code/demo-app"}
 	m := Model{st: newStyles(theme.Deepharness), store: inbox.New(), width: 120, height: 40, tree: newTreeState()}
+	atDefaults(&m)
 	m.ensureRestore()
 	reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{a}})
 	if len(reqs) != 1 || reqs[0].Model != "claude-haiku-4-5-20251001" {
@@ -378,5 +381,59 @@ func TestRestoreUsesTheModelOutsidePlanMode(t *testing.T) {
 	os.WriteFile(filepath.Join(proj, "brave-ferret.jsonl"), []byte(strings.Join(lines[2:], "\n")+"\n"), 0o644)
 	if reqs := m.restoreRequests(restorePlan{agents: []roster.Agent{a}}); reqs[0].Model != "claude-sonnet-5-5" {
 		t.Errorf("unrecorded: %+v", reqs[0])
+	}
+}
+
+// The mode a Restore card says an agent reopens in is the most it reopens
+// in: a raise of the global mode before the answer does not reach it (the
+// card, and its hash, are unchanged), and a lowering since still applies.
+func TestReopenNeverExceedsTheModeItsCardShowed(t *testing.T) {
+	ask := func(t *testing.T, global string) (Model, *fakeRestoreRun, *inbox.Item) {
+		m, fake := restoreModel(t)
+		for i := range m.restore.r.Agents {
+			if m.restore.r.Agents[i].SessionID == "comet-newt" {
+				m.restore.r.Agents[i].Mode = "auto"
+			}
+		}
+		m.mode.global = global
+		mm, _ := m.reopenCommand([]string{"Comet", "Newt"})
+		m = mm.(Model)
+		items := restoreItems(m)
+		if len(items) != 1 {
+			t.Fatalf("items = %+v", items)
+		}
+		return m, fake, items[0]
+	}
+
+	// Asked at default; the global mode raised to auto; answered from the
+	// dock on the hash it read.
+	m, fake, it := ask(t, "default")
+	read := api.ProjectCard(m.dockCard(it))
+	if !strings.Contains(read.Body, "reopens in default") {
+		t.Fatalf("card body %q", read.Body)
+	}
+	m.mode.global = "auto"
+	m.tab, m.inboxSel = tabFleet, ""
+	if now := api.ProjectCard(m.dockCard(it)); now.HashV2 != read.HashV2 {
+		t.Fatalf("the card moved with the global mode: %q", now.Body)
+	}
+	a := &api.CardAnswer{ID: it.ID, Hash: read.HashV2, Version: 2, Verb: "allow", Console: "app-host", Reply: make(chan api.CardResult, 1)}
+	// The reply is "answered in part" while the agents reopen; what
+	// matters here is the mode they reopen in.
+	cmd := m.answerFromDock(a)
+	if r := <-a.Reply; r.Code == api.CodeCardChanged || r.Code == api.CodeRefusedFromDock {
+		t.Fatalf("dock answer: %+v", r)
+	}
+	runCmds(cmd)
+	if len(fake.reqs) != 1 || fake.reqs[0].PermissionMode != "default" {
+		t.Errorf("after a raise to auto: requests %+v, want default", fake.reqs)
+	}
+
+	// Asked at auto; the global mode lowered to default before ^Y.
+	m, fake, _ = ask(t, "auto")
+	m.mode.global = "default"
+	runRestore(t, m)
+	if len(fake.reqs) != 1 || fake.reqs[0].PermissionMode != "default" {
+		t.Errorf("after a lowering to default: requests %+v, want default", fake.reqs)
 	}
 }

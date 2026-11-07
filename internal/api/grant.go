@@ -87,6 +87,11 @@ type Act struct {
 	ModeSet *ModeSet
 	// ConsolePowers asks the human to give the console its powers again.
 	ConsolePowers *ConsolePowersAsk
+	// GrantsLowered says a console lowered a class, for Den's chat.
+	GrantsLowered *GrantsLowered
+	// GrantsChanged says the levels' read changed: Den publishes again, so
+	// each card's listing follows the levels at once.
+	GrantsChanged bool
 	// View is a view switch to carry out: only the UI knows the sessions
 	// and what is waiting on the human.
 	View *ViewReq

@@ -156,7 +156,7 @@ func TestReadLayersAndBinds(t *testing.T) {
 		t.Fatalf("%+v", top)
 	}
 	bs, err := readBinds([]byte(`[{"modmask":72,"key":"Return"},{"modmask":0,"key":"mouse:272","mouse":true},{"modmask":24,"key":"Tab"}]`))
-	if err != nil || len(bs) != 2 || bs[0].Key != "return" || bs[1].Mods != modAlt {
+	if err != nil || len(bs) != 3 || bs[0].Key != "return" || bs[1].Key != "mouse:272" || bs[2].Mods != modAlt {
 		t.Fatalf("%v %+v", err, bs)
 	}
 }

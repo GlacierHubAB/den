@@ -61,10 +61,28 @@ func TestSocketLimits(t *testing.T) {
 			t.Error("a held request lost its decision")
 		}
 	}
-	// Room again once they are answered.
-	go func() { r := <-srv.Requests(); r.Reply(Decision{Behavior: "deny"}) }()
+	// Room again once they are answered: a connection gives its slot back
+	// when it ends, which may be after its caller has the decision.
+	heldDrains(t, srv)
+	go func() {
+		if r, ok := <-srv.Requests(); ok { // closed: the test ended first
+			r.Reply(Decision{Behavior: "deny"})
+		}
+	}()
 	if d, ok := Ask(path, Envelope{Event: "PermissionRequest", SessionID: "s1", Payload: small}, 3*time.Second); !ok || d.Behavior != "deny" {
 		t.Errorf("after the others were answered: %+v %v", d, ok)
+	}
+	// Every connection is done with MaxHeld before the cleanup puts it back.
+	heldDrains(t, srv)
+}
+
+// heldDrains waits until no connection of srv holds a slot.
+func heldDrains(t *testing.T, srv *Server) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); srv.held.Load() != 0; time.Sleep(5 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%d connections still hold a slot", srv.held.Load())
+		}
 	}
 }
 

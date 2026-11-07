@@ -3,8 +3,8 @@
 Den keeps a stream of what happens to your agents for scripts:
 `~/.local/state/den/events.jsonl` (under `$XDG_STATE_HOME/den/` when set), one
 JSON object per line. `den hook` appends to it as Claude Code's hooks fire, so
-it fills whether or not Den is running. The running Den adds the two kinds only
-it can tell: `stalled` and `still_waiting`. `events.log = false` stops the
+it fills whether or not Den is running. The running Den adds the kinds only it
+can tell: `stalled`, `still_waiting` and `focus_failed`. `events.log = false` stops the
 stream. When the file passes 4 MB it moves to `events.jsonl.1` and starts again.
 
 An event carries metadata only: what happened, to which session, the agent's
@@ -68,6 +68,7 @@ and, by kind:
 | `tool_failed` | a tool call failed (`PostToolUseFailure`) | `tool`: the tool name |
 | `stalled` | Den saw the agent working with no hook event for `stuck.stalled` minutes | `minutes` |
 | `still_waiting` | a request is still waiting on you after `notify.remind` minutes (Den) | `request`, `minutes` |
+| `focus_failed` | Den refused an app's `focus` (den-api.sock, see [DREY-API.md](DREY-API.md)) | `reason`: a code from the closed list there, e.g. `no_window`. `session` and `agent` are the agent's when the app named one of this machine, else empty; never the target the app sent |
 
 ```json
 {"v":1,"time":"2026-10-11T21:22:46.685Z","kind":"needs_you","session":"11111111-2222-4333-8444-555555555555","agent":"Mossy Lemur","request":"permission","tool":"Bash"}
@@ -93,7 +94,8 @@ without a new `v`.
 ## Commands on events
 
 The `[on]` section of `config.toml` runs a shell command (`sh -c`) per event
-kind while Den is running. It is empty by default.
+kind while Den is running, for every kind but `focus_failed`. It is empty by
+default.
 
 ```toml
 [on]

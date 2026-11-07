@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/GlacierHubAB/den/internal/gitenvtest"
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
 // realEnv is the environment as the test process started, before Local.Apply
@@ -90,10 +91,13 @@ func sweepStale(base string) {
 	}
 }
 
-// Main is an optional TestMain body that removes the shared build when the
-// package's tests finish: func TestMain(m *testing.M) { os.Exit(sshtest.Main(m)) }.
-// Without it the build is swept by the next run once its pid is gone.
+// Main is the TestMain body of a package that seeds sessions: func
+// TestMain(m *testing.M) { os.Exit(sshtest.Main(m)) }. A seeded session's
+// process is the test binary as a stand-in, which Main makes only sleep. Main
+// also removes the shared build when the package's tests finish; without it
+// the build is swept by the next run once its pid is gone.
 func Main(m *testing.M) int {
+	teststandin.Main()
 	gitenvtest.Scrub() // the labs and the tests' git start without an inherited GIT_DIR
 	code := m.Run()
 	if buildPath != "" {

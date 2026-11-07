@@ -27,3 +27,13 @@ func TestCleanEventKeepsOnlyTheSourcesDenHookWrites(t *testing.T) {
 		}
 	}
 }
+
+// A focus_failed is only ever this Den's own: a host's is dropped, whatever
+// reason it carries.
+func TestCleanEventDropsAHostsFocusFailed(t *testing.T) {
+	for _, reason := range []string{"no_window", "a host's own words"} {
+		if _, ok := cleanEvent(events.FocusFailedEvent(reason, sidA, "Mossy Lemur"), "devbox"); ok {
+			t.Errorf("a host's focus_failed (%q) was kept", reason)
+		}
+	}
+}

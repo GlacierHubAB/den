@@ -104,7 +104,7 @@ the connection's first `hello`, and a later `hello` with another value gets
 | `inbox.events` | | `{subscribed:true}`, then `inbox` events `{change: added\|answered, item}` |
 | `inbox.body` | `{id}` | `{id, kind, text, hash}` for a request on this machine; `unavailable` for one from another machine |
 | `mission.list` | | `[Mission]` |
-| `focus` | `{target}` an agent's id or the name Den gave it | `{focused}`: that agent's terminal comes to the front. An inbox item answers `unavailable` (open the Inbox in Den), as do an agent on another machine and any focus within 1.5 s of your last key in Den. One per app every 3 s, ten a minute in all. Den's own view, selection and command line never change. |
+| `focus` | `{target}` an agent's id or the name Den gave it | `{focused}`: that agent's terminal comes to the front. An inbox item answers `unavailable` (open the Inbox in Den), as do an agent on another machine and any focus within 1.5 s of your last key in Den. One per app every 3 s, ten a minute in all. Den's own view, selection and command line never change. A refusal carries `error.data.reason`, a code from a closed list (see "Focus refusals"); `error.message` is free text for a human. |
 | `ask` | `{text, session?}` | `{session, ask}`, then `chat` events until a `done` or `error` chunk. `ask` is 128 random bits, told only to the connection that asked: it is what cancels the ask, so keep it to yourself |
 | `ask.cancel` | `{ask}` | `{cancelled:true}`; the ask's stream ends with an `error` chunk `"cancelled"`. It takes the ask's id, on any connection of the program that asked; any other id is `not_found` |
 | `chat.history` | `{session}` | `[Message]` of an ask session |
@@ -119,6 +119,33 @@ console's. Control's verbs (`pair.claim`, `pair.challenge`, `pair.auth`,
 `cmd.*`) under Console. This release
 also answers `unsupported` for `theme.get`, `mission.start`,
 `mission.drop` and `view.data`.
+
+### Focus refusals
+
+A refused `focus` answers `not_found` or `unavailable` with
+`error.data.reason`, a code from this closed list. Key on the reason,
+never on `error.message`, which is free text for a human and may change.
+`data` holds the reason only: never the target you sent, and never what the
+compositor said. A code you do not know means Den could not focus it.
+
+| `reason` | `code` | when |
+|---|---|---|
+| `no_agent` | `not_found` | no agent by that id or name in Den's list |
+| `ambiguous` | `not_found` | more than one agent has that name: name it by its id |
+| `inbox_item` | `unavailable` | the target is an inbox item: open the Inbox in Den |
+| `remote` | `unavailable` | the agent runs on another machine |
+| `not_running` | `unavailable` | the agent has ended |
+| `waits_on_terminal` | `unavailable` | it waits on its own terminal |
+| `human_typing` | `unavailable` | within 1.5 s of the human's last key in Den |
+| `rate_limited` | `unavailable` | past one per app every 3 s, or ten a minute |
+| `busy` | `unavailable` | Den could not take the request now |
+| `no_answer` | `unavailable` | Den's UI did not answer within 3 s |
+| `no_window` | `unavailable` | Den knows no window, nor a herdr pane, for it |
+| `compositor_error` | `unavailable` | the compositor did not focus it |
+
+The rows of `internal/api/convcases/focus.go` (`FocusCases`) pin it. Den
+also writes each refusal to its event stream as a `focus_failed`
+(docs/EVENTS.md) when `[events] log` is on.
 
 ## Grants
 
@@ -172,10 +199,32 @@ no transcript, and no request body outside `inbox.body`.
   label; what their hosts report is passed on as labels, never as Den's own
   words. Windows of agents on other machines are not listed. `color` is the
   colour Den draws an agent of this machine in, its critter and an `@Name`
-  in Den's own text, as `#rrggbb`; agents on other machines have none.
-  Den colours a name only where it is Den's word that the agent is in the
-  fleet: never inside an agent's or a host's own text, and never a name two
-  local agents share. `permission_mode` is the mode an agent of this machine
+  in Den's own text, as `#rrggbb` in lower case; agents on other machines
+  have none. It is Den's own display colour, assigned by Den and never
+  taken from anything an agent writes, and not a closed set: the theme's own
+  hues, topped up from Den's curated list (`internal/theme` `Hues`, the
+  same list agent-badge uses). Den draws, and sends, only a colour the
+  agent colour rule takes (`theme.AgentColor`, the dock's own display
+  rule): it reads on the dock's dark and mid surfaces, is no grey and no
+  purple, and is neither in a meaning band nor near a meaning colour. A
+  record that fails it is sent as no `color`. `color` is always a colour of
+  Den's current palette (the theme's hues that pass the agent colour rule,
+  then Den's curated list), assigned by Den. A colour record
+  (`colors.json`) entry outside that palette is replaced, never sent. Den
+  takes colours from the record only once, at its first assignment after
+  it starts; after that it only writes its own copy back. The rows of
+  `internal/api/convcases/colorrule.go` (`ColorRuleCases`) pin the rule,
+  with each colour's first failing check. Key it on the agent's `id`. It stays with the
+  session id: a rename never changes it, and across a Den restart the agent
+  keeps it while the palette still offers it and no older session holds it.
+  It can change when the human changes theme, when there are more live
+  agents than hues (they repeat, and a restart can reshuffle them), and
+  when the agent is gone; draw from the latest fleet. Two local agents that
+  share a name each still carry theirs. In Den's text, Den colours a name
+  only where it is Den's word that the agent is in the fleet: never inside
+  an agent's or a host's own text, and never a name two local agents share.
+  The rows of `internal/api/convcases/color.go` (`ColorCases`) pin the
+  field. `permission_mode` is the mode an agent of this machine
   runs in as its own hooks last reported it (`default`, `acceptEdits`,
   `plan`, `auto`, `dontAsk`, `bypassPermissions`, or `unknown` for a value
   Den does not know); it is absent when none reported one. The fleet's
@@ -828,6 +877,8 @@ Each connection proves once, at its start:
 | `conversation.history` | `{limit?}`, at most 200 | `{entries}`, newest first: the conversation entries since it was shown in this console (see Conversation mirror); `forbidden` while it is not |
 | `card.get` | `{id}` | the card and a `nonce` |
 | `card.answer` | `{id, text_sha256, nonce, verb}` | `{ok, result, note}` |
+| `grants.get` | `{}` | the permission levels (see Permission levels); this connection then gets `grants` events |
+| `grants.lower` | `{class, level, seq}` | the levels after it |
 | `cmd.list` | | `[{name, usage, help, dock}]` |
 | `cmd.complete` | `{prefix}` | the commands that start with it, at most 64 |
 | `cmd.run` | `{text}` | `{ok, note}` |
@@ -894,7 +945,7 @@ same way. A later kind that carries state joins the snapshot.
 - `view {view, shown, total}`: how a `view.show` or `view.hide` ended, as in
   "Switching views". In the snapshot it is the view now, with the last
   switch's `shown` and `total` while that switch made it, else 0.
-- `card {id, kind, agent, change, text_sha256?, needs_den_screen?, result?, by?}`: `change` is
+- `card {id, kind, agent, change, text_sha256?, needs_den_screen?, started?, result?, by?, outcome?}`: `change` is
   `new`, `changed` or `settled`. A new or changed card the console may
   not answer (`dock_answers` false) carries `needs_den_screen: true`: only
   your answer on Den's own screen settles it. A settled card has no
@@ -903,6 +954,18 @@ same way. A later kind that carries state joins the snapshot.
   an answer), and `by` is `den`, `console` or `rule` (God mode answered
   it), absent for `gone`. Take any `by` you do not know as Den's own
   answer, never the console's or yours, and never drop the event for it.
+- A card whose answer started an action that runs for a while (a close, a
+  reopen) is not settled by the answer. It comes once more as `changed`
+  with `started: true` and `by` (who answered), its `text_sha256` the
+  same, and no `needs_den_screen`: it runs, and no one answers it. It is
+  settled once, when the action ends, with `result`, `by` and `outcome`:
+  `done`, `failed` (it did not all go: an agent was not closed or not
+  reopened) or `lost` (Den lost track of it: check the agents). `outcome`
+  is only ever on the settled event of a card that was started; read an
+  unknown value as `lost`. `started` never goes back, and settled is
+  final: there is one settled event per card. A card a console may not
+  answer, or one from a host, never comes as started: it settles when its
+  answer starts the action, with `result` and `by` and no `outcome`.
 - `god {on, since?}`: God mode went on or off (see God mode), on the
   console's `console.events` connections; in the snapshot, where it is.
 - `mode {global, mixed}`: the permission mode changed (see Permission
@@ -929,10 +992,14 @@ same way. A later kind that carries state joins the snapshot.
 ### Cards
 
 - `card.get {id}` answers `{id, kind, agent, agent_id?, tool, title, note, class,
-  step, body, text_sha256, truncated, cut_at?, verbs, dock_answers, nonce}`
-  (`agent_id` is not in the hash): the card
+  step, body, text_sha256, truncated, cut_at?, verbs, dock_answers, started?, by?, nonce}`
+  (`agent_id`, `started` and `by` are not in the hash): the card
   as Den shows it, and a nonce for one answer, on this connection, for ten
-  minutes. Show all of it, `note` (a warning Den shows) too.
+  minutes. Show all of it, `note` (a warning Den shows) too. A started
+  card (`started: true`, `by` who answered) is listed until its action
+  ends, with `verbs` empty and `dock_answers` false, its text as it was
+  when it started; show it as running. The snapshot's cards carry the
+  same.
 - `class` and `step` are what your `allow` on the card does, as Den classed
   it from its own record: `class` is `routine`, `destructive`, `code`,
   `desktop`, `outward` or `den_only`; `step` is the class's step, routine
@@ -958,7 +1025,9 @@ same way. A later kind that carries state joins the snapshot.
 - `card.answer` takes `verb` `allow`, `deny` or `always`, one of the card's
   `verbs`, with the hash and nonce of a `card.get`. Den answers it as your
   `Ctrl+Y` would, and replies once it is settled. Refusals:
-  - `not_found`: no such card, or it was answered;
+  - `not_found`: no such card, or it was answered (a started card is
+    refused so before any check of hash or nonce, and the nonce is spent);
+    final, never retry;
   - `nonce_expired`: spent, too old, or from another connection;
   - `card_changed`: the card is not what you read: get it again;
   - `hash_version`: the `text_sha256` is the card's hash in the other
@@ -976,6 +1045,128 @@ same way. A later kind that carries state joins the snapshot.
   orchestrator guidance, installing on a host, a message to an agent on a
   host, an app's grant, skills, an agent's question, and any card of or
   about a remote host.
+
+### Permission levels
+
+What your console may do on its own, per class of act, as levels 0 to 5:
+Den sets them, and a console may lower them for the Den session, never
+raise them. **They are enforced** (`enforced: true`): a console's "allow"
+on a card is taken only inside its class's level, or by an active kept
+entry; "deny" is always taken while the console has its powers (saying
+no, pausing and stopping are always allowed from the console).
+
+- **What card.get offers:** a card lists only what your console may give
+  now. With its class at the card's step (or an active kept entry), its
+  verbs as before. Otherwise, with a deny verb: `dock_answers: true` and
+  verbs `["deny"]` only (allowing is done in Den); with none:
+  `dock_answers: false`. ModeSet, UsageSet, UsageResume, ControlAsk and
+  MissionMove are deny-only for every console at every level: a console
+  can raise them itself, and allowing them would make Den less careful
+  (#63 for MissionMove). The lock, the powers and the class limit are
+  refused at answer time only, so they never change a listing.
+- **The listing is outside the card hash:** when it changes (a lowering,
+  the start confirm, kept turning active, a removal, God mode), the card's
+  event says `changed` with the same hash, and you read it again. An
+  answer on a listing you read before the change is refused, never taken:
+  Den decides at answer time, on its own loop, from its own record of the
+  card.
+- **card.answer's refusals** besides the old ones: `below_level` (the
+  class is set below the card's step, or the card is Den's alone), with
+  `data: {"class": "<class>"}` (`den_only` included); `rate_limited` (an
+  allow above routine, or by kept, within 3 s of the last such allow
+  taken, or past 10 taken in a minute; refusals never count);
+  `powers_locked` (the lock, or Den's levels held after another program
+  changed them); and `hash_version` for every answer on a connection that
+  kept card hash v1: say `card_hash: 2` in hello. The rows of
+  `internal/api/convcases/answer.go` (`AnswerCases`) pin all of this.
+
+- `grants.get {}` needs a proved console and changes nothing. It answers
+  `{seq, enforced, powers, locked, god, start_confirmed, raise_epoch,
+  classes, kept, den_only}`, and from then on this connection gets a `grants` event with
+  the same object on each change. `console.events` does not carry it.
+- `seq` rises on each change; it is per Den process. On one connection, keep
+  the object with the highest `seq` (the reply's included) and drop an event
+  whose `seq` is not higher. After a redial, forget it and call `grants.get`
+  again. The rows of `internal/api/convcases/grants.go` (`GrantsCases`,
+  `GrantsSeqCases`) pin the object and this rule.
+- `powers`: your console has its powers. Without them, or while `locked`
+  (the human's `/api lock`), every class's `level` is 0. Read a missing
+  `powers` or `enforced` as false.
+- `start_confirmed` is false from each Den start until the human presses
+  Ctrl+Y on Den's powers card in Den's window. Until then, each class's cap
+  is at most its default (a class above its default reads at the default).
+  Nothing your console does confirms it.
+- `god`: God mode is on; `desktop` and `outward` show `level` 0 meanwhile.
+- `classes`, in this order: `routine` (Everyday answers), `destructive` (Stop
+  and close), `code` (Run commands), `desktop` (Desktop control), `outward`
+  (Send out). Each is `{class, label, about, den_level, session, level,
+  default, steps, set_in_den, raise_n, raised_at}`: `den_level` is the level Den keeps across
+  its restarts; `level` is the effective level now, min(`den_level`,
+  `session.level`), at most `default` until `start_confirmed`, then 0 as
+  above; `steps`
+  has five entries, levels 1 to 5, each `{level, name, label, available}`
+  (a level the class has no step for is `available: false`, label "No
+  further step"); level 0, the empty bar, is "Only in Den". `session` is
+  `{level, at, console}` while a console's lowering holds for this Den
+  session (`console` is Den's label for it, `at` Den's clock), else null.
+  `set_in_den` is `{"at": "<RFC 3339 UTC>"}` while the human last set the
+  class in Den's window (`/permissions`), else null: shown only, never a
+  level. Only the human raises a class, in Den's window with Ctrl+Y on its
+  question, and a console hears it as a `grants` event like any change;
+  no verb raises one. A human's lowering in Den keeps your session when
+  it is below the new `den_level`.
+- The raise counter, for your own lowering's re-send: `raise_epoch` (top
+  level, 32 hex digits) and, per class, `raise_n` (a count from 0) and
+  `raised_at` (the last raise's RFC 3339 UTC time, or null, shown only).
+  Only the human's raise of a class in Den's window counts its `raise_n`
+  up, by one, and a raise always moves `seq`. Nothing else ever counts up.
+  Den starts the counter again, every `raise_n` 0 under a new
+  `raise_epoch`, when it cannot vouch for its stored levels at start, and
+  at a new pairing. Your rule, on one read and with that read's `seq`,
+  against the epoch and count you held when you made your lowering:
+  - same epoch, `raise_n` above yours: the human raised over it, so drop
+    your lowering;
+  - same epoch, the same `raise_n`: keep it, and re-send it with this
+    read's `seq`;
+  - a new epoch, `raise_n` above 0: the human raised since, so drop it;
+  - a new epoch, `raise_n` 0: take the new epoch and 0 as yours, and keep
+    it.
+
+  A re-send that crosses a raise is `stale`: read again and apply the
+  rule. Den never reads these fields to decide a level, a cap or an
+  answer. The `GrantsCases` row "a class the human raised in Den's
+  window" pins them.
+- `grants.lower {class, level, seq}` lowers one class for this Den session:
+  for a proved connection of the console paired now, with or without its
+  powers, locked or in God mode (a lowering is always allowed). `level` and
+  `seq` are JSON integers; `seq` is the read's you hold. Den checks, in
+  this order: `forbidden` (not the console paired now); `bad_request` (a
+  class or level outside the sets, or not a plain integer: never coerced);
+  `stale` (the levels changed since your read: read them again);
+  `not_lower` (the level is not below the class's cap, min(`den_level`,
+  `session.level`): a raise, the same level, or a class at 0; nothing
+  changes). Taken, the reply is the new read and the other connections get
+  a `grants` event. A lowering lasts until Den restarts. Re-send yours
+  after a reconnect, and count it held only by the cap the read shows,
+  never by the reply code or by `level` (a lock puts `level` at 0).
+- A new pairing (any pairing but your service's reconnect after its own
+  restart, or the console Den restores after its restart) puts each class's
+  `den_level` at the lowest of its default, its `den_level` and its
+  `session.level`, and clears the sessions and kept: a lowering is then
+  part of `den_level`, and a re-send of it is `not_lower`, held by the cap.
+- `grants.lower {kept, seq}` removes a kept entry for good (`"*"` every
+  one): `bad_request` for an id outside the list, `stale`, `not_lower` for
+  an entry not held. It cannot be undone, even in Den. The rows of
+  `internal/api/convcases/lower.go` (`LowerCases`) pin the lowering and
+  this. Den's window notes each class lowering in its chat.
+- `kept`: what a pairing that existed when the levels came kept answering,
+  as `{id, label, active}`: granted once, at that upgrade, and only ever
+  fewer. `active` is false until `start_confirmed`, while locked or
+  without powers, and in God mode for `budget`, `merge` and `always`. An
+  active entry covers its kind's allow while the card's class is not
+  lowered below the card's step. `den_only` lists what only the human
+  does, in Den's window, as `{id, label}`.
+- Every string is Den's own fixed words.
 
 ### Commands
 
@@ -1143,12 +1334,22 @@ powers receives it, and every console is on this machine: den-api.sock is a
 local socket open to this user only.
 
 - Each `conversation` entry is `{id, at, turn?, origin, speaker, agent?,
-  agent_id?, ending?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
+  agent_id?, ending?, card?, console?, text}`; `agent_id` is the reporting agent's id. `id` rises with each entry and is the same in
   `conversation.history`, so merge the backfill and the live entries by it.
   `at` is RFC3339 UTC, Den's clock.
 - `origin` (a closed set): `you` (the human typed it in Den), `console` (a
   console or app sent the turn), `report` (an agent reported), `mission` (Den
-  drives a mission run), `desktop` (a desktop mission's agent reported).
+  drives a mission run), `desktop` (a desktop mission's agent reported),
+  `card` (a close or reopen a console answered ended).
+- Origin `card` has speaker `den`, `card` (the card's id: its settled event
+  carries the same end, so show it once) and Den's fixed line, built from
+  the agents' names only, never from the action's errors: "Closed Mossy
+  Lemur.", "Close ended: closed Mossy Lemur; could not close Quiet Panda.",
+  "Reopen ended: could not reopen Comet Newt.", "Den lost track of the
+  close of Mossy Lemur; check the agents.". Its `ending` (a closed set on
+  origin `card` only) is `failed` (not all of it went) or `lost`, absent
+  when it all went. It has no `agent`, `agent_id` or `turn`. The rows of
+  `internal/api/convcases/settled.go` (`CardEndCases`) pin it.
 - `speaker` (a closed set): `you`, `den` (Den's own fixed lines only: "Report
   from Mossy Lemur.", "No report from Mossy Lemur: it finished without one.", a
   mission run's line, "More reports from … are in Den."),
@@ -1185,7 +1386,7 @@ local socket open to this user only.
   turn: thread it under your own request only when the turn is one of
   yours.
 - `ending` (a closed set, on origin `report` and `desktop` with speaker `den`
-  only): `no_report` is Den's line "No report from Mossy Lemur: it finished
+  only, and `failed` or `lost` on origin `card`): `no_report` is Den's line "No report from Mossy Lemur: it finished
   without one.", for work from a console turn whose agent finished without
   reporting. Den waits 30 seconds after the agent's card ended done, and any
   report from that agent in the meantime cancels it; it comes once per card,

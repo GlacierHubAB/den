@@ -62,6 +62,10 @@ type storedConsole struct {
 	Lineage     string    `json:"lineage,omitempty"`
 	Mirror      string    `json:"mirror,omitempty"`
 	MirrorSince time.Time `json:"mirror_since,omitzero"`
+	// KeptEra: a Den with the permission levels wrote the record. A
+	// console restored from one without it, on a valid clean mark, keeps
+	// what it answered before, once (grantKept).
+	KeptEra bool `json:"kept_era,omitempty"`
 }
 
 type storedConsoles struct {
@@ -127,7 +131,7 @@ func (s *Server) saveConsoleLocked() {
 	}
 	if c := s.con.cur; c != nil {
 		rec.Consoles = []storedConsole{{ID: c.ID, Identity: c.identity, Key: c.pubHex, Exe: c.Exe, PID: c.PID, Start: c.start, Started: c.Started, Since: c.Since, Pages: c.PagesSHA, Verifier: c.verifier,
-			Lineage: c.Lineage, Mirror: c.Mirror, MirrorSince: c.MirrorSince}}
+			Lineage: c.Lineage, Mirror: c.Mirror, MirrorSince: c.MirrorSince, KeptEra: true}}
 	}
 	b, _ := json.Marshal(rec)
 	if err := writeAtomic(s.consolePath(), b); err != nil {
@@ -143,8 +147,8 @@ func (s *Server) loadConsole() string {
 	if path == "" || s.ckey == nil {
 		return ""
 	}
-	raw, err := os.ReadFile(path)
-	markRaw, markErr := os.ReadFile(s.markPath())
+	raw, err := readRecord(path)
+	markRaw, markErr := readRecord(s.markPath())
 	os.Remove(s.markPath()) // a crash from here on leaves no mark
 	// drop restores no console. closed also stops automatic pairing, as
 	// an unpair does, for a record Den cannot trust: it may have held the
@@ -248,12 +252,16 @@ func (s *Server) loadConsole() string {
 	}
 	s.con.cur = restored
 	s.con.last = c.Verifier
+	// Restored only on a valid clean mark: from a record of a Den without
+	// the levels, the console keeps what it answered (grantKept).
+	s.con.keptGrant = !c.KeptEra
 	s.con.recordHash = sha256Hex(raw)
 	s.con.mu.Unlock()
 	s.note("console restored from before Den's restart: " + sanitize.Label(ExeLabel(c.Exe), 40) + " pid " + itoa(c.PID) + ", started " + hhmmss(c.Started) + ". If that is not your console, unpair it: den unpair all")
 	s.act(Act{ConsoleChanged: true})
 	// Its powers come back only as an automatic pairing's would: off the
 	// API's start, since the read may take seconds.
+	s.grantKept() // before the powers card, which lists the kept items
 	go s.restorePowers(restored)
 	return ""
 }
@@ -351,7 +359,7 @@ func (s *Server) writeCleanMark() {
 	if s.consolePath() == "" || s.ckey == nil {
 		return
 	}
-	raw, err := os.ReadFile(s.consolePath())
+	raw, err := readRecord(s.consolePath())
 	s.con.mu.Lock()
 	want, n := s.con.recordHash, 0
 	if s.con.cur != nil {
@@ -411,9 +419,10 @@ func (s *Server) ForgetMirrorConsent(lineage string) bool {
 // is a few KiB.
 const recordMax = 1 << 20
 
-// readRecord reads the console record for a check, which holds con.mu: a
-// FIFO, a symlink, a device or an outsized file planted at the path never
-// blocks or stalls it. Each is an error, which the check takes for a
+// readRecord reads one of Den's own records or its clean mark (consoles.json,
+// permissions.json), at start, at exit and for a check, which holds a lock:
+// a FIFO, a symlink, a device or an outsized file planted at the path never
+// blocks or stalls it. Each is an error, which the caller takes for a
 // change by another program, as it does a missing file.
 func readRecord(path string) ([]byte, error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)

@@ -668,6 +668,8 @@ den stats [--days N]    what the state files prove about a window: turns, workin
 den ask "who is blocked on what?"       one orchestrator turn from a script
 den events -json        follow the event stream, one JSON object per line
 den events              headless: print hook events as they arrive
+den doctor [--json]     read-only checks of the setup, one fix per problem; safe to paste into an issue
+den feedback            a report for an issue: versions, checks, counts; read it before you paste it
 den install-hooks       wire Den into Claude Code's hooks
 den uninstall-hooks     undo
 den skills              the skills Den installed, for which project or agent, from where
@@ -728,6 +730,30 @@ scrolled to its end. In another view, `Ctrl+Y` answers only a request that
 view shows whole, as the Fleet view's Details pane can; otherwise it opens the
 Inbox on that request to be read there first, and `Ctrl+Y` again answers it.
 `Ctrl+N` never waits.
+
+**The setup card.** When Den starts and Claude Code lacks Den's hooks, or
+Den's mods are missing or older than the ones built in, Den asks once on a
+card. The card shows exactly what `Ctrl+Y` writes:
+- the settings file, with its full path, which is backed up first;
+- the hook command, with this den's full path;
+- each mod's folder.
+
+`Ctrl+Y` there does what `den install-hooks` and `den install-mods` do. Den
+reads everything again at that moment and writes nothing if anything
+changed. `Ctrl+N` hides the card until a newer Den; `den doctor` still
+reports what is missing.
+
+The card is answered only in Den's own window. A console lists it as needing
+Den's screen, without the paths, and may not answer it, and God mode never
+answers it either.
+
+The card offers no `Ctrl+Y` in these cases, and says why:
+- the den runs from a temporary build folder;
+- the den, or a folder above it, can be written by someone other than you, or
+  is not yours or root's;
+- the den sits inside a git checkout;
+- the settings file cannot be read;
+- the skills folder is a symbolic link.
 
 What `/always` allows from then on, for that agent's session only (an agent
 on a host is told apart by its host as well), kept in
@@ -905,7 +931,7 @@ each chip. Delete a chip from the text and its image is left out.
 | `/copy` | copy the last command block in view (Orchestrator and Overview) |
 | `/close` `/kill` | close the selected agent (also one on a remote host, `/close Name@devbox`); `/close idle` every idle one; `/close idle 1h` those idle at least that long (`30m`, `2h`, `1d`); `/close <name>, <name>`; `--force` includes working agents and kills what does not stop |
 | `/reopen <name>`, `/reopen --fork <name>` | reopen an agent Den has seen in the last two weeks with `claude --resume`; `--fork` opens a copy of its conversation under a new session id |
-| `/desktop`, `/desktop stop`, `/desktop keep` | how a desktop mission stands; stop it at once; keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
+| `/desktop`, `/desktop stop`, `/desktop pause`, `/desktop resume`, `/desktop keep` | how a desktop mission stands; stop it at once; pause it and resume it (resume in Den's window only); keep the last ended mission's journal, screenshots and log (see [Desktop control](#desktop-control)) |
 | `/protect <Name>`, `/unprotect <Name>` | keep an agent out of every close; `/protect` alone lists what is protected |
 | `/flag <Name>: <note>`, `/unflag <Name>` | mark an agent as holding context: a bulk close lists it without selecting it |
 | `/rescan` `/r` | refresh now (in Review, reload the diffs) |
@@ -1733,6 +1759,21 @@ For a step only you do, the agent calls `your_turn`: every desktop tool is
 paused until you say it is done (`Ctrl+Y`) or end the mission (`Ctrl+N`). The
 header shows `DESKTOP · on` (or `acting`) while a mission runs.
 
+**While it runs, Den's window answers nothing that approves.** No approving
+answer while an agent has the desktop: pause or end it first. `^Y`, `/allow`,
+`/always`, a typed answer and every command that widens anything wait, and so
+do a message to an agent and Enter on an empty line. What still works: `^N`
+and `/deny`, stopping, pausing and ending, every lowering (a tighter `/mode`,
+`/api off`, `/god off`, `/usage stop`), moving around, and typing a line,
+which you send after the pause. A line typed while the agent had the desktop
+asks once more before it is sent, and if the selection moved meanwhile, the
+first answer after the pause is held once so you can check it. A card the
+mission itself raises is answered the same way: pause, then answer.
+
+**Pause it.** `/desktop pause` in Den or from the dock: every action of the
+agent but a look waits, and Den's window answers again. `/desktop resume`,
+in Den's window only, lets it go on.
+
 **Stop it.** `/desktop stop` in Den, `/desktop stop` from the dock, or
 `den desktop stop` from anywhere: it stops hypruse, the agent and its server
 at once and closes the windows Den opened. It works with Den's window hidden,
@@ -2341,22 +2382,55 @@ under `~/.claude/projects/`; it does not write to those two.
 
 ## Troubleshooting
 
-- **No agents listed.** Den needs Claude Code 2.1.289+; older versions do not
-  write `~/.claude/sessions`. Press `/rescan`, or run `den list` to see what
-  Den sees and `den explain <name>` for how it arrived at a name or status.
-- **Nothing reaches the inbox.** Hooks apply to sessions started after
-  `den install-hooks`. Check `~/.local/state/den/hooks.log`; a line ending in
-  `no den listening` means the hook ran but Den was not running.
-- **Enter does not focus a terminal.** Focus needs Hyprland (`hyprctl`) and
-  finds the window by title or working directory; `den explain <name>` says how
-  it matched, or why not.
-- **Spawn fails.** Install `xdg-terminal-exec` or set `$TERMINAL`; `claude`
-  must be on `PATH`.
-- **A remote host shows "needs you" or "version mismatch".** See the table in
-  [Remote agents](#remote-agents); `den remote status <label>` repeats the checks
-  and says what to fix.
-- **Orchestrator costs.** It is a real Claude Code session; lower the cost with
-  `model = "haiku"` or turn spawning off.
+Start with `den doctor`. It checks everything below, prints one line per check
+with a one-line fix, and exits 1 when something fails. It only reads files,
+runs `claude --version` and `git --version`, and asks Den's local socket
+whether Den is running: nothing is installed or changed, and no remote host is
+dialled. Its output names no user, host, project, session or agent (a model
+that is not a Claude Code alias or `claude-…` id shows as "a custom model"),
+so it is safe to paste into an issue
+(`den doctor --json` for scripts). Its `config` check names the keys in
+`config.toml` that Den ignores or cannot use, which it otherwise drops without
+a word.
+
+Opening an issue? Paste `den feedback`, and read it first. It prints, as a
+block ready to paste, the doctor's checks plus versions (Den, Go, the kernel,
+the distro), Den's own switches, and counts from Den's state files over the
+last 7 days (`--days N`, up to 30): turns, waits, hook runs that found no Den,
+failed `[on]` commands, failed turns by error type and failed tool calls. It
+prints numbers, fixed phrases and names from fixed lists only (Den's own files
+appear as `~/…`, and a `claude-…` model id as written): none of your paths,
+prompts, agent names, session ids, hosts, `[on]` commands or error text, and
+times only as "3 h ago". A line that still holds your user, host,
+home or an agent's name is withheld, and the report says how many were.
+Nothing is written, copied or sent.
+
+- **No agents listed** (checks `claude`, `sessions`). Den needs Claude Code
+  2.1.289+; older versions do not write `~/.claude/sessions`. Press `/rescan`,
+  or run `den list` to see what Den sees and `den explain <name>` for how it
+  arrived at a name or status.
+- **Nothing reaches the inbox** (checks `hooks`, `den`, `hooks.log`). Hooks
+  apply to sessions started after `den install-hooks`. Check
+  `~/.local/state/den/hooks.log`; a line ending in `no den listening` means the
+  hook ran but Den was not running.
+- **Enter does not focus a terminal** (check `focus`). Focus needs Hyprland
+  (`hyprctl`) and finds the window by title or working directory;
+  `den explain <name>` says how it matched, or why not.
+- **Spawn fails** (checks `terminal`, `claude`). Install `xdg-terminal-exec`
+  or set `$TERMINAL`; `claude` must be on `PATH`.
+- **A remote host shows "needs you" or "version mismatch"** (check `remotes`,
+  from what Den saved; hosts show as `host 1`, `host 2` in the order of
+  `den remote list`). See the table in [Remote agents](#remote-agents);
+  `den remote status <label>` repeats the checks and says what to fix.
+- **Orchestrator costs** (check `orchestrator`). It is a real Claude Code
+  session; lower the cost with `model = "haiku"` or turn spawning off.
+- **Notifications do not show** (check `notify`). Den notifies through
+  `notify-send`; install libnotify.
+- **Worktrees or Review's merge check fail** (check `git`). Den reads agents'
+  checkouts with git 2.31 or newer and checks merges with git 2.38 or newer.
+- **Den's mods are missing or old** (check `mods`). Run `den install-mods`
+  after installing or updating Den; a mod loaded through
+  `CLAUDE_CODE_PLUGIN_DIRS` counts as present.
 
 ## Den, Herdr and OpenRig
 

@@ -135,7 +135,7 @@ func (m Model) decideInstall(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m.say("Declined the install.", false)
 	}
-	it.Resolved = "installing…"
+	m.store.Start(it, "installing…", 5*time.Minute)
 	id, host := it.ID, plan.Host.Label
 	cmd := func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -170,5 +170,5 @@ func (m *Model) finishInstall(msg installDoneMsg) tea.Cmd {
 	}
 	m.flash, m.flashErr = strings.ToUpper(outcome[:1])+outcome[1:], msg.err != nil
 	m.refresh()
-	return flashTick(4*time.Second, m.flash)
+	return flashTick(flashFor, m.flash)
 }

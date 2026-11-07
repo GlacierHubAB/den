@@ -27,7 +27,10 @@ type Agent struct {
 	Given     string `json:"given,omitempty"` // the name Den gave it at spawn, "" for none
 	Role      string `json:"role,omitempty"`
 	Model     string `json:"model,omitempty"` // raw model id from the transcript
-	CWD       string `json:"cwd"`
+	// Mode is the permission mode its hooks last reported, "" for none.
+	// A reopen never runs it in more than this (permmode.Lower).
+	Mode string `json:"mode,omitempty"`
+	CWD  string `json:"cwd"`
 	// Parent directs it: a session id or tree.Orchestrator, "" for none.
 	Parent  string `json:"parent,omitempty"`
 	Brief   string `json:"brief,omitempty"`   // the brief on the edge to its parent
@@ -182,6 +185,9 @@ func (r *Roster) Observe(live []Agent, now, watchingSince time.Time) bool {
 		}
 		if a.Model == "" {
 			a.Model = old.Model
+		}
+		if a.Mode == "" {
+			a.Mode = old.Mode
 		}
 		a.Spawned = a.Spawned || old.Spawned
 		probe := old

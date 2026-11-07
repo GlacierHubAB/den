@@ -33,6 +33,16 @@ must pass without a git identity and without network, as they do there: a test
 that runs `git commit` or `git merge` sets `user.name` and `user.email` in its
 own repository. Please run `make test` before you open a pull request.
 
+Before a maintainer merges a pull request that touches `.github/workflows`,
+they read the workflow change and have it security-reviewed, then dispatch a
+release dry run on its branch (only a branch in this repository), because a
+called workflow cannot ask for more permissions than its caller grants and only
+the release workflow shows that: `gh workflow run release.yml --ref <branch> -f
+version=v0.0.0-dryrun`. It has to get past startup; nothing is published. Never
+dispatch a workflow from a branch whose workflow changes have not been
+reviewed: a dispatch runs that branch's own workflow files with the permissions
+they ask for. You do not need to run it yourself.
+
 To use what is on `dev` as your own `den`, see
 [docs/DEV-CHANNEL.md](docs/DEV-CHANNEL.md).
 
@@ -77,9 +87,15 @@ has the package map and how to run Den against throwaway state.
 
 ## Reporting issues
 
-Open an issue with what you did, what you expected and what happened. It
-helps to include:
+Start with `den doctor`: it checks your setup and prints one fix per
+problem, and the README's [Troubleshooting](README.md#troubleshooting) covers
+the common cases. If that does not help, open an issue with what you did,
+what you expected and what happened; for a question, use the Question form.
+It helps to include:
 
+- the output of `den doctor`, which is written to name no user, host,
+  project, session or agent; read it before you paste (releases up to v0.6.1
+  do not have it yet);
 - the output of `den version`, and `claude --version`;
 - your compositor and terminal (Den's focus and spawn features depend on
   Hyprland and the terminal launcher);

@@ -82,7 +82,7 @@ func (m Model) installThenStart(it *inbox.Item, offer deskOffer) (tea.Model, tea
 		m.refresh()
 		return m.say("Another hypruse install is running; ask again when it is done.", true)
 	}
-	it.Resolved = "installing hypruse…"
+	m.store.Start(it, "installing hypruse…", 15*time.Minute)
 	id := it.ID
 	m.desk.installing = id
 	cmd := func() tea.Msg {
@@ -123,7 +123,7 @@ func (m Model) finishSetup(msg deskSetupDoneMsg) (tea.Model, tea.Cmd) {
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Installed " + sanitize.Line(msg.got) + ".", at: time.Now()}))
 	offer := msg.offer
 	offer.setup = nil
-	it.Resolved = "starting…"
+	m.store.Start(it, "starting…", 10*time.Minute)
 	if offer.task != "" {
 		return m.startTask(msg.itemID, offer)
 	}

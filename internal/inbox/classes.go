@@ -2,9 +2,12 @@ package inbox
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // The permission manager's classes: what a console's "allow" on a card
@@ -87,7 +90,11 @@ func Classify(it *Item, f Facts) (Class, int) {
 	}
 	switch it.Kind {
 	case Permission:
-		return classifyTool(it)
+		if !it.toolClassed {
+			it.toolClass, it.toolStep = classifyTool(it)
+			it.toolClassed = true
+		}
+		return it.toolClass, it.toolStep
 	case Plan:
 		return Code, 1
 	case Close:
@@ -104,11 +111,14 @@ func Classify(it *Item, f Facts) (Class, int) {
 		return Routine, 1
 	case Merge:
 		return Outward, 2
+	case Restore:
+		// An agent comes back in the lower of its mode at close and the
+		// global mode (permmode.Lower), never in more than it had.
+		return Destructive, 1
 	}
-	// Restore waits on the agent coming back in the lower of its own and
-	// the global mode; ControlAsk carries its tool only as text, and the
-	// orchestrator's tools are Den's own MCP tools; Budget, UsageResume,
-	// UsageSet and ModeSet spend or widen. Every other kind is the human's.
+	// ControlAsk carries its tool only as text, and the orchestrator's
+	// tools are Den's own MCP tools; Budget, UsageResume, UsageSet and
+	// ModeSet spend or widen. Every other kind is the human's.
 	return DenOnly, 0
 }
 
@@ -166,6 +176,9 @@ func readInScope(tool string, args map[string]any, cwd, home string) bool {
 			if !globInScope(v, base, cwd, home) {
 				return false
 			}
+			if field == "pattern" && !globReachClear(v, base, cwd, home) {
+				return false
+			}
 			named = named || filepath.IsAbs(v) || strings.HasPrefix(v, "~")
 			continue
 		}
@@ -184,10 +197,17 @@ func readInScope(tool string, args map[string]any, cwd, home string) bool {
 // under base, the path the call names (already checked); a relative
 // pattern with no base is out. No part is sensitive or "..", and no part
 // may reach a hidden name by a wildcard (".g*", "?git", "[.]git"): the
-// sensitive names are hidden ones. Accepted residual: "*" and "**" lean on
-// the tools leaving hidden files out, as Glob and Grep (ripgrep) do by
-// default, and a symlink a wildcard matches is not resolved here.
+// sensitive names are hidden ones. A backslash is out: ripgrep's globs
+// read it as an escape, so `\.git` names .git past every check here.
+// Accepted residual: "*" and "**" lean on the tools leaving hidden files
+// out, as Glob and Grep (ripgrep) do by default. The symlinks a Glob
+// pattern can reach are checked by globReachClear; Grep's ripgrep does not
+// follow a symlink it meets while it walks (no --follow, which the tool
+// does not offer).
 func globInScope(pattern, base, cwd, home string) bool {
+	if strings.Contains(pattern, `\`) {
+		return false
+	}
 	for _, part := range strings.Split(filepath.ToSlash(pattern), "/") {
 		lp := strings.ToLower(part)
 		if part == ".." || sensitiveParts[lp] || sensitiveNames[lp] {
@@ -210,6 +230,117 @@ func globInScope(pattern, base, cwd, home string) bool {
 	return editRealInScope(fixed+"/x", cwd, home) && !readSensitive(fixed+"/x", cwd, home)
 }
 
+// reachLimit caps the entries globReachClear looks at, and reachBudget
+// the time it takes: past either, Den does not know what the pattern
+// reaches. The walk runs once per card (Classify keeps the class), on
+// Den's own loop, so a slow disk (NFS, sshfs) may hold Den's screen for
+// at most about the budget. Accepted residual: one read of a single huge
+// directory, and the resolving of the walk's root, cannot be cut short,
+// so the budget can be overrun by one directory read.
+const reachLimit = 5000
+
+var reachBudget = 250 * time.Millisecond
+
+// globReachClear reports whether no symlink a Glob pattern can reach is a
+// way out. From the existing directory at its fixed start (under base for
+// a relative pattern), down as deep as the pattern goes (every depth for
+// "**"), every symlink the pattern's parts match must resolve to a file
+// strictly under cwd that is not sensitive: one to a directory is out
+// too, since the walk does not follow it. Under "**" every entry counts.
+// Hidden entries are skipped, as the tool skips them. A pattern
+// with no wildcard is a path, already checked; more than reachLimit
+// entries, a walk longer than reachBudget, or one that fails, is out.
+// Names match the pattern's parts with case ignored on both sides: on a
+// filesystem that ignores case, "*.GO" reaches "x.go", and matching more
+// only checks more.
+func globReachClear(pattern, base, cwd, home string) bool {
+	parts := strings.Split(filepath.ToSlash(pattern), "/")
+	fixed := 0
+	for fixed < len(parts) && !strings.ContainsAny(parts[fixed], "*?[{") {
+		fixed++
+	}
+	if fixed == len(parts) {
+		return true
+	}
+	depth := len(parts) - fixed
+	for _, p := range parts[fixed:] {
+		if strings.Contains(p, "**") {
+			depth = -1
+		}
+	}
+	dir := strings.Join(parts[:fixed], "/")
+	if dir == "" && filepath.IsAbs(pattern) {
+		dir = "/"
+	}
+	if !filepath.IsAbs(pattern) && !strings.HasPrefix(pattern, "~") {
+		dir = filepath.Join(base, dir)
+	}
+	p, ok := editPath(dir, cwd, home)
+	if !ok {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return os.IsNotExist(err) // nothing there to reach
+	}
+	seen, until := 0, time.Now().Add(reachBudget)
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		// Every entry the walk reads counts against the budget, skipped
+		// or not: a huge directory where nothing matches is still read.
+		if time.Now().After(until) {
+			return errReachTooFar
+		}
+		if path == root {
+			return nil
+		}
+		skip := strings.HasPrefix(d.Name(), ".")
+		k := strings.Count(strings.TrimPrefix(path, root+"/"), "/") + 1 // its depth below root
+		if depth >= 0 && !skip {
+			// Only what the pattern's part at that depth matches; a part
+			// Den cannot match exactly (a brace) matches everything.
+			if seg := parts[fixed+k-1]; !strings.Contains(seg, "{") {
+				ok, err := filepath.Match(strings.ToLower(seg), strings.ToLower(d.Name()))
+				skip = err == nil && !ok
+			}
+		}
+		if skip {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if seen++; seen > reachLimit {
+			return errReachTooFar
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			target, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return err
+			}
+			if fi, err := os.Stat(target); err != nil || fi.IsDir() {
+				return errReachOut
+			}
+			if !editRealInScope(target, cwd, home) || readSensitive(target, cwd, home) {
+				return errReachOut
+			}
+			return nil
+		}
+		if d.IsDir() && depth >= 0 && k >= depth {
+			return filepath.SkipDir
+		}
+		return nil
+	})
+	return err == nil
+}
+
+var (
+	errReachTooFar = errors.New("the pattern reaches too many entries to check")
+	errReachOut    = errors.New("a symlink the pattern reaches leads out")
+)
+
 // readSensitive reports whether a read of path reaches what edits never
 // would but reads still should not: keys and Den's and Drey's own state.
 // The path is checked as written and with symlinks resolved, against each
@@ -227,7 +358,9 @@ func readSensitive(path, cwd, home string) bool {
 	var dirs []string
 	for _, d := range readSensitiveDirs(home) {
 		dirs = append(dirs, filepath.Clean(d))
-		if r, err := filepath.EvalSymlinks(d); err == nil {
+		// Resolved through its deepest existing part, so a directory not
+		// made yet under a symlinked parent is covered too.
+		if r, ok := realPath(d); ok {
 			dirs = append(dirs, r)
 		}
 	}

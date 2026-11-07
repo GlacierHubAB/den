@@ -81,6 +81,30 @@ type deskMission struct {
 	// overlayPausedAt (deskOverlayCheck).
 	overlayPaused   bool
 	overlayPausedAt time.Time
+	// humanPaused: the human paused it with /desktop pause; every call
+	// but a look waits until /desktop resume (desk_hold.go).
+	humanPaused bool
+	// x11: the start card's switch for a task, set there by the human and
+	// fixed for the mission: its launches get Xwayland (desk_sand.go).
+	x11 bool
+	// queued are the actions the human approved while it was paused: each
+	// runs only once it goes on, decided again then (desk_hold.go);
+	// flushing while that read of the desktop is out.
+	queued   []deskQueued
+	flushing bool
+	// The slice (desk_slice.go): cards are the mission's own cards open
+	// now, a pause too; inflight the calls Den let through that have not
+	// ended; frozen once the slice is (only then does Den's window answer
+	// while it is paused). launched once anything ran in the slice;
+	// reaped once its slice is gone after the mission ended.
+	cards                      map[string]bool
+	inflight                   map[string]time.Time
+	pausedAt, reapAfter        time.Time
+	freezeAfter                time.Time // a failed freeze is tried again from then
+	frozen, freezing, draining bool
+	freezeNoted, stopNoted     bool
+	launched, reaping, reaped  bool
+	launches                   int
 	// overlayExpect: the task started while the console watched, and its
 	// first overlay.linked has not come; input waits for it until
 	// overlayFirstBy.
@@ -115,9 +139,15 @@ type deskPending struct {
 // deskState is Den's desktop missions.
 type deskState struct {
 	missions map[string]*deskMission
-	pending  map[string]deskPending // card item id -> its call
-	offers   map[string]deskOffer   // mission card item id -> its request
-	chip     string                 // the header chip while a mission is live
+	// leftover are this Den's slices from before it started that the
+	// start's sweep could not stop (SweepDesktopSlices): Den's window
+	// holds until they are gone, and Den tries them again every 5 s.
+	leftover      []string
+	leftoverBusy  bool
+	leftoverRetry time.Time
+	pending       map[string]deskPending // card item id -> its call
+	offers        map[string]deskOffer   // mission card item id -> its request
+	chip          string                 // the header chip while a mission is live
 	// installing is the install question's item id while its approved
 	// install runs: the question stays open until the install's own result
 	// settles it, which is what answers `den install-hypruse`.
@@ -289,11 +319,20 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 	if dm == nil {
 		return deny("no such desktop mission")
 	}
+	if in.Kind == "done" {
+		// Taken even from a mission that is refused or ended: a call that
+		// ended must stop counting as in flight.
+		m.deskDone(r, dm, in)
+		return nil
+	}
 	if why := dm.refusal(); why != "" {
 		return deny(why)
 	}
 	switch in.Kind {
 	case "start":
+		if why := dm.sliceOK(); why != "" {
+			return deny(why)
+		}
 		// Only the agent's own MCP server: Den's binary, started by that
 		// agent's Claude Code, once.
 		if dm.AgentPID <= 1 && !adoptAgent(dm, r.PeerPID) {
@@ -406,6 +445,28 @@ func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end t
 	return true, nil
 }
 
+// deskGateMission is the mission as the gate decides on snap, which it
+// readies: the console's pointer outline lies over the whole monitor and
+// takes no input, so it never blocks a click, and nothing else of the
+// console's is let through. A task's off-limits windows add the console's
+// (Drey's dock), read fresh on every call: the dock may reconnect.
+func (m *Model) deskGateMission(dm *deskMission, snap *desktop.Snapshot) desktop.Mission {
+	snap.ExemptConsole(m.consoleProcs())
+	mission := dm.Mission
+	if dm.Task {
+		if console := m.consoleProcs(); len(console) > 0 {
+			mission.Protected = maps.Clone(dm.Protected)
+			for _, w := range snap.Windows {
+				if w.PID > 1 && console[w.PID] {
+					mission.Protected[w.Address] = true
+				}
+			}
+			mission.Console = console
+		}
+	}
+	return mission
+}
+
 // deskOverlayPaused is what an input call hears while paused.
 const deskOverlayPaused = "paused: the dock's overlay is down; Den resumes when it is back"
 
@@ -465,30 +526,19 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 		deny(why + "; the task has ended")
 		return m.finishDeskMission(dm, why)
 	}
+	if dm.humanPaused && !deskLooks[in.Tool] {
+		return deny(deskHumanPaused)
+	}
+	if len(dm.cards) > 0 && !deskLooks[in.Tool] {
+		return deny("paused: Den is asking the human about this mission's last call; nothing else runs until they answer")
+	}
 	if paused, end := m.deskOverlayCheck(dm, msg.snap.ConsoleGlow(m.consoleProcs())); end != nil {
 		deny(deskOverlayPaused)
 		return end
 	} else if paused && !deskLooks[in.Tool] {
 		return deny(deskOverlayPaused)
 	}
-	// The console's pointer outline lies over the whole monitor and takes
-	// no input: it never blocks a click, and nothing else of the console's
-	// is let through.
-	msg.snap.ExemptConsole(m.consoleProcs())
-	mission := dm.Mission
-	if dm.Task {
-		// The console's windows (Drey's dock) are off limits to a task like
-		// Den's own, read fresh on every call: the dock may reconnect.
-		if console := m.consoleProcs(); len(console) > 0 {
-			mission.Protected = maps.Clone(dm.Protected)
-			for _, w := range msg.snap.Windows {
-				if w.PID > 1 && console[w.PID] {
-					mission.Protected[w.Address] = true
-				}
-			}
-			mission.Console = console
-		}
-	}
+	mission := m.deskGateMission(dm, &msg.snap)
 	v := desktop.Decide(in.Tool, in.Args, mission, msg.snap)
 	// spend counts a call Den forwards to hypruse against a task's limits.
 	spend := func() (bool, tea.Cmd) {
@@ -531,6 +581,10 @@ func (m *Model) decideDesktopCall(msg deskSnapMsg) tea.Cmd {
 		if in.Tool == "marks" && v.Target != nil {
 			dm.MarksWindow = v.Target.Address
 		}
+		if in.Tool == "launch" {
+			// Den runs it itself, in the mission's slice (desk_slice.go).
+			return m.deskLaunch(r, dm, v, msg.snap)
+		}
 		m.deskAllow(r, dm, in.Tool, v, deskPieces(in.Tool, v))
 		if in.Tool == "desktop" {
 			// mission, not dm.Mission: a task hides the console's windows too.
@@ -560,7 +614,7 @@ func (m *Model) deskAllow(r *bridge.Request, dm *deskMission, tool string, v des
 	if tool == "desktop" {
 		return
 	}
-	a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds}
+	a := desktop.Answer{Args: mustJSON(v.Args), Bounds: v.Bounds, Call: dm.issueCall(tool)}
 	if pieces > 0 && v.Target != nil {
 		a.Token = newToken()
 		dm.tokens[a.Token] = deskToken{window: v.Target.Address, left: pieces, until: time.Now().Add(2 * time.Minute)}
@@ -606,6 +660,15 @@ func (m *Model) askDesktop(r *bridge.Request, dm *deskMission, in bridge.Desktop
 		it = m.store.AddDesktopAct(dm.SessionID, in.Tool, title, body, r)
 	}
 	m.desk.pending[it.ID] = deskPending{mission: dm.ID, tool: in.Tool, verdict: v, pieces: deskPieces(in.Tool, v)}
+	if in.Tool != "your_turn" {
+		// One of the mission's own cards: a pause until it is answered,
+		// so its slice freezes before its ^Y works (your_turn pauses as
+		// dm.Paused).
+		if dm.cards == nil {
+			dm.cards = map[string]bool{}
+		}
+		dm.cards[it.ID] = true
+	}
 	m.flash, m.flashErr = it.Title+": ^Y allows, ^N denies.", false
 	m.refresh()
 	id := it.ID
@@ -676,6 +739,11 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 	p, ok := m.desk.pending[it.ID]
 	delete(m.desk.pending, it.ID)
 	dm := m.deskMission(p.mission)
+	if dm != nil {
+		// Its card's pause ends with the answer; an approved action waits
+		// in the queue until then, and runs once the hold is back.
+		defer delete(dm.cards, it.ID)
+	}
 	if !ok || dm == nil {
 		m.store.SettleWith(it, bridge.Decision{Behavior: "deny", Message: "Den: that question is stale"}, "stale; denied")
 		return m.say("That desktop question is stale; denied.", true)
@@ -708,7 +776,15 @@ func (m Model) decideDesktopCard(it *inbox.Item, verb string) (tea.Model, tea.Cm
 		m.refresh()
 		return m.say("Approved.", false)
 	}
-	a := desktop.Answer{Args: mustJSON(p.verdict.Args), Bounds: p.verdict.Bounds}
+	if dm.paused() {
+		// Approved, but nothing runs while the mission is paused: Den's
+		// window answers then. It runs when the mission goes on.
+		reply := m.store.Hold(it, "approved; runs when the mission goes on")
+		dm.queued = append(dm.queued, deskQueued{p: p, reply: reply})
+		m.refresh()
+		return m.say("Approved: it runs when the mission goes on, after Den checks it again.", false)
+	}
+	a := desktop.Answer{Args: mustJSON(p.verdict.Args), Bounds: p.verdict.Bounds, Call: dm.issueCall(p.tool)}
 	if p.pieces > 0 && p.verdict.Target != nil {
 		a.Token = newToken()
 		dm.tokens[a.Token] = deskToken{window: p.verdict.Target.Address, left: p.pieces, until: time.Now().Add(2 * time.Minute)}
@@ -727,6 +803,9 @@ func (m *Model) timeoutDesktopCard(msg deskCardTimeoutMsg) {
 		}
 		p := m.desk.pending[it.ID]
 		delete(m.desk.pending, it.ID)
+		if dm := m.deskMission(p.mission); dm != nil {
+			delete(dm.cards, it.ID)
+		}
 		if dm := m.deskMission(p.mission); dm != nil && it.Kind == inbox.YourTurn {
 			// The human's step was not done: the mission stays paused until
 			// they end it or ask again.

@@ -10,12 +10,14 @@ import (
 	"github.com/GlacierHubAB/den/internal/colors"
 	"github.com/GlacierHubAB/den/internal/gitenvtest"
 	"github.com/GlacierHubAB/den/internal/notify"
+	"github.com/GlacierHubAB/den/internal/teststandin"
 )
 
 // TestMain gives the package's tests a state folder of their own. The UI
 // writes the shared colour record and the task history there, and a test run
 // against the real one replaced the colours every agent badge reads.
 func TestMain(m *testing.M) {
+	teststandin.Main() // started as a stand-in, the test binary only sleeps
 	// Started as "den-test-sleep", the test binary stands in for Den's own
 	// processes under a fake orchestrator (its hook, its den mcp).
 	if len(os.Args) > 1 && os.Args[1] == "den-test-sleep" {
@@ -35,6 +37,10 @@ func TestMain(m *testing.M) {
 	os.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "")
 	// The settle guard is tested on its own; elsewhere ^Y acts at once.
 	answerSettle = 0
+	// A flash's timer is tested on its own (TestFlashStaysUpForItsTime);
+	// elsewhere it fires at once. A test that runs every command it gets
+	// back otherwise waits out each flash, 4 s at a time.
+	flashFor, flashBrief, copyFlashFor = 0, 0, 0
 	// Nor may a test pop a notification on the desktop the run sits on: a
 	// desktop mission test once showed "Desktop control on" there.
 	notify.Command = "true"
@@ -46,6 +52,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	os.Setenv("XDG_RUNTIME_DIR", run)
+	// Nor start, freeze or stop a unit on the run's own systemd user
+	// manager: desktop missions' slices go to a fake one.
+	deskSysFake()
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

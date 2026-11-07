@@ -40,12 +40,20 @@ type Options struct {
 	Version string // Den's release, for hello
 	ChatLog string // api-chat.jsonl
 	Lane    LaneConfig
+	// FocusFailed, when set, hears every refused focus: its reason (one of
+	// FocusReasons) and the session and Den's name of the agent of this
+	// machine it was about, both "" when the target was not one. It is
+	// called on the connection's goroutine.
+	FocusFailed func(reason, session, agent string)
 	// ConsoleKey is Den's Ed25519 key for console proofs (console.go);
 	// nil leaves console pairing off.
 	ConsoleKey ed25519.PrivateKey
 	// ConsoleStore is where Den keeps its side of the console across
 	// restarts (console_store.go); "" keeps it in memory only.
 	ConsoleStore string
+	// PermStore is where Den keeps the permission levels across restarts
+	// (grants_store.go); "" keeps them in memory only.
+	PermStore string
 }
 
 // Client is a connected app, as /api and the chip show it.
@@ -79,6 +87,10 @@ type Server struct {
 	cardAnswers answers
 	// god is God mode's state as Den last set it (god.go).
 	god godState
+	// perms is the permission manager's last read and its seq (grants.go).
+	perms permsState
+	// permFile writes and watches the levels' file (grants_store.go).
+	permFile permsFile
 	// desk is the running desktop mission as Den last set it (desktop.go).
 	desk desktopState
 	// overlay is the console's overlay link (overlay.go).
@@ -151,6 +163,9 @@ func Listen(o Options) (*Server, error) {
 	}
 	s.grants, s.acts, s.lastConn, s.ctl = newGrants(), make(chan Act, 64), map[string]time.Time{}, newControl()
 	s.stopWatch = make(chan struct{})
+	// The levels are read before the console, whose powers card names
+	// them; the start note names the console restored.
+	lastLowered := s.loadPerms()
 	if s.ckey != nil {
 		if why := s.loadConsole(); why != "" {
 			s.note(why)
@@ -164,6 +179,7 @@ func Listen(o Options) (*Server, error) {
 		s.con.mu.Unlock()
 		go s.watchConsoleRecord(s.stopWatch)
 	}
+	s.startNote(lastLowered)
 	s.bp.Store(b)
 	s.lane = newLane(o.Lane, s.chat, s.view.Load, s.note)
 	s.lane.changed = s.asksChanged
@@ -418,6 +434,7 @@ func (s *Server) Healthy() bool { return s.bp.Load().ours() }
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		close(s.stopWatch)
+		s.closePerms()
 		s.writeCleanMark()
 	})
 	s.lane.close()
@@ -517,6 +534,7 @@ func (s *Server) Publish(v *View) {
 		oldCards = old.Cards
 	}
 	s.pushCards(oldCards, v.Cards, v.Settled)
+	s.grantsChanged()
 	// Whether the fleet changed, as the console sees it and as any other
 	// app does (no doing): a change in doing alone tells an app nothing,
 	// not even by when its fleet event comes.
@@ -777,6 +795,11 @@ func (c *conn) reply(id int64, result any) {
 
 func (c *conn) fail(id int64, code, msg string) {
 	c.push(Reply{ID: id, OK: false, Error: &WireError{Code: code, Message: msg}}, true)
+}
+
+// failData is fail with the refusal's data.
+func (c *conn) failData(id int64, code, msg string, data map[string]string) {
+	c.push(Reply{ID: id, OK: false, Error: &WireError{Code: code, Message: msg, Data: data}}, true)
 }
 
 // writeNow writes one line directly, before the writer runs, and closes.
@@ -1137,6 +1160,10 @@ func (s *Server) dispatch(c *conn, req Request, first bool) {
 		s.overlayVerb(c, req, false)
 	case "card.get":
 		s.cardGet(c, req)
+	case "grants.get":
+		s.grantsGet(c, req)
+	case "grants.lower":
+		s.grantsLower(c, req)
 	case "card.answer":
 		s.cardAnswer(c, req)
 	case "cmd.list":

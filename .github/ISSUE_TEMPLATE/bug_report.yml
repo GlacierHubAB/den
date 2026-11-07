@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Remove anything private from pasted output: paths, prompts, transcripts, session ids.
-        Security problems go to the Security tab, not here.
+        Security problems go to the Security tab, not here (see SECURITY.md).
   - type: textarea
     id: what
     attributes:
@@ -21,19 +21,28 @@ body:
       placeholder: |
         1. Start den
         2. ...
+  - type: textarea
+    id: feedback
+    attributes:
+      label: den feedback
+      description: |
+        Output of `den feedback`: the setup checks of `den doctor`, versions, Den's own
+        switches and counts from the last 7 days. It prints only fixed phrases, numbers
+        and names from fixed lists, never your paths, prompts, agent names, sessions or
+        hosts, and it withholds any line that still looks identifying. Read it before you
+        paste: it goes into a public issue. Releases up to v0.6.1 do not have it; paste
+        `den version` and `claude --version` below instead.
+      render: text
   - type: input
     id: den-version
     attributes:
       label: den version
-      description: Output of `den version`.
-    validations:
-      required: true
+      description: Output of `den version`. Only needed if you could not paste `den feedback`.
   - type: input
     id: claude-version
     attributes:
       label: claude --version
-    validations:
-      required: true
+      description: Only needed if you could not paste `den feedback`.
   - type: input
     id: environment
     attributes:
@@ -44,6 +53,8 @@ body:
     attributes:
       label: den list, den explain, hooks.log
       description: |
-        `den list` and `den explain <name>` for the agent in question, and the relevant
-        lines of `~/.local/state/den/hooks.log` if the inbox is involved.
+        If it is about one agent: `den list` and `den explain <name>` for it. If the inbox
+        is involved: the relevant lines of `~/.local/state/den/hooks.log`. Unlike
+        `den feedback`, these show your agents' names, projects and commands as they are,
+        so read them and remove what you do not want public.
       render: text

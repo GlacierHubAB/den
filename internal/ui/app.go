@@ -101,6 +101,18 @@ type focusedMsg struct {
 // an older flash's timer must not take a newer one away.
 type flashClearMsg struct{ text string }
 
+// How long a flash stays in the top bar: most for 4 s, a brief one for 3 s.
+// The vars are for tests, which set them to 0.
+const (
+	flashDefault      = 4 * time.Second
+	flashBriefDefault = 3 * time.Second
+)
+
+var (
+	flashFor   = flashDefault
+	flashBrief = flashBriefDefault
+)
+
 // flashTick clears text from the top bar after d, unless another flash
 // took its place.
 func flashTick(d time.Duration, text string) tea.Cmd {
@@ -220,12 +232,16 @@ type Model struct {
 	att attention // desktop notifications, reminders and stalls
 
 	remote remoteState // agents on remote hosts (remote.go); zero without remotes.toml
+	perms  permState   // the /permissions panel (permissions.go)
+	hold   deskHold    // what was typed and moved while an agent had the desktop (desk_hold.go)
 
 	guide guidanceState // orchestrator guidance and its approval (guidance.go)
 
 	api apiState     // den-api.sock (api.go); zero while the API is off
 	ctl controlState // a paired app's control (control.go)
 	con consoleUI    // the console (console.go)
+
+	setup setupState // the setup card (setup.go)
 }
 
 // New returns the root model and starts listening for hook events.
@@ -239,6 +255,7 @@ func New(cfg config.Config) Model {
 		tree:  newTreeState(),
 		att:   newAttention(),
 	}
+	m.desk.leftover = append([]string(nil), deskSwept...) // slices the start could not stop: held
 	m.tree.path = tree.Path()
 	m.tree.edges = tree.Load(m.tree.path)
 	m.missions = mission.Load(mission.Path())
@@ -279,6 +296,11 @@ func New(cfg config.Config) Model {
 	}
 	if keys := config.GodKeys(); len(keys) > 0 {
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "config: " + strings.Join(keys, ", ") + " ignored: God mode has no setting; it is turned on only in Den's own window, with /god on and its phrase, and is off at every start.", at: time.Now()}))
+	}
+	if m.srv != nil {
+		// Only the Den that holds den.sock asks: a second one would raise
+		// the same card twice.
+		m.startSetup()
 	}
 	return m
 }
@@ -516,7 +538,25 @@ func (m *Model) refresh() {
 	}
 }
 
+// Update takes every message; what a message did to the line while an
+// agent had the desktop is noted after it (desk_hold.go).
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	held, line := m.deskHolds(), m.input.Value()
+	mm, cmd := m.update(msg)
+	if n, ok := mm.(Model); ok {
+		n.deskHoldAfter(held, line, msg)
+		if drive := n.deskDrive(); drive != nil {
+			cmd = tea.Batch(cmd, drive)
+		}
+		if flush := n.deskFlush(); flush != nil {
+			cmd = tea.Batch(cmd, flush)
+		}
+		return n, cmd
+	}
+	return mm, cmd
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.tab == tabInbox {
 		m.store.MarkSeen() // whatever was on screen before this message counts as seen
 	}
@@ -548,7 +588,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.err != nil:
 			m.flash, m.flashErr = "clipboard: "+msg.err.Error(), true
-			return m, flashTick(3*time.Second, m.flash)
+			return m, flashTick(flashBrief, m.flash)
 		case msg.path != "":
 			return m, m.attach(msg.path)
 		case msg.text != "":
@@ -560,6 +600,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.anim++
 		return m, animTick()
 	case tickMsg:
+		m.loseStarted()
 		m.store.Prune(2*time.Minute, 30)
 		m.checkAPISocket()
 		m.checkGuards()
@@ -686,7 +727,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sentMsg:
 		m.applySent(msg)
 		m.refresh()
-		return m, flashTick(4*time.Second, m.flash)
+		return m, flashTick(flashFor, m.flash)
 	case closeDoneMsg:
 		return m, m.finishClose(msg)
 	case skillsDoneMsg:
@@ -734,11 +775,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.flash, m.flashErr = "Focused "+msg.note, false
 		}
-		return m, flashTick(3*time.Second, m.flash)
+		return m, flashTick(flashBrief, m.flash)
 	case flashClearMsg:
 		if msg.text == m.flash {
 			m.flash = ""
 		}
+	case deskFlushMsg:
+		m.deskFlushed(msg)
+		return m, nil
+	case deskLaunchedMsg:
+		m.deskLaunched(msg)
+		return m, nil
+	case deskFrozenMsg, deskThawedMsg, deskStoppedMsg, deskDrainMsg, deskRetryMsg, deskLeftoverMsg:
+		return m, m.deskSliceMsg(msg)
 	case tea.KeyPressMsg:
 		m.api.lastKey = time.Now()
 		return m.handleKey(msg)
@@ -945,10 +994,12 @@ func (m Model) permissionWait() time.Duration {
 	return time.Duration(m.cfg.Hooks.PermissionWait) * time.Second
 }
 
-// topAnswerable is the item y/n/a act on from the agents pane.
+// topAnswerable is the item y/n/a act on from the agents pane. Never Den's
+// setup card: that is answered only selected in the Inbox, so a key meant
+// for an agent's request never lands on it.
 func (m Model) topAnswerable() *inbox.Item {
 	for _, it := range m.store.Items() {
-		if it.Answerable() {
+		if it.Answerable() && it.Kind != inbox.Setup {
 			return it
 		}
 	}
@@ -1051,7 +1102,10 @@ func (m *Model) followSelection() {
 	if m.inboxCur >= len(items) {
 		m.inboxCur = max(0, len(items)-1)
 	}
-	if m.inboxCur >= 0 && m.inboxCur < len(items) {
+	// Never Den's setup card: highlighted with nothing chosen it stays
+	// unselected, so a request that comes after takes the row as it would
+	// with no card. Picked by hand (↑ ↓), it is selected like any item.
+	if m.inboxCur >= 0 && m.inboxCur < len(items) && items[m.inboxCur].Kind != inbox.Setup {
 		m.inboxSel = items[m.inboxCur].ID
 	}
 }
@@ -1101,6 +1155,18 @@ func (m Model) inboxActive() bool { return m.tab == tabInbox }
 // Ctrl keys or slash commands, and Enter sends or, when the line is empty,
 // focuses the selected agent's terminal.
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.perms.open && msg.String() != "ctrl+c" {
+		// The panel takes every key while it is open: a card's ^Y never
+		// answers a card behind it, and its questions take only their own.
+		return m.permKey(msg)
+	}
+	if m.deskHolds() {
+		mm, cmd, done := m.deskHeldKey(msg)
+		if done {
+			return mm, cmd
+		}
+		m = mm.(Model)
+	}
 	m.help = false
 	compl := completions(m.input.Value(), m.agents)
 	switch msg.String() {
@@ -1253,17 +1319,21 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		// Picks a rule only on a selected rules card with nothing typed;
 		// else the digit is typed as usual.
-		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RulesPick {
+		// While an agent has the desktop a digit is only typed (desk_hold.go).
+		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RulesPick && !m.deskHolds() {
 			if m.toggleRule(it, int(msg.String()[0]-'0')) {
 				return m, nil
 			}
 		}
-		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RenamePick {
+		if it := m.inboxSelected(); m.tab == tabInbox && m.input.Value() == "" && it != nil && it.Kind == inbox.RenamePick && !m.deskHolds() {
 			if m.toggleRename(it, int(msg.String()[0]-'0')) {
 				return m, nil
 			}
 		}
 	case "ctrl+y":
+		if !m.deskHeldAnswer() {
+			return m.say(deskHeldMoved, true)
+		}
 		if m.tab == tabOrch && m.selectedProposal() != nil {
 			return m.answerProposal(true)
 		}
@@ -1284,6 +1354,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.answer("deny")
 	case "enter":
+		// A line typed while an agent had the desktop asks once first.
+		if strings.TrimSpace(m.input.Value()) != "" && !m.deskHeldSend() {
+			return m.say(deskHeldAsk, true)
+		}
 		// An open edit always goes back to its comment, even if focus moved
 		// off the diff meanwhile, so it can never be sent as a message.
 		if m.tab == tabReview && (m.rev.focus == revDiff || m.rev.editing != "") && m.curFile() != nil {
@@ -1311,6 +1385,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if it := m.inboxSelected(); it != nil && it.AsksInDen() {
 				if m.unsettled(it) {
 					return m.say("A new question just came up: "+m.nameFor(itemKey(it))+": "+it.Title+". Press Enter again to answer it.", true)
+				}
+				if !m.deskHeldAnswer() {
+					return m.say(deskHeldMoved, true)
 				}
 				return m.answerQuestion(it, text)
 			}
@@ -1472,11 +1549,31 @@ func (m Model) answerTarget() *inbox.Item {
 	return it
 }
 
+// loseStarted settles the started items whose action never reported by
+// its deadline, and says so in the chat. A send may still have gone out,
+// so its note says to check before sending again.
+func (m *Model) loseStarted() {
+	for _, it := range m.store.LoseStarted() {
+		note := "Den lost track of " + sanitize.Label(it.Title, 80) + ": check the agents."
+		if it.Kind == inbox.Message {
+			note = "Den lost track of " + sanitize.Label(it.Title, 80) + ": it may still have been sent, so check before sending again."
+		}
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: note, at: time.Now()}))
+		m.loseStartedEnd(it)
+	}
+}
+
 // answer applies allow, deny or always to the item answerTarget names, only
 // while it is still open and has not just taken another's place.
 func (m Model) answer(verb string) (tea.Model, tea.Cmd) {
 	m.store.LetGo(m.permissionWait()) // a hook gone since the last tick takes no answer
 	it := m.answerTarget()
+	if it != nil && it.Started && it.State != inbox.Resolved {
+		if m.desk.installing == it.ID {
+			return m.say("hypruse is still installing; Den starts the mission when it is done.", false)
+		}
+		return m.say(refusedNote("That request was answered and is "+it.Resolved+"; nothing more was sent.", m.unboundNote()), true)
+	}
 	if m.tab == tabInbox {
 		switch {
 		case it == nil && m.inboxLost:
@@ -1537,7 +1634,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 			it.AnsweredBy = "den"
 		}
 		defer func() {
-			if it.State != inbox.Resolved {
+			// An answer that started the item's action keeps who gave it:
+			// the action's end settles it with that answer.
+			if it.State != inbox.Resolved && !it.Started {
 				it.Answer, it.AnsweredBy = "", ""
 			}
 		}()
@@ -1643,6 +1742,9 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	if it.Kind == inbox.PowersSet {
 		return m.decidePowersSet(it, verb)
 	}
+	if it.Kind == inbox.Setup {
+		return m.decideSetup(it, verb)
+	}
 	if it.Kind == inbox.ModeSet {
 		return m.decideModeSet(it, verb)
 	}
@@ -1666,39 +1768,54 @@ func (m Model) answerItem(it *inbox.Item, verb string) (tea.Model, tea.Cmd) {
 	return m.say(verbPast(verb)+" for "+m.nameFor(itemKey(it)), false)
 }
 
+// answerCommand is /answer <text>: the selected question held in Den, or
+// else the first one waiting.
+func (m Model) answerCommand(text string, fields []string) (tea.Model, tea.Cmd) {
+	it := m.inboxSelected()
+	if m.tab != tabInbox || it == nil || !it.AsksInDen() {
+		it = nil
+		for _, o := range m.store.Items() {
+			if o.AsksInDen() {
+				it = o
+				break
+			}
+		}
+	}
+	if it == nil {
+		return m.say("No question is waiting for an answer in Den.", true)
+	}
+	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), fields[0]))
+	if text == "" {
+		return m.say(questionHint(it), true)
+	}
+	return m.answerQuestion(it, text)
+}
+
 // command runs a slash command typed on the command line.
 func (m Model) command(text string) (tea.Model, tea.Cmd) {
 	fields := strings.Fields(text)
-	switch strings.ToLower(fields[0]) {
-	case "/allow", "/y", "/yes":
+	switch verb := strings.ToLower(fields[0]); verb {
+	case "/allow", "/y", "/yes", "/always", "/a", "/answer":
+		// After a hold in which the selection moved, the first answer
+		// typed in Den is held once (desk_hold.go).
+		if !m.fromDock && !m.deskHeldAnswer() {
+			return m.say(deskHeldMoved, true)
+		}
+		switch verb {
+		case "/always", "/a":
+			return m.answer("always")
+		case "/answer":
+			return m.answerCommand(text, fields)
+		}
 		return m.answer("allow")
 	case "/deny", "/n", "/no":
 		return m.answer("deny")
-	case "/always", "/a":
-		return m.answer("always")
-	case "/answer":
-		it := m.inboxSelected()
-		if m.tab != tabInbox || it == nil || !it.AsksInDen() {
-			it = nil
-			for _, o := range m.store.Items() {
-				if o.AsksInDen() {
-					it = o
-					break
-				}
-			}
-		}
-		if it == nil {
-			return m.say("No question is waiting for an answer in Den.", true)
-		}
-		text := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), fields[0]))
-		if text == "" {
-			return m.say(questionHint(it), true)
-		}
-		return m.answerQuestion(it, text)
 	case "/api":
 		return m.apiCommand(fields[1:])
 	case "/view":
 		return m.viewCommand(fields[1:])
+	case "/permissions":
+		return m.permissionsCommand()
 	case "/remote", "/remotes", "/hosts":
 		return m.remoteCommand(fields[1:])
 	case "/open", "/o", "/focus":

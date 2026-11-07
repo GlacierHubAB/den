@@ -41,17 +41,32 @@ func (m Model) View() tea.View {
 	// Rows: header, panes, [completions], prompt (rules, attachments, the
 	// command line at its current height), hints. The panes take what is
 	// left, so a growing command line pushes them up rather than over them.
-	popup := m.completionRows(w)
-	prompt := m.prompt(w)
-	_, paneH := m.paneArea()
-	out.WriteString(m.panes(w, paneH) + "\n")
-	for _, r := range popup {
-		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+	if p := m.panel(); m.perms.open && p != nil {
+		// /permissions takes the panes and the prompt; its lines wrap, the
+		// body scrolls to the selected row, and an open question is always
+		// drawn above the footer.
+		rows := h - len(header) - 1
+		lines := m.permFit(w, rows)
+		for i := 0; i < rows; i++ {
+			if i < len(lines) {
+				out.WriteString(lines[i])
+			}
+			out.WriteString("\n")
+		}
+		out.WriteString(ansi.Truncate(" "+m.st.muted.Render(m.permFooter(p.GrantsRead())), w, ""))
+	} else {
+		popup := m.completionRows(w)
+		prompt := m.prompt(w)
+		_, paneH := m.paneArea()
+		out.WriteString(m.panes(w, paneH) + "\n")
+		for _, r := range popup {
+			out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+		}
+		for _, r := range prompt {
+			out.WriteString(ansi.Truncate(r, w, "…") + "\n")
+		}
+		out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 	}
-	for _, r := range prompt {
-		out.WriteString(ansi.Truncate(r, w, "…") + "\n")
-	}
-	out.WriteString(ansi.Truncate(m.hints(w), w, "…"))
 
 	content := out.String()
 	if m.sel.active {
@@ -857,6 +872,8 @@ func (m Model) requestLines(it *inbox.Item, a fleet.Agent, w int) []string {
 		out = append(out, key("^Y", "start agents in it")+"  "+key("^N", "keep the mode"))
 	case it.Answerable() && it.Kind == inbox.PowersSet:
 		out = append(out, key("^Y", "allow it until Den restarts")+"  "+key("^N", "keep asking"))
+	case it.Answerable() && it.Kind == inbox.Setup:
+		out = append(out, m.setupActs(it, key, "  "))
 	case it.Answerable() && it.Kind == inbox.APIOn:
 		out = append(out, key("^Y", "turn it on")+"  "+key("^N", "leave it off"))
 	case it.Answerable() && it.Kind == inbox.Grant:
@@ -1089,6 +1106,8 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		text = append(text, dim.Render(it.Resolved)+sp+sp+key("/dismiss", ""))
 	case (it.Kind == inbox.DesktopInstall || it.Kind == inbox.DesktopMission) && m.desk.installing == it.ID:
 		text = append(text, attn.Render(installingNote))
+	case it.Started && it.State != inbox.Resolved:
+		text = append(text, attn.Render(it.Resolved)+dim.Render(" · answered; Den settles it when this ends"))
 	case it.Answerable() && !selected:
 		why := "waiting"
 		if it.At.After(m.inboxAt) {
@@ -1177,6 +1196,9 @@ func (m Model) inboxBlock(it *inbox.Item, selected bool, w int) []string {
 		}
 		if it.Kind == inbox.PowersSet {
 			acts = key("^Y", "allow it until Den restarts") + sp + sp + key("^N", "keep asking")
+		}
+		if it.Kind == inbox.Setup {
+			acts = m.setupActs(it, key, sp+sp)
 		}
 		if it.Kind == inbox.APIOn {
 			acts = key("^Y", "turn it on") + sp + sp + key("^N", "leave it off")
@@ -1526,6 +1548,9 @@ func (m Model) hints(w int) string {
 	s := m.st
 	var items [][2]string
 	switch {
+	case m.deskHolds() && !m.perms.open:
+		// Only what runs while an agent has the desktop (desk_hold.go).
+		items = [][2]string{{"^Y", "waits: an agent has the desktop"}, {"/desktop pause", ""}, {"/desktop stop", ""}, {"^N", "deny"}, {"↑ ↓", "select"}, {"type", "Enter waits"}, {"Tab", "view"}, {"^C", "quit"}}
 	case m.help:
 		items = [][2]string{{"/allow /deny /always", "answer the selected prompt"}, {"/answer <text>", "answer a question held in Den"}, {"/open", "focus terminal"}, {"/dismiss", "drop a notice"}, {"/unread", "keep the selected item unread"}, {"/close [idle|<name>] [--force]", "close agents"}, {"/reopen [--fork] <name>", "reopen a closed agent"}, {"/copy", "last command block"}, {"/rescan", ""}, {"/fleet /inbox /orch /review /map", "switch view"}, {"/fleet project · flat", "the Fleet by project, or not"}, {"/project <name> · add <dir> · drop", ""}, {"/remote [connect <host>]", "remote hosts"}, {"/view [rescue]", "the window view · bring back windows on special:den"}, {"/mission <goal> · move <project>", ""}, {"/template [<name> <target>|save <name>]", "missions from a saved shape"}, {"/quit", ""}, {"⇧Enter Alt+Enter ^J", "newline"}, {"^V", "paste image"}, {"Esc", "clear line"}}
 	case len(completions(m.input.Value(), m.agents)) > 0:

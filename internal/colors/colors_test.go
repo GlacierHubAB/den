@@ -1,8 +1,11 @@
 package colors
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/GlacierHubAB/den/internal/theme"
 )
 
 func TestAssignIsUniqueStickyAndOldestFirst(t *testing.T) {
@@ -37,6 +40,27 @@ func TestAssignIsUniqueStickyAndOldestFirst(t *testing.T) {
 	}
 }
 
+// A record from before the agent colour rule (rose, mint, lilac, orchid)
+// is replaced at the first assignment from the curated hues, each by a
+// colour the rule takes, and the next assignment changes nothing: an
+// agent is recoloured once.
+func TestOldRecordsAreRecolouredOnce(t *testing.T) {
+	agents := []Agent{{"s-a", 1}, {"s-b", 2}, {"s-c", 3}, {"s-d", 4}, {"s-e", 5}}
+	prev := map[string]string{"s-a": "#ea9e9e", "s-b": "#66cb8e", "s-c": "#b9a3f0", "s-d": "#e39ad8", "s-e": "#86c6e8"}
+	got, changed := Assign(prev, agents, theme.Hues)
+	if !changed || got["s-e"] != "#86c6e8" {
+		t.Fatalf("changed=%v got=%v: a passing record must stay", changed, got)
+	}
+	for sid, c := range got {
+		if ok, why := theme.AgentColor(c); !ok {
+			t.Errorf("%s kept %s, which the rule refuses (%s)", sid, c, why)
+		}
+	}
+	if again, changed := Assign(got, agents, theme.Hues); changed {
+		t.Errorf("a second assignment recoloured again: %v to %v", got, again)
+	}
+}
+
 func TestSaveLoadRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "den", "colors.json")
 	want := map[string]string{"s": "#abcdef"}
@@ -48,5 +72,14 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 	if got := Load(filepath.Join(t.TempDir(), "missing.json")); len(got) != 0 {
 		t.Errorf("missing file should load empty, got %v", got)
+	}
+	// A record holding null loads as an empty map, not nil: the UI loads
+	// the record once, while it has none.
+	null := filepath.Join(t.TempDir(), "colors.json")
+	if err := os.WriteFile(null, []byte("null\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := Load(null); got == nil || len(got) != 0 {
+		t.Errorf("a null record loads as %#v", got)
 	}
 }

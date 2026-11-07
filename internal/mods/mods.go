@@ -97,8 +97,13 @@ func loadedFrom(name string) string {
 }
 
 // Install writes the mod into its Installs directory, replacing whatever
-// version was there. Sessions started afterwards load it.
+// version was there. Sessions started afterwards load it. It never writes
+// through a symbolic link: when the skills folder or the mod's own folder
+// is one, it writes nothing.
 func Install(m Mod) error {
+	if why := Symlinked(m); why != "" {
+		return errors.New(why + " is a symbolic link; Den does not write through one")
+	}
 	if err := os.RemoveAll(m.Installs); err != nil {
 		return err
 	}
@@ -117,6 +122,17 @@ func Install(m Mod) error {
 		}
 		return os.WriteFile(dst, raw, 0o644)
 	})
+}
+
+// Symlinked names the folder on m's way that is a symbolic link: the
+// skills folder or the mod's own, "" when neither is.
+func Symlinked(m Mod) string {
+	for _, p := range []string{filepath.Dir(m.Installs), m.Installs} {
+		if fi, err := os.Lstat(p); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			return p
+		}
+	}
+	return ""
 }
 
 // Uninstall removes an installed copy. It refuses to touch anything that is

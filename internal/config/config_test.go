@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -284,5 +285,29 @@ func TestDesktopAgentView(t *testing.T) {
 	os.WriteFile(p, []byte("[desktop]\nagent_view = maybe\n"), 0o600)
 	if DesktopAgentView() {
 		t.Fatal("on for nonsense")
+	}
+}
+
+// The task folder lists are JSON lists of absolute or ~/ paths; one bad
+// entry makes the whole list unusable, so a launch refuses.
+func TestDesktopPaths(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "config.toml")
+	t.Setenv("DEN_CONFIG", p)
+	t.Setenv("HOME", "/home/u")
+	if got, ok := DesktopPaths("task_writable"); got != nil || !ok {
+		t.Fatalf("no file: %q %v", got, ok)
+	}
+	os.WriteFile(p, []byte("[desktop]\ntask_writable = [\"~/Documents/out\", \"/srv/share/\"]\ntask_hide = [\"relative/x\"]\n"), 0o600)
+	if got, ok := DesktopPaths("task_writable"); !ok || strings.Join(got, ",") != "/home/u/Documents/out,/srv/share" {
+		t.Fatalf("set: %q %v", got, ok)
+	}
+	if got, ok := DesktopPaths("task_hide"); ok || got != nil {
+		t.Fatalf("relative accepted: %q %v", got, ok)
+	}
+	for _, bad := range []string{`["/home/u/../etc"]`, `"/home/u"`, `[1]`, `["~"]`} {
+		os.WriteFile(p, []byte("[desktop]\ntask_writable = "+bad+"\n"), 0o600)
+		if _, ok := DesktopPaths("task_writable"); ok {
+			t.Errorf("%s accepted", bad)
+		}
 	}
 }

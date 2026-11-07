@@ -10,6 +10,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
+	"github.com/GlacierHubAB/den/internal/theme"
 )
 
 // Snapshot is what the UI hands the API after each refresh, on its own
@@ -101,17 +102,16 @@ const labelMax = 80
 // summaryMax caps a mission run's summary.
 const summaryMax = 200
 
-// hexColor is c as "#rrggbb" in lower case, "" unless it is one.
+// hexColor is c as "#rrggbb" in lower case, "" unless it is one the agent
+// colour rule takes (theme.AgentColor): Den draws agents only in those,
+// and a record from before, or from elsewhere, never reaches a console as
+// a colour it would refuse.
 func hexColor(c string) string {
-	if len(c) != 7 || c[0] != '#' {
+	c = strings.ToLower(c)
+	if ok, _ := theme.AgentColor(c); !ok {
 		return ""
 	}
-	for _, r := range c[1:] {
-		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
-			return ""
-		}
-	}
-	return strings.ToLower(c)
+	return c
 }
 
 // Project builds the View. It reads only the fields it names.
@@ -262,7 +262,10 @@ func Project(s Snapshot) *View {
 		v.Cards[c.ID] = c
 	}
 	for _, st := range s.Settled {
-		if settledResult[st.Verb] != "" && (st.By == "den" || st.By == "console" || st.By == "rule") {
+		if settledResult[st.Verb] != "" && settledBy[st.By] {
+			if !outcomes[st.Outcome] {
+				st.Outcome = ""
+			}
 			v.Settled[st.ID] = st
 		}
 	}
@@ -313,6 +316,13 @@ func projectCard(c Card) Card {
 			out.Verbs = append(out.Verbs, v)
 		}
 	}
+	if c.Started {
+		// Its action runs: no one answers it.
+		out.Started, out.DockAnswers, out.Verbs = true, false, []string{}
+		if settledBy[c.StartedBy] {
+			out.StartedBy = c.StartedBy
+		}
+	}
 	out.Class, out.Step = c.Class, c.Step
 	if !inbox.StepFits(inbox.Class(out.Class), out.Step) {
 		out.Class, out.Step = string(inbox.DenOnly), 0
@@ -324,6 +334,13 @@ func projectCard(c Card) Card {
 	out.HashV2, _ = CardHashV2(out.Kind, out.Agent, out.Tool, out.Title, out.Note, out.Class, out.Step, "", nil, out.Body)
 	return out
 }
+
+// settledBy and outcomes are the closed sets a card's by and outcome
+// take: nothing a console or an action wrote reaches the wire.
+var (
+	settledBy = map[string]bool{"den": true, "console": true, "rule": true}
+	outcomes  = map[string]bool{"": true, inbox.OutcomeDone: true, inbox.OutcomeFailed: true, inbox.OutcomeLost: true}
+)
 
 func kindName(k inbox.Kind) string {
 	switch k {

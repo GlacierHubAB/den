@@ -38,6 +38,7 @@ const (
 	ToolFailed   = "tool_failed"   // tool: the tool whose call failed
 	Stalled      = "stalled"       // minutes: working with no hook event that long (from Den)
 	StillWaiting = "still_waiting" // request, minutes: a needs_you unanswered that long (from Den)
+	FocusFailed  = "focus_failed"  // reason: why an app's focus was refused (from Den)
 )
 
 // Sources of a turn_start: where the prompt came from.
@@ -47,7 +48,17 @@ const (
 )
 
 // Kinds lists every kind, in the order the docs give them.
-var Kinds = []string{SessionStart, SessionEnd, TurnStart, Done, NeedsYou, Idle, TurnFailed, ToolFailed, Stalled, StillWaiting}
+var Kinds = []string{SessionStart, SessionEnd, TurnStart, Done, NeedsYou, Idle, TurnFailed, ToolFailed, Stalled, StillWaiting, FocusFailed}
+
+// FailureTypes are the error types of a turn_failed that Den knows: Claude
+// Code's own names for why a turn ended. The inbox titles them and den
+// feedback counts them by name; any other type is counted as "other", since
+// the field is whatever Claude Code sent.
+var FailureTypes = []string{
+	"rate_limit", "overloaded", "server_error", "invalid_request",
+	"authentication_failed", "oauth_org_not_allowed", "cloud_credential_error",
+	"billing_error", "account_on_hold", "max_output_tokens", "unknown",
+}
 
 // Event is one line of the stream.
 type Event struct {
@@ -75,6 +86,16 @@ type Event struct {
 // the agent's name.
 func New(kind, sessionID string) Event {
 	return Event{V: Version, Time: time.Now().UTC().Truncate(time.Millisecond), Kind: kind, Session: sessionID, Agent: badge.Name(sessionID)}
+}
+
+// FocusFailedEvent is a focus_failed: the refusal's reason, a code from a
+// closed list, and the session and Den's name for the agent of this
+// machine it was about, both empty when the target was not one. Never
+// the target an app sent, nor what the compositor said.
+func FocusFailedEvent(reason, sessionID, agent string) Event {
+	ev := New(FocusFailed, sessionID)
+	ev.Agent, ev.Reason = agent, reason
+	return ev
 }
 
 // FromHook maps a hook event to a stream event, picking metadata fields by

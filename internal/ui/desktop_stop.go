@@ -159,6 +159,9 @@ func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
 		last.kept = true
 		return m.say("Kept the last desktop mission's journal, screenshots and log in "+last.Dir+".", false)
 	}
+	if len(args) > 0 && strings.EqualFold(args[0], "x11") {
+		return m.deskX11(args[1:])
+	}
 	if len(args) > 0 && strings.EqualFold(args[0], "stop") {
 		out := m.stopDesktop("you stopped it with /desktop stop")
 		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop stop: " + out, at: time.Now()}))
@@ -167,6 +170,9 @@ func (m Model) desktopCommand(args []string) (tea.Model, tea.Cmd) {
 	dm := m.deskLive()
 	if dm == nil {
 		return m.say("No desktop mission is running. /desktop stop stops one at once.", false)
+	}
+	if len(args) > 0 && (strings.EqualFold(args[0], "pause") || strings.EqualFold(args[0], "resume")) {
+		return m.deskPause(dm, strings.EqualFold(args[0], "pause"))
 	}
 	if dm.Task {
 		left := time.Until(dm.deadline).Round(time.Second)

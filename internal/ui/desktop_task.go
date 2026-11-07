@@ -103,15 +103,13 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 		"This one task only. Model: "+in.Model+". Stop it any time: /desktop stop, or den desktop stop; it also stops if Den quits.",
 		"Den needs its own window to start: run Den in its own terminal window, with its tab in front.",
 	)
-	if setup != nil {
-		body = append(body, setup.lines()...)
-	}
-	it := m.store.AddDesktopMission(sanitize.Label(sentence, 120), body, r)
+	body = append(body, deskSandLines()...)
+	o := deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup, body: body}
+	it := m.store.AddDesktopMission(sanitize.Label(sentence, 120), o.cardBody(), r)
 	m.deskAsked()
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	o := deskOffer{in: in, task: task, steps: in.HumanSteps, minutes: minutes, actions: actions, setup: setup}
 	o.consoleTurn, o.turnLineage = m.deskTurn(r)
 	m.desk.offers[it.ID] = o
 	m.flash, m.flashErr = "Desktop control asked: ^Y starts it, ^N declines.", false
@@ -222,6 +220,12 @@ func prepareTask(itemID string, offer deskOffer, own string, pid int) deskPrepar
 		return p
 	}
 	p.focused = snap.Active
+	p.layers = map[string]bool{}
+	for _, l := range snap.Layers {
+		if l.Level >= 2 && l.Address != "" {
+			p.layers[desktop.LayerKey(l)] = true
+		}
+	}
 	p.dir = filepath.Join(deskStateDir(), p.id)
 	if err := os.MkdirAll(p.dir, 0o700); err != nil {
 		p.err = err

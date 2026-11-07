@@ -261,6 +261,9 @@ type consoleState struct {
 	// lockGen counts those locks, so a card raised before one is refused.
 	always  bool
 	lockGen uint64
+	// keptGrant: the console restored at this start came from a record
+	// without kept_era (grantKept takes it).
+	keptGrant bool
 }
 
 // consoleKey is Den's half: its Ed25519 key, loaded once (signing caches
@@ -764,6 +767,8 @@ func (s *Server) awaitConsole(c *conn, req Request, rec *consoleRec, confirm cha
 		s.act(Act{ConsoleDone: rec.ID, ConsoleChanged: true})
 		if locked {
 			s.askPowers(rec, "you locked the console's powers in Den")
+		} else if s.permsHeld() {
+			s.askPowers(rec, permsTamper)
 		}
 		c.reply(req.ID, reply())
 	}()

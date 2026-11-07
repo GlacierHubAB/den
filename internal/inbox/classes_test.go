@@ -2,15 +2,17 @@ package inbox
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 )
 
 // allKinds is every Kind there is: from Permission up to the first one
-// String does not name. It must reach RenamePick, the last kind: a kind
+// String does not name. It must reach Setup, the last kind: a kind
 // added without a String case would end the walk early and hide the
 // kinds after it.
 func allKinds(t *testing.T) []Kind {
@@ -19,8 +21,8 @@ func allKinds(t *testing.T) []Kind {
 	for k := Permission; k.String() != "?"; k++ {
 		out = append(out, k)
 	}
-	if len(out) == 0 || out[len(out)-1] < RenamePick {
-		t.Fatalf("the kinds stop after %d, before RenamePick: give every kind its String", len(out))
+	if len(out) == 0 || out[len(out)-1] < Setup {
+		t.Fatalf("the kinds stop after %d, before Setup: give every kind its String", len(out))
 	}
 	return out
 }
@@ -56,8 +58,9 @@ func TestClassifyEveryKind(t *testing.T) {
 		MissionUpdate: {Destructive, 2},
 		MissionMove:   {Routine, 1},
 		Merge:         {Outward, 2},
+		Restore:       {Destructive, 1}, // back in permmode.Lower(its mode at close, the global mode)
 		Question:      {DenOnly, 0}, Done: {DenOnly, 0}, Idle: {DenOnly, 0}, Sent: {DenOnly, 0},
-		Skills: {DenOnly, 0}, Budget: {DenOnly, 0}, Restore: {DenOnly, 0}, Stalled: {DenOnly, 0},
+		Skills: {DenOnly, 0}, Budget: {DenOnly, 0}, Stalled: {DenOnly, 0},
 		Failed: {DenOnly, 0}, Install: {DenOnly, 0}, Message: {DenOnly, 0}, Guidance: {DenOnly, 0},
 		Usage: {DenOnly, 0}, UsageResume: {DenOnly, 0}, APIOn: {DenOnly, 0}, Grant: {DenOnly, 0},
 		Pair: {DenOnly, 0}, ControlAsk: {DenOnly, 0}, Console: {DenOnly, 0}, ConsoleNote: {DenOnly, 0},
@@ -66,6 +69,7 @@ func TestClassifyEveryKind(t *testing.T) {
 		GuardNote: {DenOnly, 0}, MissionCriteria: {DenOnly, 0}, MissionDone: {DenOnly, 0},
 		MirrorAsk: {DenOnly, 0}, ProcessTuned: {DenOnly, 0}, PromptProposal: {DenOnly, 0},
 		RulesPick: {DenOnly, 0}, RulesEdited: {DenOnly, 0}, PowersSet: {DenOnly, 0}, RenamePick: {DenOnly, 0},
+		Setup: {DenOnly, 0}, // writes Claude Code's settings: the human's, in Den only
 	}
 	kinds := allKinds(t)
 	if len(kinds) != len(want) {
@@ -146,6 +150,24 @@ func TestClassifyPermissionByTool(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(cwd, "src", "pkg"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// src/lib/alias.go links to a file beside it; src/out/x.go to one
+	// outside the cwd.
+	for _, d := range []string{filepath.Join(cwd, "src", "lib"), filepath.Join(cwd, "src", "out")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, f := range []string{filepath.Join(cwd, "src", "lib", "real.go"), filepath.Join(home, "elsewhere", "a")} {
+		if err := os.WriteFile(f, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(cwd, "src", "lib", "real.go"), filepath.Join(cwd, "src", "lib", "alias.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "a"), filepath.Join(cwd, "src", "out", "x.go")); err != nil {
+		t.Fatal(err)
+	}
 	type cs struct {
 		c    Class
 		step int
@@ -186,7 +208,17 @@ func TestClassifyPermissionByTool(t *testing.T) {
 		{"a relative grep glob through a symlink to keys", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": "skeys/**"}, den},
 		{"a relative glob under a real dir", "Glob", map[string]any{"pattern": "pkg/*.go", "path": filepath.Join(cwd, "src")}, routine3},
 		{"a grep glob with no path", "Grep", map[string]any{"pattern": "x", "glob": "*.go"}, den},
-		{"a glob under a path inside", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a ** glob that can reach a symlink to keys", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src")}, den},
+		{"a ** glob with no symlink in reach", "Glob", map[string]any{"pattern": "**/*.go", "path": filepath.Join(cwd, "src", "pkg")}, routine3},
+		{"a glob whose wildcard matches a symlink to keys", "Glob", map[string]any{"pattern": "sk?ys/*", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob whose wildcard matches a link to a file outside", "Glob", map[string]any{"pattern": "out/*.go", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob whose wildcard matches a link to a file inside", "Glob", map[string]any{"pattern": "lib/*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a glob that cannot match the symlink beside it", "Glob", map[string]any{"pattern": "*.go", "path": filepath.Join(cwd, "src")}, routine3},
+		{"a glob whose upper-case wildcard matches a link to a file outside", "Glob", map[string]any{"pattern": "o?t/*.GO", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob whose upper-case wildcard matches a symlink to keys", "Glob", map[string]any{"pattern": "S?EYS/*", "path": filepath.Join(cwd, "src")}, den},
+		{"a glob with an escaped name", "Glob", map[string]any{"pattern": `sk\eys/*`, "path": filepath.Join(cwd, "src")}, den},
+		{"a grep glob escaping a hidden dir", "Grep", map[string]any{"pattern": "x", "path": filepath.Join(cwd, "src"), "glob": `\.git/**`}, den},
+		{"a glob escaping Claude's dir", "Glob", map[string]any{"pattern": `\.claude/*`, "path": filepath.Join(cwd, "src")}, den},
 		{"an absolute glob inside", "Glob", map[string]any{"pattern": filepath.Join(cwd, "src") + "/*.go"}, routine3},
 		{"an absolute glob outside", "Glob", map[string]any{"pattern": "/etc/*"}, den},
 		{"a ~ glob", "Glob", map[string]any{"pattern": "~/**/*.pem"}, den},
@@ -208,6 +240,101 @@ func TestClassifyPermissionByTool(t *testing.T) {
 	it.req.Input.ToolInput = json.RawMessage("{not json")
 	if c, step := Classify(it, Facts{}); c != DenOnly || step != 0 {
 		t.Errorf("unparsable input: %s %d", c, step)
+	}
+}
+
+// TestMain lifts the reach walk's time budget: a loaded runner under -race
+// may walk slowly, and a row that wants routine must not get den_only for
+// it. Only TestGlobReachPastItsBudgetIsDenOnly is about the budget, and it
+// sets its own.
+func TestMain(m *testing.M) {
+	reachBudget = time.Hour
+	os.Exit(m.Run())
+}
+
+// globCwd makes a cwd with src/a.go under a fresh HOME, and a Glob of
+// src/*.go in it.
+func globCwd(t *testing.T) (cwd string, glob func() *Item) {
+	t.Helper()
+	home := t.TempDir()
+	if r, err := filepath.EvalSymlinks(home); err == nil {
+		home = r
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	cwd = filepath.Join(home, "code", "proj")
+	if err := os.MkdirAll(filepath.Join(cwd, "src"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "src", "a.go"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cwd, func() *Item {
+		return permItem(t, cwd, "Glob", map[string]any{"pattern": "*.go", "path": filepath.Join(cwd, "src")})
+	}
+}
+
+// A walk of a Glob's reach that runs past its time budget does not know
+// what the pattern reaches: den_only.
+func TestGlobReachPastItsBudgetIsDenOnly(t *testing.T) {
+	_, glob := globCwd(t)
+	if c, step := Classify(glob(), Facts{}); c != Routine || step != 3 {
+		t.Fatalf("within the budget: %s %d", c, step)
+	}
+	old := reachBudget
+	reachBudget = -time.Second
+	t.Cleanup(func() { reachBudget = old })
+	if c, step := Classify(glob(), Facts{}); c != DenOnly || step != 0 {
+		t.Errorf("past the budget: %s %d", c, step)
+	}
+}
+
+// The budget counts the entries the walk skips too: a directory of files
+// that none match is read in full, so it is den_only past the budget.
+func TestGlobReachOfNothingMatchingStillHasABudget(t *testing.T) {
+	cwd, _ := globCwd(t)
+	for i := range 2000 {
+		if err := os.WriteFile(filepath.Join(cwd, "src", fmt.Sprintf("f%d.txt", i)), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	glob := func() *Item {
+		return permItem(t, cwd, "Glob", map[string]any{"pattern": "*.zz", "path": filepath.Join(cwd, "src")})
+	}
+	if c, step := Classify(glob(), Facts{}); c != Routine || step != 3 {
+		t.Fatalf("within the budget: %s %d", c, step)
+	}
+	old := reachBudget
+	reachBudget = -time.Second
+	t.Cleanup(func() { reachBudget = old })
+	if c, step := Classify(glob(), Facts{}); c != DenOnly || step != 0 {
+		t.Errorf("past the budget: %s %d", c, step)
+	}
+}
+
+// A permission is classed once: a later projection of the same card
+// neither walks again nor changes class (its card hash v2 holds the
+// class), though a new card sees what is there now.
+func TestPermissionIsClassedOnce(t *testing.T) {
+	cwd, glob := globCwd(t)
+	it := glob()
+	if c, step := Classify(it, Facts{}); c != Routine || step != 3 {
+		t.Fatalf("first: %s %d", c, step)
+	}
+	out := filepath.Join(filepath.Dir(filepath.Dir(cwd)), "out")
+	if err := os.WriteFile(out, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(out, filepath.Join(cwd, "src", "b.go")); err != nil {
+		t.Fatal(err)
+	}
+	if c, step := Classify(it, Facts{}); c != Routine || step != 3 {
+		t.Errorf("the same card again: %s %d", c, step)
+	}
+	if c, step := Classify(glob(), Facts{}); c != DenOnly || step != 0 {
+		t.Errorf("a new card: %s %d", c, step)
 	}
 }
 
@@ -271,6 +398,20 @@ func TestClassifyReadsResolveIntoDenOrDreyState(t *testing.T) {
 			t.Errorf("%s: %s %d, want den_only 0", tc.name, c, step)
 		}
 	}
+	// Den's config dir, not made yet, under a config home XDG names through
+	// a symlink: a read where it will be is den_only all the same.
+	cfg := filepath.Join(cwd, "cfg")
+	if err := os.MkdirAll(cfg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(cfg, filepath.Join(home, "cfglink")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "cfglink"))
+	if c, _ := Classify(permItem(t, cwd, "Read", map[string]any{"file_path": filepath.Join(cfg, "den", "config.toml")}), Facts{}); c != DenOnly {
+		t.Errorf("Den's config dir not made yet, through a symlinked config home: %s, want den_only", c)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
 	// An ordinary file next to them stays routine.
 	t.Setenv("XDG_DATA_HOME", data)
 	it := permItem(t, cwd, "Read", map[string]any{"file_path": filepath.Join(cwd, "src", "main.go")})

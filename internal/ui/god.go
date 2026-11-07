@@ -76,6 +76,9 @@ var godTTYKinds = map[inbox.Kind]bool{
 	inbox.RulesPick: true, inbox.RulesEdited: true, inbox.RenamePick: true,
 	// The console's automatic powers, as config.toml asks for them.
 	inbox.PowersSet: true,
+	// What every later session's hooks run, written into Claude Code's
+	// settings.
+	inbox.Setup: true,
 }
 
 // godTTYOnly reports whether, now, only the human answers it in Den.

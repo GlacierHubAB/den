@@ -66,9 +66,24 @@ var dockVerbs = []dockVerb{
 		}
 		return api.DockRefused, "connecting with a changed policy is for Den only"
 	}},
-	// Stopping desktop control only lowers: always allowed from the dock.
-	{"/desktop", nil, "/desktop [stop|keep]", "desktop control: stop it at once, or keep the last mission's files", always(api.DockOK, "")},
+	// Stopping and pausing desktop control only lower: allowed from the
+	// dock. Resuming an agent, and anything else /desktop does (X11 apps
+	// for a task), is the human's, in Den's window.
+	{"/desktop", nil, "/desktop [stop|pause|resume|keep]", "desktop control: stop or pause it at once, or keep the last mission's files", func(a []string) (string, string) {
+		if len(a) == 0 {
+			return api.DockOK, ""
+		}
+		if w := strings.ToLower(a[0]); len(a) == 1 && (w == "stop" || w == "pause" || w == "keep") {
+			return api.DockOK, ""
+		}
+		if strings.EqualFold(a[0], "resume") {
+			return api.DockDenScreen, "resuming a desktop agent is done in Den's window"
+		}
+		return api.DockDenScreen, "that is done in Den's window"
+	}},
 	{"/open", []string{"/o", "/focus"}, "/open", "focus the agent's terminal", always(api.DockDenScreen, whyScreen)},
+	// The levels are set in Den's window only: a console never opens it.
+	{"/permissions", nil, "/permissions", "what Drey may do: set the levels", always(api.DockDenScreen, whyScreen)},
 	{"/copy", nil, "/copy", "copy the last code block", always(api.DockDenScreen, whyScreen)},
 	{"/close", []string{"/kill"}, "/close <name>[, name…] | idle [dur] [--force]", "close agents, on a card", func(a []string) (string, string) {
 		if len(a) == 0 {
@@ -201,7 +216,7 @@ var dockVerbs = []dockVerb{
 // dockJudged is how many leading words each verb's verdict judges: they
 // run in the form judged (lowercased), so what runs is what was checked;
 // the words after (names, notes, paths) run as typed.
-var dockJudged = map[string]int{"/god": 1, "/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1, "/memory": 1}
+var dockJudged = map[string]int{"/desktop": 1, "/god": 1, "/api": 1, "/remote": 1, "/fleet": 1, "/mission": 1, "/template": 1, "/usage": 1, "/orchestrator": 1, "/mode": 1, "/memory": 1}
 
 // dockVerbOf is the verb a command word names, by its name or an alias.
 func dockVerbOf(word string) (dockVerb, bool) {

@@ -12,20 +12,20 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/config"
+	"github.com/GlacierHubAB/den/internal/desksand"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/discover"
 	"github.com/GlacierHubAB/den/internal/hypr"
 	"github.com/GlacierHubAB/den/internal/inbox"
-	"github.com/GlacierHubAB/den/internal/procs"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 	"github.com/GlacierHubAB/den/internal/spawn"
+	"github.com/GlacierHubAB/den/internal/sysd"
 )
 
 // A desktop mission starts from one card (DesktopMission): the asker names
@@ -51,6 +51,68 @@ type deskOffer struct {
 	// in (deskTurn), taken when it came, not at ^Y: by then that turn may
 	// be over, or another one running.
 	consoleTurn, turnLineage string
+	// body is the card's text above its X11 line and its setup lines;
+	// x11 the card's switch: off until the human turns it on, in Den's
+	// window, with /desktop x11 (deskX11).
+	body []string
+	x11  bool
+}
+
+// cardBody is the card's whole text: its own, the X11 switch, and the
+// install it does first.
+func (o deskOffer) cardBody() []string {
+	out := append([]string(nil), o.body...)
+	if o.task != "" {
+		out = append(out, deskX11Line(o.x11))
+	}
+	if o.setup != nil {
+		out = append(out, o.setup.lines()...)
+	}
+	return out
+}
+
+// deskX11Line is the start card's line for its X11 switch.
+func deskX11Line(on bool) string {
+	if on {
+		return "X11 apps: on for this one. X apps it opens can reach your other X windows. /desktop x11 off turns them off."
+	}
+	return "X11 apps: off. /desktop x11 lets it open X11 apps too, for this one only."
+}
+
+// deskX11 is /desktop x11 [on|off], typed in Den's window: the switch on
+// the start card waiting now. Nothing else sets it: not the agent's
+// request, the config, the dock or den-api, and no mission inherits it.
+func (m Model) deskX11(args []string) (tea.Model, tea.Cmd) {
+	on := true
+	switch {
+	case len(args) == 0:
+	case len(args) == 1 && strings.EqualFold(args[0], "on"):
+	case len(args) == 1 && strings.EqualFold(args[0], "off"):
+		on = false
+	default:
+		return m.say("/desktop x11 takes on or off.", true)
+	}
+	for _, it := range m.store.Items() {
+		if it.Kind != inbox.DesktopMission || it.State != inbox.Waiting {
+			continue
+		}
+		o, ok := m.desk.offers[it.ID]
+		if !ok || it.Resolved != "" || m.desk.installing == it.ID {
+			return m.say("That card is already starting; X11 apps stay as they were.", true)
+		}
+		if o.task == "" {
+			return m.say("X11 apps are for a task; a mission with configured apps opens only those.", true)
+		}
+		o.x11 = on
+		m.desk.offers[it.ID] = o
+		it.Body = o.cardBody()
+		m.refresh()
+		if on {
+			return m.say("X11 apps are on for the mission on the card. X apps it opens can reach your other X windows.", false)
+		}
+		return m.say("X11 apps are off for the mission on the card.", false)
+	}
+	return m.say("No desktop mission card is waiting. X11 apps are set on its card, before it starts.", true)
 }
 
 // deskTurn is the console turn a desktop request from r came in: only
@@ -81,6 +143,7 @@ type deskPrepared struct {
 	workspace int
 	dir       string
 	windows   []deskLaunched
+	layers    map[string]bool // a task: the top and overlay surfaces up at its start
 	err       error
 }
 
@@ -252,15 +315,13 @@ func (m *Model) handleDesktopMissionRequest(r *bridge.Request) tea.Cmd {
 		"The agent never types credentials. It has only the desktop tools: no shell, files, web, messages, app launching, keybinds or clipboard.",
 		"Model: "+in.Model+". Stop it any time: /desktop stop, or den desktop stop.",
 	)
-	if setup != nil {
-		body = append(body, setup.lines()...)
-	}
-	it := m.store.AddDesktopMission("Start a desktop mission for "+sanitize.Label(in.AskedBy, 40)+"?", body, r)
+	body = append(body, deskSandLines()...)
+	o := deskOffer{in: in, apps: apps, setup: setup, body: body}
+	it := m.store.AddDesktopMission("Start a desktop mission for "+sanitize.Label(in.AskedBy, 40)+"?", o.cardBody(), r)
 	m.deskAsked()
 	if m.desk.offers == nil {
 		m.desk.offers = map[string]deskOffer{}
 	}
-	o := deskOffer{in: in, apps: apps, setup: setup}
 	o.consoleTurn, o.turnLineage = m.deskTurn(r)
 	m.desk.offers[it.ID] = o
 	m.flash, m.flashErr = it.Title+" ^Y starts it, ^N declines.", false
@@ -296,7 +357,7 @@ func (m Model) decideDesktopMission(it *inbox.Item, verb string) (tea.Model, tea
 	if offer.setup != nil {
 		return m.installThenStart(it, offer)
 	}
-	it.Resolved = "starting…"
+	m.store.Start(it, "starting…", 10*time.Minute)
 	id := it.ID
 	if offer.task != "" {
 		return m.startTask(id, offer)
@@ -396,6 +457,11 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		}
 		m.flash, m.flashErr = "The desktop mission did not start: "+why, true
 		m.refresh()
+		if len(p.windows) > 0 {
+			// What it launched ran in its slice: stopped as a leftover is,
+			// Den's window holding until it is gone.
+			m.desk.leftover = append(m.desk.leftover, deskSliceOf(p.id))
+		}
 		return nil
 	}
 	if p.err != nil {
@@ -424,12 +490,15 @@ func (m *Model) finishPrepare(p deskPrepared) tea.Cmd {
 		AskedBy:   p.offer.in.AskedBy,
 	}
 	dm.consoleTurn, dm.turnLineage = p.offer.consoleTurn, p.offer.turnLineage
+	dm.launched = len(p.windows) > 0 // its apps run in its slice: stopped when it ends
 	if task {
 		// The whole desktop, with Den's window off limits from the start;
 		// the agent view joins it once it is up, and until then no call
 		// is answered (decideDesktopCall).
 		dm.Task, dm.Protected = true, map[string]bool{p.own: true}
+		dm.LayersAtStart = p.layers
 		dm.limitActions = p.offer.actions
+		dm.x11 = p.offer.x11 // the card's switch, fixed for the mission
 		dm.deadline = time.Now().Add(time.Duration(p.offer.minutes) * time.Minute)
 	}
 	for _, l := range p.windows {
@@ -589,25 +658,37 @@ func adoptAgent(dm *deskMission, proxyPID int) bool {
 	return dm.AgentStart != ""
 }
 
-// launchApp starts an app (argv, no shell, a session of its own) and
-// waits for its new window. Joined says the window belongs to a process
-// that was running before: the app handed the request to its running
-// instance.
+// launchApp starts an app (argv, no shell) as a service in the mission's
+// slice (desk_slice.go; the mission's id is its folder's name) and waits
+// for its new window. Joined says the window belongs to a process outside
+// the slice: the app handed the request to an instance already running.
 func launchApp(ctx context.Context, a desktop.App, dir string, before desktop.Snapshot) (deskLaunched, error) {
 	l := deskLaunched{App: a}
 	seen := map[string]bool{}
 	for _, w := range before.Windows {
 		seen[w.Address] = true
 	}
-	argv := a.Argv(dir)
-	cmd := exec.Command(argv[0], argv[1:]...)
-	cmd.Dir = dir
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if err := cmd.Start(); err != nil {
+	slice := deskSliceOf(filepath.Base(dir))
+	// The sandbox (desk_sand.go), the same as a task's launch, with no
+	// X11: that switch is a task's. Its profile is the app's own.
+	spec, err := deskSandSpec(dir, a.Name, false)
+	if err == nil {
+		err = deskSandCheck(spec, filepath.Base(dir))
+	}
+	if err != nil {
 		return l, err
 	}
-	started := cmd.Process.Pid
-	go cmd.Wait()
+	svc := sysd.Service{
+		Name:        strings.TrimSuffix(slice, ".slice") + "_app_" + sysd.EscapePart(a.Name) + ".service",
+		Slice:       slice,
+		Description: "Den desktop mission app " + a.Name,
+		Argv:        append(desksand.Outer(spec), append([]string{"--"}, a.Argv(dir)...)...),
+		Env:         desksand.Env(spec),
+		Dir:         desksand.Work(dir),
+	}
+	if err := deskSysStart(svc); err != nil {
+		return l, err
+	}
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) && ctx.Err() == nil {
 		snap, err := deskSnapshot(ctx)
@@ -617,12 +698,7 @@ func launchApp(ctx context.Context, a desktop.App, dir string, before desktop.Sn
 					continue
 				}
 				l.Address, l.PID = w.Address, w.PID
-				l.Joined = true
-				for _, p := range procs.Ancestors(w.PID) {
-					if p.PID == started {
-						l.Joined = false
-					}
-				}
+				l.Joined = !strings.Contains(deskCgroupOf(w.PID), "/"+slice+"/")
 				return l, nil
 			}
 		}

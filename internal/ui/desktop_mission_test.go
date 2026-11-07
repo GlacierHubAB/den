@@ -223,6 +223,11 @@ func TestDesktopMissionJoinedInstanceRefused(t *testing.T) {
 	if strings.Join(*closed, ",") != "0xn1" {
 		t.Fatalf("closed %v", *closed)
 	}
+	// What it launched ran in its slice: stopped as a leftover is, with
+	// Den's window holding until it is gone (sec's S2-4).
+	if len(m.desk.leftover) != 1 || !strings.HasPrefix(m.desk.leftover[0], deskSlicePrefix()) || !m.deskHolds() {
+		t.Errorf("the failed start's slice: leftover %v, held %v", m.desk.leftover, m.deskHolds())
+	}
 }
 
 func TestFreeWorkspace(t *testing.T) {
