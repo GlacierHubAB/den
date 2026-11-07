@@ -94,8 +94,11 @@ type deskMission struct {
 	// a held task: it paused then, and resumes only once the build is the
 	// checked one again (C1).
 	buildChanged string
-	// resumeChecking is set while /desktop resume's build read is out.
+	// resumeChecking is set while /desktop resume's build read is out;
+	// buildGen counts build changes, so an answer read before a later
+	// change resumes nothing.
 	resumeChecking bool
+	buildGen       int
 	// queued are the actions the human approved while it was paused: each
 	// runs only once it goes on, decided again then (desk_hold.go);
 	// flushing while that read of the desktop is out.

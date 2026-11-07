@@ -393,9 +393,9 @@ func (m Model) deskPause(dm *deskMission, pause bool) (tea.Model, tea.Cmd) {
 			return m.say("Den is still checking Hyprland's build; the desktop agent stays paused until it knows.", false)
 		}
 		dm.resumeChecking = true
-		id := dm.ID
+		id, gen := dm.ID, dm.buildGen
 		check := func() tea.Msg {
-			return deskResumeCheckMsg{mission: id, why: deskScopedBuild(context.Background())}
+			return deskResumeCheckMsg{mission: id, gen: gen, why: deskScopedBuild(context.Background())}
 		}
 		mm, flash := m.say("Checking Hyprland's build before the desktop agent goes on…", false)
 		return mm, tea.Batch(check, flash)
@@ -407,6 +407,7 @@ func (m Model) deskPause(dm *deskMission, pause bool) (tea.Model, tea.Cmd) {
 // /desktop resume after a build change: why is "" on the checked build.
 type deskResumeCheckMsg struct {
 	mission string
+	gen     int
 	why     string
 }
 
@@ -421,6 +422,9 @@ func (m Model) finishResumeCheck(msg deskResumeCheckMsg) (tea.Model, tea.Cmd) {
 	dm.resumeChecking = false
 	if dm.Ended != "" || !dm.humanPaused || dm.buildChanged == "" {
 		return m, nil
+	}
+	if msg.gen != dm.buildGen {
+		return m.say("The desktop agent stays paused: Hyprland changed again while Den checked. /desktop resume checks again; /desktop stop ends it.", true)
 	}
 	if msg.why != "" {
 		return m.say("The desktop agent stays paused: "+sanitize.Line(msg.why)+". /desktop stop ends it.", true)

@@ -231,8 +231,12 @@ func TestDeskResumeReadsTheBuildOffTheLoop(t *testing.T) {
 	if _, c := m.finishResumeCheck(deskResumeCheckMsg{mission: "gone"}); c != nil {
 		t.Fatal("an answer for no mission did something")
 	}
-	m.finishResumeCheck(answer)
-	if dm.humanPaused || dm.buildChanged != "" {
+	// The build changed again after the read: its "" answer is stale.
+	m.deskBuildChanged(dm, "this Hyprland build (v0.57.1) isn't the one checked")
+	if mm, _ := m.finishResumeCheck(answer); !mm.(Model).flashErr || !dm.humanPaused {
+		t.Fatal("an answer read before a later build change resumed the task")
+	}
+	if resumeChecked(t, m, dm); dm.humanPaused || dm.buildChanged != "" {
 		t.Fatal("the checked build's answer didn't resume the task")
 	}
 }
