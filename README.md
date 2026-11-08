@@ -341,7 +341,10 @@ that two agents edited the same file. Den takes over that job.
   `StrictHostKeyChecking=yes`. Den forwards nothing and stores no secret, and a
   host sends metadata only by default.
 
-Each section below says plainly what stays open. Anything running as your user
+Each section below says plainly what stays open. A desktop task can't
+approve anything in Den's window or from a paired console while it runs,
+but what it leaves in your terminals can after it ends (see
+[Desktop control](#desktop-control)). Anything running as your user
 can change Den's files, type into its window or drive a paired app. Anything
 that can change the console's service gets the console's reading and chat
 without a question in Den, and an agent in God mode can do anything you can. See [God mode](#god-mode),
@@ -1729,20 +1732,24 @@ are typed in Den's window only (never from the dock), and both are fixed
 once the task starts.
 
 Read this before you turn on the whole desktop: **while a task runs on the
-whole desktop, the agent can do anything you can at the keyboard.** That includes running commands as you in a
-terminal, typing into other agents' terminals (their permission prompts
-too), the clipboard, everything on the screen, and every app you are signed
-in to. Den refuses only a short fixed list: anything on Den's own window,
-the agent's terminal when you turned it on, or a paired console's dock
-(Drey's); exiting or reloading Hyprland, or running `hyprctl` or
-`den` through a bind or a launch; closing or killing Den's window; binds
-that send keys to another window by name; and `ctrl+alt+Delete`,
-`Backspace` and `F1`–`F12`. The signs you can rely on during a task are
-Den's own: the `DESKTOP · on` chip in Den's header, the agent's view
-(when `agent_view` is on), and `/desktop stop`. A paired console's dock may
-also glow, but that is an extra, not a safety control. If the dock's overlay
-goes away during a task, Den pauses the agent's input (below), yet Den's
-chip and `/desktop stop` are still what to rely on. Your levers are these:
+whole desktop, the agent can do anything you can at the keyboard.** While a
+task runs, Den's window and a paired console take no approving answer
+(below), and the agent's own tools refuse Den's window, the agent's terminal
+and a paired console's dock. Programs the task opens run in a sandbox Den
+owns (below), frozen when you pause and stopped when it ends. What the agent
+*can* reach is everything else the task allows: on a held task (the
+default), its own windows and the ones you pick; on the whole desktop,
+everything you can, including your other windows, other agents' terminals
+and their prompts, your apps and your sign-ins. Den also refuses a short
+fixed list: exiting or reloading Hyprland, or running `hyprctl` or `den`
+through a bind or a launch; closing or killing Den's window; binds that send
+keys to another window by name; and `ctrl+alt+Delete`, `Backspace` and
+`F1`–`F12`. The signs you can rely on during a task are Den's own: the
+`DESKTOP · on` chip in Den's header, the agent's view (when `agent_view` is
+on), and `/desktop stop`. A paired console's dock may also glow, but that is
+an extra, not a safety control. If the dock's overlay goes away during a
+task, Den pauses the agent's input (below), yet Den's chip and `/desktop
+stop` are still what to rely on. Your levers are these:
 
 - **The panic stop.** `/desktop stop` or `den desktop stop` (bind it to a
   key, below). The agent also stops when Den quits, however Den ends: it is
@@ -1815,6 +1822,31 @@ yourself, for example in Lua:
 ```lua
 hl.bind("SUPER + SHIFT + Escape", hl.dsp.exec_cmd("den desktop stop"))
 ```
+
+**What a task's apps can still do.**
+
+**A held task (the default):**
+
+- put text on your clipboard while one of its windows has focus; check what
+  you paste after a task;
+- learn when you're idle, and ask Hyprland for focus (your
+  `misc:focus_on_activate` decides);
+- keys the agent sends into a window you picked run as you, outside the task's
+  sandbox, and pausing doesn't stop what they start. Don't pick a terminal or
+  a file manager unless you mean it.
+
+**A task on the whole desktop**, as well:
+
+- type into any window, read and change your clipboard at any time, and
+  possibly see what you type in other windows. Don't copy or type secrets
+  during the task.
+- what the agent types into your own terminals runs as you, outside the
+  sandbox. Pausing or ending the task doesn't stop it, and a command left to
+  run later can send keys to Den's window like any program of yours. Check
+  your open terminals before you approve anything in Den after the task.
+
+**Either kind, with X11 on:** the apps it opens can read and send input to
+your other X (XWayland) windows.
 
 **Files.** Each mission has a private folder in
 `~/.local/state/den/desktop/<mission>/`: its settings, hypruse's journal

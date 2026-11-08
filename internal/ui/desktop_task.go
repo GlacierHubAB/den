@@ -97,7 +97,7 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 		}
 	}
 	body = append(body,
-		"Den keeps its own window and the agent view off limits and refuses a short fixed list (ending your session, reloading or rebinding Hyprland, the panic stop's bind).",
+		"The agent's tools refuse Den's own window and the agent view, and Den's window takes no approving answer while the task runs: pause or end it first. Den also refuses a short fixed list (ending your session, reloading or rebinding Hyprland, the panic stop's bind).",
 		fmt.Sprintf("Den stops it after %d minutes or %d actions, whichever comes first (task_minutes and task_actions in your config's [desktop]).", minutes, actions),
 		"This one task only. Model: "+in.Model+". Stop it any time: /desktop stop, or den desktop stop; it also stops if Den quits.",
 		"Den needs its own window to start: run Den in its own terminal window, with its tab in front.",
