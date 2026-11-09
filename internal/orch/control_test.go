@@ -437,3 +437,42 @@ func TestControlPendingPermissionOutlivesNoProcess(t *testing.T) {
 		t.Error("a request answered after its process was gone")
 	}
 }
+
+// No turn Den writes begins with "/", however it is padded.
+func TestNoSlashTurn(t *testing.T) {
+	o, in := controlOrch(false)
+	for _, c := range []string{"/compact", "  /clear", "\n\t/model opus"} {
+		if err := o.SendApp("t-s", c); err != ErrSlashTurn {
+			t.Errorf("SendApp(%q) = %v", c, err)
+		}
+		if err := o.Send(c); err != ErrSlashTurn {
+			t.Errorf("Send(%q) = %v", c, err)
+		}
+	}
+	in.mu.Lock()
+	n := in.b.Len()
+	in.mu.Unlock()
+	if n != 0 {
+		t.Errorf("%d bytes written for refused turns", n)
+	}
+	if err := o.SendApp("t-s", "<den_fleet>\n/compact\n</den_fleet>"); err != nil {
+		t.Errorf("a turn with / later on: %v", err)
+	}
+}
+
+// Control runs without slash commands, and without --restricted, which
+// would cut the orchestrator off from peers and so from the inbound hook.
+func TestControlArgvFlags(t *testing.T) {
+	var slash, restricted int
+	for _, a := range Argv(Options{Control: true, Spawn: true}) {
+		switch a {
+		case "--disable-slash-commands":
+			slash++
+		case "--restricted":
+			restricted++
+		}
+	}
+	if slash != 1 || restricted != 0 {
+		t.Errorf("--disable-slash-commands %d times, --restricted %d times", slash, restricted)
+	}
+}

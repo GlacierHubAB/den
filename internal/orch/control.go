@@ -63,6 +63,31 @@ var ControlSystemPrompt = strings.NewReplacer(controlSends...).Replace(SystemPro
 // one of them.
 var SendVerified = []string{"2.1.289", "2.1.296"}
 
+// ControlVerified are the Claude Code releases on which control mode's
+// own limits were checked offline (the app turn's tools, every permission
+// request reaching Den, the disallowed SendMessage refused, peer messages
+// reaching Den's inbound hook only, no slash commands, skills or
+// plugins). The orchestrator starts in control mode only on one of them.
+// It says nothing of delivery to agents: send_message, and God mode's
+// bypass agents, still need SendVerified.
+var ControlVerified = []string{"2.1.289", "2.1.296", "2.1.319"}
+
+// ControlVerifiedVersion reports whether control mode may start on a
+// release.
+func ControlVerifiedVersion(v string) bool {
+	for _, ok := range ControlVerified {
+		if v == ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ControlBuiltinPluginsOff are Claude Code's built-in plugins, as
+// enabledPlugins names them, that Den's settings turn off for control.
+// A release with another one fails the control check (its init lists it).
+var ControlBuiltinPluginsOff = []string{"cc-plugin-agents-md@builtin", "cc-plugin-plugin-authoring@builtin", "cc-plugin-privacy@builtin", "cc-plugin-sec-default@builtin", "cc-plugin-telemetry@builtin"}
+
 // SendVerifiedVersion reports whether send_message may run on a release.
 func SendVerifiedVersion(v string) bool {
 	for _, ok := range SendVerified {
@@ -212,6 +237,16 @@ func controlMCPConfig(exe string, spawn bool) string {
 	return string(b)
 }
 
+// ErrSlashTurn is the refusal of a turn that begins with "/": Claude Code
+// could take it for a slash command. Den's turns begin with its own blocks.
+var ErrSlashTurn = errors.New("a turn Den writes may not begin with /")
+
+// slashTurn reports whether content would begin with "/" once leading
+// blank space is set aside.
+func slashTurn(content string) bool {
+	return strings.HasPrefix(strings.TrimLeft(content, " \t\r\n"), "/")
+}
+
 // ErrAppTurn is SendApp's refusal while an app's turn is open.
 var ErrAppTurn = errors.New("an app's turn is already running")
 
@@ -221,6 +256,9 @@ var ErrAppTurn = errors.New("an app's turn is already running")
 // standing allowances for that app. id names the turn in events.
 func (o *Orchestrator) SendApp(id, content string, standing ...string) error {
 	content = peermsg.Defuse(content)
+	if slashTurn(content) {
+		return ErrSlashTurn
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.ctl == nil {

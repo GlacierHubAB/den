@@ -118,6 +118,7 @@ func TestGodModeSpawnsGuarded(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	m := testModel(140, 40)
 	m.orch.control = true // the orchestrator is on Den's send_message
+	m.orch.version = "2.1.296"
 	old := fromOrchestrator
 	t.Cleanup(func() { fromOrchestrator = old })
 	fromOrchestrator = func(_ *Model, pid int) bool { return pid == 4242 }
@@ -139,7 +140,19 @@ func TestGodModeSpawnsGuarded(t *testing.T) {
 	if d := ask(""); d.Message == permmode.Bypass {
 		t.Fatalf("bypass before the orchestrator is on send_message: %+v", d)
 	}
-	m.orch.control = true
+	// Control on a release Den checked control on, but not delivery to
+	// agents: no bypass, since its messages could be dropped.
+	m.orch.control, m.orch.version = true, "2.1.319"
+	if d := ask(""); d.Message == permmode.Bypass {
+		t.Fatalf("bypass on a release send_message is not checked on: %+v", d)
+	}
+	if why := m.godBypassBlocked(); !strings.Contains(why, "2.1.319") {
+		t.Errorf("godBypassBlocked: %q", why)
+	}
+	m.orch.version = "2.1.296"
+	if why := m.godBypassBlocked(); why != "" {
+		t.Errorf("godBypassBlocked with control on a send-verified release: %q", why)
+	}
 	d := ask("")
 	sid, path := d.Answers["session_id"], d.Answers["settings"]
 	if d.Message != permmode.Bypass || len(sid) != 36 || !filepath.IsAbs(path) {
