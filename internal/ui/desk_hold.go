@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"time"
 	"unicode"
@@ -37,6 +38,50 @@ const deskHeldDock = "a desktop agent has the desktop: pause or end it in Den fi
 // things as they are or stopping something.
 var deskHeldVerbs = map[string]bool{"deny": true}
 
+// deskActRuns are the fields of api.Act whose acts run while an agent has
+// the desktop, each with why it cannot approve anything: it raises a card
+// that Den's window holds, settles or shows something, or only lowers.
+// This is a list of what runs: a field added to api.Act waits until it is
+// placed here, or in deskActHeld (TestDeskActFieldsArePlaced).
+var deskActRuns = map[string]string{
+	"Grant":           "an app's grant card, held like every card",
+	"Expired":         "settles grant cards as not granted",
+	"Focus":           "brings an agent's own terminal forward, never Den's window",
+	"Pair":            "a pairing card, held like every card",
+	"PairDone":        "settles a pairing card",
+	"Paired":          "the pairings changed",
+	"CodeGone":        "a pairing code left the screen",
+	"Console":         "a console claim card, held like every card",
+	"ConsoleDone":     "settles a console claim card",
+	"ConsoleChanged":  "the console changed",
+	"ConsoleCodeGone": "a console code left the screen",
+	"ConsoleIntruder": "a note that another program tried the console's proof",
+	"ConsolePowers":   "a card asking the human to give the powers back",
+	"GrantsLowered":   "a chat line about a lowering",
+	"GrantsChanged":   "Den publishes again, nothing is decided",
+	"View":            "which view the console shows, never an answer",
+	"GodOff":          "only lowers",
+}
+
+// deskActHeld are the fields deskHeldAct decides case by case below.
+var deskActHeld = map[string]bool{"CardAnswer": true, "ModeSet": true, "Say": true, "Command": true}
+
+// deskActUnplaced names the first field set in act that is in neither list,
+// "" when every set field is placed.
+func deskActUnplaced(act api.Act) string {
+	v := reflect.ValueOf(act)
+	for i := 0; i < v.NumField(); i++ {
+		if v.Field(i).IsZero() {
+			continue
+		}
+		name := v.Type().Field(i).Name
+		if _, ok := deskActRuns[name]; !ok && !deskActHeld[name] {
+			return name
+		}
+	}
+	return ""
+}
+
 // deskHeldAct answers a console's act that Den's window wouldn't take
 // while held, and reports whether it did: a card answer but a deny, a
 // mode.set but a lowering, a turn for the orchestrator, a command
@@ -44,6 +89,12 @@ var deskHeldVerbs = map[string]bool{"deny": true}
 // the dock refuses anyway (dockLine) is left to runFromDock, which keeps
 // the dock's own narrower rules (/desktop pause and stop only).
 func (m *Model) deskHeldAct(act api.Act) bool {
+	// Fail closed: a kind of act nobody has placed (deskActRuns,
+	// deskActHeld) waits like everything else that could widen something.
+	if f := deskActUnplaced(act); f != "" {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "A request (" + sanitize.Label(f, 40) + ") was not taken: " + deskHeldDock, at: time.Now()}))
+		return true
+	}
 	switch {
 	case act.CardAnswer != nil:
 		if deskHeldVerbs[act.CardAnswer.Verb] {
