@@ -113,6 +113,12 @@ func (m *Model) applyAPIAct(act api.Act) tea.Cmd {
 	if act.GodOff != "" {
 		m.godOff(act.GodOff)
 	}
+	// While an agent has the desktop, a console's answers, mode.set and
+	// commands take only what Den's window takes then (desk_hold.go),
+	// decided here, on Den's loop, at answer time.
+	if m.deskHolds() && m.deskHeldAct(act) {
+		return nil
+	}
 	if act.CardAnswer != nil {
 		return m.answerFromDock(act.CardAnswer)
 	}

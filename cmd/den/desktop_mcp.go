@@ -110,6 +110,12 @@ func runDesktopMCP(args []string) {
 	}
 	pid := child.Process.Pid
 	proxyLog("started hypruse, pid %d", pid)
+	// Den records the child's executable when it hears of it: tell Den only
+	// once the child has exec'd, not while it is still this proxy's fork.
+	if !awaitExec(pid, selfExe(), func() { child.Process.Signal(syscall.SIGTERM); child.Wait() }) {
+		fmt.Fprintln(os.Stderr, "den desktop-mcp: hypruse did not start")
+		os.Exit(1)
+	}
 	if d, err := ask(bridge.DesktopInput{Kind: "child", ChildPID: pid, ChildStart: procs.StartTicks(pid)}, 10*time.Second); err != nil || d.Behavior != "allow" {
 		child.Process.Signal(syscall.SIGTERM)
 		child.Wait()
@@ -256,5 +262,38 @@ var (
 func proxyLog(format string, a ...any) {
 	if logTo != nil {
 		fmt.Fprintf(logTo, "%s den desktop-mcp: %s\n", time.Now().Format(time.RFC3339), fmt.Sprintf(format, a...))
+	}
+}
+
+// The wait for hypruse's exec: off Den's loop, bounded.
+var (
+	execBound = 500 * time.Millisecond
+	execPoll  = 2 * time.Millisecond
+	execOf    = procs.Exe
+)
+
+// selfExe is this proxy's own executable as /proc shows it.
+func selfExe() string {
+	exe, _ := os.Executable()
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return procs.Undeleted(exe)
+}
+
+// awaitExec waits until pid runs something other than self (the fork
+// before its exec runs self), for at most execBound. If it never does, it
+// stops the child and reports false; nothing is sent to Den.
+func awaitExec(pid int, self string, stop func()) bool {
+	deadline := time.Now().Add(execBound)
+	for {
+		if e := execOf(pid); e != "" && e != self {
+			return true
+		}
+		if !time.Now().Before(deadline) {
+			stop()
+			return false
+		}
+		time.Sleep(execPoll)
 	}
 }

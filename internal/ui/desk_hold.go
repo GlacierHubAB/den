@@ -10,9 +10,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"golang.org/x/text/unicode/norm"
 
+	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/desktop"
 	"github.com/GlacierHubAB/den/internal/permmode"
+	"github.com/GlacierHubAB/den/internal/sanitize"
 )
 
 // While an agent has the desktop (deskHolds), Den's window takes only what
@@ -24,6 +26,64 @@ import (
 
 // deskHeldNote is what a key that waits says.
 const deskHeldNote = "An agent has the desktop: pause or end it first (/desktop pause, /desktop stop)."
+
+// deskHeldDock is what a console's answer, mode.set or command that waits
+// gets back (deskHeldAct).
+const deskHeldDock = "a desktop agent has the desktop: pause or end it in Den first"
+
+// deskHeldVerbs are the card answers taken while held: Den's window takes
+// only ^N's deny then (deskHoldRuns; ^Y and ^X wait), and so does a
+// console. Every kind a console may answer (todayDock) denies by leaving
+// things as they are or stopping something.
+var deskHeldVerbs = map[string]bool{"deny": true}
+
+// deskHeldAct answers a console's act that Den's window wouldn't take
+// while held, and reports whether it did: a card answer but a deny, a
+// mode.set but a lowering, a turn for the orchestrator, a command
+// deskHeldCommand doesn't list. A line
+// the dock refuses anyway (dockLine) is left to runFromDock, which keeps
+// the dock's own narrower rules (/desktop pause and stop only).
+func (m *Model) deskHeldAct(act api.Act) bool {
+	switch {
+	case act.CardAnswer != nil:
+		if deskHeldVerbs[act.CardAnswer.Verb] {
+			return false
+		}
+		act.CardAnswer.Reply <- api.CardResult{Code: api.CodeUnavailable, Note: deskHeldDock}
+	case act.ModeSet != nil:
+		if to, ok := permmode.Parse(act.ModeSet.Mode); ok && permmode.Lowers(m.mode.global, to) {
+			return false
+		}
+		act.ModeSet.Reply <- api.ModeSetResult{Code: api.CodeUnavailable, Note: deskHeldDock}
+	case act.Say != nil:
+		// A turn for the orchestrator is a message to an agent, which
+		// waits in Den's window too: an app's and a console's alike.
+		deskSayFail(act.Say, deskHeldDock)
+	case act.Command != nil:
+		words, _, why := dockLine(act.Command.Text)
+		if why != "" {
+			return false
+		}
+		if deskHeldDockLine(words, m.mode.global) {
+			return false
+		}
+		act.Command.Reply <- api.CommandResult{Code: api.CodeUnavailable, Note: deskHeldDock}
+	default:
+		return false
+	}
+	return true
+}
+
+// deskSayFail ends a turn that waits (a seam: tests make turns with no
+// connection).
+var deskSayFail = func(y *api.Say, why string) { y.Fail(why) }
+
+// deskHeldDockLine is deskHeldCommand on exactly the words runFromDock
+// will run (dockLine lowers only the words it judges): a word the window
+// would lower first and take is refused here, never the other way round.
+func deskHeldDockLine(words []string, mode string) bool {
+	return deskHeldCommand(words[0], words[1:], mode)
+}
 
 // deskHeldAsk is what the first Enter on a line typed while an agent had
 // the desktop says, once the hold is over.
@@ -325,6 +385,55 @@ func (m Model) deskPause(dm *deskMission, pause bool) (tea.Model, tea.Cmd) {
 	case !dm.humanPaused:
 		return m.say("The desktop mission is not paused.", false)
 	}
+	if dm.buildChanged != "" {
+		// C1: only on the checked build again; never wider instead. The
+		// read runs off the update loop, and the task stays paused until
+		// its answer is in (finishResumeCheck).
+		if dm.resumeChecking {
+			return m.say("Den is still checking Hyprland's build; the desktop agent stays paused until it knows.", false)
+		}
+		dm.resumeChecking = true
+		id, gen := dm.ID, dm.buildGen
+		check := func() tea.Msg {
+			return deskResumeCheckMsg{mission: id, gen: gen, why: deskScopedBuild(context.Background())}
+		}
+		mm, flash := m.say("Checking Hyprland's build before the desktop agent goes on…", false)
+		return mm, tea.Batch(check, flash)
+	}
+	return m.deskResumed(dm)
+}
+
+// deskResumeCheckMsg is a held task's build read, asked for by
+// /desktop resume after a build change: why is "" on the checked build.
+type deskResumeCheckMsg struct {
+	mission string
+	gen     int
+	why     string
+}
+
+// finishResumeCheck resumes the task only if the build is the checked one
+// again and it is still the same paused, held, live mission; otherwise it
+// stays as it is.
+func (m Model) finishResumeCheck(msg deskResumeCheckMsg) (tea.Model, tea.Cmd) {
+	dm := m.deskMission(msg.mission)
+	if dm == nil {
+		return m, nil
+	}
+	dm.resumeChecking = false
+	if dm.Ended != "" || !dm.humanPaused || dm.buildChanged == "" {
+		return m, nil
+	}
+	if msg.gen != dm.buildGen {
+		return m.say("The desktop agent stays paused: Hyprland changed again while Den checked. /desktop resume checks again; /desktop stop ends it.", true)
+	}
+	if msg.why != "" {
+		return m.say("The desktop agent stays paused: "+sanitize.Line(msg.why)+". /desktop stop ends it.", true)
+	}
+	dm.buildChanged = ""
+	return m.deskResumed(dm)
+}
+
+func (m Model) deskResumed(dm *deskMission) (tea.Model, tea.Cmd) {
 	dm.humanPaused = false
 	m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "Desktop agent resumed.", at: time.Now()}))
 	return m.say("Desktop agent resumed: Den's window takes no approving answer until you pause or end it.", false)

@@ -87,6 +87,18 @@ type deskMission struct {
 	// x11: the start card's switch for a task, set there by the human and
 	// fixed for the mission: its launches get Xwayland (desk_sand.go).
 	x11 bool
+	// listener is a held task's Wayland socket for its apps (wlsec),
+	// closed once its slice is stopped (closeListener).
+	listener deskListener
+	// buildChanged is why Hyprland stopped being the checked build during
+	// a held task: it paused then, and resumes only once the build is the
+	// checked one again (C1).
+	buildChanged string
+	// resumeChecking is set while /desktop resume's build read is out;
+	// buildGen counts build changes, so an answer read before a later
+	// change resumes nothing.
+	resumeChecking bool
+	buildGen       int
 	// queued are the actions the human approved while it was paused: each
 	// runs only once it goes on, decided again then (desk_hold.go);
 	// flushing while that read of the desktop is out.
@@ -175,6 +187,16 @@ var (
 	deskStart   = procs.StartTicks
 	deskParent  = procs.Parent
 	deskExeOf   = procs.Exe
+	// deskPython is the file hypruse's interpreter runs as, resolved by Den
+	// itself from the venv's python link (never from a proxy's word): what
+	// /proc shows for the server's child once it has exec'd.
+	deskPython = func() (string, error) {
+		p, err := filepath.EvalSymlinks(desktop.DefaultPaths().Python())
+		if err != nil {
+			return "", err
+		}
+		return procs.Undeleted(p), nil
+	}
 	// deskCardWait is how long a desktop card waits before it denies.
 	deskCardWait = 5 * time.Minute
 	// deskConsole is the console's proved processes, pid to start, from
@@ -361,7 +383,15 @@ func (m *Model) handleDesktop(r *bridge.Request) tea.Cmd {
 		if !ok || pp != dm.ProxyPID || in.ChildStart == "" || deskStart(in.ChildPID) != in.ChildStart {
 			return deny("that is not the desktop server's child")
 		}
-		dm.ChildPID, dm.ChildStart, dm.ChildExe = in.ChildPID, in.ChildStart, deskExeOf(in.ChildPID)
+		// Recorded only once it runs hypruse's interpreter: read before its
+		// exec, it would be the proxy's own binary, and the stop would then
+		// refuse to signal it. Never recorded empty (hold skips the check).
+		want, err := deskPython()
+		got := deskExeOf(in.ChildPID)
+		if err != nil || want == "" || got == "" || got != want {
+			return deny("that is not the desktop server's child")
+		}
+		dm.ChildPID, dm.ChildStart, dm.ChildExe = in.ChildPID, in.ChildStart, got
 		dm.save()
 		r.Reply(bridge.Decision{Behavior: "allow"})
 		return nil
@@ -453,6 +483,11 @@ func (m *Model) deskOverlayCheck(dm *deskMission, glow bool) (paused bool, end t
 func (m *Model) deskGateMission(dm *deskMission, snap *desktop.Snapshot) desktop.Mission {
 	snap.ExemptConsole(m.consoleProcs())
 	mission := dm.Mission
+	if dm.Scoped {
+		// A closed pick is gone for good; the slice is read for this call.
+		prunePicks(dm.Picked, *snap)
+		mission.InSlice = dm.inSlice
+	}
 	if dm.Task {
 		if console := m.consoleProcs(); len(console) > 0 {
 			mission.Protected = maps.Clone(dm.Protected)

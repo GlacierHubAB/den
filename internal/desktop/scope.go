@@ -22,6 +22,12 @@ type Window struct {
 	Floating  bool   `json:"floating"`
 	Mapped    bool   `json:"mapped"`
 	Pinned    bool   `json:"-"` // shown on every workspace (Den pins the agent view)
+	// XWayland is an X11 client's window, whose pid is the X client's own
+	// claim. A window Hyprland doesn't say is Wayland counts as X.
+	XWayland bool `json:"-"`
+	// InitialClass is the class the window opened with, which a program
+	// can't change later: Den's agents' terminals carry Den's marker.
+	InitialClass string `json:"-"`
 }
 
 // Contains reports whether the global point lies inside the window.
@@ -124,6 +130,8 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 		Pinned    bool   `json:"pinned"`
 		Mapped    *bool  `json:"mapped"`
 		Hidden    bool   `json:"hidden"`
+		XWayland  *bool  `json:"xwayland"`
+		Initial   string `json:"initialClass"`
 		Workspace struct {
 			ID int `json:"id"`
 		} `json:"workspace"`
@@ -133,7 +141,7 @@ func ReadSnapshot(ctx context.Context) (Snapshot, error) {
 	}
 	for _, c := range clients {
 		mapped := (c.Mapped == nil || *c.Mapped) && !c.Hidden
-		s.Windows = append(s.Windows, Window{Address: c.Address, Class: c.Class, Title: c.Title, PID: c.PID, Workspace: c.Workspace.ID, At: c.At, Size: c.Size, Floating: c.Floating, Mapped: mapped, Pinned: c.Pinned})
+		s.Windows = append(s.Windows, Window{Address: c.Address, Class: c.Class, Title: c.Title, PID: c.PID, Workspace: c.Workspace.ID, At: c.At, Size: c.Size, Floating: c.Floating, Mapped: mapped, Pinned: c.Pinned, XWayland: c.XWayland == nil || *c.XWayland, InitialClass: c.Initial})
 	}
 	out, err = hyprctl(ctx, "monitors", "-j")
 	if err != nil {
@@ -240,6 +248,13 @@ type Mission struct {
 	// not among them opened later (a launcher, a menu, a popup) and may
 	// hold the keyboard: a task's keys wait until it is gone.
 	LayersAtStart map[string]bool
+	// Scoped holds a task to its own windows (scoped.go): those of the
+	// processes in its slice, which InSlice reads afresh for each call,
+	// and the windows the human picked on the start card. It is set only
+	// on the checked Hyprland build, and only from Den's window.
+	Scoped  bool
+	InSlice func(pid int) bool
+	Picked  map[string]Pick
 }
 
 // InScope reports whether a window is the mission's: on its workspace, and

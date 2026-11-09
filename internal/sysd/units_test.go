@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -360,6 +361,24 @@ func TestRealUnits(t *testing.T) {
 			t.Errorf("the test's unit %s is left", n)
 		case n == "den.slice", n == "den-desk.slice", strings.HasPrefix(n, "den_desk."), strings.HasPrefix(n, "den_desk_"+inst+"."):
 			t.Errorf("a parent slice %s was made", n)
+		}
+	}
+}
+
+// [S4-4] A transient unit is started with no fd of Den's: no flag hands
+// the unit systemd-run's own fds or a file, and no property stores or
+// passes one. A held task's close fd stays Den's alone.
+func TestStartArgsPassNoFDs(t *testing.T) {
+	args, _, err := StartArgs(Service{Name: "den-desk-m1_1.service", Slice: "den-desk-m1.slice", Argv: []string{"/usr/bin/pasta", "--", "x"}, Env: []string{"A=1"}, Dir: "/tmp"}, []string{"PATH"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := slices.Index(args, "--")
+	for _, a := range args[:cut] {
+		for _, bad := range []string{"--pipe", "-P", "--pty", "-t", "--stdin", "--socket", "OpenFile", "FileDescriptorStore", "StandardInput", "StandardOutput", "StandardError", "Sockets", "Listen"} {
+			if a == bad || strings.HasPrefix(a, bad+"=") || strings.Contains(a, "="+bad) {
+				t.Errorf("systemd-run gets %q", a)
+			}
 		}
 	}
 }

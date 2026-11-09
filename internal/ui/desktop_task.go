@@ -97,8 +97,7 @@ func (m *Model) offerTask(r *bridge.Request, in bridge.DesktopMissionInput, setu
 		}
 	}
 	body = append(body,
-		"While it runs, the agent can do anything you can at the keyboard: run commands as you in a terminal, type into other agents' terminals and their permission prompts, use the clipboard, read the screen, and act in apps you are signed in to.",
-		"Den keeps its own window and the agent view off limits and refuses a short fixed list (ending your session, reloading or rebinding Hyprland, the panic stop's bind).",
+		"The agent's tools refuse Den's own window and the agent view, and Den's window takes no approving answer while the task runs: pause or end it first. Den also refuses a short fixed list (ending your session, reloading or rebinding Hyprland, the panic stop's bind).",
 		fmt.Sprintf("Den stops it after %d minutes or %d actions, whichever comes first (task_minutes and task_actions in your config's [desktop]).", minutes, actions),
 		"This one task only. Model: "+in.Model+". Stop it any time: /desktop stop, or den desktop stop; it also stops if Den quits.",
 		"Den needs its own window to start: run Den in its own terminal window, with its tab in front.",
@@ -186,9 +185,10 @@ func (m *Model) finishOwn(msg deskOwnMsg) tea.Cmd {
 	if msg.err != nil {
 		return m.taskDidNotStart(msg.itemID, sanitize.Line(msg.err.Error()))
 	}
+	exclude := m.deskNeverPickable()
 	return func() tea.Msg {
 		time.Sleep(deskSettle)
-		return prepareTask(msg.itemID, msg.offer, msg.addr, msg.pid)
+		return prepareTask(msg.itemID, msg.offer, msg.addr, msg.pid, exclude)
 	}
 }
 
@@ -206,7 +206,7 @@ func (m *Model) taskDidNotStart(itemID, why string) tea.Cmd {
 
 // prepareTask confirms Den's window and makes the mission's folder. It
 // runs off the update loop.
-func prepareTask(itemID string, offer deskOffer, own string, pid int) deskPrepared {
+func prepareTask(itemID string, offer deskOffer, own string, pid int, exclude map[int]bool) deskPrepared {
 	p := deskPrepared{itemID: itemID, offer: offer, id: newMissionID(), own: own}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -218,6 +218,14 @@ func prepareTask(itemID string, offer deskOffer, own string, pid int) deskPrepar
 	if w, ok := snap.Window(own); !ok || w.PID != pid {
 		p.err = errors.New("Den's own window changed while Den found it; ask again")
 		return p
+	}
+	if !offer.wide {
+		picks, why := scopeTask(ctx, offer, snap, own, exclude)
+		if why != "" {
+			p.err = errors.New(why)
+			return p
+		}
+		p.picks = picks
 	}
 	p.focused = snap.Active
 	p.layers = map[string]bool{}
@@ -232,6 +240,16 @@ func prepareTask(itemID string, offer deskOffer, own string, pid int) deskPrepar
 		return p
 	}
 	os.Chmod(filepath.Dir(p.dir), 0o700)
+	if !offer.wide {
+		// The apps it opens connect through its own listener, never the
+		// compositor's socket; without one, it doesn't start.
+		l, err := deskOpenListener(p.id)
+		if err != nil {
+			p.err = errors.New("Den could not make the task's sandboxed Wayland socket (" + sanitize.Line(err.Error()) + "); use /desktop whole on a new card, or decline")
+			return p
+		}
+		p.listener = l
+	}
 	return p
 }
 
