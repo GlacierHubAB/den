@@ -88,6 +88,24 @@ func ControlVerifiedVersion(v string) bool {
 // A release with another one fails the control check (its init lists it).
 var ControlBuiltinPluginsOff = []string{"cc-plugin-agents-md@builtin", "cc-plugin-plugin-authoring@builtin", "cc-plugin-privacy@builtin", "cc-plugin-sec-default@builtin", "cc-plugin-telemetry@builtin"}
 
+// BypassVerified are the Claude Code releases on which God mode's bypass
+// agents were checked offline: started on Den's guarded settings, and a
+// peer's message reaching only Den's inbound hook. No release has passed
+// that check, so God mode starts new agents in the global mode on all of
+// them. Adding a release needs that check and the human's yes.
+var BypassVerified []string
+
+// BypassVerifiedVersion reports whether God mode may give a new agent
+// bypassPermissions on a release.
+func BypassVerifiedVersion(v string) bool {
+	for _, ok := range BypassVerified {
+		if v == ok {
+			return true
+		}
+	}
+	return false
+}
+
 // SendVerifiedVersion reports whether send_message may run on a release.
 func SendVerifiedVersion(v string) bool {
 	for _, ok := range SendVerified {

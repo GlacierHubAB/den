@@ -11,6 +11,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/permmode"
 )
 
@@ -116,6 +117,7 @@ func TestGodModeFromOutside(t *testing.T) {
 // global mode.
 func TestGodModeSpawnsGuarded(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	allowBypass(t, "2.1.296")
 	m := testModel(140, 40)
 	m.orch.control = true // the orchestrator is on Den's send_message
 	m.orch.version = "2.1.296"
@@ -198,6 +200,7 @@ func TestGodModeSpawnsGuarded(t *testing.T) {
 // agents start in it again.
 func TestGodOffLandsOnTheGlobalMode(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	allowBypass(t, "2.1.296")
 	old := fromOrchestrator
 	t.Cleanup(func() { fromOrchestrator = old })
 	fromOrchestrator = func(*Model, int) bool { return true }
@@ -220,7 +223,7 @@ func TestGodOffLandsOnTheGlobalMode(t *testing.T) {
 		}},
 	} {
 		m := testModel(140, 40)
-		m.orch.control = true
+		m.orch.control, m.orch.version = true, "2.1.296"
 		m.mode.global = permmode.AcceptEdits
 		typeLine(&m, "/god on")
 		typeLine(&m, godPhrase)
@@ -368,4 +371,41 @@ func TestGodModeLeavesMissionCriteriaAndDoneToYou(t *testing.T) {
 			t.Errorf("%v from the dock: dock_answers %v, tty only %v", k, card.DockAnswers, card.TTYOnly)
 		}
 	}
+}
+
+// God mode gives no bypass on a release Den has not checked delivery on,
+// including one it could not read, even with control on.
+func TestGodBypassNeedsASendVerifiedRelease(t *testing.T) {
+	releases := []string{"", "2.1.300", "2.1.29", "2.1.296-rc1"}
+	allowBypass(t, releases...)
+	for _, v := range releases {
+		m := testModel(140, 40)
+		m.orch.control, m.orch.version = true, v
+		if m.godBypassBlocked() == "" {
+			t.Errorf("bypass allowed on release %q", v)
+		}
+	}
+}
+
+// No release has passed the bypass check, so control on a release Den
+// checked delivery on still gives no bypass.
+func TestGodBypassOffUntilChecked(t *testing.T) {
+	if len(orch.BypassVerified) != 0 {
+		t.Fatalf("BypassVerified = %v: adding a release needs the bypass check and the human's yes", orch.BypassVerified)
+	}
+	for _, v := range []string{"2.1.289", "2.1.296"} {
+		m := testModel(140, 40)
+		m.orch.control, m.orch.version = true, v
+		if why := m.godBypassBlocked(); !strings.Contains(why, "bypass agents") {
+			t.Errorf("control on %s: %q", v, why)
+		}
+	}
+}
+
+// allowBypass stands in for a release having passed the bypass check.
+func allowBypass(t *testing.T, releases ...string) {
+	t.Helper()
+	old := orch.BypassVerified
+	t.Cleanup(func() { orch.BypassVerified = old })
+	orch.BypassVerified = releases
 }

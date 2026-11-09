@@ -204,13 +204,17 @@ func (m *Model) godSweep() tea.Cmd {
 // bypass agent goes through deliverTo, so the orchestrator must be on
 // Den's send_message (it restarts into it when idle) and on a release Den
 // checked delivery on: on any other, a bypass agent's messages could be
-// dropped. godSpawn and the /god notes ask it, so they cannot differ.
+// dropped. The release must also be one Den checked bypass agents on
+// (orch.BypassVerified, empty for now).
 func (m Model) godBypassBlocked() string {
 	if !m.orch.control {
 		return "the orchestrator is not on Den's send_message yet"
 	}
 	if !orch.SendVerifiedVersion(m.orch.version) {
 		return "Den has not checked delivery to agents on Claude Code " + sanitize.Label(m.orch.version, 20)
+	}
+	if !orch.BypassVerifiedVersion(m.orch.version) {
+		return "Den has not checked bypass agents on Claude Code " + sanitize.Label(m.orch.version, 20)
 	}
 	return ""
 }

@@ -460,6 +460,23 @@ func TestNoSlashTurn(t *testing.T) {
 	}
 }
 
+// Each source of a turn puts Den's own block first, so text from a human,
+// an app or an agent that begins with "/" never begins the turn.
+func TestTurnSourcesNeverBeginWithSlash(t *testing.T) {
+	const text = "/compact"
+	for source, content := range map[string]string{
+		"Den's window and held turns (ComposeAll)": ComposeAll(nil, nil, nil, nil, nil, text),
+		"a replay after a restart (ComposeAll)":    ComposeAll(nil, nil, nil, nil, nil, text+"\n\nNow the human says:\n"+text),
+		"an app's turn (ComposeAll)":               ComposeAll(nil, nil, nil, nil, nil, "\n\n"+text),
+		"the API's ask (ComposeWith)":              ComposeWith(nil, nil, text),
+		"an agent's report (peermsg.Report)":       peermsg.Report("worker", text),
+	} {
+		if slashTurn(peermsg.Defuse(content)) {
+			t.Errorf("%s begins with /: %q", source, content)
+		}
+	}
+}
+
 // Control runs without slash commands, and without --restricted, which
 // would cut the orchestrator off from peers and so from the inbound hook.
 func TestControlArgvFlags(t *testing.T) {
