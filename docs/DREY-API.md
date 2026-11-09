@@ -1090,7 +1090,7 @@ no, pausing and stopping are always allowed from the console).
 
 - `grants.get {}` needs a proved console and changes nothing. It answers
   `{seq, enforced, powers, locked, god, start_confirmed, raise_epoch,
-  classes, kept, den_only}`, and from then on this connection gets a `grants` event with
+  classes, kept, den_only, mode?}`, and from then on this connection gets a `grants` event with
   the same object on each change. `console.events` does not carry it.
 - `seq` rises on each change; it is per Den process. On one connection, keep
   the object with the highest `seq` (the reply's included) and drop an event
@@ -1105,6 +1105,17 @@ no, pausing and stopping are always allowed from the console).
   is at most its default (a class above its default reads at the default).
   Nothing your console does confirms it.
 - `god`: God mode is on; `desktop` and `outward` show `level` 0 meanwhile.
+- `mode`, when Den has read it, is the global permission mode agents start
+  in: `{current, modes, lower_to}`. `current` is one of `dontAsk`, `default`,
+  `plan`, `acceptEdits`, `auto`, spelled as Claude Code spells them, never
+  `bypassPermissions`. `modes` is `[{name}, ...]`, the five, most
+  restrictive first. Den's order is not a line: `plan` and `acceptEdits` are
+  not ranked against each other, so read what a mode can be lowered to from
+  `lower_to`, Den's own list of the modes strictly below `current` (empty for
+  `dontAsk`), never from the position in `modes`. God mode is not a mode
+  here: it stays in `god` and wraps the mode. The key is absent until Den has
+  read its mode. A name you do not know means a newer Den: draw nothing for
+  it. The rows of `GrantsCases` pin it.
 - `classes`, in this order: `routine` (Everyday answers), `destructive` (Stop
   and close), `code` (Run commands), `desktop` (Desktop control), `outward`
   (Send out). Each is `{class, label, about, den_level, session, level,
