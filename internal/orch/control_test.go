@@ -460,6 +460,32 @@ func TestNoSlashTurn(t *testing.T) {
 	}
 }
 
+// Padding that prints nothing hides a leading "/" no better than a space.
+func TestSlashTurnBlanks(t *testing.T) {
+	blanks := []rune{
+		'\t', '\n', '\v', '\f', '\r', ' ', '\u0085', '\u00A0', '\u1680',
+		'\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006',
+		'\u2007', '\u2008', '\u2009', '\u200A', '\u2028', '\u2029', '\u202F',
+		'\u205F', '\u3000',
+		'\uFEFF', '\u200B', '\u200C', '\u200D', '\u2060',
+	}
+	var all strings.Builder
+	for _, r := range blanks {
+		all.WriteRune(r)
+		if c := string(r) + "/compact"; !slashTurn(c) {
+			t.Errorf("slashTurn(%q) = false", c)
+		}
+	}
+	if c := all.String() + "/compact"; !slashTurn(c) {
+		t.Errorf("slashTurn(%q) = false", c)
+	}
+	for _, c := range []string{"", "\u200B", "x/compact", "\u200Bx/compact", "\xff/compact"} {
+		if slashTurn(c) {
+			t.Errorf("slashTurn(%q) = true", c)
+		}
+	}
+}
+
 // Each source of a turn puts Den's own block first, so text from a human,
 // an app or an agent that begins with "/" never begins the turn.
 func TestTurnSourcesNeverBeginWithSlash(t *testing.T) {

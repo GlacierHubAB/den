@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/GlacierHubAB/den/internal/peermsg"
 )
@@ -260,9 +261,19 @@ func controlMCPConfig(exe string, spawn bool) string {
 var ErrSlashTurn = errors.New("a turn Den writes may not begin with /")
 
 // slashTurn reports whether content would begin with "/" once leading
-// blank space is set aside.
+// blank space is set aside, Unicode's and the characters that print nothing.
 func slashTurn(content string) bool {
-	return strings.HasPrefix(strings.TrimLeft(content, " \t\r\n"), "/")
+	return strings.HasPrefix(strings.TrimLeftFunc(content, leadingBlank), "/")
+}
+
+// leadingBlank is Unicode white space, the byte order mark, the zero-width
+// space and joiners, and the word joiner.
+func leadingBlank(r rune) bool {
+	switch r {
+	case '\uFEFF', '\u200B', '\u200C', '\u200D', '\u2060':
+		return true
+	}
+	return unicode.IsSpace(r)
 }
 
 // ErrAppTurn is SendApp's refusal while an app's turn is open.
