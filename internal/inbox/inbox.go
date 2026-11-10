@@ -360,6 +360,11 @@ func (s *Store) NeedsYouOn(host, sessionID string) bool {
 // Apply folds a hook request into the store. It returns the item it created,
 // if any. Permission requests matching an "always" rule are answered here.
 func (s *Store) Apply(r *bridge.Request) *Item {
+	if MadeUpSession(r.SessionID) || MadeUpSession(r.Input.SessionID) {
+		// Not an agent's event, and nothing to show: the sender is told so.
+		r.Reply(bridge.Decision{Behavior: "deny", Message: "den: that session id is one Den makes up for its own cards"})
+		return nil
+	}
 	it := s.apply(r)
 	if it != nil {
 		it.clean()
@@ -848,6 +853,39 @@ func (s *Store) AddInstall(host, title string, body []string, req *bridge.Reques
 // "Den", and none is ever an agent's: a test holds every such constant and
 // every literal SessionID in this file to the prefix.
 const SessionPrefix = "den:"
+
+// The other prefixes of session ids Den makes up for cards of its own: a
+// mission's (update, criteria, done, budget, move), a project's rules and a
+// project's tuning. With SessionPrefix and HostPrefix they are all of them
+// (MadeUpSession), and a test holds this file to that list.
+const (
+	MissionPrefix = "mission:"
+	MemoryPrefix  = "memory:"
+	TunePrefix    = "tune:"
+)
+
+// madeUpPrefixes are the prefixes of the session ids Den makes up.
+var madeUpPrefixes = []string{SessionPrefix, HostPrefix, MissionPrefix, MemoryPrefix, TunePrefix}
+
+// MadeUpSession reports whether id is one Den makes up for a card of its
+// own. No agent has one (a Claude session's id is a UUID), so a hook event
+// that carries one is not from an agent: Apply and ApplyRemote refuse it,
+// and a card never reads as Den's, a mission's or a host's on its say.
+func MadeUpSession(id string) bool { return MadeUpPrefix(id) != "" }
+
+// MadeUpPrefixes are all of the prefixes MadeUpSession knows.
+func MadeUpPrefixes() []string { return append([]string(nil), madeUpPrefixes...) }
+
+// MadeUpPrefix is the prefix of Den's own that id starts with, "" when it
+// starts with none.
+func MadeUpPrefix(id string) string {
+	for _, p := range madeUpPrefixes {
+		if strings.HasPrefix(id, p) {
+			return p
+		}
+	}
+	return ""
+}
 
 // DesktopSession is the SessionID of Den's questions about desktop control
 // that concern no one agent yet: the hypruse install, a mission's start.
