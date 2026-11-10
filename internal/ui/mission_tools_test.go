@@ -107,6 +107,31 @@ func TestProposeMissionRefusals(t *testing.T) {
 	}
 }
 
+// A proposal cannot take a name Den reserves whole, however it is written;
+// a name that only contains such a word, or is a command word, is a name.
+// Missions are never found by name (the store has Get(id) only), so a
+// name is a label and nothing else.
+func TestProposeMissionRefusesAReservedName(t *testing.T) {
+	for _, name := range []string{"Den", "drey", "Orchestrator", "the human", "System", "DEN!", "\u202eden", "Den\u0435"} {
+		m, _ := missionUpdateModel(t, originHuman)
+		p := goodProposal()
+		p.Name = name
+		before := len(m.missions.All())
+		d := callDen(t, &m, bridge.ProposeEvent, p, orchChildPID)
+		if d.Behavior != "deny" || !strings.Contains(d.Message, "a name Den keeps") || len(m.missions.All()) != before || m.ov.proposal != "" {
+			t.Errorf("%q: %+v, %d missions (was %d), proposal %q", name, d, len(m.missions.All()), before, m.ov.proposal)
+		}
+	}
+	for _, name := range []string{"Den v0.6.3 release", "Stop", "Budget", "Drey command bar", "Mossy Lemur"} {
+		m, _ := missionUpdateModel(t, originHuman)
+		p := goodProposal()
+		p.Name = name
+		if d := callDen(t, &m, bridge.ProposeEvent, p, orchChildPID); d.Behavior != "allow" || m.missions.Get(m.ov.proposal) == nil || m.missions.Get(m.ov.proposal).Name != name {
+			t.Errorf("%q: %+v", name, d)
+		}
+	}
+}
+
 // startedMission is a running mission with two criteria and a sub-goal.
 func startedMission(t *testing.T, origin string) (Model, *mission.Mission) {
 	m, ms := missionUpdateModel(t, origin)

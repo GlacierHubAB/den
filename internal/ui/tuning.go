@@ -111,6 +111,11 @@ func (m *Model) handleTune(r *bridge.Request) tea.Cmd {
 	}
 }
 
+// tuneSessionPrefix starts the session id of a project's tuning cards
+// (process tuned, prompt proposal): Den raises them, but their words are
+// the orchestrator's, so they are shown as "orchestrator".
+const tuneSessionPrefix = "tune:"
+
 // applyTune checks every change against its bounds, applies all or none,
 // saves, and puts the card to the human.
 func (m *Model) applyTune(msg tuneMsg, now time.Time) {
@@ -126,7 +131,7 @@ func (m *Model) applyTune(msg tuneMsg, now time.Time) {
 		deny("give reason, one line on why")
 		return
 	}
-	session := "tune:" + msg.repo
+	session := tuneSessionPrefix + msg.repo
 	for _, c := range msg.in.Changes {
 		if c.Key != tuning.ProposalKey {
 			continue
