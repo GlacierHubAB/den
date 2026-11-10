@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/GlacierHubAB/den/internal/permmode"
@@ -74,3 +75,38 @@ func (s *Server) modeSet(c *conn, req Request) {
 		}
 	}()
 }
+
+// modeState is the global mode as Den last told the server (SetMode): ""
+// until Den has read it.
+type modeState struct {
+	mu   sync.Mutex
+	mode string
+}
+
+func (m *modeState) get() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.mode
+}
+
+// SetMode records the global permission mode, from Den, and pushes the
+// read to the console's subscribed connections when that changes it. The
+// server never decides a mode: it only shows Den's.
+func (s *Server) SetMode(mode string) {
+	s.mode.mu.Lock()
+	changed := s.mode.mode != mode
+	s.mode.mode = mode
+	s.mode.mu.Unlock()
+	if !changed {
+		return
+	}
+	if _, ok := s.CurrentConsole(); !ok {
+		// No console to tell; the next grants.get works the read out
+		// afresh, as for God mode.
+		return
+	}
+	s.grantsChanged()
+}
+
+// ModeNow is the global mode as the server last heard it from Den.
+func (s *Server) ModeNow() string { return s.mode.get() }

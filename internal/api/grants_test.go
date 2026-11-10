@@ -8,6 +8,7 @@ import (
 
 	"github.com/GlacierHubAB/den/internal/api/convcases"
 	perm "github.com/GlacierHubAB/den/internal/grants"
+	"github.com/GlacierHubAB/den/internal/permmode"
 )
 
 // getGrants is grants.get on c.
@@ -145,10 +146,14 @@ func TestGrantsSeqOnlyRises(t *testing.T) {
 // in every state.
 func TestGrantsTable(t *testing.T) {
 	states := map[string]perm.State{
-		"a console with its powers": {Powers: true, Confirmed: true},
-		"no console, or no powers":  {},
-		"locked":                    {Locked: true},
-		"God mode":                  {Powers: true, God: true, Confirmed: true},
+		"a console with its powers":                           {Powers: true, Confirmed: true},
+		"no console, or no powers":                            {},
+		"locked":                                              {Locked: true},
+		"God mode":                                            {Powers: true, God: true, Confirmed: true},
+		"a console with its powers, mode auto":                {Powers: true, Confirmed: true, Mode: permmode.Auto},
+		"mode plan: acceptEdits is not below it":              {Powers: true, Confirmed: true, Mode: permmode.Plan},
+		"mode dontAsk: nothing is below it":                   {Powers: true, Confirmed: true, Mode: permmode.DontAsk},
+		"God mode, mode default":                              {Powers: true, God: true, Confirmed: true, Mode: permmode.Default},
 		"a class above its default, before the start confirm": {Powers: true, DenLevels: map[string]int{perm.Destructive: 2}},
 		"a class above its default, after the start confirm":  {Powers: true, Confirmed: true, DenLevels: map[string]int{perm.Destructive: 2}},
 		"God mode, desktop set above 0":                       {Powers: true, God: true, Confirmed: true, DenLevels: map[string]int{perm.Desktop: 2}},

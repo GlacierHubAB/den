@@ -23,7 +23,7 @@ const EventGrants = "grants"
 // risen on every change, never reset while Den runs, for ordering only.
 // mu also orders the pushes: one read at a time, in seq order.
 //
-// Lock order: mu first, then s.con.mu, s.god.mu and s.mu (consoleConns),
+// Lock order: mu first, then s.con.mu, s.god.mu, s.mode.mu and s.mu (consoleConns),
 // each taken and let go inside. No caller holds any of those when it takes
 // mu. Under mu a push only queues (conn.push never blocks). The file's lock
 // (permsFile.mu) is never held together with mu: under mu Den only changes
@@ -123,6 +123,7 @@ func (s *Server) grantsInput() (perm.State, string) {
 	}
 	s.con.mu.Unlock()
 	st.God = s.god.get().On
+	st.Mode = s.mode.get()
 	st.Sessions = map[string]perm.Session{}
 	for k, v := range s.perms.caps {
 		st.Sessions[k] = v

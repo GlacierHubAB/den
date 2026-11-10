@@ -72,11 +72,20 @@ func (m Model) agentMode() string {
 	return m.mode.global
 }
 
+// publishMode tells den-api the global mode, for the levels push: "" until
+// Den has read it, and then only a mode Den itself accepted.
+func (m *Model) publishMode() {
+	if m.api.srv != nil {
+		m.api.srv.SetMode(m.mode.global)
+	}
+}
+
 // startMode takes the setting Den started with: at most permmode.Shipped,
 // since the file may have been written by anyone while Den was stopped;
 // more waits on a card. (With auto shipped, nothing is more today.) A
 // refused value starts Den in the shipped mode, as no setting does.
 func (m *Model) startMode(mode, refused string) {
+	defer m.publishMode()
 	m.mode.load = readMode
 	m.mode.global = permmode.Shipped
 	read := modeReadMsg{ok: true, mode: mode, refused: refused}
@@ -138,6 +147,7 @@ func (m *Model) modeRefusedNote(value string) {
 func (m *Model) setMode(mode, by string, write bool) {
 	old := m.mode.global
 	m.mode.global = mode
+	m.publishMode()
 	note := "Agents Den starts now run in " + mode + " (was " + old + "), set by " + by + ": " + permmode.Allows(mode) + ". Running agents keep their mode until they restart."
 	if write {
 		m.mode.gen++

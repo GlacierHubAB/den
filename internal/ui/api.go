@@ -347,6 +347,9 @@ func (m *Model) startAPI() tea.Cmd {
 		srv.SetGod(true, m.god.since)
 		lockConsolePowers(m, "God mode is on")
 	}
+	// The global mode as it is now, for the levels push; later changes go
+	// through publishMode.
+	srv.SetMode(m.mode.global)
 	srv.SetGodMode(func() bool { return srv.GodNow().On })
 	m.publishAPI()
 	return tea.Batch(waitAPINote(srv), waitAPIAct(srv))

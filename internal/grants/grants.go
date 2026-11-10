@@ -8,6 +8,8 @@
 // or a console wrote reaches the read.
 package grants
 
+import "github.com/GlacierHubAB/den/internal/permmode"
+
 // The classes, in the order the read lists them; a closed set.
 const (
 	Routine     = "routine"
@@ -157,6 +159,30 @@ type Grants struct {
 	Classes    []Class       `json:"classes"`
 	Kept       []Kept        `json:"kept"`
 	DenOnly    []DenOnlyItem `json:"den_only"`
+	// Mode is the global permission mode agents start in, and the modes a
+	// change from it lowers to. Absent until Den has read its mode.
+	Mode *Mode `json:"mode,omitempty"`
+}
+
+// Mode is Den's global permission mode as a console reads it. God mode is
+// not a mode here: it stays in Grants.God, and wraps the mode.
+type Mode struct {
+	// Current is the global mode, as Claude Code spells it; never
+	// bypassPermissions.
+	Current string `json:"current"`
+	// Modes are the modes the global mode may take, most restrictive
+	// first. The ranking is partial (plan and acceptEdits are not ranked
+	// against each other), so the order of this list is not a line.
+	Modes []ModeName `json:"modes"`
+	// LowerTo are the modes strictly below Current in Den's own order: the
+	// only modes a console may lower it to. A list, not a position in
+	// Modes, because Den's order is not a line.
+	LowerTo []string `json:"lower_to"`
+}
+
+// ModeName is one mode of Mode.Modes.
+type ModeName struct {
+	Name string `json:"name"`
 }
 
 // State is what the read is worked out from: Den's own record only.
@@ -190,6 +216,9 @@ type State struct {
 	RaiseEpoch string
 	RaiseN     map[string]int
 	RaisedAt   map[string]string
+	// Mode is the global permission mode, "" until Den has read it. A
+	// mode that is not ranked (bypassPermissions included) reads as none.
+	Mode string
 }
 
 // The refusals of a lowering.
@@ -346,6 +375,13 @@ func Read(st State) Grants {
 			out.Level = 0
 		}
 		g.Classes = append(g.Classes, out)
+	}
+	if permmode.Valid(st.Mode) {
+		m := &Mode{Current: st.Mode, LowerTo: permmode.LowerTo(st.Mode)}
+		for _, name := range permmode.Modes() {
+			m.Modes = append(m.Modes, ModeName{Name: name})
+		}
+		g.Mode = m
 	}
 	for _, k := range keptTable {
 		if st.holds(k.id) {

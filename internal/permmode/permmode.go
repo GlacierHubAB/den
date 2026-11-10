@@ -60,6 +60,14 @@ func Modes() []string {
 	return append([]string(nil), ranked...)
 }
 
+// LowerTo lists, most restrictive first, the ranked modes strictly below
+// mode: the modes a change from it is a lowering to (Lowers). It is empty,
+// not nil, for dontAsk and for a mode that is not ranked. The list is a
+// copy.
+func LowerTo(mode string) []string {
+	return append([]string{}, below[mode]...)
+}
+
 // Valid reports whether mode may be the global mode: a ranked one,
 // spelled exactly as Claude Code spells it.
 func Valid(mode string) bool {
