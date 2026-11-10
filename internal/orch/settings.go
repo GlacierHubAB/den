@@ -108,6 +108,13 @@ func denSettings(o Options) map[string]any {
 		// Den answers permission prompts itself, on stdio (control.go); a
 		// hook answering first would take that from it.
 		delete(s["hooks"].(map[string]any), "PermissionRequest")
+		// Claude Code's built-in plugins add hooks of their own; control
+		// runs with none of them.
+		off := map[string]any{}
+		for _, p := range ControlBuiltinPluginsOff {
+			off[p] = false
+		}
+		s["enabledPlugins"] = off
 	}
 	return s
 }

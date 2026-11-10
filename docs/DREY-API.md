@@ -457,9 +457,11 @@ afterwards, so no later message carries a MAC.
   orchestrator, and when you type in Den's chat while it runs: your
   message goes first.
 - The orchestrator starts in control mode for the app's first turn, on a
-  Claude Code release Den has checked control on (2.1.289, 2.1.296); on any
-  other release `orch.say` ends with an error that says so, and Den's own
-  chat works as before.
+  Claude Code release Den has checked control on (2.1.289, 2.1.296,
+  2.1.319); on any other release `orch.say` ends with an error that says
+  so, and Den's own chat works as before. Its messages to agents need a
+  release Den has checked delivery on as well (2.1.289, 2.1.296): on
+  2.1.319, `orch.say` works, but the orchestrator cannot message agents.
 
 ### Switching views
 
@@ -1000,6 +1002,12 @@ same way. A later kind that carries state joins the snapshot.
   ends, with `verbs` empty and `dock_answers` false, its text as it was
   when it started; show it as running. The snapshot's cards carry the
   same.
+- A card's `agent` names the session it concerns. It is a label, not
+  proof of who wrote the card's words: key on `kind` and `agent_id`. A
+  fleet agent's card carries its name and `agent_id`. A card of Den's own
+  (its settings, pairings and notices) reads `Den`, a project's tuning
+  card `orchestrator`, and a mission's card `mission <name>`, or `mission`
+  alone; none of those three carries an `agent_id`.
 - `class` and `step` are what your `allow` on the card does, as Den classed
   it from its own record: `class` is `routine`, `destructive`, `code`,
   `desktop`, `outward` or `den_only`; `step` is the class's step, routine

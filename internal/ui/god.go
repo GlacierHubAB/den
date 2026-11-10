@@ -12,6 +12,7 @@ import (
 	"github.com/GlacierHubAB/den/internal/api"
 	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
+	"github.com/GlacierHubAB/den/internal/orch"
 	"github.com/GlacierHubAB/den/internal/permmode"
 	"github.com/GlacierHubAB/den/internal/sanitize"
 )
@@ -198,17 +199,34 @@ func (m *Model) godSweep() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// godBypassBlocked is why God mode may not hand out bypassPermissions to a
+// new agent now, in Den's own words, or "" when it may. Every message to a
+// bypass agent goes through deliverTo, so the orchestrator must be on
+// Den's send_message (it restarts into it when idle) and on a release Den
+// checked delivery on: on any other, a bypass agent's messages could be
+// dropped. The release must also be one Den checked bypass agents on
+// (orch.BypassVerified, empty for now).
+func (m Model) godBypassBlocked() string {
+	if !m.orch.control {
+		return "the orchestrator is not on Den's send_message yet"
+	}
+	if !orch.SendVerifiedVersion(m.orch.version) {
+		return "Den has not checked delivery to agents on Claude Code " + sanitize.Label(m.orch.version, 20)
+	}
+	if !orch.BypassVerifiedVersion(m.orch.version) {
+		return "Den has not checked bypass agents on Claude Code " + sanitize.Label(m.orch.version, 20)
+	}
+	return ""
+}
+
 // godSpawn is the answer to den mcp for an agent the orchestrator starts
 // in God mode: bypassPermissions, a session id Den draws, and the guarded
 // --settings file Den wrote for that id. False when Den cannot write the
 // guard: the agent then starts in the global mode. Agents a lead starts
 // are never bypass (a bypass agent leads no team), nor are reopened ones.
 func (m *Model) godSpawn() (bridge.Decision, bool) {
-	if !m.orch.control {
-		// Messages to the new agent must go through deliverTo, so the
-		// orchestrator must be on send_message first (it restarts into it
-		// when idle).
-		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "God mode: the orchestrator is not on Den's send_message yet, so the new agent starts in " + m.agentMode() + ".", at: time.Now()}))
+	if why := m.godBypassBlocked(); why != "" {
+		m.logEntry(m.addUnthreaded(chatEntry{role: "note", text: "God mode: " + why + ", so the new agent starts in " + m.agentMode() + ".", at: time.Now()}))
 		return bridge.Decision{}, false
 	}
 	den, err := os.Executable()

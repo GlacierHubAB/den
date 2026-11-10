@@ -110,6 +110,24 @@ func Reserved(name string) string {
 	return ""
 }
 
+// ReservedWord says why a label may not be used whole, "" when it may: the
+// label, normalised as an agent's name is, is one word Den reserves (den,
+// drey, orchestrator, console, system, the-human…). Unlike Reserved it
+// leaves a label that only contains such a word ("Den v0.6.3 release"), and
+// the command words and id-like names, which matter only where a name stands
+// in a command. For the labels a human reads as a source, such as a
+// mission's name.
+func ReservedWord(label string) string {
+	n := Normalise(label)
+	switch {
+	case reservedTokens[n]:
+		return "it names " + n
+	case reservedNames[n]:
+		return "it is a word Den uses"
+	}
+	return ""
+}
+
 // Valid reports whether name is one Den could have given: a base Normalise
 // leaves as it is and Reserved allows, then nothing or a number from 2 to
 // maxN with no leading zero; the whole not reserved either. A name from
