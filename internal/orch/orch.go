@@ -398,6 +398,10 @@ func Argv(o Options) []string {
 	}
 	if o.Control {
 		args = append(args, "--permission-prompt-tool", "stdio", "--disallowedTools", "SendMessage")
+		// No slash commands or skills (ControlVerified was checked so).
+		// Not --restricted: it makes the orchestrator unreachable to peers,
+		// so their messages would never reach Den's inbound hook.
+		args = append(args, "--disable-slash-commands")
 	}
 	args = append(args, "--allowedTools", allowed)
 	if o.Resume != "" {
@@ -584,6 +588,9 @@ func (o *Orchestrator) Events() <-chan Event { return o.events }
 // is written is kept for the inbound hook (Sent).
 func (o *Orchestrator) Send(content string) error {
 	content = peermsg.Defuse(content)
+	if slashTurn(content) {
+		return ErrSlashTurn
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.closed {
