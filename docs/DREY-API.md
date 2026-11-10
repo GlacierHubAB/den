@@ -457,9 +457,11 @@ afterwards, so no later message carries a MAC.
   orchestrator, and when you type in Den's chat while it runs: your
   message goes first.
 - The orchestrator starts in control mode for the app's first turn, on a
-  Claude Code release Den has checked control on (2.1.289, 2.1.296); on any
-  other release `orch.say` ends with an error that says so, and Den's own
-  chat works as before.
+  Claude Code release Den has checked control on (2.1.289, 2.1.296,
+  2.1.319); on any other release `orch.say` ends with an error that says
+  so, and Den's own chat works as before. Its messages to agents need a
+  release Den has checked delivery on as well (2.1.289, 2.1.296): on
+  2.1.319, `orch.say` works, but the orchestrator cannot message agents.
 
 ### Switching views
 
