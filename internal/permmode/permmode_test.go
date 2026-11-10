@@ -118,3 +118,37 @@ func TestShippedIsTheTop(t *testing.T) {
 		}
 	}
 }
+
+// LowerTo is Lowers, read as a list: for every pair, a mode is in the list
+// exactly when going to it is a lowering. A mode that is not ranked has an
+// empty list, never a nil one (it is sent as [] and not as null).
+func TestLowerToIsLowers(t *testing.T) {
+	all := []string{DontAsk, Plan, Default, AcceptEdits, Auto, Bypass, "", "unknown"}
+	for _, from := range all {
+		list := LowerTo(from)
+		if list == nil {
+			t.Errorf("LowerTo(%q) is nil", from)
+		}
+		for _, to := range all {
+			in := false
+			for _, m := range list {
+				in = in || m == to
+			}
+			if in != Lowers(from, to) {
+				t.Errorf("LowerTo(%q) has %q = %v, but Lowers = %v", from, to, in, Lowers(from, to))
+			}
+		}
+	}
+	if got := LowerTo(Plan); len(got) != 2 || got[0] != DontAsk || got[1] != Default {
+		t.Errorf("LowerTo(plan) = %v: acceptEdits is not below plan", got)
+	}
+}
+
+// LowerTo hands out a copy: changing it changes nothing in Den's order.
+func TestLowerToIsACopy(t *testing.T) {
+	got := LowerTo(Auto)
+	got[0] = "changed"
+	if !Lowers(Auto, DontAsk) || LowerTo(Auto)[0] != DontAsk {
+		t.Fatal("a caller changed Den's order through LowerTo")
+	}
+}

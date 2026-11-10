@@ -87,6 +87,8 @@ type Server struct {
 	cardAnswers answers
 	// god is God mode's state as Den last set it (god.go).
 	god godState
+	// mode is the global permission mode as Den last set it (mode.go).
+	mode modeState
 	// perms is the permission manager's last read and its seq (grants.go).
 	perms permsState
 	// permFile writes and watches the levels' file (grants_store.go).
