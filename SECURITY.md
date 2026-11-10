@@ -57,6 +57,12 @@ Design-level attacks on these rules are in scope too.
 
 Only the latest release. Den is pre-1.0; there is no backport policy yet.
 
+## Published advisories
+
+- [GHSA-rcx7-cfmf-292j](https://github.com/GlacierHubAB/den/security/advisories/GHSA-rcx7-cfmf-292j):
+  a desktop task could approve Den's own cards. Affects v0.6.0 to v0.6.2,
+  fixed in v0.6.3.
+
 ## Practices
 
 - Every GitHub Action is pinned by commit SHA, and every workflow starts from
