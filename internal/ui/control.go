@@ -656,7 +656,8 @@ func (m *Model) controlTick(now time.Time) tea.Cmd {
 var interruptHook, appTurnEndHook = func() {}, func() {}
 
 // controlStart checks, before an orchestrator starts in control mode,
-// that its Claude Code release is one send_message was checked on.
+// that its Claude Code release is one control was checked on
+// (orch.ControlVerified). send_message checks its own list on each call.
 func controlStart(cmd []string, version func(context.Context, []string) (string, error)) (bool, string) {
 	if len(cmd) == 0 {
 		cmd = []string{"claude"}
@@ -667,8 +668,8 @@ func controlStart(cmd []string, version func(context.Context, []string) (string,
 	if err != nil {
 		return false, "Den could not read the Claude Code release, so control stays off"
 	}
-	if !orch.SendVerifiedVersion(v) {
-		return false, "control needs a Claude Code release Den has checked it on (" + strings.Join(orch.SendVerified, ", ") + "); this one is " + sanitize.Label(v, 20)
+	if !orch.ControlVerifiedVersion(v) {
+		return false, "control needs a Claude Code release Den has checked it on (" + strings.Join(orch.ControlVerified, ", ") + "); this one is " + sanitize.Label(v, 20)
 	}
 	return true, ""
 }

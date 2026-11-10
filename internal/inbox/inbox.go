@@ -842,6 +842,13 @@ func (s *Store) AddInstall(host, title string, body []string, req *bridge.Reques
 	return s.add(&Item{SessionID: HostPrefix + host, Kind: Install, Tool: "remote_install", Title: title, Body: body, req: req})
 }
 
+// SessionPrefix starts the SessionID of every card Den raises on its own
+// account, for no one agent: its settings, its pairings, its notices
+// (DesktopSession, GuidanceSession and the rest). Den shows all of them as
+// "Den", and none is ever an agent's: a test holds every such constant and
+// every literal SessionID in this file to the prefix.
+const SessionPrefix = "den:"
+
 // DesktopSession is the SessionID of Den's questions about desktop control
 // that concern no one agent yet: the hypruse install, a mission's start.
 const DesktopSession = "den:desktop"
@@ -1002,10 +1009,13 @@ func (s *Store) AddMissionCriteria(sessionID, title string, body []string) *Item
 	return s.add(&Item{SessionID: sessionID, Kind: MissionCriteria, Tool: "update_mission", Title: title, Body: body})
 }
 
+// MirrorSession is the SessionID of the conversation mirror's card: Den's own.
+const MirrorSession = "den:mirror"
+
 // AddMirrorAsk adds Den's question: show the human's orchestrator
 // conversation in the paired console?
 func (s *Store) AddMirrorAsk(title string, body []string) *Item {
-	return s.add(&Item{SessionID: "den:mirror", Kind: MirrorAsk, Tool: "mirror", Title: title, Body: body})
+	return s.add(&Item{SessionID: MirrorSession, Kind: MirrorAsk, Tool: "mirror", Title: title, Body: body})
 }
 
 // AddProcessTuned adds Den's notice: the orchestrator tuned a project's

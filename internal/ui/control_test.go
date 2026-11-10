@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/GlacierHubAB/den/internal/bridge"
 	"github.com/GlacierHubAB/den/internal/inbox"
 	"github.com/GlacierHubAB/den/internal/orch"
 )
@@ -619,5 +620,35 @@ func TestAppTurnWatchdog(t *testing.T) {
 	}
 	if !noted {
 		t.Error("no note in the chat")
+	}
+}
+
+// Control starts on a release control was checked on even where
+// send_message was not, and send_message still refuses there.
+func TestControlStartIsControlVerifiedOnly(t *testing.T) {
+	for _, v := range orch.ControlVerified {
+		if ok, why := controlStart(nil, func(context.Context, []string) (string, error) { return v, nil }); !ok {
+			t.Errorf("control refused on %s: %s", v, why)
+		}
+	}
+	if ok, _ := controlStart(nil, func(context.Context, []string) (string, error) { return "2.1.300", nil }); ok {
+		t.Error("control started on an unchecked release")
+	}
+	split := ""
+	for _, v := range orch.ControlVerified {
+		if !orch.SendVerifiedVersion(v) {
+			split = v
+		}
+	}
+	if split == "" {
+		t.Skip("every control release is send-verified too")
+	}
+	m := testModel(100, 30)
+	m.orch.control, m.orch.version = true, split
+	payload, _ := json.Marshal(map[string]string{"to": "worker-otter", "message": "hi"})
+	r := bridge.TestRequest(bridge.Envelope{Event: bridge.OrchSendEvent, Payload: payload})
+	m.handleOrchSend(r)
+	if d, _ := r.Decided(); d.Behavior != "deny" || !strings.Contains(d.Message, "send_message needs a Claude Code release Den has checked") {
+		t.Errorf("send_message on %s: %+v", split, d)
 	}
 }

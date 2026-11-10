@@ -1995,8 +1995,14 @@ func (m Model) nameFor(sessionID string) string {
 	if host, ok := strings.CutPrefix(sessionID, inbox.HostPrefix); ok {
 		return "@" + host
 	}
-	if sessionID == inbox.GuidanceSession || sessionID == inbox.UsageSession || sessionID == inbox.APISession || sessionID == inbox.DesktopSession {
+	// A card Den raises on its own account is Den's, never an agent's and
+	// never a cut session id; the tuning cards are Den's too, but every
+	// word in them is the orchestrator's.
+	switch {
+	case strings.HasPrefix(sessionID, inbox.SessionPrefix):
 		return "Den"
+	case strings.HasPrefix(sessionID, tuneSessionPrefix):
+		return "orchestrator"
 	}
 	for _, dm := range m.desk.missions {
 		// A desktop agent's cards come before its session registers.
@@ -2005,8 +2011,10 @@ func (m Model) nameFor(sessionID string) string {
 		}
 	}
 	if id, ok := strings.CutPrefix(sessionID, missionSessionPrefix); ok {
-		if ms := m.missions.Get(id); ms != nil {
-			return ms.Name
+		// Under a fixed word, so a mission's name, which the orchestrator
+		// proposes, can never read as "Den" or as an agent's name.
+		if ms := m.missions.Get(id); ms != nil && ms.Name != "" {
+			return "mission " + ms.Name
 		}
 		return "mission"
 	}
